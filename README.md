@@ -61,9 +61,13 @@ For managers of Postgres databases, pg_edge should make managing Postgres cluste
 
 ## Inspiration
 
-- pgbouncer
-- stolon
-- pgcat
+- [pgbouncer](https://www.pgbouncer.org/)
+- [stolon](https://github.com/sorintlab/stolon)
+- [pgcat](https://github.com/levkk/pgcat)
+- [odyssey](https://github.com/yandex/odyssey)
+- [crunchy-proxy](https://github.com/CrunchyData/crunchy-proxy)
+- [pgpool](https://www.pgpool.net/mediawiki/index.php/Main_Page)
+- [pgagroal](https://github.com/agroal/pgagroal)
 
 ## Installation
 
