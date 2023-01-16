@@ -82,6 +82,9 @@ Benchmarking for stateful throughput:
 
 Make sure we benchmark for typical server-side stateful database connection pools.
 
+- Run pgbench for a minimum of 60 seconds
+  - Connection init will be less of a percentage of time
+
 Benchmarking for serverless use-case:
 
 Make sure we benchmark how long it takes to connect, run one transaction and disconnnect.
