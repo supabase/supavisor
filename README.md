@@ -41,6 +41,9 @@ For managers of Postgres databases, pg_edge should make managing Postgres cluste
   - Health checks
   - Push button read-replica configuration
   - What else?
+- Deployable as a single or multi-tenant proxy
+  - Direct replacement for `pgbouncer`
+  - Uses specific `pg_edge` schema in metadata database so when used as a `pgbouncer` replacement it can use the local database as the metadata database
 
 ## General Features
 
