@@ -75,3 +75,13 @@ For managers of Postgres databases, pg_edge should make managing Postgres cluste
 ## Installation
 
 tbd
+
+## Benchmarking
+
+Benchmarking for stateful throughput:
+
+Make sure we benchmark for typical server-side stateful database connection pools.
+
+Benchmarking for serverless use-case:
+
+Make sure we benchmark how long it takes to connect, run one transaction and disconnnect.
