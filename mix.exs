@@ -19,7 +19,7 @@ defmodule PgEdge.MixProject do
   def application do
     [
       mod: {PgEdge.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools, :ranch]
     ]
   end
 

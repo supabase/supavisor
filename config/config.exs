@@ -8,6 +8,7 @@
 import Config
 
 config :pg_edge,
+  proxy_port: 5555,
   ecto_repos: [PgEdge.Repo]
 
 # Configures the endpoint
