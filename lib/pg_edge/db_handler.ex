@@ -12,10 +12,6 @@ defmodule PgEdge.DbHandler do
     GenServer.call(pid, {:db_call, msg})
   end
 
-  def cast(pid, msg, caller) do
-    GenServer.cast(pid, {:db_call, msg, caller})
-  end
-
   @impl true
   def init(_) do
     # IP
@@ -50,6 +46,7 @@ defmodule PgEdge.DbHandler do
       wait: false,
       stage: nil,
       nonce: nil,
+      messages: "",
       server_proof: nil,
       client_socket: nil
     }
@@ -64,16 +61,15 @@ defmodule PgEdge.DbHandler do
     {:reply, {:ok, state.socket}, %{state | caller: pid, client_socket: socket}}
   end
 
-  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket} = state) do
-    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
-    :gen_tcp.send(socket, bin)
-    {:reply, :ok, %{state | caller: pid}}
-  end
-
-  def handle_cast({:db_call, bin, pid}, %{socket: socket} = state) do
-    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
-    :gen_tcp.send(socket, bin)
-    {:noreply, %{state | caller: pid}}
+  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket, messages: m} = state) do
+    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(socket)}")
+    messages = if socket do
+      :gen_tcp.send(socket, bin)
+      ""
+    else
+      state.messages <> bin
+    end
+    {:reply, :ok, %{state | caller: pid, messages: messages}}
   end
 
   @impl true
@@ -179,6 +175,7 @@ defmodule PgEdge.DbHandler do
       {ps, db_state} ->
         Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
         Logger.debug("DB ready_for_query: #{inspect(db_state)}")
+        send(self(), :check_messages)
         {:noreply, %{state | parameter_status: ps, stage: :idle}}
     end
   end
@@ -210,9 +207,19 @@ defmodule PgEdge.DbHandler do
     end
   end
 
+
+  def handle_info(:check_messages, %{messages: m, socket: socket} = state) do
+    if m != "" do
+      :gen_tcp.send(socket, m)
+      {:noreply, %{state | messages: ""}}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info({:tcp_closed, _port}, state) do
-    Logger.error("DB closed connection")
-    {:noreply, %{state | check_ref: reconnect()}}
+    Logger.error("DB closed connection #{inspect(self())} #{inspect(state)}")
+    {:noreply, %{state | check_ref: reconnect(), socket: nil}}
   end
 
   def handle_info(msg, state) do
