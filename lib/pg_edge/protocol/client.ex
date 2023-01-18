@@ -7,6 +7,8 @@ defmodule PgEdge.Protocol.Client do
     do: defstruct([:tag, :len, :payload, :bin])
   )
 
+  def pkt_header_size, do: @pkt_header_size
+
   def stream(bin) do
     Stream.resource(
       fn -> {:bin, bin} end,
@@ -35,14 +37,19 @@ defmodule PgEdge.Protocol.Client do
     {tag(char), pkt_len}
   end
 
+  @spec decode(binary) :: {:ok, [Pkt.t()], binary} | {:error, any}
   def decode(data) do
     decode(data, [])
   end
 
-  def decode(data, acc) when byte_size(data) >= @pkt_header_size do
+  @spec decode(binary, [Pkt.t()]) :: {:ok, [Pkt.t()], binary} | {:error, any}
+  def decode("", acc), do: {:ok, Enum.reverse(acc), ""}
+
+  def decode(data, acc) do
     case decode_pkt(data) do
       {:ok, pkt, rest} -> decode(rest, [pkt | acc])
-      {:acc, nil, bin} -> {:ok, Enum.reverse(acc), bin}
+      {:error, :payload_too_small} -> {:ok, Enum.reverse(acc), data}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -50,35 +57,37 @@ defmodule PgEdge.Protocol.Client do
     {:ok, Enum.reverse(acc), ""}
   end
 
-  def decode_pkt(
-        <<char::integer-8, pkt_len::integer-32, rest::binary>> = bin,
-        decode_payload \\ true
-      ) do
-    tag = tag(char)
-    payload_len = pkt_len - 4
+  @spec decode_pkt(binary) ::
+          {:ok, Pkt.t(), binary}
+          | {:acc, nil, binary}
+          | {:error, :payload_too_small | :packet_too_small}
+  def decode_pkt(<<_::integer-8, pkt_len::integer-32, payload::binary>>)
+      when byte_size(payload) < pkt_len - 4 do
+    {:error, :payload_too_small}
+  end
 
-    if byte_size(rest) >= payload_len do
-      <<bin_payload::binary-size(payload_len), rest2::binary>> = rest
+  def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>> = bin) do
+    case tag(char) do
+      nil ->
+        {:error, {:undefined_tag, <<char>>}}
 
-      payload =
-        if decode_payload do
-          decode_payload(tag, bin_payload)
-        else
-          nil
-        end
+      tag ->
+        payload_len = pkt_len - 4
+        <<bin_payload::binary-size(payload_len), rest2::binary>> = rest
 
-      {:ok,
-       %Pkt{
-         tag: tag,
-         len: pkt_len + 1,
-         payload: payload,
-         bin: <<char, pkt_len::integer-32, bin_payload::binary>>
-       }, rest2}
-    else
-      {:acc, nil, bin}
+        {:ok,
+         %Pkt{
+           tag: tag,
+           len: pkt_len + 1,
+           payload: decode_payload(tag, bin_payload),
+           bin: <<char, pkt_len::integer-32, bin_payload::binary>>
+         }, rest2}
     end
   end
 
+  def decode_pkt(_), do: {:error, :header_mismatch}
+
+  @spec tag(byte) :: atom | nil
   def tag(char) do
     case char do
       ?Q ->
@@ -106,8 +115,7 @@ defmodule PgEdge.Protocol.Client do
         :termination_message
 
       _ ->
-        Logger.error("undefined tag char: #{inspect(<<char>>)}")
-        :undefined
+        nil
     end
   end
 

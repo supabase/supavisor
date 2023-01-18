@@ -4,6 +4,7 @@ defmodule PgEdge.ClientHandler do
   @behaviour :ranch_protocol
 
   alias PgEdge.Protocol.Client
+  alias PgEdge.Protocol.Server
   alias PgEdge.DbHandler, as: Db
 
   @impl true
@@ -30,22 +31,20 @@ defmodule PgEdge.ClientHandler do
       __MODULE__,
       [],
       %{
-        # db_socket: db_socket,
         socket: socket,
         trans: trans,
         connected: false,
-        pgo: nil,
-        buffer: <<>>,
+        buffer: "",
         db_pid: nil,
-        stage: :wait_startup_packet
+        state: :wait_startup_packet
       }
     )
   end
 
   @impl true
   def handle_info(
-        {:tcp, _port, bin},
-        %{trans: trans, socket: socket, stage: :wait_startup_packet} = state
+        {:tcp, _, bin},
+        %{trans: trans, socket: socket, state: :wait_startup_packet} = state
       ) do
     Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
 
@@ -57,53 +56,51 @@ defmodule PgEdge.ClientHandler do
       hello = Client.decode_startup_packet(bin)
       Logger.debug("Client startup message: #{inspect(hello)}")
       trans.send(socket, authentication_ok())
-      {:noreply, %{state | stage: :idle}}
+      {:noreply, %{state | state: :idle}}
     end
   end
 
-  def handle_info({:tcp, _port, <<"X", 0, 0, 0, 4>>}, state) do
-    Logger.debug("Exclude termination")
+  def handle_info({:tcp, _, <<"X", 0, 0, 0, 4>>}, state) do
+    Logger.warn("Receive termination")
     {:noreply, state}
   end
 
-  def handle_info({:tcp, _port, bin1}, %{buffer: buf, db_pid: db_pid} = state) do
-    db_pid1 =
+  # select 1 stub
+  def handle_info({:tcp, _, <<?Q, <<14::32>>, "SELECT 1;", 0>>}, state) do
+    Logger.info("Receive select 1")
+    state.trans.send(state.socket, Server.select_1_response())
+    {:noreply, state}
+  end
+
+  def handle_info({:tcp, _, bin}, %{buffer: buf, db_pid: db_pid} = state) do
+    db_pid =
       if db_pid do
         db_pid
       else
         :poolboy.checkout(:db_sess, true, 60000)
       end
 
-    Logger.debug("Worker: #{inspect(db_pid1)}")
+    data = buf <> bin
 
-    # :gen_tcp.send(db_socket, bin1)
-
-    {rest, _, _transaction} =
-      Client.stream(buf <> bin1)
-      |> Enum.reduce(
-        {<<>>, db_pid1, nil},
-        fn
-          {:rest, rest}, {_, db_pid, transaction} ->
-            {rest, db_pid, transaction}
-
-          pkt, {_, db_pid, _} = acc ->
-            Logger.debug(inspect(%{pkt | bin: ""}, pretty: true))
-            # s = System.monotonic_time(:microsecond)
+    buf =
+      case Client.decode(data) do
+        {:ok, packets, rest} ->
+          Enum.each(packets, fn pkt ->
+            Logger.info("Packet: #{inspect(pkt)}")
             Db.call(db_pid, pkt.bin)
+          end)
 
-            # Db.cast(db_pid, pkt.bin, self())
-            # :gen_tcp.send(db_socket, pkt.bin)
-            # IO.inspect({:check, System.monotonic_time(:microsecond) - s})
-            acc
-        end
-      )
+          rest
 
-    Logger.debug("rest #{inspect(rest, pretty: true)}")
+        {:error, reason} ->
+          Logger.error("Error: #{inspect(reason)}")
+          data
+      end
 
-    {:noreply, %{state | buffer: rest, db_pid: db_pid1}}
+    {:noreply, %{state | buffer: buf, db_pid: db_pid}}
   end
 
-  def handle_info({:tcp_closed, _port}, state) do
+  def handle_info({:tcp_closed, _}, state) do
     Logger.info("Client closed connection")
     {:stop, :normal, state}
   end
