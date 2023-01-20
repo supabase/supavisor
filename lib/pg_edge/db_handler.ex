@@ -218,7 +218,7 @@ defmodule PgEdge.DbHandler do
   end
 
   def handle_info({:tcp_closed, _port}, state) do
-    Logger.error("DB closed connection #{inspect(self())} #{inspect(state)}")
+    Logger.error("DB closed connection #{inspect(self())}")
     {:noreply, %{state | check_ref: reconnect(), socket: nil}}
   end
 

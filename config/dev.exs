@@ -1,15 +1,4 @@
 import Config
-
-config :pg_edge, PgEdge.DevTenant,
-  db_host: "127.0.0.1",
-  db_port: 6432,
-  db_name: "postgres",
-  db_user: "postgres",
-  db_password: "postgres",
-  connect_timeout: 5000,
-  application_name: "pg_edge",
-  pool_size: 50
-
 # Configure your database
 config :pg_edge, PgEdge.Repo,
   username: "postgres",

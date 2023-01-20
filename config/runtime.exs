@@ -1,40 +1,20 @@
 import Config
 
-# config/runtime.exs is executed for all environments, including
-# during releases. It is executed after compilation and before the
-# system starts, so it is typically used to load production configuration
-# and secrets from environment variables or elsewhere. Do not define
-# any compile-time configuration in here, as it won't be applied.
-# The block below contains prod specific runtime configuration.
-
-# ## Using releases
-#
-# If you use `mix release`, you need to explicitly enable the server
-# by passing the PHX_SERVER=true when you start it:
-#
-#     PHX_SERVER=true bin/pg_edge start
-#
-# Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
-# script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") do
-  config :pg_edge, PgEdgeWeb.Endpoint, server: true
-end
-
 if config_env() == :prod do
-  database_url =
-    System.get_env("DATABASE_URL") ||
-      raise """
-      environment variable DATABASE_URL is missing.
-      For example: ecto://USER:PASS@HOST/DATABASE
-      """
+  # database_url =
+  #   System.get_env("DATABASE_URL") ||
+  #     raise """
+  #     environment variable DATABASE_URL is missing.
+  #     For example: ecto://USER:PASS@HOST/DATABASE
+  #     """
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6"), do: [:inet6], else: []
 
-  config :pg_edge, PgEdge.Repo,
-    # ssl: true,
-    url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    socket_options: maybe_ipv6
+  # config :pg_edge, PgEdge.Repo,
+  #   # ssl: true,
+  #   url: database_url,
+  #   pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
+  #   socket_options: maybe_ipv6
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
@@ -47,19 +27,33 @@ if config_env() == :prod do
       environment variable SECRET_KEY_BASE is missing.
       You can generate one by calling: mix phx.gen.secret
       """
-
-  host = System.get_env("PHX_HOST") || "example.com"
-  port = String.to_integer(System.get_env("PORT") || "4000")
+  app_name =
+    System.get_env("FLY_APP_NAME") ||
+      raise "APP_NAME not available"
 
   config :pg_edge, PgEdgeWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
+    server: true,
+    url: [host: "#{app_name}.fly.dev", port: 80],
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/plug_cowboy/Plug.Cowboy.html
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0},
-      port: port
+      port: String.to_integer(System.get_env("PORT") || "4000"),
+      transport_options: [
+        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "16384"),
+        num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+        # IMPORTANT: support IPv6 addresses
+        socket_opts: [:inet6]
+      ]
     ],
     secret_key_base: secret_key_base
+end
+
+if config_env() != :test do
+  config :pg_edge, PgEdge.DevTenant,
+    db_host: System.get_env("TENANT_DB_HOST", "127.0.0.1"),
+    db_port: System.get_env("TENANT_DB_PORT", "6432") |> String.to_integer(),
+    db_name: System.get_env("TENANT_DB_NAME", "postgres"),
+    db_user:  System.get_env("TENANT_DB_USER", "postgres"),
+    db_password: System.get_env("TENANT_DB_PASSWORD", "postgres"),
+    connect_timeout: 5000,
+    application_name: "pg_edge",
+    pool_size: System.get_env("DB_POOL_SIZE", "50") |> String.to_integer()
 end
