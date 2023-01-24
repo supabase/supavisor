@@ -39,16 +39,13 @@ defmodule PgEdge.DbHandler do
       caller: nil,
       sent: false,
       auth: auth,
-      payload_size: 0,
-      buffer: <<>>,
+      buffer: "",
       db_state: nil,
       parameter_status: %{},
-      wait: false,
-      stage: nil,
+      state: nil,
       nonce: nil,
       messages: "",
-      server_proof: nil,
-      client_socket: nil
+      server_proof: nil
     }
 
     send(self(), :connect)
@@ -57,18 +54,17 @@ defmodule PgEdge.DbHandler do
 
   # receive call from the client
   @impl true
-  def handle_call({:subscribe, socket}, {pid, _ref} = _from, state) do
-    {:reply, {:ok, state.socket}, %{state | caller: pid, client_socket: socket}}
-  end
-
-  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket, messages: m} = state) do
+  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket, messages: _m} = state) do
     Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(socket)}")
-    messages = if socket do
-      :gen_tcp.send(socket, bin)
-      ""
-    else
-      state.messages <> bin
-    end
+
+    messages =
+      if socket do
+        :gen_tcp.send(socket, bin)
+        ""
+      else
+        state.messages <> bin
+      end
+
     {:reply, :ok, %{state | caller: pid, messages: messages}}
   end
 
@@ -82,6 +78,7 @@ defmodule PgEdge.DbHandler do
       {:ok, socket} ->
         Logger.debug("auth #{inspect(auth, pretty: true)}")
 
+        # TODO: add password
         msg =
           :pgo_protocol.encode_startup_message([
             {"user", auth.user},
@@ -91,7 +88,7 @@ defmodule PgEdge.DbHandler do
           ])
 
         :ok = :gen_tcp.send(socket, msg)
-        {:noreply, %{state | stage: :authentication, socket: socket}}
+        {:noreply, %{state | state: :authentication, socket: socket}}
 
       other ->
         Logger.error("Connection faild #{inspect(other)}")
@@ -99,7 +96,7 @@ defmodule PgEdge.DbHandler do
     end
   end
 
-  def handle_info({:tcp, _port, bin}, %{stage: :authentication} = state) do
+  def handle_info({:tcp, _port, bin}, %{state: :authentication} = state) do
     dec_pkt = Server.decode(bin)
     Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
@@ -176,29 +173,21 @@ defmodule PgEdge.DbHandler do
         Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
         Logger.debug("DB ready_for_query: #{inspect(db_state)}")
         send(self(), :check_messages)
-        {:noreply, %{state | parameter_status: ps, stage: :idle}}
+        {:noreply, %{state | parameter_status: ps, state: :idle}}
     end
   end
 
   # receive reply from DB and send to the client
-  def handle_info(
-        {:tcp, _port, bin},
-        %{caller: caller, buffer: buf, client_socket: client_socket} = state
-      ) do
+  def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf} = state) do
     Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
 
     if caller do
       case handle_packets(buf <> bin) do
         {:ok, :ready_for_query, rest, :idle} ->
-          # :gen_tcp.send(client_socket, bin)
           Client.client_call(caller, bin, true)
-
-          # IO.inspect({:checkin, caller, self(), rest})
-          # :poolboy.checkin(:db_sess, self())
           {:noreply, %{state | buffer: rest}}
 
         {:ok, _, rest, _} ->
-          # :gen_tcp.send(client_socket, bin)
           Client.client_call(caller, bin, false)
           {:noreply, %{state | buffer: rest}}
       end
@@ -206,7 +195,6 @@ defmodule PgEdge.DbHandler do
       {:noreply, state}
     end
   end
-
 
   def handle_info(:check_messages, %{messages: m, socket: socket} = state) do
     if m != "" do

@@ -48,6 +48,7 @@ defmodule PgEdge.ClientHandler do
       ) do
     Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
 
+    # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
     if byte_size(bin) == 8 do
       trans.send(socket, "N")
@@ -60,13 +61,13 @@ defmodule PgEdge.ClientHandler do
     end
   end
 
-  def handle_info({:tcp, _, <<"X", 0, 0, 0, 4>>}, state) do
+  def handle_info({:tcp, _, <<?X, 4::32>>}, state) do
     Logger.warn("Receive termination")
     {:noreply, state}
   end
 
   # select 1 stub
-  def handle_info({:tcp, _, <<?Q, <<14::32>>, "SELECT 1;", 0>>}, state) do
+  def handle_info({:tcp, _, <<?Q, 14::32, "SELECT 1;", 0>>}, state) do
     Logger.info("Receive select 1")
     state.trans.send(state.socket, Server.select_1_response())
     {:noreply, state}
@@ -135,6 +136,7 @@ defmodule PgEdge.ClientHandler do
     {:reply, :ok, %{state | db_pid: db_pid1}}
   end
 
+  # TODO: implement authentication response
   def authentication_ok() do
     [
       # authentication_ok

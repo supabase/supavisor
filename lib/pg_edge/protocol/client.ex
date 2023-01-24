@@ -9,30 +9,6 @@ defmodule PgEdge.Protocol.Client do
 
   def pkt_header_size, do: @pkt_header_size
 
-  def stream(bin) do
-    Stream.resource(
-      fn -> {:bin, bin} end,
-      fn
-        <<>> ->
-          {:halt, nil}
-
-        {:bin, data} ->
-          if byte_size(data) >= @pkt_header_size do
-            case decode_pkt(data) do
-              {:ok, pkt, rest} ->
-                {[pkt], {:bin, rest}}
-
-              {:acc, nil, rest} ->
-                {[{:rest, rest}], <<>>}
-            end
-          else
-            {[{:rest, data}], <<>>}
-          end
-      end,
-      fn _ -> :ok end
-    )
-  end
-
   def header(<<char::integer-8, pkt_len::integer-32>>) do
     {tag(char), pkt_len}
   end
@@ -49,24 +25,19 @@ defmodule PgEdge.Protocol.Client do
     case decode_pkt(data) do
       {:ok, pkt, rest} -> decode(rest, [pkt | acc])
       {:error, :payload_too_small} -> {:ok, Enum.reverse(acc), data}
-      {:error, reason} -> {:error, reason}
     end
-  end
-
-  def decode(_, acc) do
-    {:ok, Enum.reverse(acc), ""}
   end
 
   @spec decode_pkt(binary) ::
           {:ok, Pkt.t(), binary}
           | {:acc, nil, binary}
-          | {:error, :payload_too_small | :packet_too_small}
+          | {:error, :payload_too_small}
   def decode_pkt(<<_::integer-8, pkt_len::integer-32, payload::binary>>)
       when byte_size(payload) < pkt_len - 4 do
     {:error, :payload_too_small}
   end
 
-  def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>> = bin) do
+  def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
     case tag(char) do
       nil ->
         {:error, {:undefined_tag, <<char>>}}

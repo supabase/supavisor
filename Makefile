@@ -18,3 +18,6 @@ pgbench_init:
 
 pgbench_short:
 	PGPASSWORD=postgres pgbench -M extended --transactions 5 --jobs 4 --client 1 -h localhost -p 7654 -U postgres postgres
+
+pgbench_long:
+	PGPASSWORD=postgres pgbench -M extended --transactions 500 --jobs 5 --client 100 -h localhost -p 7654 -U postgres postgres
