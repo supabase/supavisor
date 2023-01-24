@@ -72,6 +72,12 @@ For managers of Postgres databases, pg_edge should make managing Postgres cluste
 - [pgpool](https://www.pgpool.net/mediawiki/index.php/Main_Page)
 - [pgagroal](https://github.com/agroal/pgagroal)
 
+## Commercial Inspiration
+
+- [proxysql.com](https://proxysql.com/)
+- [Amazon RDS Proxy](https://aws.amazon.com/rds/proxy/)
+- [Google Cloud SQL Proxy](https://github.com/GoogleCloudPlatform/cloud-sql-proxy)
+
 ## Installation
 
 tbd
