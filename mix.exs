@@ -44,12 +44,13 @@ defmodule PgEdge.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
+      {:joken, "~> 2.5.0"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},
       {:pgo, "~> 0.12"},
       {:nimble_pool, "~> 0.2"}
-      #TODO: add ranch deps
+      # TODO: add ranch deps
     ]
   end
 

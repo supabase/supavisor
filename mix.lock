@@ -13,6 +13,8 @@
   "file_system": {:hex, :file_system, "0.2.10", "fb082005a9cd1711c05b5248710f8826b02d7d1784e7c3451f9c1231d4fc162d", [:mix], [], "hexpm", "41195edbfb562a593726eda3b3e8b103a309b733ad25f3d642ba49696bf715dc"},
   "floki": {:hex, :floki, "0.34.0", "002d0cc194b48794d74711731db004fafeb328fe676976f160685262d43706a8", [:mix], [], "hexpm", "9c3a9f43f40dde00332a589bd9d389b90c1f518aef500364d00636acc5ebc99c"},
   "jason": {:hex, :jason, "1.4.0", "e855647bc964a44e2f67df589ccf49105ae039d4179db7f6271dfd3843dc27e6", [:mix], [{:decimal, "~> 1.0 or ~> 2.0", [hex: :decimal, repo: "hexpm", optional: true]}], "hexpm", "79a3791085b2a0f743ca04cec0f7be26443738779d09302e01318f97bdb82121"},
+  "joken": {:hex, :joken, "2.5.0", "09be497d804b8115eb6f07615cef2e60c2a1008fb89dc0aef0d4c4b4609b99aa", [:mix], [{:jose, "~> 1.11.2", [hex: :jose, repo: "hexpm", optional: false]}], "hexpm", "22b25c89617c5ed8ca7b31026340a25ea0f9ca7160f9706b79be9ed81fdf74e7"},
+  "jose": {:hex, :jose, "1.11.5", "3bc2d75ffa5e2c941ca93e5696b54978323191988eb8d225c2e663ddfefd515e", [:mix, :rebar3], [], "hexpm", "dcd3b215bafe02ea7c5b23dafd3eb8062a5cd8f2d904fd9caa323d37034ab384"},
   "mime": {:hex, :mime, "2.0.3", "3676436d3d1f7b81b5a2d2bd8405f412c677558c81b1c92be58c00562bb59095", [:mix], [], "hexpm", "27a30bf0db44d25eecba73755acf4068cbfe26a4372f9eb3e4ea3a45956bff6b"},
   "nimble_pool": {:hex, :nimble_pool, "0.2.6", "91f2f4c357da4c4a0a548286c84a3a28004f68f05609b4534526871a22053cde", [:mix], [], "hexpm", "1c715055095d3f2705c4e236c18b618420a35490da94149ff8b580a2144f653f"},
   "opentelemetry_api": {:hex, :opentelemetry_api, "1.2.0", "454a35655b4c1924405ef1f3587f2c6f141bf73366b2c5e8a38dcc619b53eaa0", [:mix, :rebar3], [], "hexpm", "9e677c68243de0f70538798072e66e1fb1d4a2ca8888a6eb493c0a41e5480c35"},

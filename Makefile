@@ -1,9 +1,9 @@
 .PHONY: dev
 dev:
-	MIX_ENV=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
+	MIX_ENV=dev DB_ENC_KEY="1234567890123456" API_JWT_SECRET=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
 
 db_start:
-	docker-compose -f ./dev/docker-compose.db.yml up
+	docker-compose -f ./dev/docker-compose.db.yml up && mix ecto.migrate --prefix pgedge --log-migrator-sql
 
 db_stop:
 	docker-compose -f ./dev/docker-compose.db.yml down  --remove-orphans
