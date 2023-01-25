@@ -8,9 +8,8 @@ defmodule PgEdge.ClientHandler do
   alias PgEdge.DbHandler, as: Db
 
   @impl true
-  def start_link(ref, socket, transport, opts) do
+  def start_link(ref, _socket, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
-    IO.inspect({123, ref, :inet.peername(socket), transport, opts})
     {:ok, pid}
   end
 
