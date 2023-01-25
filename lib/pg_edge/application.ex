@@ -18,14 +18,14 @@ defmodule PgEdge.Application do
 
     children = [
       # Start the Ecto repository
-      # PgEdge.Repo,
+      PgEdge.Repo,
       # Start the Telemetry supervisor
       PgEdgeWeb.Telemetry,
       # Start the PubSub system
       {Phoenix.PubSub, name: PgEdge.PubSub},
       # Start the Endpoint (http/https)
-      PgEdgeWeb.Endpoint,
-      :poolboy.child_spec(:worker, dev_pool())
+      PgEdgeWeb.Endpoint
+      # :poolboy.child_spec(:worker, dev_pool())
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

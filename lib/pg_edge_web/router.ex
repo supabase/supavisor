@@ -1,6 +1,9 @@
 defmodule PgEdgeWeb.Router do
   use PgEdgeWeb, :router
 
+  require Logger
+  import PgEdge.Jwt, only: [authorize: 2]
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -12,12 +15,19 @@ defmodule PgEdgeWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug :check_auth, :api_jwt_secret
   end
 
   scope "/", PgEdgeWeb do
     pipe_through :browser
 
     get "/", PageController, :index
+  end
+
+  scope "/api", PgEdgeWeb do
+    pipe_through :api
+
+    resources "/tenants", TenantController
   end
 
   # Other scopes may use custom stacks.
@@ -42,4 +52,17 @@ defmodule PgEdgeWeb.Router do
     end
   end
 
+  defp check_auth(conn, secret_key) do
+    secret = Application.fetch_env!(:pg_edge, secret_key)
+
+    with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
+         {:ok, _claims} <- authorize(token, secret) do
+      conn
+    else
+      _ ->
+        conn
+        |> send_resp(403, "")
+        |> halt()
+    end
+  end
 end
