@@ -1,5 +1,4 @@
 import Config
-
 # Configure your database
 config :pg_edge, PgEdge.Repo,
   username: "postgres",
