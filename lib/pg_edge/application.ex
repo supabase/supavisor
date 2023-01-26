@@ -16,6 +16,11 @@ defmodule PgEdge.Application do
       []
     )
 
+    Registry.start_link(
+      keys: :unique,
+      name: PgEdge.Registry.DbPool
+    )
+
     children = [
       # Start the Ecto repository
       PgEdge.Repo,
@@ -24,8 +29,11 @@ defmodule PgEdge.Application do
       # Start the PubSub system
       {Phoenix.PubSub, name: PgEdge.PubSub},
       # Start the Endpoint (http/https)
-      PgEdgeWeb.Endpoint
-      # :poolboy.child_spec(:worker, dev_pool())
+      PgEdgeWeb.Endpoint,
+      {
+        PartitionSupervisor,
+        child_spec: DynamicSupervisor, strategy: :one_for_one, name: PgEdge.DynamicSupervisor
+      }
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
@@ -40,14 +48,5 @@ defmodule PgEdge.Application do
   def config_change(changed, _new, removed) do
     PgEdgeWeb.Endpoint.config_change(changed, removed)
     :ok
-  end
-
-  defp dev_pool do
-    [
-      name: {:local, :db_sess},
-      worker_module: PgEdge.DbHandler,
-      size: Application.get_env(:pg_edge, :pool_size),
-      max_overflow: 0
-    ]
   end
 end

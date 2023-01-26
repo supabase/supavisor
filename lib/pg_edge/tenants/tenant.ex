@@ -8,13 +8,13 @@ defmodule PgEdge.Tenants.Tenant do
   @schema_prefix "pgedge"
 
   schema "tenants" do
-    field :db_database, :string
-    field :db_host, :string
-    field :db_password, :string
-    field :db_port, :integer
-    field :db_user, :string
-    field :external_id, :string
-    field :pool_size, :integer, default: 100
+    field(:db_database, :string)
+    field(:db_host, :string)
+    field(:db_password, :string)
+    field(:db_port, :integer)
+    field(:db_user, :string)
+    field(:external_id, :string)
+    field(:pool_size, :integer)
 
     timestamps()
   end
@@ -45,8 +45,8 @@ defmodule PgEdge.Tenants.Tenant do
 
   def encrypt_password(changeset) do
     update_change(changeset, :db_password, fn password ->
-      secure_key = Application.get_env(:pg_edge, :db_enc_key)
-      encrypt!(password, secure_key)
+      Application.get_env(:pg_edge, :db_enc_key)
+      |> encrypt!(password)
     end)
   end
 end

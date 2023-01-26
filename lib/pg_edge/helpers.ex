@@ -3,15 +3,15 @@ defmodule PgEdge.Helpers do
   This module includes helper functions for different contexts that can't be union in one module.
   """
 
-  @spec encrypt!(binary, <<_::128>>) :: binary
-  def encrypt!(text, secret_key) do
+  @spec encrypt!(<<_::128>>, binary()) :: binary()
+  def encrypt!(secret_key, text) do
     :aes_128_ecb
     |> :crypto.crypto_one_time(secret_key, pad(text), true)
     |> Base.encode64()
   end
 
-  @spec decrypt!(binary, <<_::128>>) :: binary
-  def decrypt!(base64_text, secret_key) do
+  @spec decrypt!(<<_::128>>, binary()) :: binary()
+  def decrypt!(secret_key, base64_text) do
     crypto_text = Base.decode64!(base64_text)
 
     :aes_128_ecb
