@@ -3,15 +3,15 @@ dev:
 	MIX_ENV=dev DB_ENC_KEY="1234567890123456" API_JWT_SECRET=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
 
 db_start:
-	docker-compose -f ./dev/docker-compose.db.yml up && mix ecto.migrate --prefix pgedge --log-migrator-sql
+	docker-compose -f ./dev/docker-compose.db.yml up
 
 db_stop:
-	docker-compose -f ./dev/docker-compose.db.yml down  --remove-orphans
+	docker-compose -f ./dev/docker-compose.db.yml down --remove-orphans
 
 db_rebuild:
 	make db_stop
 	docker-compose -f ./dev/docker-compose.db.yml build
-	docker-compose -f ./dev/docker-compose.db.yml up --force-recreate --build
+	make db_start
 
 pgbench_init:
 	PGPASSWORD=postgres pgbench -i -h 127.0.0.1 -p 6432 -U postgres -d postgres
