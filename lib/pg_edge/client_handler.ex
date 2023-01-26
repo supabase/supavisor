@@ -61,7 +61,7 @@ defmodule PgEdge.ClientHandler do
       # TODO: rewrite case -> with
       case hello.payload do
         [["user", user_value] | _] ->
-          case String.split(user_value, "@") do
+          case String.split(user_value, "#") do
             [_user, external_id] ->
               # TODO: check the response
               PgEdge.start_pool(external_id)
