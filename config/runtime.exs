@@ -34,8 +34,6 @@ if config_env() != :test do
     db_enc_key: System.get_env("DB_ENC_KEY")
 
   config :pg_edge, PgEdge.Repo,
-    # priv: "priv/repo/pgedge",
-    # migration_default_prefix: "pgedge",
     hostname: System.get_env("DB_HOST", "localhost"),
     username: System.get_env("DB_USER", "postgres"),
     password: System.get_env("DB_PASSWORD", "postgres"),
@@ -45,14 +43,4 @@ if config_env() != :test do
     parameters: [
       application_name: "pg_edge_meta"
     ]
-
-  config :pg_edge, PgEdge.DevTenant,
-    db_host: System.get_env("TENANT_DB_HOST", "127.0.0.1"),
-    db_port: System.get_env("TENANT_DB_PORT", "6432") |> String.to_integer(),
-    db_name: System.get_env("TENANT_DB_NAME", "postgres"),
-    db_user: System.get_env("TENANT_DB_USER", "postgres"),
-    db_password: System.get_env("TENANT_DB_PASSWORD", "postgres"),
-    connect_timeout: 5000,
-    application_name: "pg_edge",
-    pool_size: System.get_env("DB_POOL_SIZE", "50") |> String.to_integer()
 end
