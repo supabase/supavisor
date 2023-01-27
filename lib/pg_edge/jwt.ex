@@ -28,13 +28,14 @@ defmodule PgEdge.Jwt do
 
   @hs_algorithms ["HS256", "HS384", "HS512"]
 
+  @spec authorize(String.t(), String.t()) :: {:ok, map()} | {:error, any()}
   def authorize(token, secret) when is_binary(token) do
     token
     |> clean_token()
     |> verify(secret)
   end
 
-  def authorize(_token, _secret), do: :error
+  def authorize(_token, _secret), do: {:error, :token_not_a_string}
 
   defp clean_token(token) do
     Regex.replace(~r/\s|\n/, URI.decode(token), "")
@@ -54,13 +55,10 @@ defmodule PgEdge.Jwt do
 
       {:error, reason} ->
         {:error, reason}
-
-      error ->
-        Logger.error("Unknown connection authorization error: #{inspect(error)}")
-        {:error, :unknown}
     end
   end
 
+  @spec verify(String.t(), String.t()) :: {:ok, map()} | {:error, any()}
   def verify(token, secret) when is_binary(token) do
     with {:ok, _claims} <- check_claims_format(token),
          {:ok, header} <- check_header_format(token),
@@ -69,7 +67,7 @@ defmodule PgEdge.Jwt do
     end
   end
 
-  def verify(_token, _secret), do: {:error, :not_a_string}
+  def verify(_token, _secret), do: {:error, :token_not_a_string}
 
   defp check_header_format(token) do
     case Joken.peek_header(token) do
