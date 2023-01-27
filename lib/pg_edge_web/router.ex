@@ -12,7 +12,7 @@ defmodule PgEdgeWeb.Router do
 
   pipeline :api do
     plug(:accepts, ["json"])
-    plug(:check_auth, :api_jwt_secret)
+    plug(:check_api_auth)
   end
 
   scope "/", PgEdgeWeb do
@@ -49,8 +49,8 @@ defmodule PgEdgeWeb.Router do
     end
   end
 
-  defp check_auth(conn, secret_key) do
-    secret = Application.fetch_env!(:pg_edge, secret_key)
+  defp check_api_auth(conn, _) do
+    secret = Application.fetch_env!(:pg_edge, :api_jwt_secret)
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
          {:ok, _claims} <- PgEdge.Jwt.authorize(token, secret) do
