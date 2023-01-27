@@ -9,7 +9,7 @@ defmodule PgEdge.Repo.Migrations.CreateTenants do
       add(:db_port, :integer, null: false)
       add(:db_user, :string, null: false)
       add(:db_database, :string, null: false)
-      add(:db_password, :binary, null: false)
+      add(:db_pass_encrypted, :binary, null: false)
       add(:pool_size, :integer, null: false)
 
       timestamps()

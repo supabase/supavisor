@@ -9,7 +9,7 @@ defmodule PgEdge.Tenants.Tenant do
   schema "tenants" do
     field(:db_database, :string)
     field(:db_host, :string)
-    field(:db_password, PgEdge.Encrypted.Binary)
+    field(:db_password, PgEdge.Encrypted.Binary, source: :db_pass_encrypted)
     field(:db_port, :integer)
     field(:db_user, :string)
     field(:external_id, :string)
