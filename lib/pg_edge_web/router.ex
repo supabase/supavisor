@@ -1,8 +1,6 @@
 defmodule PgEdgeWeb.Router do
   use PgEdgeWeb, :router
 
-  import PgEdge.Jwt, only: [authorize: 2]
-
   pipeline :browser do
     plug(:accepts, ["html"])
     plug(:fetch_session)
@@ -55,7 +53,7 @@ defmodule PgEdgeWeb.Router do
     secret = Application.fetch_env!(:pg_edge, secret_key)
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, _claims} <- authorize(token, secret) do
+         {:ok, _claims} <- PgEdge.Jwt.authorize(token, secret) do
       conn
     else
       _ ->
