@@ -20,29 +20,13 @@ defmodule PgEdge.DbHandler do
     #   |> String.to_charlist()
     #   |> :inet.parse_address()
 
-    %{
-      db_host: db_host,
-      db_port: db_port,
-      db_user: db_user,
-      db_database: db_database,
-      db_password: db_password
-    } = args
-
-    auth = %{
-      host: String.to_charlist(db_host),
-      port: db_port,
-      user: db_user,
-      database: db_database,
-      password: fn -> decrypt_password(db_password) end,
-      application_name: "pg_edge"
-    }
-
     state = %{
       check_ref: make_ref(),
       socket: nil,
       caller: nil,
       sent: false,
-      auth: auth,
+      auth: args.auth,
+      tenant: args.tenant,
       buffer: "",
       db_state: nil,
       parameter_status: %{},

@@ -1,7 +1,6 @@
 defmodule PgEdge.Tenants.Tenant do
   use Ecto.Schema
   import Ecto.Changeset
-  import PgEdge.Helpers, only: [encrypt!: 2]
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
@@ -10,7 +9,7 @@ defmodule PgEdge.Tenants.Tenant do
   schema "tenants" do
     field(:db_database, :string)
     field(:db_host, :string)
-    field(:db_password, :string)
+    field(:db_pass_encrypted, PgEdge.Encrypted.Binary)
     field(:db_port, :integer)
     field(:db_user, :string)
     field(:external_id, :string)
@@ -28,7 +27,7 @@ defmodule PgEdge.Tenants.Tenant do
       :db_port,
       :db_user,
       :db_database,
-      :db_password,
+      :db_pass_encrypted,
       :pool_size
     ])
     |> validate_required([
@@ -37,16 +36,8 @@ defmodule PgEdge.Tenants.Tenant do
       :db_port,
       :db_user,
       :db_database,
-      :db_password,
+      :db_pass_encrypted,
       :pool_size
     ])
-    |> encrypt_password()
-  end
-
-  def encrypt_password(changeset) do
-    update_change(changeset, :db_password, fn password ->
-      Application.get_env(:pg_edge, :db_enc_key)
-      |> encrypt!(password)
-    end)
   end
 end

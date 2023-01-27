@@ -43,4 +43,12 @@ if config_env() != :test do
     parameters: [
       application_name: "pg_edge_meta"
     ]
+
+  config :pg_edge, PgEdge.Vault,
+    ciphers: [
+      default: {
+        Cloak.Ciphers.AES.GCM,
+        tag: "AES.GCM.V1", key: System.get_env("VAULT_ENC_KEY")
+      }
+    ]
 end

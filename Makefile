@@ -1,6 +1,6 @@
 .PHONY: dev
 dev:
-	MIX_ENV=dev DB_ENC_KEY="1234567890123456" API_JWT_SECRET=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
+	MIX_ENV=dev VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" API_JWT_SECRET=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
 
 db_start:
 	docker-compose -f ./dev/docker-compose.db.yml up

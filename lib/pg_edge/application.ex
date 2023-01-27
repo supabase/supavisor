@@ -33,7 +33,8 @@ defmodule PgEdge.Application do
       {
         PartitionSupervisor,
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: PgEdge.DynamicSupervisor
-      }
+      },
+      PgEdge.Vault
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

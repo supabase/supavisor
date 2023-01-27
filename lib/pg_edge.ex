@@ -9,16 +9,34 @@ defmodule PgEdge do
 
     case Tenants.get_tenant_by_external_id(external_id) do
       %Tenant{} = tenant ->
+        %{
+          db_host: db_host,
+          db_port: db_port,
+          db_user: db_user,
+          db_database: db_database,
+          db_pass_encrypted: db_pass,
+          pool_size: pool_size
+        } = tenant
+
         pool_spec = [
           name: pool_name(external_id),
           worker_module: PgEdge.DbHandler,
-          size: tenant.pool_size,
+          size: pool_size,
           max_overflow: 0
         ]
 
+        auth = %{
+          host: String.to_charlist(db_host),
+          port: db_port,
+          user: db_user,
+          database: db_database,
+          password: fn -> db_pass end,
+          application_name: "pg_edge"
+        }
+
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, self()}},
-          :poolboy.child_spec(:worker, pool_spec, tenant)
+          :poolboy.child_spec(:worker, pool_spec, %{tenant: external_id, auth: auth})
         )
 
       _ ->

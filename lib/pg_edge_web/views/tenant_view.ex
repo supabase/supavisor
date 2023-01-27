@@ -18,7 +18,6 @@ defmodule PgEdgeWeb.TenantView do
       db_port: tenant.db_port,
       db_user: tenant.db_user,
       db_database: tenant.db_database,
-      db_password: tenant.db_password,
       pool_size: tenant.pool_size
     }
   end
