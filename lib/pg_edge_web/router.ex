@@ -1,33 +1,32 @@
 defmodule PgEdgeWeb.Router do
   use PgEdgeWeb, :router
 
-  require Logger
   import PgEdge.Jwt, only: [authorize: 2]
 
   pipeline :browser do
-    plug :accepts, ["html"]
-    plug :fetch_session
-    plug :fetch_live_flash
-    plug :put_root_layout, {PgEdgeWeb.LayoutView, :root}
-    plug :protect_from_forgery
-    plug :put_secure_browser_headers
+    plug(:accepts, ["html"])
+    plug(:fetch_session)
+    plug(:fetch_live_flash)
+    plug(:put_root_layout, {PgEdgeWeb.LayoutView, :root})
+    plug(:protect_from_forgery)
+    plug(:put_secure_browser_headers)
   end
 
   pipeline :api do
-    plug :accepts, ["json"]
-    plug :check_auth, :api_jwt_secret
+    plug(:accepts, ["json"])
+    plug(:check_auth, :api_jwt_secret)
   end
 
   scope "/", PgEdgeWeb do
-    pipe_through :browser
+    pipe_through(:browser)
 
-    get "/", PageController, :index
+    get("/", PageController, :index)
   end
 
   scope "/api", PgEdgeWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    resources "/tenants", TenantController
+    resources("/tenants", TenantController)
   end
 
   # Other scopes may use custom stacks.
@@ -46,9 +45,9 @@ defmodule PgEdgeWeb.Router do
     import Phoenix.LiveDashboard.Router
 
     scope "/" do
-      pipe_through :browser
+      pipe_through(:browser)
 
-      live_dashboard "/dashboard", metrics: PgEdgeWeb.Telemetry
+      live_dashboard("/dashboard", metrics: PgEdgeWeb.Telemetry)
     end
   end
 
