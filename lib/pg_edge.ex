@@ -14,7 +14,7 @@ defmodule PgEdge do
           db_port: db_port,
           db_user: db_user,
           db_database: db_database,
-          db_pass_encrypted: db_pass,
+          db_password: db_pass,
           pool_size: pool_size
         } = tenant
 

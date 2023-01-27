@@ -9,7 +9,7 @@ defmodule PgEdge.Tenants.Tenant do
   schema "tenants" do
     field(:db_database, :string)
     field(:db_host, :string)
-    field(:db_pass_encrypted, PgEdge.Encrypted.Binary)
+    field(:db_password, PgEdge.Encrypted.Binary)
     field(:db_port, :integer)
     field(:db_user, :string)
     field(:external_id, :string)
@@ -27,7 +27,7 @@ defmodule PgEdge.Tenants.Tenant do
       :db_port,
       :db_user,
       :db_database,
-      :db_pass_encrypted,
+      :db_password,
       :pool_size
     ])
     |> validate_required([
@@ -36,7 +36,7 @@ defmodule PgEdge.Tenants.Tenant do
       :db_port,
       :db_user,
       :db_database,
-      :db_pass_encrypted,
+      :db_password,
       :pool_size
     ])
   end
