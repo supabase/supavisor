@@ -66,8 +66,6 @@ defmodule PgEdge.Jwt do
          {:ok, header} <- check_header_format(token),
          {:ok, signer} <- generate_signer(header, secret) do
       JwtAuthToken.verify_and_validate(token, signer)
-    else
-      {:error, _e} = error -> error
     end
   end
 
