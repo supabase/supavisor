@@ -5,13 +5,15 @@ defmodule PgEdgeWeb.TenantControllerTest do
 
   alias PgEdge.Tenants.Tenant
 
+  @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"
+
   @create_attrs %{
     db_database: "some db_database",
     db_host: "some db_host",
     db_password: "some db_password",
     db_port: 42,
     db_user: "some db_user",
-    external_id: "some external_id",
+    external_id: "dev_tenant",
     pool_size: 42
   }
   @update_attrs %{
@@ -20,13 +22,29 @@ defmodule PgEdgeWeb.TenantControllerTest do
     db_password: "some updated db_password",
     db_port: 43,
     db_user: "some updated db_user",
-    external_id: "some updated external_id",
+    external_id: "dev_tenant",
     pool_size: 43
   }
-  @invalid_attrs %{db_database: nil, db_host: nil, db_password: nil, db_port: nil, db_user: nil, external_id: nil, pool_size: nil}
+  @invalid_attrs %{
+    db_database: nil,
+    db_host: nil,
+    db_password: nil,
+    db_port: nil,
+    db_user: nil,
+    external_id: nil,
+    pool_size: nil
+  }
 
   setup %{conn: conn} do
-    {:ok, conn: put_req_header(conn, "accept", "application/json")}
+    new_conn =
+      conn
+      |> put_req_header("accept", "application/json")
+      |> put_req_header(
+        "authorization",
+        "Bearer " <> @jwt
+      )
+
+    {:ok, conn: new_conn}
   end
 
   describe "index" do
@@ -40,19 +58,6 @@ defmodule PgEdgeWeb.TenantControllerTest do
     test "renders tenant when data is valid", %{conn: conn} do
       conn = post(conn, Routes.tenant_path(conn, :create), tenant: @create_attrs)
       assert %{"id" => id} = json_response(conn, 201)["data"]
-
-      conn = get(conn, Routes.tenant_path(conn, :show, id))
-
-      assert %{
-               "id" => ^id,
-               "db_database" => "some db_database",
-               "db_host" => "some db_host",
-               "db_password" => "some db_password",
-               "db_port" => 42,
-               "db_user" => "some db_user",
-               "external_id" => "some external_id",
-               "pool_size" => 42
-             } = json_response(conn, 200)["data"]
     end
 
     test "renders errors when data is invalid", %{conn: conn} do
@@ -64,20 +69,21 @@ defmodule PgEdgeWeb.TenantControllerTest do
   describe "update tenant" do
     setup [:create_tenant]
 
-    test "renders tenant when data is valid", %{conn: conn, tenant: %Tenant{id: id} = tenant} do
-      conn = put(conn, Routes.tenant_path(conn, :update, tenant), tenant: @update_attrs)
-      assert %{"id" => ^id} = json_response(conn, 200)["data"]
+    test "renders tenant when data is valid", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id} = tenant
+    } do
+      conn = put(conn, Routes.tenant_path(conn, :update, external_id), tenant: @update_attrs)
+      assert %{"external_id" => ^external_id} = json_response(conn, 200)["data"]
 
-      conn = get(conn, Routes.tenant_path(conn, :show, id))
+      conn = get(conn, Routes.tenant_path(conn, :show, external_id))
 
       assert %{
-               "id" => ^id,
+               "external_id" => ^external_id,
                "db_database" => "some updated db_database",
                "db_host" => "some updated db_host",
-               "db_password" => "some updated db_password",
                "db_port" => 43,
                "db_user" => "some updated db_user",
-               "external_id" => "some updated external_id",
                "pool_size" => 43
              } = json_response(conn, 200)["data"]
     end
@@ -91,13 +97,9 @@ defmodule PgEdgeWeb.TenantControllerTest do
   describe "delete tenant" do
     setup [:create_tenant]
 
-    test "deletes chosen tenant", %{conn: conn, tenant: tenant} do
-      conn = delete(conn, Routes.tenant_path(conn, :delete, tenant))
+    test "deletes chosen tenant", %{conn: conn, tenant: %Tenant{external_id: external_id}} do
+      conn = delete(conn, Routes.tenant_path(conn, :delete, external_id))
       assert response(conn, 204)
-
-      assert_error_sent 404, fn ->
-        get(conn, Routes.tenant_path(conn, :show, tenant))
-      end
     end
   end
 

@@ -8,7 +8,15 @@ defmodule PgEdge.TenantsTest do
 
     import PgEdge.TenantsFixtures
 
-    @invalid_attrs %{db_database: nil, db_host: nil, db_password: nil, db_port: nil, db_user: nil, external_id: nil, pool_size: nil}
+    @invalid_attrs %{
+      db_database: nil,
+      db_host: nil,
+      db_password: nil,
+      db_port: nil,
+      db_user: nil,
+      external_id: nil,
+      pool_size: nil
+    }
 
     test "list_tenants/0 returns all tenants" do
       tenant = tenant_fixture()
@@ -21,7 +29,15 @@ defmodule PgEdge.TenantsTest do
     end
 
     test "create_tenant/1 with valid data creates a tenant" do
-      valid_attrs = %{db_database: "some db_database", db_host: "some db_host", db_password: "some db_password", db_port: 42, db_user: "some db_user", external_id: "some external_id", pool_size: 42}
+      valid_attrs = %{
+        db_database: "some db_database",
+        db_host: "some db_host",
+        db_password: "some db_password",
+        db_port: 42,
+        db_user: "some db_user",
+        external_id: "dev_tenant",
+        pool_size: 42
+      }
 
       assert {:ok, %Tenant{} = tenant} = Tenants.create_tenant(valid_attrs)
       assert tenant.db_database == "some db_database"
@@ -29,7 +45,7 @@ defmodule PgEdge.TenantsTest do
       assert tenant.db_password == "some db_password"
       assert tenant.db_port == 42
       assert tenant.db_user == "some db_user"
-      assert tenant.external_id == "some external_id"
+      assert tenant.external_id == "dev_tenant"
       assert tenant.pool_size == 42
     end
 
@@ -39,7 +55,16 @@ defmodule PgEdge.TenantsTest do
 
     test "update_tenant/2 with valid data updates the tenant" do
       tenant = tenant_fixture()
-      update_attrs = %{db_database: "some updated db_database", db_host: "some updated db_host", db_password: "some updated db_password", db_port: 43, db_user: "some updated db_user", external_id: "some updated external_id", pool_size: 43}
+
+      update_attrs = %{
+        db_database: "some updated db_database",
+        db_host: "some updated db_host",
+        db_password: "some updated db_password",
+        db_port: 43,
+        db_user: "some updated db_user",
+        external_id: "some updated external_id",
+        pool_size: 43
+      }
 
       assert {:ok, %Tenant{} = tenant} = Tenants.update_tenant(tenant, update_attrs)
       assert tenant.db_database == "some updated db_database"

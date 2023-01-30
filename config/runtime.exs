@@ -30,8 +30,7 @@ end
 if config_env() != :test do
   config :pg_edge,
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
-    api_jwt_secret: System.get_env("API_JWT_SECRET"),
-    db_enc_key: System.get_env("DB_ENC_KEY")
+    api_jwt_secret: System.get_env("API_JWT_SECRET")
 
   config :pg_edge, PgEdge.Repo,
     hostname: System.get_env("DB_HOST", "localhost"),

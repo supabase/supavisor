@@ -16,7 +16,7 @@ defmodule PgEdge.TenantsFixtures do
         db_password: "some db_password",
         db_port: 42,
         db_user: "some db_user",
-        external_id: "some external_id",
+        external_id: "dev_tenant",
         pool_size: 42
       })
       |> PgEdge.Tenants.create_tenant()
