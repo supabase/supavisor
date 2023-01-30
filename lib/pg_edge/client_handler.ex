@@ -58,24 +58,18 @@ defmodule PgEdge.ClientHandler do
       hello = Client.decode_startup_packet(bin)
       Logger.debug("Client startup message: #{inspect(hello)}")
 
-      # TODO: rewrite case -> with
-      case hello.payload do
-        [["user", user_value] | _] ->
-          case String.split(user_value, "#") do
-            [_user, external_id] ->
-              # TODO: check the response
-              PgEdge.start_pool(external_id)
-              trans.send(socket, authentication_ok())
-              {:noreply, %{state | state: :idle, tenant: external_id}}
-
-            _ ->
-              Logger.error("Can't find external_id in #{inspect(user_value)}")
-              {:stop, :normal, state}
-          end
-
-        _ ->
-          Logger.error("Can't find user in #{inspect(hello)}")
+      Application.fetch_env!(:pg_edge, :tenant_option)
+      |> value_opts(hello.payload["options"])
+      |> case do
+        nil ->
+          Logger.error("Can't find external_id in #{inspect(hello.payload)}")
           {:stop, :normal, state}
+
+        external_id ->
+          # TODO: check the response
+          PgEdge.start_pool(external_id)
+          trans.send(socket, authentication_ok())
+          {:noreply, %{state | state: :idle, tenant: external_id}}
       end
     end
   end
@@ -193,5 +187,10 @@ defmodule PgEdge.ClientHandler do
       <<90, 0, 0, 0, 5>>,
       <<"I">>
     ]
+  end
+
+  @spec value_opts(String.t(), String.t()) :: nil | String.t()
+  def value_opts(value, opts) do
+    opts |> URI.decode_query() |> Map.get(value)
   end
 end

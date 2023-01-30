@@ -138,7 +138,10 @@ defmodule PgEdge.Protocol.Client do
 
     %Pkt{
       len: len,
-      payload: String.split(rest, <<0>>, trim: true) |> Enum.chunk_every(2),
+      payload:
+        String.split(rest, <<0>>, trim: true)
+        |> Enum.chunk_every(2)
+        |> Enum.into(%{}, fn [k, v] -> {k, v} end),
       tag: :startup
     }
   end
