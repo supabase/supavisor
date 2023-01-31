@@ -4,7 +4,7 @@ defmodule PgEdge.DbHandler do
   alias PgEdge.Protocol.Server
   alias PgEdge.ClientHandler, as: Client
 
-  def start_link(config) when is_list(config) do
+  def start_link(config) do
     GenServer.start_link(__MODULE__, config)
   end
 
@@ -13,32 +13,20 @@ defmodule PgEdge.DbHandler do
   end
 
   @impl true
-  def init(_) do
+  def init(args) do
     # IP
     # {:ok, host} =
     #   Application.get_env(:pg_edge, :db_host)
     #   |> String.to_charlist()
     #   |> :inet.parse_address()
 
-    host =
-      Application.get_env(:pg_edge, PgEdge.DevTenant)[:db_host]
-      |> String.to_charlist()
-
-    auth = %{
-      host: host,
-      port: Application.get_env(:pg_edge, PgEdge.DevTenant)[:db_port],
-      user: Application.get_env(:pg_edge, PgEdge.DevTenant)[:db_user],
-      database: Application.get_env(:pg_edge, PgEdge.DevTenant)[:db_name],
-      password: Application.get_env(:pg_edge, PgEdge.DevTenant)[:db_password],
-      application_name: "pg_edge"
-    }
-
     state = %{
       check_ref: make_ref(),
       socket: nil,
       caller: nil,
       sent: false,
-      auth: auth,
+      auth: args.auth,
+      tenant: args.tenant,
       buffer: "",
       db_state: nil,
       parameter_status: %{},
@@ -58,7 +46,7 @@ defmodule PgEdge.DbHandler do
     Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(socket)}")
 
     messages =
-      if socket do
+      if socket && state.state == :idle do
         :gen_tcp.send(socket, bin)
         ""
       else
@@ -147,7 +135,7 @@ defmodule PgEdge.DbHandler do
               server_first_parts,
               nonce,
               state.auth.user,
-              state.auth.password
+              state.auth.password.()
             )
 
           bin = :pgo_protocol.encode_scram_response_message(client_final_message)
@@ -262,5 +250,10 @@ defmodule PgEdge.DbHandler do
 
   def active_once(socket) do
     :inet.setopts(socket, [{:active, :once}])
+  end
+
+  defp decrypt_password(password) do
+    Application.get_env(:pg_edge, :db_enc_key)
+    |> PgEdge.Helpers.decrypt!(password)
   end
 end

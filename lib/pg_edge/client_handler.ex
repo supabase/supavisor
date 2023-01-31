@@ -36,6 +36,7 @@ defmodule PgEdge.ClientHandler do
         connected: false,
         buffer: "",
         db_pid: nil,
+        tenant: nil,
         state: :wait_startup_packet
       }
     )
@@ -56,8 +57,20 @@ defmodule PgEdge.ClientHandler do
     else
       hello = Client.decode_startup_packet(bin)
       Logger.debug("Client startup message: #{inspect(hello)}")
-      trans.send(socket, authentication_ok())
-      {:noreply, %{state | state: :idle}}
+
+      Application.fetch_env!(:pg_edge, :tenant_option)
+      |> value_opts(hello.payload["options"])
+      |> case do
+        nil ->
+          Logger.error("Can't find external_id in #{inspect(hello.payload)}")
+          {:stop, :normal, state}
+
+        external_id ->
+          # TODO: check the response
+          PgEdge.start_pool(external_id)
+          trans.send(socket, authentication_ok())
+          {:noreply, %{state | state: :idle, tenant: external_id}}
+      end
     end
   end
 
@@ -73,12 +86,13 @@ defmodule PgEdge.ClientHandler do
     {:noreply, state}
   end
 
-  def handle_info({:tcp, _, bin}, %{buffer: buf, db_pid: db_pid} = state) do
+  def handle_info({:tcp, _, bin}, %{buffer: buf, db_pid: db_pid, tenant: tenant} = state) do
     db_pid =
       if db_pid do
         db_pid
       else
-        :poolboy.checkout(:db_sess, true, 60000)
+        PgEdge.pool_name(tenant)
+        |> :poolboy.checkout(true, 60000)
       end
 
     data = buf <> bin
@@ -121,11 +135,13 @@ defmodule PgEdge.ClientHandler do
   def handle_call(
         {:client_call, bin, ready?},
         _,
-        %{socket: socket, trans: trans, db_pid: db_pid} = state
+        %{socket: socket, trans: trans, db_pid: db_pid, tenant: tenant} = state
       ) do
     db_pid1 =
       if ready? do
-        :poolboy.checkin(:db_sess, db_pid)
+        PgEdge.pool_name(tenant)
+        |> :poolboy.checkin(db_pid)
+
         nil
       else
         db_pid
@@ -144,7 +160,7 @@ defmodule PgEdge.ClientHandler do
       <<0, 0, 0, 0>>,
       # parameter_status,<<"application_name">>,<<"nonode@nohost">>
       <<83, 0, 0, 0, 35>>,
-      <<"application_name", 0, "node@nohost", 0>>,
+      <<"application_name", 0, "nonode@nohost", 0>>,
       # parameter_status,<<"client_encoding">>,<<"UTF8">>
       <<83, 0, 0, 0, 25>>,
       <<99, 108, 105, 101, 110, 116, 95, 101, 110, 99, 111, 100, 105, 110, 103, 0, 85, 84, 70, 56,
@@ -171,5 +187,10 @@ defmodule PgEdge.ClientHandler do
       <<90, 0, 0, 0, 5>>,
       <<"I">>
     ]
+  end
+
+  @spec value_opts(String.t(), String.t()) :: nil | String.t()
+  def value_opts(value, opts) do
+    opts |> URI.decode_query() |> Map.get(value)
   end
 end

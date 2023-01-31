@@ -44,12 +44,14 @@ defmodule PgEdge.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
+      {:joken, "~> 2.5.0"},
+      {:cloak_ecto, "~> 1.2.0"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},
       {:pgo, "~> 0.12"},
       {:nimble_pool, "~> 0.2"}
-      #TODO: add ranch deps
+      # TODO: add ranch deps
     ]
   end
 
@@ -64,7 +66,13 @@ defmodule PgEdge.MixProject do
       setup: ["deps.get", "ecto.setup"],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
+      # test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
+      test: [
+        "ecto.create",
+        "run priv/repo/seeds_before_migration.exs",
+        "ecto.migrate --prefix pgedge --log-migrator-sql",
+        "test"
+      ]
     ]
   end
 end

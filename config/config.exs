@@ -8,8 +8,9 @@
 import Config
 
 config :pg_edge,
-  proxy_port: 7654
-  # ecto_repos: [PgEdge.Repo]
+  proxy_port: 7654,
+  ecto_repos: [PgEdge.Repo],
+  version: Mix.Project.config()[:version]
 
 # Configures the endpoint
 config :pg_edge, PgEdgeWeb.Endpoint,
