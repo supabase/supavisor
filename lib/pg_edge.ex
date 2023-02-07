@@ -18,13 +18,6 @@ defmodule PgEdge do
           pool_size: pool_size
         } = tenant
 
-        pool_spec = [
-          name: pool_name(external_id),
-          worker_module: PgEdge.DbHandler,
-          size: pool_size,
-          max_overflow: 0
-        ]
-
         auth = %{
           host: String.to_charlist(db_host),
           port: db_port,
@@ -34,10 +27,24 @@ defmodule PgEdge do
           application_name: "pg_edge"
         }
 
+        # for num <- 1..10 do
+        pool_spec = [
+          # name: pool_name(external_id <> "_#{inspect(num)}"),
+          name: pool_name(external_id),
+          worker_module: PgEdge.DbHandler,
+          size: pool_size,
+          max_overflow: 0
+        ]
+
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, self()}},
-          :poolboy.child_spec(:worker, pool_spec, %{tenant: external_id, auth: auth})
+          :poolboy.child_spec(:worker, pool_spec, %{
+            tenant: external_id,
+            auth: auth
+          })
         )
+
+      # end
 
       _ ->
         Logger.error("Can't find tenant with external_id #{external_id}")

@@ -2,17 +2,13 @@ defmodule PgEdge.DbHandler do
   require Logger
   use GenServer
   alias PgEdge.Protocol.Server
-  alias PgEdge.ClientHandler, as: Client
 
   def start_link(config) do
     GenServer.start_link(__MODULE__, config)
   end
 
-  def call(pid, msg) do
-    GenServer.call(pid, {:db_call, msg})
-  end
-
   @impl true
+  @spec init(map()) :: {:ok, map()}
   def init(args) do
     # IP
     # {:ok, host} =
@@ -32,7 +28,6 @@ defmodule PgEdge.DbHandler do
       parameter_status: %{},
       state: nil,
       nonce: nil,
-      messages: "",
       server_proof: nil
     }
 
@@ -40,20 +35,15 @@ defmodule PgEdge.DbHandler do
     {:ok, state}
   end
 
-  # receive call from the client
   @impl true
-  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket, messages: _m} = state) do
-    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(socket)}")
-
-    messages =
-      if socket && state.state == :idle do
-        :gen_tcp.send(socket, bin)
-        ""
-      else
-        state.messages <> bin
+  def handle_call(:change_owner, {pid, _}, state) do
+    resp =
+      case :gen_tcp.controlling_process(state.socket, pid) do
+        :ok -> {:ok, state.socket}
+        error -> error
       end
 
-    {:reply, :ok, %{state | caller: pid, messages: messages}}
+    {:reply, resp, state}
   end
 
   @impl true
@@ -160,36 +150,7 @@ defmodule PgEdge.DbHandler do
       {ps, db_state} ->
         Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
         Logger.debug("DB ready_for_query: #{inspect(db_state)}")
-        send(self(), :check_messages)
         {:noreply, %{state | parameter_status: ps, state: :idle}}
-    end
-  end
-
-  # receive reply from DB and send to the client
-  def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf} = state) do
-    Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
-
-    if caller do
-      case handle_packets(buf <> bin) do
-        {:ok, :ready_for_query, rest, :idle} ->
-          Client.client_call(caller, bin, true)
-          {:noreply, %{state | buffer: rest}}
-
-        {:ok, _, rest, _} ->
-          Client.client_call(caller, bin, false)
-          {:noreply, %{state | buffer: rest}}
-      end
-    else
-      {:noreply, state}
-    end
-  end
-
-  def handle_info(:check_messages, %{messages: m, socket: socket} = state) do
-    if m != "" do
-      :gen_tcp.send(socket, m)
-      {:noreply, %{state | messages: ""}}
-    else
-      {:noreply, state}
     end
   end
 
@@ -250,10 +211,5 @@ defmodule PgEdge.DbHandler do
 
   def active_once(socket) do
     :inet.setopts(socket, [{:active, :once}])
-  end
-
-  defp decrypt_password(password) do
-    Application.get_env(:pg_edge, :db_enc_key)
-    |> PgEdge.Helpers.decrypt!(password)
   end
 end

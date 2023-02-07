@@ -5,16 +5,11 @@ defmodule PgEdge.ClientHandler do
 
   alias PgEdge.Protocol.Client
   alias PgEdge.Protocol.Server
-  alias PgEdge.DbHandler, as: Db
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
     {:ok, pid}
-  end
-
-  def client_call(pid, bin, ready?) do
-    GenServer.call(pid, {:client_call, bin, ready?})
   end
 
   @impl true
@@ -36,6 +31,7 @@ defmodule PgEdge.ClientHandler do
         connected: false,
         buffer: "",
         db_pid: nil,
+        db_socket: nil,
         tenant: nil,
         state: :wait_startup_packet
       }
@@ -44,75 +40,98 @@ defmodule PgEdge.ClientHandler do
 
   @impl true
   def handle_info(
-        {:tcp, _, bin},
-        %{trans: trans, socket: socket, state: :wait_startup_packet} = state
-      ) do
+        {:tcp, sock, bin},
+        %{socket: socket, state: :wait_startup_packet} = state
+      )
+      when sock == socket do
     Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
 
     # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
     if byte_size(bin) == 8 do
-      trans.send(socket, "N")
+      :gen_tcp.send(socket, "N")
       {:noreply, state}
     else
       hello = Client.decode_startup_packet(bin)
-      Logger.debug("Client startup message: #{inspect(hello)}")
+      Logger.warning("Client startup message: #{inspect(hello)}")
 
-      Application.fetch_env!(:pg_edge, :tenant_option)
-      |> value_opts(hello.payload["options"])
-      |> case do
-        nil ->
-          Logger.error("Can't find external_id in #{inspect(hello.payload)}")
-          {:stop, :normal, state}
+      external_id =
+        hello.payload["user"]
+        |> get_external_id()
 
-        external_id ->
-          # TODO: check the response
-          PgEdge.start_pool(external_id)
-          trans.send(socket, authentication_ok())
-          {:noreply, %{state | state: :idle, tenant: external_id}}
-      end
+      # TODO: check the response
+      PgEdge.start_pool(external_id)
+      :gen_tcp.send(socket, authentication_ok())
+      {:noreply, %{state | state: :idle, tenant: external_id}}
     end
   end
 
-  def handle_info({:tcp, _, <<?X, 4::32>>}, state) do
+  def handle_info({:tcp, sock, <<?X, 4::32>>}, state) when sock == state.socket do
     Logger.warn("Receive termination")
     {:noreply, state}
   end
 
   # select 1 stub
-  def handle_info({:tcp, _, <<?Q, 14::32, "SELECT 1;", 0>>}, state) do
+  def handle_info({:tcp, sock, <<?Q, 14::32, "SELECT 1;", 0>>}, state)
+      when sock == state.socket do
     Logger.info("Receive select 1")
-    state.trans.send(state.socket, Server.select_1_response())
+    :gen_tcp.send(state.socket, Server.select_1_response())
     {:noreply, state}
   end
 
-  def handle_info({:tcp, _, bin}, %{buffer: buf, db_pid: db_pid, tenant: tenant} = state) do
+  # receive from a client
+  def handle_info({:tcp, sock, bin}, %{tenant: tenant, state: :idle} = state)
+      when sock === state.socket do
     db_pid =
-      if db_pid do
-        db_pid
-      else
-        PgEdge.pool_name(tenant)
-        |> :poolboy.checkout(true, 60000)
-      end
+      PgEdge.pool_name(tenant)
+      |> :poolboy.checkout(true, 60_000)
 
-    data = buf <> bin
+    state =
+      case GenServer.call(db_pid, :change_owner) do
+        {:ok, db_socket} ->
+          {db_pid, db_socket}
 
-    buf =
-      case Client.decode(data) do
-        {:ok, packets, rest} ->
-          Enum.each(packets, fn pkt ->
-            Logger.info("Packet: #{inspect(pkt)}")
-            Db.call(db_pid, pkt.bin)
-          end)
-
-          rest
+          :gen_tcp.send(db_socket, bin)
+          {:noreply, %{state | db_pid: db_pid, db_socket: db_socket, state: :transaction}}
 
         {:error, reason} ->
-          Logger.error("Error: #{inspect(reason)}")
-          data
+          Logger.error("Can't change socket owner: #{inspect(reason)}")
+          {:stop, reason, state}
+      end
+  end
+
+  def handle_info({:tcp, sock, bin}, %{state: :transaction} = state)
+      when sock === state.socket do
+    :gen_tcp.send(state.db_socket, bin)
+
+    {:noreply, state}
+  end
+
+  # send to db
+  def handle_info(
+        {:tcp, sock, bin},
+        %{db_socket: db_socket, socket: socket, state: :transaction} = state
+      )
+      when sock == db_socket do
+    Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
+
+    :gen_tcp.send(socket, bin)
+
+    state =
+      case PgEdge.DbHandler.handle_packets(bin) do
+        {:ok, :ready_for_query, rest, :idle} ->
+          :gen_tcp.controlling_process(db_socket, state.db_pid)
+
+          PgEdge.pool_name(state.tenant)
+          |> :poolboy.checkin(state.db_pid)
+
+          %{state | db_pid: nil, db_socket: nil, state: :idle}
+
+        {:ok, _, rest, _} ->
+          state
       end
 
-    {:noreply, %{state | buffer: buf, db_pid: db_pid}}
+    {:noreply, state}
   end
 
   def handle_info({:tcp_closed, _}, state) do
@@ -129,27 +148,6 @@ defmodule PgEdge.ClientHandler do
     Logger.error("Undefined msg: #{inspect(msg, pretty: true)}")
 
     {:noreply, state}
-  end
-
-  @impl true
-  def handle_call(
-        {:client_call, bin, ready?},
-        _,
-        %{socket: socket, trans: trans, db_pid: db_pid, tenant: tenant} = state
-      ) do
-    db_pid1 =
-      if ready? do
-        PgEdge.pool_name(tenant)
-        |> :poolboy.checkin(db_pid)
-
-        nil
-      else
-        db_pid
-      end
-
-    Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
-    trans.send(socket, bin)
-    {:reply, :ok, %{state | db_pid: db_pid1}}
   end
 
   # TODO: implement authentication response
@@ -193,4 +191,13 @@ defmodule PgEdge.ClientHandler do
   def value_opts(value, opts) do
     opts |> URI.decode_query() |> Map.get(value)
   end
+
+  @spec get_external_id(String.t()) :: String.t()
+  def get_external_id(username) do
+    username
+    |> String.split(".")
+    |> List.last()
+  end
+
+  def mt(), do: System.monotonic_time(:microsecond)
 end
