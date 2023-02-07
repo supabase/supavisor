@@ -16,6 +16,8 @@ defmodule PgEdge.Application do
       []
     )
 
+    :syn.add_node_to_scopes([:pool])
+
     Registry.start_link(
       keys: :unique,
       name: PgEdge.Registry.DbPool

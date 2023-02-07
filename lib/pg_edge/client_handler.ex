@@ -44,33 +44,29 @@ defmodule PgEdge.ClientHandler do
 
   @impl true
   def handle_info(
-        {:tcp, _, bin},
-        %{trans: trans, socket: socket, state: :wait_startup_packet} = state
-      ) do
+        {:tcp, sock, bin},
+        %{socket: socket, state: :wait_startup_packet} = state
+      )
+      when sock == socket do
     Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
 
     # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
     if byte_size(bin) == 8 do
-      trans.send(socket, "N")
+      :gen_tcp.send(socket, "N")
       {:noreply, state}
     else
       hello = Client.decode_startup_packet(bin)
-      Logger.debug("Client startup message: #{inspect(hello)}")
+      Logger.warning("Client startup message: #{inspect(hello)}")
 
-      Application.fetch_env!(:pg_edge, :tenant_option)
-      |> value_opts(hello.payload["options"])
-      |> case do
-        nil ->
-          Logger.error("Can't find external_id in #{inspect(hello.payload)}")
-          {:stop, :normal, state}
+      external_id =
+        hello.payload["user"]
+        |> get_external_id()
 
-        external_id ->
-          # TODO: check the response
-          PgEdge.start_pool(external_id)
-          trans.send(socket, authentication_ok())
-          {:noreply, %{state | state: :idle, tenant: external_id}}
-      end
+      # TODO: check the response
+      PgEdge.start_pool(external_id)
+      :gen_tcp.send(socket, authentication_ok())
+      {:noreply, %{state | state: :idle, tenant: external_id}}
     end
   end
 
@@ -91,7 +87,7 @@ defmodule PgEdge.ClientHandler do
       if db_pid do
         db_pid
       else
-        PgEdge.pool_name(tenant)
+        PgEdge.get_pool_pid(tenant)
         |> :poolboy.checkout(true, 60000)
       end
 
@@ -139,7 +135,7 @@ defmodule PgEdge.ClientHandler do
       ) do
     db_pid1 =
       if ready? do
-        PgEdge.pool_name(tenant)
+        PgEdge.get_pool_pid(tenant)
         |> :poolboy.checkin(db_pid)
 
         nil
@@ -189,8 +185,10 @@ defmodule PgEdge.ClientHandler do
     ]
   end
 
-  @spec value_opts(String.t(), String.t()) :: nil | String.t()
-  def value_opts(value, opts) do
-    opts |> URI.decode_query() |> Map.get(value)
+  @spec get_external_id(String.t()) :: String.t()
+  def get_external_id(username) do
+    username
+    |> String.split(".")
+    |> List.last()
   end
 end

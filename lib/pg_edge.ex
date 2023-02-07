@@ -19,7 +19,7 @@ defmodule PgEdge do
         } = tenant
 
         pool_spec = [
-          name: pool_name(external_id),
+          name: {:via, :syn, pool_name(external_id)},
           worker_module: PgEdge.DbHandler,
           size: pool_size,
           max_overflow: 0
@@ -36,7 +36,11 @@ defmodule PgEdge do
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, self()}},
-          :poolboy.child_spec(:worker, pool_spec, %{tenant: external_id, auth: auth})
+          %{
+            id: {:pool, external_id},
+            start: {:poolboy, :start_link, [pool_spec, %{tenant: external_id, auth: auth}]},
+            restart: :transient
+          }
         )
 
       _ ->
@@ -45,11 +49,20 @@ defmodule PgEdge do
     end
   end
 
-  # TODO: implement stop_pool
-  def stop_pool(_), do: :not_implemented
-
-  @spec pool_name(any) :: {:via, Registry, {PgEdge.Registry.DbPool, any}}
+  @spec pool_name(String.t()) :: {:via, :syn, {:pool, String.t()}}
   def pool_name(external_id) do
-    {:via, Registry, {PgEdge.Registry.DbPool, external_id}}
+    {:pool, external_id}
+  end
+
+  def stop_pool(external_id) do
+    pool_name(external_id)
+    |> :syn.whereis_name()
+    |> DynamicSupervisor.stop()
+  end
+
+  @spec get_pool_pid(String.t()) :: pid() | :undefined
+  def get_pool_pid(external_id) do
+    pool_name(external_id)
+    |> :syn.whereis_name()
   end
 end
