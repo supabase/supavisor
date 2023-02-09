@@ -65,6 +65,7 @@ defmodule PgEdge.ClientHandler do
 
       # TODO: check the response
       PgEdge.start_pool(external_id)
+      PgEdge.subscribe(external_id)
       :gen_tcp.send(socket, authentication_ok())
       {:noreply, %{state | state: :idle, tenant: external_id}}
     end

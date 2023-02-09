@@ -4,11 +4,11 @@ defmodule PgEdge do
   alias PgEdge.{Tenants, Tenants.Tenant}
 
   @spec start_pool(String.t()) :: {:ok, pid} | {:error, any}
-  def start_pool(external_id) do
-    Logger.debug("Starting pool for #{external_id}")
+  def start_pool(tenant) do
+    Logger.debug("Starting pool for #{tenant}")
 
-    case Tenants.get_tenant_by_external_id(external_id) do
-      %Tenant{} = tenant ->
+    case Tenants.get_tenant_by_external_id(tenant) do
+      %Tenant{} = tenant_record ->
         %{
           db_host: db_host,
           db_port: db_port,
@@ -16,10 +16,10 @@ defmodule PgEdge do
           db_database: db_database,
           db_password: db_pass,
           pool_size: pool_size
-        } = tenant
+        } = tenant_record
 
         pool_spec = [
-          name: {:via, :syn, pool_name(external_id)},
+          name: {:via, :syn, pool_name(tenant)},
           worker_module: PgEdge.DbHandler,
           size: pool_size,
           max_overflow: 0
@@ -34,35 +34,44 @@ defmodule PgEdge do
           application_name: "pg_edge"
         }
 
+        args = %{tenant: tenant, auth: auth, pool_spec: pool_spec, pool_size: pool_size}
+
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, self()}},
           %{
-            id: {:pool, external_id},
-            start: {:poolboy, :start_link, [pool_spec, %{tenant: external_id, auth: auth}]},
+            id: tenant,
+            start: {PgEdge.TenantSupervisor, :start_link, [args]},
             restart: :transient
           }
         )
 
       _ ->
-        Logger.error("Can't find tenant with external_id #{external_id}")
+        Logger.error("Can't find tenant with external_id #{tenant}")
         {:error, :tenant_not_found}
     end
   end
 
-  @spec pool_name(String.t()) :: {:via, :syn, {:pool, String.t()}}
-  def pool_name(external_id) do
-    {:pool, external_id}
+  defdelegate subscribe(tenant), to: PgEdge.Manager
+
+  @spec supervisor_name(String.t()) :: {:supervisor, String.t()}
+  def supervisor_name(tenant) do
+    {:supervisor, tenant}
   end
 
-  def stop_pool(external_id) do
-    pool_name(external_id)
+  @spec pool_name(String.t()) :: {:pool, String.t()}
+  def pool_name(tenant) do
+    {:pool, tenant}
+  end
+
+  def stop_pool(tenant) do
+    supervisor_name(tenant)
     |> :syn.whereis_name()
-    |> DynamicSupervisor.stop()
+    |> Supervisor.stop()
   end
 
   @spec get_pool_pid(String.t()) :: pid() | :undefined
-  def get_pool_pid(external_id) do
-    pool_name(external_id)
+  def get_pool_pid(tenant) do
+    pool_name(tenant)
     |> :syn.whereis_name()
   end
 end

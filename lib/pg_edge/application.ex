@@ -16,7 +16,7 @@ defmodule PgEdge.Application do
       []
     )
 
-    :syn.add_node_to_scopes([:pool])
+    :syn.add_node_to_scopes([:supervisor, :pool, :manager])
 
     Registry.start_link(
       keys: :unique,
