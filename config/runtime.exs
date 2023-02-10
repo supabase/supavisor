@@ -31,7 +31,8 @@ if config_env() != :test do
   config :pg_edge,
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
-    tenant_option: System.get_env("TENANT_OPTION", "tenant")
+    tenant_option: System.get_env("TENANT_OPTION", "tenant"),
+    proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer()
 
   config :pg_edge, PgEdge.Repo,
     hostname: System.get_env("DB_HOST", "localhost"),
