@@ -72,6 +72,7 @@ defmodule PgEdge.MixProject do
         "ecto.create",
         "run priv/repo/seeds_before_migration.exs",
         "ecto.migrate --prefix pgedge --log-migrator-sql",
+        "run priv/repo/seeds_after_migration.exs",
         "test"
       ]
     ]

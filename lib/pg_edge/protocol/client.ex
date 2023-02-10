@@ -85,6 +85,9 @@ defmodule PgEdge.Protocol.Client do
       ?X ->
         :termination_message
 
+      ?C ->
+        :encode_copy_done
+
       _ ->
         nil
     end
@@ -121,6 +124,10 @@ defmodule PgEdge.Protocol.Client do
   end
 
   def decode_payload(:execute_message, _payload) do
+    nil
+  end
+
+  def decode_payload(:encode_copy_done, _payload) do
     nil
   end
 
