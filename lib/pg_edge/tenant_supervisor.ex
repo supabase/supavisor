@@ -26,11 +26,7 @@ defmodule PgEdge.TenantSupervisor do
         start: {:poolboy, :start_link, [pool_spec, args]},
         restart: :transient
       },
-      %{
-        id: Manager,
-        start: {Manager, :start_link, [args]},
-        restart: :transient
-      }
+      {Manager, args}
     ]
 
     Supervisor.init(children, strategy: :one_for_all, max_restarts: 10, max_seconds: 60)

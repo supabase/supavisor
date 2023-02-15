@@ -1,6 +1,6 @@
 defmodule PgEdge.Manager do
   @moduledoc false
-  use GenServer
+  use GenServer, restart: :transient
   require Logger
 
   @check_timeout 120_000
