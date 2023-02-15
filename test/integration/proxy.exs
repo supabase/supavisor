@@ -29,10 +29,10 @@ defmodule PgEdge.Integration.Proxy do
   end
 
   test "insert", %{proxy: proxy, origin: origin} do
-    P.query(proxy, "insert into public.test (details) values ('test_insert')", [])
+    P.query!(proxy, "insert into public.test (details) values ('test_insert')", [])
 
-    assert {:ok, %P.Result{num_rows: 1}} =
-             P.query(origin, "select * from public.test where details = 'test_insert'", [])
+    assert %P.Result{num_rows: 1} =
+             P.query!(origin, "select * from public.test where details = 'test_insert'", [])
   end
 
   test "select", %{proxy: proxy, origin: origin} do
