@@ -18,8 +18,6 @@ defmodule PgEdge.Manager do
   ## Callbacks
 
   @impl true
-  @spec init(atom | %{:tenant => any, optional(any) => any}) ::
-          {:ok, %{check_ref: reference, tenant: any, tid: atom | :ets.tid()}}
   def init(args) do
     state = %{
       check_ref: check_subscribers(),
