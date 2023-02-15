@@ -36,23 +36,23 @@ defmodule PgEdge.Integration.Proxy do
   end
 
   test "select", %{proxy: proxy, origin: origin} do
-    P.query(origin, "insert into public.test (details) values ('test_select')", [])
+    P.query!(origin, "insert into public.test (details) values ('test_select')", [])
 
-    assert {:ok, %P.Result{num_rows: 1}} =
-             P.query(proxy, "select * from public.test where details = 'test_select'", [])
+    assert %P.Result{num_rows: 1} =
+             P.query!(proxy, "select * from public.test where details = 'test_select'", [])
   end
 
   test "update", %{proxy: proxy, origin: origin} do
-    P.query(origin, "insert into public.test (details) values ('test_update')", [])
+    P.query!(origin, "insert into public.test (details) values ('test_update')", [])
 
-    P.query(
+    P.query!(
       proxy,
       "update public.test set details = 'test_update_updated' where details = 'test_update'",
       []
     )
 
-    assert {:ok, %P.Result{num_rows: 1}} =
-             P.query(
+    assert %P.Result{num_rows: 1} =
+             P.query!(
                origin,
                "select * from public.test where details = 'test_update_updated'",
                []
@@ -60,10 +60,10 @@ defmodule PgEdge.Integration.Proxy do
   end
 
   test "delete", %{proxy: proxy, origin: origin} do
-    P.query(origin, "insert into public.test (details) values ('test_delete')", [])
-    P.query(proxy, "delete from public.test where details = 'test_delete'", [])
+    P.query!(origin, "insert into public.test (details) values ('test_delete')", [])
+    P.query!(proxy, "delete from public.test where details = 'test_delete'", [])
 
-    assert {:ok, %P.Result{num_rows: 0}} =
-             P.query(origin, "select * from public.test where details = 'test_delete'", [])
+    assert %P.Result{num_rows: 0} =
+             P.query!(origin, "select * from public.test where details = 'test_delete'", [])
   end
 end

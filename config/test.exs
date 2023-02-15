@@ -2,7 +2,8 @@ import Config
 
 config :pg_edge,
   api_jwt_secret: "dev",
-  jwt_claim_validators: %{}
+  jwt_claim_validators: %{},
+  proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer()
 
 config :pg_edge, PgEdge.Repo,
   username: "postgres",
