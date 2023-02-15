@@ -38,11 +38,7 @@ defmodule PgEdge do
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, self()}},
-          %{
-            id: tenant,
-            start: {PgEdge.TenantSupervisor, :start_link, [args]},
-            restart: :transient
-          }
+          {PgEdge.TenantSupervisor, args}
         )
 
       _ ->

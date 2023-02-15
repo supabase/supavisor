@@ -35,4 +35,12 @@ defmodule PgEdge.TenantSupervisor do
 
     Supervisor.init(children, strategy: :one_for_all, max_restarts: 10, max_seconds: 60)
   end
+
+  def child_spec(args) do
+    %{
+      id: args.tenant,
+      start: {__MODULE__, :start_link, [args]},
+      restart: :transient
+    }
+  end
 end
