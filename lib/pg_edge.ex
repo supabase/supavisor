@@ -63,6 +63,10 @@ defmodule PgEdge do
       subscribe(pid, tenant)
     else
       :rpc.call(tenant_node, __MODULE__, :subscribe, [pid, tenant], 15_000)
+      |> case do
+        {:badrpc, _} = reason -> {:error, reason}
+        response -> response
+      end
     end
   end
 
