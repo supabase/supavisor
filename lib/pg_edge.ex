@@ -136,7 +136,7 @@ defmodule PgEdge do
         args = %{tenant: tenant, auth: auth, pool_spec: pool_spec, pool_size: pool_size}
 
         DynamicSupervisor.start_child(
-          {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, self()}},
+          {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, tenant}},
           {PgEdge.TenantSupervisor, args}
         )
         |> case do
