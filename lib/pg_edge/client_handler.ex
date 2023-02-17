@@ -37,6 +37,9 @@ defmodule PgEdge.ClientHandler do
         buffer: "",
         db_pid: nil,
         tenant: nil,
+        pool: nil,
+        manager: nil,
+        subscribe_ref: make_ref(),
         state: :wait_startup_packet
       }
     )
@@ -63,11 +66,28 @@ defmodule PgEdge.ClientHandler do
         hello.payload["user"]
         |> get_external_id()
 
-      # TODO: check the response
-      PgEdge.start_pool(external_id)
-      PgEdge.subscribe(external_id)
+      # TODO: check if tenant exists
       :gen_tcp.send(socket, authentication_ok())
-      {:noreply, %{state | state: :idle, tenant: external_id}}
+      send(self(), :subscribe)
+      {:noreply, %{state | state: :subscribing, tenant: external_id}}
+    end
+  end
+
+  def handle_info(:subscribe, %{tenant: tenant} = state) do
+    Process.cancel_timer(state.subscribe_ref)
+
+    with {:ok, tenant_sup} <- PgEdge.start(tenant),
+         {:ok,
+          %{
+            manager: manager,
+            pool: pool
+          }} <- PgEdge.subscribe_dist(node(tenant_sup), self(), tenant) do
+      Process.monitor(manager)
+      {:noreply, %{state | state: :idle, pool: pool, manager: manager}}
+    else
+      error ->
+        Logger.error("Subscribe error: #{inspect(error)}")
+        {:noreply, %{state | subscribe_ref: check_subscribe()}}
     end
   end
 
@@ -88,7 +108,7 @@ defmodule PgEdge.ClientHandler do
       if db_pid do
         db_pid
       else
-        PgEdge.get_pool_pid(tenant)
+        state.pool
         |> :poolboy.checkout(true, 60000)
       end
 
@@ -117,6 +137,12 @@ defmodule PgEdge.ClientHandler do
     {:stop, :normal, state}
   end
 
+  def handle_info({:DOWN, _, _, _, _}, state) do
+    Logger.error("Manager down tenant: #{state.tenant}")
+    send(self(), :subscribe)
+    {:noreply, %{state | state: :subscribing, pool: nil, manager: nil}}
+  end
+
   def handle_info(msg, state) do
     msg = [
       {"msg", msg},
@@ -136,7 +162,7 @@ defmodule PgEdge.ClientHandler do
       ) do
     db_pid1 =
       if ready? do
-        PgEdge.get_pool_pid(tenant)
+        state.pool
         |> :poolboy.checkin(db_pid)
 
         nil
@@ -186,10 +212,16 @@ defmodule PgEdge.ClientHandler do
     ]
   end
 
+  ## Internal functions
+
   @spec get_external_id(String.t()) :: String.t()
   def get_external_id(username) do
     username
     |> String.split(".")
     |> List.last()
+  end
+
+  defp check_subscribe() do
+    Process.send_after(self(), :subscribe, 1000)
   end
 end

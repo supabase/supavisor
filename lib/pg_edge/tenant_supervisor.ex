@@ -14,7 +14,7 @@ defmodule PgEdge.TenantSupervisor do
   @impl true
   def init(%{tenant: tenant, pool_size: pool_size} = args) do
     pool_spec = [
-      name: {:via, :syn, {:pool, tenant}},
+      name: {:via, Registry, PgEdge.pool_name(tenant)},
       worker_module: PgEdge.DbHandler,
       size: pool_size,
       max_overflow: 0

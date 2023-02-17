@@ -5,14 +5,13 @@ defmodule PgEdge.Manager do
 
   @check_timeout 120_000
 
-  def start_link(opts) do
-    name = {:via, :syn, {:manager, opts.tenant}}
-    GenServer.start_link(__MODULE__, opts, name: name)
+  def start_link(args) do
+    name = {:via, Registry, PgEdge.manager_name(args.tenant)}
+    GenServer.start_link(__MODULE__, args, name: name)
   end
 
-  def subscribe(tenant) do
-    :syn.whereis_name({:manager, tenant})
-    |> GenServer.call(:subscribe)
+  def subscribe(manager, pid) do
+    GenServer.call(manager, {:subscribe, pid})
   end
 
   ## Callbacks
@@ -29,7 +28,7 @@ defmodule PgEdge.Manager do
   end
 
   @impl true
-  def handle_call(:subscribe, {pid, _}, state) do
+  def handle_call({:subscribe, pid}, _, state) do
     Logger.info("Subscribing #{inspect(pid)} to tenant #{state.tenant}")
     :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
     {:reply, :ok, state}
@@ -46,7 +45,7 @@ defmodule PgEdge.Manager do
 
     if :ets.info(state.tid, :size) == 0 do
       Logger.info("No subscribers for tenant #{state.tenant}, shutting down")
-      PgEdge.stop_pool(state.tenant)
+      PgEdge.stop(state.tenant)
       {:stop, :normal}
     else
       {:noreply, %{state | check_ref: check_subscribers()}}

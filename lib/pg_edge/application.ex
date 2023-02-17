@@ -16,11 +16,11 @@ defmodule PgEdge.Application do
       []
     )
 
-    :syn.add_node_to_scopes([:supervisor, :pool, :manager])
+    :syn.add_node_to_scopes([:tenants])
 
     Registry.start_link(
       keys: :unique,
-      name: PgEdge.Registry.DbPool
+      name: PgEdge.Registry.Tenants
     )
 
     children = [
