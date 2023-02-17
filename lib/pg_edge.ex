@@ -102,8 +102,7 @@ defmodule PgEdge do
 
   ## Internal functions
 
-  @spec start_pool(String.t()) ::
-          {:ok, pid} | {:error, {:already_started, pid()} | :tenant_not_found}
+  @spec start_pool(String.t()) :: {:ok, pid} | {:error, any()}
   defp start_pool(tenant) do
     Logger.debug("Starting pool for #{tenant}")
 
@@ -140,6 +139,10 @@ defmodule PgEdge do
           {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, self()}},
           {PgEdge.TenantSupervisor, args}
         )
+        |> case do
+          {:error, {:already_started, pid}} -> {:ok, pid}
+          resp -> resp
+        end
 
       _ ->
         Logger.error("Can't find tenant with external_id #{tenant}")
