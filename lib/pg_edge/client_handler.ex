@@ -81,7 +81,7 @@ defmodule PgEdge.ClientHandler do
           %{
             manager: manager,
             pool: pool
-          }} <- PgEdge.subscribe_dist(node(tenant_sup), self(), tenant) do
+          }} <- PgEdge.subscribe_global(node(tenant_sup), self(), tenant) do
       Process.monitor(manager)
       {:noreply, %{state | state: :idle, pool: pool, manager: manager}}
     else

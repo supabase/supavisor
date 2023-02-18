@@ -7,10 +7,10 @@ defmodule PgEdge do
 
   @spec start(String.t()) :: {:ok, pid} | {:error, any()}
   def start(tenant) do
-    get_sup_pid(tenant)
+    get_global_sup(tenant)
     |> case do
       :undefined ->
-        start_pool(tenant)
+        start_local_pool(tenant)
 
       pid ->
         {:ok, pid}
@@ -19,17 +19,17 @@ defmodule PgEdge do
 
   @spec stop(String.t()) :: :ok | {:error, :tenant_not_found}
   def stop(tenant) do
-    case get_sup_pid(tenant) do
+    case get_global_sup(tenant) do
       :undefined -> {:error, :tenant_not_found}
       pid -> Supervisor.stop(pid)
     end
   end
 
-  @spec get_workers(String.t()) :: {:ok, workers} | {:error, :worker_not_found}
-  def get_workers(tenant) do
+  @spec get_local_workers(String.t()) :: {:ok, workers} | {:error, :worker_not_found}
+  def get_local_workers(tenant) do
     workers = %{
-      manager: get_manager_pid(tenant),
-      pool: get_pool_pid(tenant)
+      manager: get_local_manager(tenant),
+      pool: get_local_pool(tenant)
     }
 
     if Map.values(workers) |> Enum.member?(:undefined) do
@@ -40,9 +40,9 @@ defmodule PgEdge do
     end
   end
 
-  @spec subscribe(pid, String.t()) :: {:ok, workers} | {:error, any()}
-  def subscribe(pid, tenant) do
-    with {:ok, workers} <- get_workers(tenant),
+  @spec subscribe_local(pid, String.t()) :: {:ok, workers} | {:error, any()}
+  def subscribe_local(pid, tenant) do
+    with {:ok, workers} <- get_local_workers(tenant),
          :ok <- Manager.subscribe(workers.manager, pid) do
       {:ok, workers}
     else
@@ -51,12 +51,12 @@ defmodule PgEdge do
     end
   end
 
-  @spec subscribe_dist(atom(), pid(), String.t()) :: {:ok, workers} | {:error, any()}
-  def subscribe_dist(tenant_node, pid, tenant) do
+  @spec subscribe_global(atom(), pid(), String.t()) :: {:ok, workers} | {:error, any()}
+  def subscribe_global(tenant_node, pid, tenant) do
     if node() == tenant_node do
-      subscribe(pid, tenant)
+      subscribe_local(pid, tenant)
     else
-      :rpc.call(tenant_node, __MODULE__, :subscribe, [pid, tenant], 15_000)
+      :rpc.call(tenant_node, __MODULE__, :subscribe_local, [pid, tenant], 15_000)
       |> case do
         {:badrpc, _} = reason -> {:error, reason}
         response -> response
@@ -76,28 +76,28 @@ defmodule PgEdge do
     {PgEdge.Registry.Tenants, {:manager, external_id}}
   end
 
-  @spec get_sup_pid(binary) :: pid() | :undefined
-  def get_sup_pid(tenant) do
+  @spec get_global_sup(binary) :: pid() | :undefined
+  def get_global_sup(tenant) do
     supervisor_name(tenant)
     |> :syn.whereis_name()
   end
 
-  @spec get_pool_pid(String.t()) :: pid() | :undefined
-  def get_pool_pid(tenant) do
+  @spec get_local_pool(String.t()) :: pid() | :undefined
+  def get_local_pool(tenant) do
     pool_name(tenant)
     |> Registry.whereis_name()
   end
 
-  @spec get_manager_pid(String.t()) :: pid() | :undefined
-  def get_manager_pid(tenant) do
+  @spec get_local_manager(String.t()) :: pid() | :undefined
+  def get_local_manager(tenant) do
     manager_name(tenant)
     |> Registry.whereis_name()
   end
 
   ## Internal functions
 
-  @spec start_pool(String.t()) :: {:ok, pid} | {:error, any()}
-  defp start_pool(tenant) do
+  @spec start_local_pool(String.t()) :: {:ok, pid} | {:error, any()}
+  defp start_local_pool(tenant) do
     Logger.debug("Starting pool for #{tenant}")
 
     case Tenants.get_tenant_by_external_id(tenant) do
