@@ -50,8 +50,7 @@ defmodule PgEdge.MixProject do
       # pooller
       {:poolboy, "~> 1.5.2"},
       {:syn, "~> 3.3"},
-      {:pgo, "~> 0.12"},
-      {:semaphore, "~> 1.3"}
+      {:pgo, "~> 0.12"}
       # TODO: add ranch deps
     ]
   end

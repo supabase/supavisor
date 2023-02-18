@@ -10,13 +10,7 @@ defmodule PgEdge do
     get_sup_pid(tenant)
     |> case do
       :undefined ->
-        Semaphore.call_linksafe(tenant, 1, fn ->
-          start_pool(tenant)
-        end)
-        |> case do
-          {:error, :max} -> {:error, :locked}
-          resp -> resp
-        end
+        start_pool(tenant)
 
       pid ->
         {:ok, pid}
