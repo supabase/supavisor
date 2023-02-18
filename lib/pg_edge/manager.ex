@@ -6,7 +6,7 @@ defmodule PgEdge.Manager do
   @check_timeout 120_000
 
   def start_link(args) do
-    name = {:via, Registry, PgEdge.manager_name(args.tenant)}
+    name = {:via, Registry, {PgEdge.Registry.Tenants, {:manager, args.tenant}}}
     GenServer.start_link(__MODULE__, args, name: name)
   end
 

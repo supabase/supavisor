@@ -7,14 +7,14 @@ defmodule PgEdge.TenantSupervisor do
   @spec start_link(atom | %{:tenant => any, optional(any) => any}) ::
           :ignore | {:error, any} | {:ok, pid}
   def start_link(args) do
-    name = {:via, :syn, PgEdge.supervisor_name(args.tenant)}
+    name = {:via, :syn, {:tenants, args.tenant}}
     Supervisor.start_link(__MODULE__, args, name: name)
   end
 
   @impl true
   def init(%{tenant: tenant, pool_size: pool_size} = args) do
     pool_spec = [
-      name: {:via, Registry, PgEdge.pool_name(tenant)},
+      name: {:via, Registry, {PgEdge.Registry.Tenants, {:pool, tenant}}},
       worker_module: PgEdge.DbHandler,
       size: pool_size,
       max_overflow: 0

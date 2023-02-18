@@ -3,13 +3,13 @@ defmodule PgEdge do
   require Logger
   alias PgEdge.{Tenants, Tenants.Tenant, Manager}
 
+  @registry PgEdge.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
 
   @spec start(String.t()) :: {:ok, pid} | {:error, any()}
   def start(tenant) do
-    get_global_sup(tenant)
-    |> case do
-      :undefined ->
+    case get_global_sup(tenant) do
+      nil ->
         start_local_pool(tenant)
 
       pid ->
@@ -20,7 +20,7 @@ defmodule PgEdge do
   @spec stop(String.t()) :: :ok | {:error, :tenant_not_found}
   def stop(tenant) do
     case get_global_sup(tenant) do
-      :undefined -> {:error, :tenant_not_found}
+      nil -> {:error, :tenant_not_found}
       pid -> Supervisor.stop(pid)
     end
   end
@@ -32,7 +32,7 @@ defmodule PgEdge do
       pool: get_local_pool(tenant)
     }
 
-    if Map.values(workers) |> Enum.member?(:undefined) do
+    if Map.values(workers) |> Enum.member?(nil) do
       Logger.error("Could not get workers for tenant #{tenant}")
       {:error, :worker_not_found}
     else
@@ -64,34 +64,28 @@ defmodule PgEdge do
     end
   end
 
-  def supervisor_name(tenant) do
-    {:tenants, tenant}
-  end
-
-  def pool_name(external_id) do
-    {PgEdge.Registry.Tenants, {:pool, external_id}}
-  end
-
-  def manager_name(external_id) do
-    {PgEdge.Registry.Tenants, {:manager, external_id}}
-  end
-
-  @spec get_global_sup(binary) :: pid() | :undefined
+  @spec get_global_sup(binary) :: pid() | nil
   def get_global_sup(tenant) do
-    supervisor_name(tenant)
-    |> :syn.whereis_name()
+    case :syn.whereis_name({:tenants, tenant}) do
+      :undefined -> nil
+      pid -> pid
+    end
   end
 
-  @spec get_local_pool(String.t()) :: pid() | :undefined
+  @spec get_local_pool(String.t()) :: pid() | nil
   def get_local_pool(tenant) do
-    pool_name(tenant)
-    |> Registry.whereis_name()
+    case Registry.lookup(@registry, {:pool, tenant}) do
+      [{pid, _}] -> pid
+      _ -> nil
+    end
   end
 
-  @spec get_local_manager(String.t()) :: pid() | :undefined
+  @spec get_local_manager(String.t()) :: pid() | nil
   def get_local_manager(tenant) do
-    manager_name(tenant)
-    |> Registry.whereis_name()
+    case Registry.lookup(@registry, {:manager, tenant}) do
+      [{pid, _}] -> pid
+      _ -> nil
+    end
   end
 
   ## Internal functions
@@ -112,7 +106,7 @@ defmodule PgEdge do
         } = tenant_record
 
         pool_spec = [
-          name: {:via, :syn, pool_name(tenant)},
+          name: {:via, Registry, {@registry, {:pool, tenant}}},
           worker_module: PgEdge.DbHandler,
           size: pool_size,
           max_overflow: 0
