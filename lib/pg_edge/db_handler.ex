@@ -20,6 +20,8 @@ defmodule PgEdge.DbHandler do
     #   |> String.to_charlist()
     #   |> :inet.parse_address()
 
+    Process.flag(:trap_exit, true)
+
     state = %{
       check_ref: make_ref(),
       socket: nil,
@@ -208,8 +210,8 @@ defmodule PgEdge.DbHandler do
     {:noreply, state}
   end
 
-  def terminate(_reason, _state, _data) do
-    Logger.debug("DB terminated")
+  def terminate(reason, _state) do
+    Logger.debug("DB terminated #{inspect(reason)}")
     :ok
   end
 

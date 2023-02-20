@@ -49,8 +49,8 @@ defmodule PgEdge.MixProject do
 
       # pooller
       {:poolboy, "~> 1.5.2"},
-      {:pgo, "~> 0.12"},
-      {:nimble_pool, "~> 0.2"}
+      {:syn, "~> 3.3"},
+      {:pgo, "~> 0.12"}
       # TODO: add ranch deps
     ]
   end
@@ -71,6 +71,7 @@ defmodule PgEdge.MixProject do
         "ecto.create",
         "run priv/repo/seeds_before_migration.exs",
         "ecto.migrate --prefix pgedge --log-migrator-sql",
+        "run priv/repo/seeds_after_migration.exs",
         "test"
       ]
     ]
