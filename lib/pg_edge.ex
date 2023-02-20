@@ -56,10 +56,15 @@ defmodule PgEdge do
     if node() == tenant_node do
       subscribe_local(pid, tenant)
     else
-      :rpc.call(tenant_node, __MODULE__, :subscribe_local, [pid, tenant], 15_000)
-      |> case do
-        {:badrpc, _} = reason -> {:error, reason}
-        response -> response
+      try do
+        # TODO: tests for different cases
+        :erpc.call(tenant_node, __MODULE__, :subscribe_local, [pid, tenant], 15_000)
+        |> case do
+          {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
+          result -> result
+        end
+      catch
+        kind, reason -> {:error, {:badrpc, {kind, reason}}}
       end
     end
   end
