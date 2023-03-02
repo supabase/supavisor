@@ -36,7 +36,6 @@ defmodule PgEdge.ClientHandler do
     data = %{
       socket: socket,
       trans: trans,
-      connected: false,
       db_pid: nil,
       tenant: nil,
       pool: nil,
