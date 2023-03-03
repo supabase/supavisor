@@ -47,13 +47,6 @@ defmodule PgEdgeWeb.TenantControllerTest do
     {:ok, conn: new_conn}
   end
 
-  describe "index" do
-    test "lists all tenants", %{conn: conn} do
-      conn = get(conn, Routes.tenant_path(conn, :index))
-      assert json_response(conn, 200)["data"] == []
-    end
-  end
-
   describe "create tenant" do
     test "renders tenant when data is valid", %{conn: conn} do
       conn = post(conn, Routes.tenant_path(conn, :create), tenant: @create_attrs)

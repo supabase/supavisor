@@ -39,5 +39,6 @@ defmodule PgEdge.Tenants.Tenant do
       :db_password,
       :pool_size
     ])
+    |> unique_constraint([:external_id])
   end
 end
