@@ -15,6 +15,7 @@
   "jason": {:hex, :jason, "1.4.0", "e855647bc964a44e2f67df589ccf49105ae039d4179db7f6271dfd3843dc27e6", [:mix], [{:decimal, "~> 1.0 or ~> 2.0", [hex: :decimal, repo: "hexpm", optional: true]}], "hexpm", "79a3791085b2a0f743ca04cec0f7be26443738779d09302e01318f97bdb82121"},
   "joken": {:hex, :joken, "2.5.0", "09be497d804b8115eb6f07615cef2e60c2a1008fb89dc0aef0d4c4b4609b99aa", [:mix], [{:jose, "~> 1.11.2", [hex: :jose, repo: "hexpm", optional: false]}], "hexpm", "22b25c89617c5ed8ca7b31026340a25ea0f9ca7160f9706b79be9ed81fdf74e7"},
   "jose": {:hex, :jose, "1.11.5", "3bc2d75ffa5e2c941ca93e5696b54978323191988eb8d225c2e663ddfefd515e", [:mix, :rebar3], [], "hexpm", "dcd3b215bafe02ea7c5b23dafd3eb8062a5cd8f2d904fd9caa323d37034ab384"},
+  "meck": {:hex, :meck, "0.9.2", "85ccbab053f1db86c7ca240e9fc718170ee5bda03810a6292b5306bf31bae5f5", [:rebar3], [], "hexpm", "81344f561357dc40a8344afa53767c32669153355b626ea9fcbc8da6b3045826"},
   "mime": {:hex, :mime, "2.0.3", "3676436d3d1f7b81b5a2d2bd8405f412c677558c81b1c92be58c00562bb59095", [:mix], [], "hexpm", "27a30bf0db44d25eecba73755acf4068cbfe26a4372f9eb3e4ea3a45956bff6b"},
   "opentelemetry_api": {:hex, :opentelemetry_api, "1.2.0", "454a35655b4c1924405ef1f3587f2c6f141bf73366b2c5e8a38dcc619b53eaa0", [:mix, :rebar3], [], "hexpm", "9e677c68243de0f70538798072e66e1fb1d4a2ca8888a6eb493c0a41e5480c35"},
   "pg_types": {:hex, :pg_types, "0.4.0", "3ce365c92903c5bb59c0d56382d842c8c610c1b6f165e20c4b652c96fa7e9c14", [:rebar3], [], "hexpm", "b02efa785caececf9702c681c80a9ca12a39f9161a846ce17b01fb20aeeed7eb"},
