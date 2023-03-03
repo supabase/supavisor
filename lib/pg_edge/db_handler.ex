@@ -20,7 +20,6 @@ defmodule PgEdge.DbHandler do
     Logger.metadata(project: args.tenant)
 
     data = %{
-      check_ref: make_ref(),
       socket: nil,
       caller: nil,
       sent: false,
@@ -62,11 +61,14 @@ defmodule PgEdge.DbHandler do
         {:next_state, :authentication, %{data | socket: socket}}
 
       other ->
-        # TODO: check timeout
         Logger.error("Connection faild #{inspect(other)}")
-        :keep_state_and_data
-        # {:noreply, %{state | check_ref: reconnect()}}
+        {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
     end
+  end
+
+  def handle_event(:state_timeout, :connect, _state, _) do
+    Logger.warning("Reconnect")
+    {:keep_state_and_data, {:next_event, :internal, :connect}}
   end
 
   def handle_event(:info, {:tcp, _, bin}, :authentication, data) do
@@ -172,6 +174,11 @@ defmodule PgEdge.DbHandler do
     {:keep_state, %{data | caller: pid}, reply}
   end
 
+  def handle_event(:info, {:tcp_closed, socket}, state, %{socket: socket} = data) do
+    Logger.error("Connection closed when state was #{state}")
+    {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
+  end
+
   def handle_event(type, content, state, data) do
     msg = [
       {"type", type},
@@ -209,10 +216,6 @@ defmodule PgEdge.DbHandler do
 
   def handle_packets(bin) do
     {:ok, :small_chunk, bin, ""}
-  end
-
-  def reconnect() do
-    Process.send_after(self(), :connect, 5_000)
   end
 
   def send_active_once(socket, msg) do
