@@ -4,7 +4,6 @@ defmodule PgEdge.ClientHandler do
   @behaviour :ranch_protocol
   @behaviour :gen_statem
 
-  alias PgEdge.Protocol.Client
   alias PgEdge.DbHandler, as: Db
 
   @impl true
@@ -25,7 +24,7 @@ defmodule PgEdge.ClientHandler do
   end
 
   @impl true
-  def init(_opts), do: {:ok, %{}}
+  def init(_), do: :ignore
 
   def init(ref, trans, _opts) do
     Process.flag(:trap_exit, true)
@@ -56,7 +55,7 @@ defmodule PgEdge.ClientHandler do
   end
 
   def handle_event(:info, {:tcp, _, bin}, :auth, data) do
-    hello = Client.decode_startup_packet(bin)
+    hello = decode_startup_packet(bin)
     Logger.warning("Client startup message: #{inspect(hello)}")
 
     external_id =
@@ -215,5 +214,20 @@ defmodule PgEdge.ClientHandler do
     username
     |> String.split(".")
     |> List.last()
+  end
+
+  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
+    %{
+      len: len,
+      payload:
+        String.split(rest, <<0>>, trim: true)
+        |> Enum.chunk_every(2)
+        |> Enum.into(%{}, fn [k, v] -> {k, v} end),
+      tag: :startup
+    }
+  end
+
+  def decode_startup_packet(_) do
+    :undef
   end
 end
