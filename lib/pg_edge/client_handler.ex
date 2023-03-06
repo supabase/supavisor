@@ -24,6 +24,7 @@ defmodule PgEdge.ClientHandler do
     :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
   end
 
+  @impl true
   def init(_opts), do: {:ok, %{}}
 
   def init(ref, trans, _opts) do
