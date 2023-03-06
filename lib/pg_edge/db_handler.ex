@@ -11,7 +11,7 @@ defmodule PgEdge.DbHandler do
   end
 
   def call(pid, msg) do
-    GenServer.call(pid, {:db_call, msg})
+    :gen_statem.call(pid, {:db_call, msg})
   end
 
   @impl true
@@ -40,6 +40,7 @@ defmodule PgEdge.DbHandler do
   @impl true
   def callback_mode, do: [:handle_event_function]
 
+  @impl true
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
     Logger.info("Try to connect to DB")
     socket_opts = [:binary, {:packet, :raw}, {:active, true}]
@@ -152,22 +153,14 @@ defmodule PgEdge.DbHandler do
     end
   end
 
-  def handle_event(:info, {:tcp, _, bin}, _, %{caller: caller} = data) do
-    {bin, ready} =
-      case handle_packets(bin) do
-        {:ok, :ready_for_query, rest, :idle} ->
-          {bin, true}
-
-        {:ok, _, rest, _} ->
-          {bin, true}
-      end
-
-    Client.client_call(caller, bin, false)
-
+  def handle_event(:info, {:tcp, _, bin}, _, data) do
+    # check if the response ends with "ready for query"
+    ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
+    :ok = Client.client_call(data.caller, bin, ready)
     :keep_state_and_data
   end
 
-  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, state, %{socket: socket} = data) do
+  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, _, %{socket: socket} = data) do
     Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
 
     reply = {:reply, from, :gen_tcp.send(socket, bin)}
@@ -190,45 +183,5 @@ defmodule PgEdge.DbHandler do
     Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
-  end
-
-  def handle_packets(<<char::integer-8, pkt_len::integer-32, rest::binary>> = bin) do
-    payload_len = pkt_len - 4
-    tag = Server.tag(char)
-
-    case rest do
-      <<payload::binary-size(payload_len)>> ->
-        pkt = Server.packet(tag, pkt_len, payload)
-        Logger.debug(inspect(pkt, pretty: true))
-
-        {:ok, tag, "", pkt.payload}
-
-      <<payload::binary-size(payload_len), rest1::binary>> ->
-        pkt = Server.packet(tag, pkt_len, payload)
-        Logger.debug(inspect(pkt, pretty: true))
-
-        handle_packets(rest1)
-
-      _ ->
-        {:ok, tag, bin, ""}
-    end
-  end
-
-  def handle_packets(bin) do
-    {:ok, :small_chunk, bin, ""}
-  end
-
-  def send_active_once(socket, msg) do
-    :gen_tcp.send(socket, msg)
-    :inet.setopts(socket, [{:active, :once}])
-  end
-
-  def active_once(socket) do
-    :inet.setopts(socket, [{:active, :once}])
-  end
-
-  defp decrypt_password(password) do
-    Application.get_env(:pg_edge, :db_enc_key)
-    |> PgEdge.Helpers.decrypt!(password)
   end
 end

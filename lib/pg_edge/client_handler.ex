@@ -13,8 +13,6 @@ defmodule PgEdge.ClientHandler do
     {:ok, pid}
   end
 
-  def init(_opts), do: {:ok, %{}}
-
   @impl true
   def callback_mode,
     do: [
@@ -25,6 +23,8 @@ defmodule PgEdge.ClientHandler do
   def client_call(pid, bin, ready?) do
     :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
   end
+
+  def init(_opts), do: {:ok, %{}}
 
   def init(ref, trans, _opts) do
     Process.flag(:trap_exit, true)
@@ -45,6 +45,7 @@ defmodule PgEdge.ClientHandler do
     :gen_statem.enter_loop(__MODULE__, [], :negotiation, data)
   end
 
+  @impl true
   def handle_event(:info, {:tcp, _, bin}, :negotiation, data) do
     # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
@@ -89,7 +90,7 @@ defmodule PgEdge.ClientHandler do
   end
 
   # ignore termination messages
-  def handle_event(:info, {:tcp, _, <<?X, 4::32>>}, _, data) do
+  def handle_event(:info, {:tcp, _, <<?X, 4::32>>}, _, _) do
     Logger.warn("Receive termination")
     :keep_state_and_data
   end
@@ -118,7 +119,7 @@ defmodule PgEdge.ClientHandler do
   end
 
   # linked db_handler went down
-  def handle_event(:info, {:EXIT, db_pid, reason}, _, %{db_pid: db_pid} = data) do
+  def handle_event(:info, {:EXIT, db_pid, reason}, _, _) do
     Logger.error("DB handler #{inspect(db_pid)} exited #{inspect(reason)}")
     {:stop, :normal}
   end

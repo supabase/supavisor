@@ -1,3 +1,6 @@
+help:
+	@make -qpRr | egrep -e '^[a-z].*:$$' | sed -e 's~:~~g' | sort
+
 .PHONY: dev
 dev:
 	MIX_ENV=dev VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" API_JWT_SECRET=dev ERL_AFLAGS="-kernel shell_history enabled" iex --name node1@127.0.0.1 --cookie cookie -S mix phx.server
