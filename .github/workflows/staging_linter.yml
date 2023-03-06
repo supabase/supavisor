@@ -1,8 +1,8 @@
 name: Staging Formatting Checks
 on:
-  push:
+  pull_request:
     branches:
-      - client-server
+      - main
 jobs:
   format:
     name: Formatting Checks
