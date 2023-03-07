@@ -1,10 +1,10 @@
 import Config
 # Configure your database
-config :pg_edge, PgEdge.Repo,
+config :supavisor, Supavisor.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
-  database: "pg_edge_dev",
+  database: "supavisor_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
@@ -15,7 +15,7 @@ config :pg_edge, PgEdge.Repo,
 # The watchers configuration can be used to run external
 # watchers to your application. For example, we use it
 # with esbuild to bundle .js and .css sources.
-config :pg_edge, PgEdgeWeb.Endpoint,
+config :supavisor, SupavisorWeb.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   http: [ip: {127, 0, 0, 1}, port: System.get_env("PORT", "4000")],
@@ -50,12 +50,12 @@ config :pg_edge, PgEdgeWeb.Endpoint,
 # different ports.
 
 # Watch static and templates for browser reloading.
-config :pg_edge, PgEdgeWeb.Endpoint,
+config :supavisor, SupavisorWeb.Endpoint,
   live_reload: [
     patterns: [
       ~r"priv/static/.*(js|css|png|jpeg|jpg|gif|svg)$",
-      ~r"lib/pg_edge_web/(live|views)/.*(ex)$",
-      ~r"lib/pg_edge_web/templates/.*(eex)$"
+      ~r"lib/supavisor_web/(live|views)/.*(ex)$",
+      ~r"lib/supavisor_web/templates/.*(eex)$"
     ]
   ]
 

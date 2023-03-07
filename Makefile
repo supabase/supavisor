@@ -9,7 +9,7 @@ dev.node2:
 	PROXY_PORT=7655 PORT=4001 MIX_ENV=dev VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" API_JWT_SECRET=dev ERL_AFLAGS="-kernel shell_history enabled" iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server	
 
 db_migrate:
-	mix ecto.migrate --prefix pgedge --log-migrator-sql
+	mix ecto.migrate --prefix supavisor --log-migrator-sql
 
 db_start:
 	docker-compose -f ./dev/docker-compose.db.yml up

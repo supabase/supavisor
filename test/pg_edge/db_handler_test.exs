@@ -1,6 +1,6 @@
-defmodule PgEdge.DbHandlerTest do
+defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: false
-  alias PgEdge.DbHandler, as: Db
+  alias Supavisor.DbHandler, as: Db
   # import Mock
 
   describe "init/1" do

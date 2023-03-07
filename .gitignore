@@ -20,7 +20,7 @@ erl_crash.dump
 *.ez
 
 # Ignore package tarball (built via "mix hex.build").
-pg_edge-*.tar
+supavisor-*.tar
 
 # Ignore assets that are produced by build tools.
 /priv/static/assets/

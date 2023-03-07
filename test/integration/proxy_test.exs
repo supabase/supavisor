@@ -1,20 +1,20 @@
-defmodule PgEdge.Integration.ProxyTest do
-  use PgEdge.DataCase
+defmodule Supavisor.Integration.ProxyTest do
+  use Supavisor.DataCase
   alias Postgrex, as: P
 
   @tenant "proxy_tenant"
 
-  import PgEdge.TenantsFixtures
+  import Supavisor.TenantsFixtures
 
   setup_all do
-    db_conf = Application.get_env(:pg_edge, Repo)
+    db_conf = Application.get_env(:supavisor, Repo)
 
     # :timer.sleep(10_000)
 
     {:ok, proxy} =
       Postgrex.start_link(
         hostname: db_conf[:hostname],
-        port: Application.get_env(:pg_edge, :proxy_port),
+        port: Application.get_env(:supavisor, :proxy_port),
         database: db_conf[:database],
         password: "no_pass",
         username: db_conf[:username] <> "." <> @tenant

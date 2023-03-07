@@ -1,8 +1,8 @@
-defmodule PgEdge.Repo.Migrations.CreateTenants do
+defmodule Supavisor.Repo.Migrations.CreateTenants do
   use Ecto.Migration
 
   def change do
-    create table(:tenants, primary_key: false, prefix: "pgedge") do
+    create table(:tenants, primary_key: false, prefix: "supavisor") do
       add(:id, :binary_id, primary_key: true)
       add(:external_id, :string, null: false)
       add(:db_host, :string, null: false)
@@ -15,6 +15,6 @@ defmodule PgEdge.Repo.Migrations.CreateTenants do
       timestamps()
     end
 
-    create(index(:tenants, [:external_id], unique: true, prefix: "pgedge"))
+    create(index(:tenants, [:external_id], unique: true, prefix: "supavisor"))
   end
 end

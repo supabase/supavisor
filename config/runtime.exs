@@ -12,7 +12,7 @@ if config_env() == :prod do
     System.get_env("FLY_APP_NAME") ||
       raise "APP_NAME not available"
 
-  config :pg_edge, PgEdgeWeb.Endpoint,
+  config :supavisor, SupavisorWeb.Endpoint,
     server: true,
     url: [host: "#{app_name}.fly.dev", port: 80],
     http: [
@@ -28,13 +28,13 @@ if config_env() == :prod do
 end
 
 if config_env() != :test do
-  config :pg_edge,
+  config :supavisor,
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     tenant_option: System.get_env("TENANT_OPTION", "tenant"),
     proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer()
 
-  config :pg_edge, PgEdge.Repo,
+  config :supavisor, Supavisor.Repo,
     hostname: System.get_env("DB_HOST", "localhost"),
     username: System.get_env("DB_USER", "postgres"),
     password: System.get_env("DB_PASSWORD", "postgres"),
@@ -42,10 +42,10 @@ if config_env() != :test do
     port: System.get_env("DB_PORT", "6432"),
     pool_size: System.get_env("DB_POOL_SIZE", "5") |> String.to_integer(),
     parameters: [
-      application_name: "pg_edge_meta"
+      application_name: "supavisor_meta"
     ]
 
-  config :pg_edge, PgEdge.Vault,
+  config :supavisor, Supavisor.Vault,
     ciphers: [
       default: {
         Cloak.Ciphers.AES.GCM,

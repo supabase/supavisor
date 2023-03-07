@@ -1,3 +1,3 @@
-defmodule PgEdgeWeb.PageViewTest do
-  use PgEdgeWeb.ConnCase, async: true
+defmodule SupavisorWeb.PageViewTest do
+  use SupavisorWeb.ConnCase, async: true
 end
