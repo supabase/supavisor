@@ -62,7 +62,7 @@ defmodule PgEdge.DbHandler do
         {:next_state, :authentication, %{data | socket: socket}}
 
       other ->
-        Logger.error("Connection faild #{inspect(other)}")
+        Logger.error("Connection failed #{inspect(other)}")
         {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
     end
   end

@@ -46,15 +46,16 @@ defmodule PgEdge.ClientHandler do
   end
 
   @impl true
-  def handle_event(:info, {:tcp, _, bin}, :negotiation, data) do
+  def handle_event(:info, {:tcp, _, <<bin::64>>}, :negotiation, data) do
+    Logger.warn("Client is trying to connect with SSL #{inspect(bin, limit: :infinity)}")
     # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
     :gen_tcp.send(data.socket, "N")
 
-    {:next_state, :auth, data}
+    :keep_state_and_data
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :auth, data) do
+  def handle_event(:info, {:tcp, _, bin}, :negotiation, data) do
     hello = decode_startup_packet(bin)
     Logger.warning("Client startup message: #{inspect(hello)}")
 
@@ -77,6 +78,8 @@ defmodule PgEdge.ClientHandler do
          {:ok, %{manager: manager, pool: pool}} <-
            PgEdge.subscribe_global(node(tenant_sup), self(), tenant) do
       Process.monitor(manager)
+      # TODO: remove this sleep, when db_handler will be ready
+      :timer.sleep(500)
       {:next_state, :idle, %{data | pool: pool, manager: manager}}
     else
       error ->

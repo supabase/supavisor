@@ -57,7 +57,7 @@ defmodule PgEdge.DbHandlerTest do
     end
 
     test "db is not avaible" do
-      :meck.new(:gen_tcp, [:unstick])
+      :meck.new(:gen_tcp, [:unstick, :passthrough])
 
       :meck.expect(:gen_tcp, :connect, fn _host, _port, _socket_opts -> {:error, "some error"} end)
 
@@ -72,6 +72,7 @@ defmodule PgEdge.DbHandlerTest do
       state = Db.handle_event(:internal, nil, :connect, %{auth: auth, socket: nil})
 
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
+      :meck.unload(:gen_tcp)
     end
   end
 end
