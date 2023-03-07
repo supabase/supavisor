@@ -2,7 +2,7 @@
 
 ## Overview
 
-supavisor (name tbd) is a scalable cloud-native Postgres connection pooler capable of supporting millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
+Supavisor is a scalable cloud-native Postgres connection pooler capable of supporting millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
 
 For Postgres clients, goal is to provide Postgres connection pools as a service such that clients don't have to worry about connection limits of their Postgres database.
 
@@ -89,7 +89,7 @@ Benchmarking for stateful throughput:
 Make sure we benchmark for typical server-side stateful database connection pools.
 
 - Run pgbench for a minimum of 60 seconds
-  - Connection init will be less of a percentage of time
+- Connection init will be less of a percentage of time
 
 Benchmarking for serverless use-case:
 
