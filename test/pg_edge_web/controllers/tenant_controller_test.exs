@@ -1,9 +1,9 @@
-defmodule PgEdgeWeb.TenantControllerTest do
-  use PgEdgeWeb.ConnCase
+defmodule SupavisorWeb.TenantControllerTest do
+  use SupavisorWeb.ConnCase
 
-  import PgEdge.TenantsFixtures
+  import Supavisor.TenantsFixtures
 
-  alias PgEdge.Tenants.Tenant
+  alias Supavisor.Tenants.Tenant
 
   @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"
 

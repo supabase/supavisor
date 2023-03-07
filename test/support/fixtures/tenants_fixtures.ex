@@ -1,7 +1,7 @@
-defmodule PgEdge.TenantsFixtures do
+defmodule Supavisor.TenantsFixtures do
   @moduledoc """
   This module defines test helpers for creating
-  entities via the `PgEdge.Tenants` context.
+  entities via the `Supavisor.Tenants` context.
   """
 
   @doc """
@@ -19,7 +19,7 @@ defmodule PgEdge.TenantsFixtures do
         external_id: "dev_tenant",
         pool_size: 42
       })
-      |> PgEdge.Tenants.create_tenant()
+      |> Supavisor.Tenants.create_tenant()
 
     tenant
   end

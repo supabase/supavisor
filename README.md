@@ -1,12 +1,12 @@
-# pg_edge
+# supavisor
 
 ## Overview
 
-pg_edge (name tbd) is a scalable cloud-native Postgres connection pooler capable of supporting millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
+supavisor (name tbd) is a scalable cloud-native Postgres connection pooler capable of supporting millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
 
 For Postgres clients, goal is to provide Postgres connection pools as a service such that clients don't have to worry about connection limits of their Postgres database.
 
-For managers of Postgres databases, pg_edge should make managing Postgres clusters easy by handling Postgres high-availability cluster configuration and state.
+For managers of Postgres databases, supavisor should make managing Postgres clusters easy by handling Postgres high-availability cluster configuration and state.
 
 ## Postgres Features
 
@@ -35,7 +35,7 @@ For managers of Postgres databases, pg_edge should make managing Postgres cluste
 - Connection buffering
   - Supports a fast (minutes) tenant Postgres database restart without interupting clients (aside from query latency)
 - High-availability
-  - When deployed as a pg_edge cluster and a pg_edge node dies connection pools should be quickly spun up or already available on other nodes when clients reconnect
+  - When deployed as a supavisor cluster and a supavisor node dies connection pools should be quickly spun up or already available on other nodes when clients reconnect
 - Postgres high-availability management
   - Primary database election on primary failure
   - Health checks
@@ -43,7 +43,7 @@ For managers of Postgres databases, pg_edge should make managing Postgres cluste
   - What else?
 - Deployable as a single or multi-tenant proxy
   - Direct replacement for `pgbouncer`
-  - Uses specific `pg_edge` schema in metadata database so when used as a `pgbouncer` replacement it can use the local database as the metadata database
+  - Uses specific `supavisor` schema in metadata database so when used as a `pgbouncer` replacement it can use the local database as the metadata database
 
 ## General Features
 
@@ -59,7 +59,7 @@ For managers of Postgres databases, pg_edge should make managing Postgres cluste
   - Prometheus `/metrics` endpoint
   - Admin UI to add tenants, view metrics, sort tenants by throughput, ban tenants, etc
 - Config as code
-  - Not noly for the pg_edge cluster but tenant databases and tenant database clusters as well
+  - Not noly for the supavisor cluster but tenant databases and tenant database clusters as well
   - Pulumi / terraform support
 
 ## Inspiration

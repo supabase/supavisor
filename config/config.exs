@@ -7,15 +7,15 @@
 # General application configuration
 import Config
 
-config :pg_edge,
-  ecto_repos: [PgEdge.Repo],
+config :supavisor,
+  ecto_repos: [Supavisor.Repo],
   version: Mix.Project.config()[:version]
 
 # Configures the endpoint
-config :pg_edge, PgEdgeWeb.Endpoint,
+config :supavisor, SupavisorWeb.Endpoint,
   url: [host: "localhost"],
-  render_errors: [view: PgEdgeWeb.ErrorView, accepts: ~w(html json), layout: false],
-  pubsub_server: PgEdge.PubSub,
+  render_errors: [view: SupavisorWeb.ErrorView, accepts: ~w(html json), layout: false],
+  pubsub_server: Supavisor.PubSub,
   live_view: [signing_salt: "qf3AEZ7n"]
 
 # Configures Elixir's Logger

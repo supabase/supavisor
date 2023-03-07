@@ -1,4 +1,4 @@
-defmodule PgEdgeWeb.ConnCase do
+defmodule SupavisorWeb.ConnCase do
   @moduledoc """
   This module defines the test case to be used by
   tests that require setting up a connection.
@@ -11,7 +11,7 @@ defmodule PgEdgeWeb.ConnCase do
   we enable the SQL sandbox, so changes done to the database
   are reverted at the end of every test. If you are using
   PostgreSQL, you can even run database tests asynchronously
-  by setting `use PgEdgeWeb.ConnCase, async: true`, although
+  by setting `use SupavisorWeb.ConnCase, async: true`, although
   this option is not recommended for other databases.
   """
 
@@ -22,17 +22,17 @@ defmodule PgEdgeWeb.ConnCase do
       # Import conveniences for testing with connections
       import Plug.Conn
       import Phoenix.ConnTest
-      import PgEdgeWeb.ConnCase
+      import SupavisorWeb.ConnCase
 
-      alias PgEdgeWeb.Router.Helpers, as: Routes
+      alias SupavisorWeb.Router.Helpers, as: Routes
 
       # The default endpoint for testing
-      @endpoint PgEdgeWeb.Endpoint
+      @endpoint SupavisorWeb.Endpoint
     end
   end
 
   setup tags do
-    PgEdge.DataCase.setup_sandbox(tags)
+    Supavisor.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 end

@@ -1,8 +1,8 @@
-alias PgEdge.Tenants
-alias PgEdge.Repo
+alias Supavisor.Tenants
+alias Supavisor.Repo
 import Ecto.Adapters.SQL, only: [query: 3]
 
-db_conf = Application.get_env(:pg_edge, Repo)
+db_conf = Application.get_env(:supavisor, Repo)
 
 tenant_name = "dev_tenant"
 proxy_tenant = "proxy_tenant"

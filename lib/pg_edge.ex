@@ -1,9 +1,9 @@
-defmodule PgEdge do
+defmodule Supavisor do
   @moduledoc false
   require Logger
-  alias PgEdge.{Tenants, Tenants.Tenant, Manager}
+  alias Supavisor.{Tenants, Tenants.Tenant, Manager}
 
-  @registry PgEdge.Registry.Tenants
+  @registry Supavisor.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
 
   @spec start(String.t()) :: {:ok, pid} | {:error, any()}
@@ -116,14 +116,14 @@ defmodule PgEdge do
           user: db_user,
           database: db_database,
           password: fn -> db_pass end,
-          application_name: "pg_edge"
+          application_name: "supavisor"
         }
 
         args = %{tenant: tenant, auth: auth, pool_size: pool_size}
 
         DynamicSupervisor.start_child(
-          {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, tenant}},
-          {PgEdge.TenantSupervisor, args}
+          {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, tenant}},
+          {Supavisor.TenantSupervisor, args}
         )
         |> case do
           {:error, {:already_started, pid}} -> {:ok, pid}

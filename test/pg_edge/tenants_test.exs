@@ -1,12 +1,12 @@
-defmodule PgEdge.TenantsTest do
-  use PgEdge.DataCase
+defmodule Supavisor.TenantsTest do
+  use Supavisor.DataCase
 
-  alias PgEdge.Tenants
+  alias Supavisor.Tenants
 
   describe "tenants" do
-    alias PgEdge.Tenants.Tenant
+    alias Supavisor.Tenants.Tenant
 
-    import PgEdge.TenantsFixtures
+    import Supavisor.TenantsFixtures
 
     @invalid_attrs %{
       db_database: nil,
