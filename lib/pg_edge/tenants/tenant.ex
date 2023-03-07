@@ -2,6 +2,8 @@ defmodule PgEdge.Tenants.Tenant do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{}
+
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
   @schema_prefix "pgedge"
@@ -39,5 +41,6 @@ defmodule PgEdge.Tenants.Tenant do
       :db_password,
       :pool_size
     ])
+    |> unique_constraint([:external_id])
   end
 end

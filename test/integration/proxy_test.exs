@@ -1,11 +1,15 @@
-defmodule PgEdge.Integration.Proxy do
+defmodule PgEdge.Integration.ProxyTest do
   use PgEdge.DataCase
   alias Postgrex, as: P
 
-  @tenant "dev_tenant"
+  @tenant "proxy_tenant"
+
+  import PgEdge.TenantsFixtures
 
   setup_all do
     db_conf = Application.get_env(:pg_edge, Repo)
+
+    # :timer.sleep(10_000)
 
     {:ok, proxy} =
       Postgrex.start_link(
@@ -21,7 +25,7 @@ defmodule PgEdge.Integration.Proxy do
         hostname: db_conf[:hostname],
         port: db_conf[:port],
         database: db_conf[:database],
-        password: db_conf[:password],
+        password: "postgres",
         username: db_conf[:username]
       )
 

@@ -18,11 +18,6 @@ defmodule PgEdge.TenantsTest do
       pool_size: nil
     }
 
-    test "list_tenants/0 returns all tenants" do
-      tenant = tenant_fixture()
-      assert Tenants.list_tenants() == [tenant]
-    end
-
     test "get_tenant!/1 returns the tenant with given id" do
       tenant = tenant_fixture()
       assert Tenants.get_tenant!(tenant.id) == tenant

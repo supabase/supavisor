@@ -46,6 +46,10 @@ defmodule PgEdge.MixProject do
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.5.0"},
       {:cloak_ecto, "~> 1.2.0"},
+      {:meck, "~> 0.9.2", only: :test},
+      {:credo, "~> 1.6.4", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.1.0", only: [:dev], runtime: false},
+      {:benchee, "~> 1.1.0", only: :dev},
 
       # pooller
       {:poolboy, "~> 1.5.2"},

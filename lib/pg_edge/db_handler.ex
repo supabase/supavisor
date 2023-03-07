@@ -1,29 +1,25 @@
 defmodule PgEdge.DbHandler do
   require Logger
-  use GenServer
+
+  @behaviour :gen_statem
+
   alias PgEdge.Protocol.Server
   alias PgEdge.ClientHandler, as: Client
 
   def start_link(config) do
-    GenServer.start_link(__MODULE__, config)
+    :gen_statem.start_link(__MODULE__, config, [])
   end
 
   def call(pid, msg) do
-    GenServer.call(pid, {:db_call, msg})
+    :gen_statem.call(pid, {:db_call, msg})
   end
 
   @impl true
   def init(args) do
-    # IP
-    # {:ok, host} =
-    #   Application.get_env(:pg_edge, :db_host)
-    #   |> String.to_charlist()
-    #   |> :inet.parse_address()
-
     Process.flag(:trap_exit, true)
+    Logger.metadata(project: args.tenant)
 
-    state = %{
-      check_ref: make_ref(),
+    data = %{
       socket: nil,
       caller: nil,
       sent: false,
@@ -38,30 +34,15 @@ defmodule PgEdge.DbHandler do
       server_proof: nil
     }
 
-    send(self(), :connect)
-    {:ok, state}
-  end
-
-  # receive call from the client
-  @impl true
-  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket, messages: _m} = state) do
-    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(socket)}")
-
-    messages =
-      if socket && state.state == :idle do
-        :gen_tcp.send(socket, bin)
-        ""
-      else
-        state.messages <> bin
-      end
-
-    {:reply, :ok, %{state | caller: pid, messages: messages}}
+    {:ok, :connect, data, {:next_event, :internal, :connect}}
   end
 
   @impl true
-  def handle_info(:connect, %{auth: auth, check_ref: ref} = state) do
+  def callback_mode, do: [:handle_event_function]
+
+  @impl true
+  def handle_event(:internal, _, :connect, %{auth: auth} = data) do
     Logger.info("Try to connect to DB")
-    Process.cancel_timer(ref)
     socket_opts = [:binary, {:packet, :raw}, {:active, true}]
 
     case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
@@ -78,15 +59,20 @@ defmodule PgEdge.DbHandler do
           ])
 
         :ok = :gen_tcp.send(socket, msg)
-        {:noreply, %{state | state: :authentication, socket: socket}}
+        {:next_state, :authentication, %{data | socket: socket}}
 
       other ->
-        Logger.error("Connection faild #{inspect(other)}")
-        {:noreply, %{state | check_ref: reconnect()}}
+        Logger.error("Connection failed #{inspect(other)}")
+        {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
     end
   end
 
-  def handle_info({:tcp, _port, bin}, %{state: :authentication} = state) do
+  def handle_event(:state_timeout, :connect, _state, _) do
+    Logger.warning("Reconnect")
+    {:keep_state_and_data, {:next_event, :internal, :connect}}
+  end
+
+  def handle_event(:info, {:tcp, _, bin}, :authentication, data) do
     dec_pkt = Server.decode(bin)
     Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
@@ -105,7 +91,7 @@ defmodule PgEdge.DbHandler do
                 nonce = :pgo_scram.get_nonce(16)
 
                 client_first =
-                  state.auth.user
+                  data.auth.user
                   |> :pgo_scram.get_client_first(nonce)
 
                 client_first_size = IO.iodata_length(client_first)
@@ -118,7 +104,7 @@ defmodule PgEdge.DbHandler do
                 ]
 
                 bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
-                :gen_tcp.send(state.socket, bin)
+                :gen_tcp.send(data.socket, bin)
                 nonce
 
               other ->
@@ -129,19 +115,19 @@ defmodule PgEdge.DbHandler do
           {ps, :authentication_sasl, nonce}
 
         %{payload: {:authentication_server_first_message, server_first}}, {ps, _} ->
-          nonce = state.nonce
+          nonce = data.nonce
           server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
 
           {client_final_message, server_proof} =
             :pgo_scram.get_client_final(
               server_first_parts,
               nonce,
-              state.auth.user,
-              state.auth.password.()
+              data.auth.user,
+              data.auth.password.()
             )
 
           bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :gen_tcp.send(state.socket, bin)
+          :gen_tcp.send(data.socket, bin)
 
           {ps, :authentication_server_first_message, server_proof}
 
@@ -154,108 +140,48 @@ defmodule PgEdge.DbHandler do
 
     case resp do
       {_, :authentication_sasl, nonce} ->
-        {:noreply, %{state | nonce: nonce}}
+        {:keep_state, %{data | nonce: nonce}}
 
       {_, :authentication_server_first_message, server_proof} ->
-        {:noreply, %{state | server_proof: server_proof}}
+        {:keep_state, %{data | server_proof: server_proof}}
 
       {ps, db_state} ->
         Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
         Logger.debug("DB ready_for_query: #{inspect(db_state)}")
-        send(self(), :check_messages)
-        {:noreply, %{state | parameter_status: ps, state: :idle}}
+        # send(self(), :check_messages)
+        {:next_state, :idle, %{data | parameter_status: ps}}
     end
   end
 
-  # receive reply from DB and send to the client
-  def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf} = state) do
-    Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
-
-    if caller do
-      case handle_packets(buf <> bin) do
-        {:ok, :ready_for_query, rest, :idle} ->
-          Client.client_call(caller, bin, true)
-          {:noreply, %{state | buffer: rest}}
-
-        {:ok, _, rest, _} ->
-          Client.client_call(caller, bin, false)
-          {:noreply, %{state | buffer: rest}}
-      end
-    else
-      {:noreply, state}
-    end
+  def handle_event(:info, {:tcp, _, bin}, _, data) do
+    # check if the response ends with "ready for query"
+    ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
+    :ok = Client.client_call(data.caller, bin, ready)
+    :keep_state_and_data
   end
 
-  def handle_info(:check_messages, %{messages: m, socket: socket} = state) do
-    if m != "" do
-      :gen_tcp.send(socket, m)
-      {:noreply, %{state | messages: ""}}
-    else
-      {:noreply, state}
-    end
+  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, _, %{socket: socket} = data) do
+    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
+
+    reply = {:reply, from, :gen_tcp.send(socket, bin)}
+    {:keep_state, %{data | caller: pid}, reply}
   end
 
-  def handle_info({:tcp_closed, _port}, state) do
-    Logger.error("DB closed connection #{inspect(self())}")
-    {:noreply, %{state | check_ref: reconnect(), socket: nil}}
+  def handle_event(:info, {:tcp_closed, socket}, state, %{socket: socket} = data) do
+    Logger.error("Connection closed when state was #{state}")
+    {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
   end
 
-  def handle_info(msg, state) do
+  def handle_event(type, content, state, data) do
     msg = [
-      {"msg", msg},
-      {"state", state}
+      {"type", type},
+      {"content", content},
+      {"state", state},
+      {"data", data}
     ]
 
-    Logger.error("Undefined msg: #{inspect(msg, pretty: true)}")
-    {:noreply, state}
-  end
+    Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
 
-  def terminate(reason, _state) do
-    Logger.debug("DB terminated #{inspect(reason)}")
-    :ok
-  end
-
-  def handle_packets(<<char::integer-8, pkt_len::integer-32, rest::binary>> = bin) do
-    payload_len = pkt_len - 4
-    tag = Server.tag(char)
-
-    case rest do
-      <<payload::binary-size(payload_len)>> ->
-        pkt = Server.packet(tag, pkt_len, payload)
-        Logger.debug(inspect(pkt, pretty: true))
-
-        {:ok, tag, "", pkt.payload}
-
-      <<payload::binary-size(payload_len), rest1::binary>> ->
-        pkt = Server.packet(tag, pkt_len, payload)
-        Logger.debug(inspect(pkt, pretty: true))
-
-        handle_packets(rest1)
-
-      _ ->
-        {:ok, tag, bin, ""}
-    end
-  end
-
-  def handle_packets(bin) do
-    {:ok, :small_chunk, bin, ""}
-  end
-
-  def reconnect() do
-    Process.send_after(self(), :connect, 5_000)
-  end
-
-  def send_active_once(socket, msg) do
-    :gen_tcp.send(socket, msg)
-    :inet.setopts(socket, [{:active, :once}])
-  end
-
-  def active_once(socket) do
-    :inet.setopts(socket, [{:active, :once}])
-  end
-
-  defp decrypt_password(password) do
-    Application.get_env(:pg_edge, :db_enc_key)
-    |> PgEdge.Helpers.decrypt!(password)
+    :keep_state_and_data
   end
 end

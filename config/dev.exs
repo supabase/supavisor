@@ -59,8 +59,12 @@ config :pg_edge, PgEdgeWeb.Endpoint,
     ]
   ]
 
-# Do not include metadata nor timestamps in development logs
-config :logger, :console, format: "[$level] $message\n"
+# Configures Elixir's Logger
+config :logger, :console,
+  format: "$time [$level] $message $metadata\n",
+  level: :debug,
+  # level: :error,
+  metadata: [:error_code, :file, :line, :pid, :project]
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.

@@ -1,10 +1,9 @@
 defmodule PgEdge.ClientHandler do
   require Logger
-  use GenServer
-  @behaviour :ranch_protocol
 
-  alias PgEdge.Protocol.Client
-  alias PgEdge.Protocol.Server
+  @behaviour :ranch_protocol
+  @behaviour :gen_statem
+
   alias PgEdge.DbHandler, as: Db
 
   @impl true
@@ -13,166 +12,165 @@ defmodule PgEdge.ClientHandler do
     {:ok, pid}
   end
 
+  @impl true
+  def callback_mode,
+    do: [
+      :handle_event_function
+      # :state_enter
+    ]
+
   def client_call(pid, bin, ready?) do
-    GenServer.call(pid, {:client_call, bin, ready?})
+    :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
   end
 
   @impl true
-  def init(_opts) do
-    {:ok, %{}}
-  end
+  def init(_), do: :ignore
 
   def init(ref, trans, _opts) do
+    Process.flag(:trap_exit, true)
+
     {:ok, socket} = :ranch.handshake(ref)
     :ok = trans.setopts(socket, [{:active, true}])
     Logger.info("ClientHandler is: #{inspect(self())}")
 
-    :gen_server.enter_loop(
-      __MODULE__,
-      [],
-      %{
-        socket: socket,
-        trans: trans,
-        connected: false,
-        buffer: "",
-        db_pid: nil,
-        tenant: nil,
-        pool: nil,
-        manager: nil,
-        subscribe_ref: make_ref(),
-        state: :wait_startup_packet
-      }
-    )
+    data = %{
+      socket: socket,
+      trans: trans,
+      db_pid: nil,
+      tenant: nil,
+      pool: nil,
+      manager: nil
+    }
+
+    :gen_statem.enter_loop(__MODULE__, [], :negotiation, data)
   end
 
   @impl true
-  def handle_info(
-        {:tcp, sock, bin},
-        %{socket: socket, state: :wait_startup_packet} = state
-      )
-      when sock == socket do
-    Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
-
+  def handle_event(:info, {:tcp, _, <<bin::64>>}, :negotiation, data) do
+    Logger.warn("Client is trying to connect with SSL #{inspect(bin, limit: :infinity)}")
     # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
-    if byte_size(bin) == 8 do
-      :gen_tcp.send(socket, "N")
-      {:noreply, state}
-    else
-      hello = Client.decode_startup_packet(bin)
-      Logger.warning("Client startup message: #{inspect(hello)}")
+    :gen_tcp.send(data.socket, "N")
 
-      external_id =
-        hello.payload["user"]
-        |> get_external_id()
-
-      # TODO: check if tenant exists
-      :gen_tcp.send(socket, authentication_ok())
-      send(self(), :subscribe)
-      {:noreply, %{state | state: :subscribing, tenant: external_id}}
-    end
+    :keep_state_and_data
   end
 
-  def handle_info(:subscribe, %{tenant: tenant} = state) do
-    Process.cancel_timer(state.subscribe_ref)
+  def handle_event(:info, {:tcp, _, bin}, :negotiation, data) do
+    hello = decode_startup_packet(bin)
+    Logger.warning("Client startup message: #{inspect(hello)}")
+
+    external_id =
+      hello.payload["user"]
+      |> get_external_id()
+
+    Logger.metadata(project: external_id)
+
+    # TODO: check creds
+    :gen_tcp.send(data.socket, authentication_ok())
+
+    {:keep_state, %{data | tenant: external_id}, {:next_event, :internal, :subscribe}}
+  end
+
+  def handle_event(:internal, :subscribe, _, %{tenant: tenant} = data) do
+    Logger.info("Subscribe to tenant #{tenant}")
 
     with {:ok, tenant_sup} <- PgEdge.start(tenant),
-         {:ok,
-          %{
-            manager: manager,
-            pool: pool
-          }} <- PgEdge.subscribe_global(node(tenant_sup), self(), tenant) do
+         {:ok, %{manager: manager, pool: pool}} <-
+           PgEdge.subscribe_global(node(tenant_sup), self(), tenant) do
       Process.monitor(manager)
-      {:noreply, %{state | state: :idle, pool: pool, manager: manager}}
+      # TODO: remove this sleep, when db_handler will be ready
+      :timer.sleep(500)
+      {:next_state, :idle, %{data | pool: pool, manager: manager}}
     else
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
-        {:noreply, %{state | subscribe_ref: check_subscribe()}}
+        {:keep_state_and_data, {:timeout, 1000, :subscribe}}
     end
   end
 
-  def handle_info({:tcp, _, <<?X, 4::32>>}, state) do
+  def handle_event(:timeout, :subscribe, _, _) do
+    {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+  end
+
+  # ignore termination messages
+  def handle_event(:info, {:tcp, _, <<?X, 4::32>>}, _, _) do
     Logger.warn("Receive termination")
-    {:noreply, state}
+    :keep_state_and_data
   end
 
-  # select 1 stub
-  def handle_info({:tcp, _, <<?Q, 14::32, "SELECT 1;", 0>>}, state) do
-    Logger.info("Receive select 1")
-    state.trans.send(state.socket, Server.select_1_response())
-    {:noreply, state}
-  end
-
-  def handle_info({:tcp, _, bin}, %{buffer: buf, db_pid: db_pid, tenant: tenant} = state) do
+  def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     db_pid =
-      if db_pid do
-        db_pid
-      else
-        state.pool
-        |> :poolboy.checkout(true, 60000)
-      end
+      data.pool
+      |> :poolboy.checkout(true, 60000)
 
-    data = buf <> bin
+    Process.link(db_pid)
+    :ok = Db.call(db_pid, bin)
 
-    buf =
-      case Client.decode(data) do
-        {:ok, packets, rest} ->
-          Enum.each(packets, fn pkt ->
-            Logger.info("Packet: #{inspect(pkt)}")
-            Db.call(db_pid, pkt.bin)
-          end)
-
-          rest
-
-        {:error, reason} ->
-          Logger.error("Error: #{inspect(reason)}")
-          data
-      end
-
-    {:noreply, %{state | buffer: buf, db_pid: db_pid}}
+    {:next_state, :busy, %{data | db_pid: db_pid}}
   end
 
-  def handle_info({:tcp_closed, _}, state) do
-    Logger.info("Client closed connection")
-    {:stop, :normal, state}
+  def handle_event(:info, {:tcp, _, bin}, :busy, data) do
+    Db.call(data.db_pid, bin)
+
+    :keep_state_and_data
   end
 
-  def handle_info({:DOWN, _, _, _, _}, state) do
-    Logger.error("Manager down tenant: #{state.tenant}")
-    send(self(), :subscribe)
-    {:noreply, %{state | state: :subscribing, pool: nil, manager: nil}}
+  # client closed connection
+  def handle_event(_, {:tcp_closed, _}, _, data) do
+    Logger.info("tcp soket closed for #{inspect(data.tenant)}")
+    {:stop, :normal}
   end
 
-  def handle_info(msg, state) do
+  # linked db_handler went down
+  def handle_event(:info, {:EXIT, db_pid, reason}, _, _) do
+    Logger.error("DB handler #{inspect(db_pid)} exited #{inspect(reason)}")
+    {:stop, :normal}
+  end
+
+  # pool's manager went down
+  def handle_event(:info, {:DOWN, _, _, _, reason}, state, data) do
+    Logger.error(
+      "Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}"
+    )
+
+    case state do
+      :idle ->
+        {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+
+      :busy ->
+        {:stop, :normal}
+    end
+  end
+
+  # emulate handle_call
+  def handle_event({:call, from}, {:client_call, bin, ready?}, _, data) do
+    Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
+
+    reply = {:reply, from, :gen_tcp.send(data.socket, bin)}
+
+    if ready? do
+      Logger.debug("Client is ready")
+
+      Process.unlink(data.db_pid)
+      :poolboy.checkin(data.pool, data.db_pid)
+      {:next_state, :idle, %{data | db_pid: nil}, reply}
+    else
+      Logger.debug("Client is not ready")
+      {:keep_state_and_data, reply}
+    end
+  end
+
+  def handle_event(type, content, state, data) do
     msg = [
-      {"msg", msg},
-      {"state", state}
+      {"type", type},
+      {"content", content},
+      {"state", state},
+      {"data", data}
     ]
 
-    Logger.error("Undefined msg: #{inspect(msg, pretty: true)}")
+    Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
 
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_call(
-        {:client_call, bin, ready?},
-        _,
-        %{socket: socket, trans: trans, db_pid: db_pid, tenant: tenant} = state
-      ) do
-    db_pid1 =
-      if ready? do
-        state.pool
-        |> :poolboy.checkin(db_pid)
-
-        nil
-      else
-        db_pid
-      end
-
-    Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
-    trans.send(socket, bin)
-    {:reply, :ok, %{state | db_pid: db_pid1}}
+    :keep_state_and_data
   end
 
   # TODO: implement authentication response
@@ -221,7 +219,18 @@ defmodule PgEdge.ClientHandler do
     |> List.last()
   end
 
-  defp check_subscribe() do
-    Process.send_after(self(), :subscribe, 1000)
+  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
+    %{
+      len: len,
+      payload:
+        String.split(rest, <<0>>, trim: true)
+        |> Enum.chunk_every(2)
+        |> Enum.into(%{}, fn [k, v] -> {k, v} end),
+      tag: :startup
+    }
+  end
+
+  def decode_startup_packet(_) do
+    :undef
   end
 end

@@ -3,9 +3,10 @@ defmodule PgEdge.Protocol.Client do
 
   @pkt_header_size 5
 
-  defmodule(Pkt,
-    do: defstruct([:tag, :len, :payload, :bin])
-  )
+  defmodule Pkt do
+    @type t :: %__MODULE__{}
+    defstruct([:tag, :len, :payload, :bin])
+  end
 
   def pkt_header_size, do: @pkt_header_size
 

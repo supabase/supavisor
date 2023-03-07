@@ -110,13 +110,6 @@ defmodule PgEdge do
           pool_size: pool_size
         } = tenant_record
 
-        pool_spec = [
-          name: {:via, Registry, {@registry, {:pool, tenant}}},
-          worker_module: PgEdge.DbHandler,
-          size: pool_size,
-          max_overflow: 0
-        ]
-
         auth = %{
           host: String.to_charlist(db_host),
           port: db_port,
@@ -126,7 +119,7 @@ defmodule PgEdge do
           application_name: "pg_edge"
         }
 
-        args = %{tenant: tenant, auth: auth, pool_spec: pool_spec, pool_size: pool_size}
+        args = %{tenant: tenant, auth: auth, pool_size: pool_size}
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {PgEdge.DynamicSupervisor, tenant}},
