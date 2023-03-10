@@ -48,8 +48,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
-  def handle_event(:info, {:tcp, _, bin}, :exchange, data) when byte_size(bin) == 8 do
-    Logger.warn("Client is trying to connect with SSL #{inspect(bin, limit: :infinity)}")
+  def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, data) do
+    Logger.warn("Client is trying to connect with SSL")
     # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
     :gen_tcp.send(data.socket, "N")
