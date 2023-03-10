@@ -158,8 +158,6 @@ defmodule Supavisor.Protocol.Server do
         :password_message,
         <<"SCRAM-SHA-256", 0, _::32, bin::binary>>
       ) do
-    IO.inspect({1_313_123, bin})
-
     case kv_to_map(bin) do
       {:ok, map} -> {:scram_sha_256, map}
       {:error, _} -> :undefined
