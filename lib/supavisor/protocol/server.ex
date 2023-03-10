@@ -69,6 +69,7 @@ defmodule Supavisor.Protocol.Server do
       ?s -> :portal_suspended
       ?Z -> :ready_for_query
       ?T -> :row_description
+      ?p -> :password_message
       _ -> :undefined
     end
   end
@@ -153,8 +154,38 @@ defmodule Supavisor.Protocol.Server do
     :error
   end
 
+  def decode_payload(
+        :password_message,
+        <<"SCRAM-SHA-256", 0, _::32, bin::binary>>
+      ) do
+    IO.inspect({1_313_123, bin})
+
+    case kv_to_map(bin) do
+      {:ok, map} -> {:scram_sha_256, map}
+      {:error, _} -> :undefined
+    end
+  end
+
+  def decode_payload(:password_message, bin) do
+    case kv_to_map(bin) do
+      {:ok, map} -> {:first_msg_response, map}
+      {:error, _} -> :undefined
+    end
+  end
+
   def decode_payload(_, _) do
     :undefined
+  end
+
+  @spec kv_to_map(String.t()) :: {:ok, map()} | {:error, String.t()}
+  def kv_to_map(bin) do
+    Regex.scan(~r/(\w+)=([^,]*)/, bin)
+    |> Enum.map(fn [_, k, v] -> {k, v} end)
+    |> Map.new()
+    |> case do
+      map when map_size(map) > 0 -> {:ok, map}
+      _ -> {:error, "invalid key value string"}
+    end
   end
 
   def decode_row_description(0, "", acc), do: Enum.reverse(acc)
@@ -207,6 +238,37 @@ defmodule Supavisor.Protocol.Server do
         {string, <<0, rest::binary>>} = :erlang.split_binary(bin, pos)
         {:ok, string, rest}
     end
+  end
+
+  def send_request_authentication(socket) do
+    :gen_tcp.send(socket, <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>)
+  end
+
+  def exchange_first_message(nonce) do
+    secret = :pgo_scram.get_nonce(16) |> Base.encode64()
+    server_nonce = :pgo_scram.get_nonce(16) |> Base.encode64()
+    "r=#{nonce <> server_nonce},s=#{secret},i=4096"
+  end
+
+  @spec send_exchange_message(binary, :final | :first, port) ::
+          :ok | {:error, atom | {:timeout, binary}}
+  def send_exchange_message(message, type, socket) do
+    code =
+      case type do
+        :first ->
+          11
+
+        :final ->
+          12
+      end
+
+    :gen_tcp.send(socket, <<?R, byte_size(message) + 8::32, code::32, message::binary>>)
+  end
+
+  @spec send_error(port, integer, binary) :: :ok | {:error, atom | {:timeout, binary}}
+  def send_error(socket, type, value) do
+    message = <<type, value::binary, 0, 0>>
+    :gen_tcp.send(socket, <<?E, byte_size(message) + 4::32, message::binary>>)
   end
 
   def decode_parameter_description("", acc), do: Enum.reverse(acc)

@@ -28,7 +28,6 @@ defmodule Supavisor.DbHandler do
       buffer: "",
       db_state: nil,
       parameter_status: %{},
-      state: nil,
       nonce: nil,
       messages: "",
       server_proof: nil
@@ -54,7 +53,6 @@ defmodule Supavisor.DbHandler do
           :pgo_protocol.encode_startup_message([
             {"user", auth.user},
             {"database", auth.database},
-            # {"password", auth.user},
             {"application_name", auth.application_name}
           ])
 

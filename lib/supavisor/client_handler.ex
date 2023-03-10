@@ -5,6 +5,8 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Protocol.Server
+  alias Supavisor.{Tenants, Tenants.Tenant}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -42,11 +44,11 @@ defmodule Supavisor.ClientHandler do
       manager: nil
     }
 
-    :gen_statem.enter_loop(__MODULE__, [], :negotiation, data)
+    :gen_statem.enter_loop(__MODULE__, [], :exchange, data)
   end
 
   @impl true
-  def handle_event(:info, {:tcp, _, <<bin::64>>}, :negotiation, data) do
+  def handle_event(:info, {:tcp, _, bin}, :exchange, data) when byte_size(bin) == 8 do
     Logger.warn("Client is trying to connect with SSL #{inspect(bin, limit: :infinity)}")
     # TODO: implement SSL negotiation
     # SSL negotiation, S/N/Error
@@ -55,7 +57,7 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :negotiation, data) do
+  def handle_event(:info, {:tcp, _, bin}, :exchange, %{socket: socket} = data) do
     hello = decode_startup_packet(bin)
     Logger.warning("Client startup message: #{inspect(hello)}")
 
@@ -65,10 +67,35 @@ defmodule Supavisor.ClientHandler do
 
     Logger.metadata(project: external_id)
 
-    # TODO: check creds
-    :gen_tcp.send(data.socket, authentication_ok())
+    case Tenants.get_tenant_by_external_id(external_id) do
+      %Tenant{db_password: pass} ->
+        {:keep_state, %{data | tenant: external_id},
+         {:next_event, :internal, {:handle, fn -> pass end}}}
 
-    {:keep_state, %{data | tenant: external_id}, {:next_event, :internal, :subscribe}}
+      _ ->
+        Server.send_error(socket, ?S, "FATAL: Tenant not found")
+        {:stop, :normal, data}
+    end
+  end
+
+  def handle_event(:internal, {:handle, pass}, _, %{socket: socket} = data) do
+    Logger.info("Handle exchange")
+
+    handle_exchange(socket, pass)
+    |> case do
+      {:error, reason} ->
+        Logger.error("Exchange error: #{inspect(reason)}")
+
+        "e=#{reason}"
+        |> Server.send_exchange_message(:final, socket)
+
+        {:stop, :normal, data}
+
+      :ok ->
+        Logger.info("Exchange success")
+        :gen_tcp.send(socket, authentication_ok())
+        {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+    end
   end
 
   def handle_event(:internal, :subscribe, _, %{tenant: tenant} = data) do
@@ -232,5 +259,61 @@ defmodule Supavisor.ClientHandler do
 
   def decode_startup_packet(_) do
     :undef
+  end
+
+  @spec handle_exchange(port, fun) :: {:ok, any()} | {:error, String.t()}
+  def handle_exchange(socket, password) do
+    :ok = Server.send_request_authentication(socket)
+
+    receive do
+      {:tcp, socket, bin} ->
+        case Server.decode_pkt(bin) do
+          {:ok,
+           %{tag: :password_message, payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}},
+           _} ->
+            message = Server.exchange_first_message(nonce)
+            server_first_parts = :pgo_scram.parse_server_first(message, nonce)
+
+            {client_final_message, server_proof} =
+              :pgo_scram.get_client_final(
+                server_first_parts,
+                nonce,
+                user,
+                password.()
+              )
+
+            :ok =
+              message
+              |> Server.send_exchange_message(:first, socket)
+
+            receive do
+              {:tcp, socket, bin} ->
+                case Server.decode_pkt(bin) do
+                  {:ok, %{tag: :password_message, payload: {:first_msg_response, %{"p" => p}}}, _} ->
+                    if p == List.last(client_final_message) do
+                      "v=#{Base.encode64(server_proof)}"
+                      |> Server.send_exchange_message(:final, socket)
+                    else
+                      {:error, "Invalid client signature"}
+                    end
+
+                  other ->
+                    {:error, "Unexpected message #{inspect(other)}"}
+                end
+
+              other ->
+                {:error, "Unexpected message #{inspect(other)}"}
+            after
+              15_000 ->
+                {:error, "Timeout while waiting for the second password message"}
+            end
+
+          other ->
+            {:error, "Unexpected message #{inspect(other)}"}
+        end
+    after
+      15_000 ->
+        {:error, "Timeout while waiting for the first password message"}
+    end
   end
 end
