@@ -30,6 +30,17 @@ defmodule Supavisor.Integration.ProxyTest do
     %{proxy: proxy, origin: origin}
   end
 
+  test "the wrong password", %{proxy: proxy, origin: origin} do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    :os.cmd(
+      'psql postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres'
+    )
+    |> List.to_string()
+    |> String.contains?("error received from server in SCRAM exchange: Invalid client signature")
+    |> assert
+  end
+
   test "insert", %{proxy: proxy, origin: origin} do
     P.query!(proxy, "insert into public.test (details) values ('test_insert')", [])
 
