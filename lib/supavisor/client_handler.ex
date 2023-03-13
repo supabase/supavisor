@@ -88,8 +88,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, {:handle, pass}, _, %{socket: socket} = data) do
     Logger.info("Handle exchange")
 
-    handle_exchange(socket, pass)
-    |> case do
+    case handle_exchange(socket, pass) do
       {:error, reason} ->
         Logger.error("Exchange error: #{inspect(reason)}")
 
