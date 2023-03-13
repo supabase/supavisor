@@ -181,8 +181,7 @@ defmodule Supavisor.Protocol.Server do
   @spec kv_to_map(String.t()) :: {:ok, map()} | {:error, String.t()}
   def kv_to_map(bin) do
     Regex.scan(~r/(\w+)=([^,]*)/, bin)
-    |> Enum.map(fn [_, k, v] -> {k, v} end)
-    |> Map.new()
+    |> Map.new(fn [_, k, v] -> {k, v} end)
     |> case do
       map when map_size(map) > 0 -> {:ok, map}
       _ -> {:error, "invalid key value string"}
