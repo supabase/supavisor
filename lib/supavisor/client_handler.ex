@@ -99,7 +99,7 @@ defmodule Supavisor.ClientHandler do
 
       :ok ->
         Logger.info("Exchange success")
-        :gen_tcp.send(socket, authentication_ok())
+        :ok = :gen_tcp.send(socket, authentication_ok())
         {:keep_state_and_data, {:next_event, :internal, :subscribe}}
     end
   end
