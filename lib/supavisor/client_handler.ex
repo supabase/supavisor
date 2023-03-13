@@ -261,7 +261,7 @@ defmodule Supavisor.ClientHandler do
     :undef
   end
 
-  @spec handle_exchange(port, fun) :: {:ok, any()} | {:error, String.t()}
+  @spec handle_exchange(port, fun) :: :ok | {:error, String.t()}
   def handle_exchange(socket, password) do
     :ok = Server.send_request_authentication(socket)
 
