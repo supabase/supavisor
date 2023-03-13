@@ -1,5 +1,9 @@
 defmodule Supavisor.Protocol.Server do
+  @moduledoc """
+  The Supavisor.Protocol.Server module is responsible for decoding data received from the PostgreSQL server. It provides several functions to decode payloads from different types of messages.
+  """
   require Logger
+  alias PgType
 
   @pkt_header_size 5
 
@@ -145,8 +149,7 @@ defmodule Supavisor.Protocol.Server do
     decode_row_description(count, rest, [])
   end
 
-  def decode_payload(:data_row, payload) do
-    # String.split(payload, <<0>>)
+  def decode_payload(:data_row, _payload) do
     nil
   end
 
@@ -198,7 +201,7 @@ defmodule Supavisor.Protocol.Server do
           {:ok, format} ->
             field = %{
               name: field_name,
-              type_info: Supavisor.Protocol.PgType.type(data_type_oid),
+              type_info: PgType.type(data_type_oid),
               table_oid: table_oid,
               attr_number: attr_num,
               data_type_oid: data_type_oid,

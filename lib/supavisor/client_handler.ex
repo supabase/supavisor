@@ -1,4 +1,11 @@
 defmodule Supavisor.ClientHandler do
+  @moduledoc """
+  This module is responsible for handling incoming connections to the Supavisor server. It is
+  implemented as a Ranch protocol behavior and a gen_statem behavior. It handles SSL negotiation,
+  user authentication, tenant subscription, and dispatching of messages to the appropriate tenant
+  supervisor. Each client connection is assigned to a specific tenant supervisor.
+  """
+
   require Logger
 
   @behaviour :ranch_protocol
@@ -128,7 +135,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     db_pid =
       data.pool
-      |> :poolboy.checkout(true, 60000)
+      |> :poolboy.checkout(true, 60_000)
 
     Process.link(db_pid)
     :ok = Db.call(db_pid, bin)

@@ -1,4 +1,9 @@
 defmodule Supavisor.DbHandler do
+  """
+  This module contains functions to start a link with the database, send requests to the database, and handle incoming messages from clients.
+  It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
+  """
+
   require Logger
 
   @behaviour :gen_statem

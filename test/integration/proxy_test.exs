@@ -4,8 +4,6 @@ defmodule Supavisor.Integration.ProxyTest do
 
   @tenant "proxy_tenant"
 
-  import Supavisor.TenantsFixtures
-
   setup_all do
     db_conf = Application.get_env(:supavisor, Repo)
 
@@ -30,7 +28,7 @@ defmodule Supavisor.Integration.ProxyTest do
     %{proxy: proxy, origin: origin}
   end
 
-  test "the wrong password", %{proxy: proxy, origin: origin} do
+  test "the wrong password" do
     db_conf = Application.get_env(:supavisor, Repo)
 
     :os.cmd(
