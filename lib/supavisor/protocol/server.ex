@@ -267,8 +267,8 @@ defmodule Supavisor.Protocol.Server do
 
   @spec send_error(port, integer, binary) :: :ok | {:error, atom | {:timeout, binary}}
   def send_error(socket, type, value) do
-    message = <<type, value::binary, 0, 0>>
-    :gen_tcp.send(socket, <<?E, byte_size(message) + 4::32, message::binary>>)
+    message = [type, value, 0, 0]
+    :gen_tcp.send(socket, [<<?E, byte_size(message) + 4::32>>, message])
   end
 
   def decode_parameter_description("", acc), do: Enum.reverse(acc)
