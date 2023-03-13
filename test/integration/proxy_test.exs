@@ -31,12 +31,11 @@ defmodule Supavisor.Integration.ProxyTest do
   test "the wrong password" do
     db_conf = Application.get_env(:supavisor, Repo)
 
-    :os.cmd(
-      'psql postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres'
-    )
-    |> List.to_string()
-    |> String.contains?("error received from server in SCRAM exchange: Invalid client signature")
-    |> assert
+    url =
+      "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+
+    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
+    assert result =~ "error received from server in SCRAM exchange: Invalid client signature"
   end
 
   test "insert", %{proxy: proxy, origin: origin} do
