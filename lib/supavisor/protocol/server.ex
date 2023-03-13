@@ -3,7 +3,7 @@ defmodule Supavisor.Protocol.Server do
   The Supavisor.Protocol.Server module is responsible for decoding data received from the PostgreSQL server. It provides several functions to decode payloads from different types of messages.
   """
   require Logger
-  alias PgType
+  alias Supavisor.Protocol.PgType
 
   @pkt_header_size 5
 
