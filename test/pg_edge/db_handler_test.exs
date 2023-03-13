@@ -17,7 +17,6 @@ defmodule Supavisor.DbHandlerTest do
       assert data.buffer == ""
       assert data.db_state == nil
       assert data.parameter_status == %{}
-      assert data.state == nil
       assert data.nonce == nil
       assert data.messages == ""
       assert data.server_proof == nil
