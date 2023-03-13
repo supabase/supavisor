@@ -4,19 +4,15 @@ defmodule Supavisor.Integration.ProxyTest do
 
   @tenant "proxy_tenant"
 
-  import Supavisor.TenantsFixtures
-
   setup_all do
     db_conf = Application.get_env(:supavisor, Repo)
-
-    # :timer.sleep(10_000)
 
     {:ok, proxy} =
       Postgrex.start_link(
         hostname: db_conf[:hostname],
         port: Application.get_env(:supavisor, :proxy_port),
         database: db_conf[:database],
-        password: "no_pass",
+        password: db_conf[:password],
         username: db_conf[:username] <> "." <> @tenant
       )
 
@@ -25,11 +21,21 @@ defmodule Supavisor.Integration.ProxyTest do
         hostname: db_conf[:hostname],
         port: db_conf[:port],
         database: db_conf[:database],
-        password: "postgres",
+        password: db_conf[:password],
         username: db_conf[:username]
       )
 
     %{proxy: proxy, origin: origin}
+  end
+
+  test "the wrong password" do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url =
+      "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+
+    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
+    assert result =~ "error received from server in SCRAM exchange: Invalid client signature"
   end
 
   test "insert", %{proxy: proxy, origin: origin} do

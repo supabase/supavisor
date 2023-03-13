@@ -1,4 +1,9 @@
 defmodule Supavisor.DbHandler do
+  """
+  This module contains functions to start a link with the database, send requests to the database, and handle incoming messages from clients.
+  It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
+  """
+
   require Logger
 
   @behaviour :gen_statem
@@ -28,7 +33,6 @@ defmodule Supavisor.DbHandler do
       buffer: "",
       db_state: nil,
       parameter_status: %{},
-      state: nil,
       nonce: nil,
       messages: "",
       server_proof: nil
@@ -54,7 +58,6 @@ defmodule Supavisor.DbHandler do
           :pgo_protocol.encode_startup_message([
             {"user", auth.user},
             {"database", auth.database},
-            # {"password", auth.user},
             {"application_name", auth.application_name}
           ])
 

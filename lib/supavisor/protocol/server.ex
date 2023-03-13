@@ -1,5 +1,9 @@
 defmodule Supavisor.Protocol.Server do
+  @moduledoc """
+  The Supavisor.Protocol.Server module is responsible for decoding data received from the PostgreSQL server. It provides several functions to decode payloads from different types of messages.
+  """
   require Logger
+  alias Supavisor.Protocol.PgType
 
   @pkt_header_size 5
 
@@ -69,6 +73,7 @@ defmodule Supavisor.Protocol.Server do
       ?s -> :portal_suspended
       ?Z -> :ready_for_query
       ?T -> :row_description
+      ?p -> :password_message
       _ -> :undefined
     end
   end
@@ -144,8 +149,7 @@ defmodule Supavisor.Protocol.Server do
     decode_row_description(count, rest, [])
   end
 
-  def decode_payload(:data_row, payload) do
-    # String.split(payload, <<0>>)
+  def decode_payload(:data_row, _payload) do
     nil
   end
 
@@ -153,8 +157,35 @@ defmodule Supavisor.Protocol.Server do
     :error
   end
 
+  def decode_payload(
+        :password_message,
+        <<"SCRAM-SHA-256", 0, _::32, bin::binary>>
+      ) do
+    case kv_to_map(bin) do
+      {:ok, map} -> {:scram_sha_256, map}
+      {:error, _} -> :undefined
+    end
+  end
+
+  def decode_payload(:password_message, bin) do
+    case kv_to_map(bin) do
+      {:ok, map} -> {:first_msg_response, map}
+      {:error, _} -> :undefined
+    end
+  end
+
   def decode_payload(_, _) do
     :undefined
+  end
+
+  @spec kv_to_map(String.t()) :: {:ok, map()} | {:error, String.t()}
+  def kv_to_map(bin) do
+    Regex.scan(~r/(\w+)=([^,]*)/, bin)
+    |> Map.new(fn [_, k, v] -> {k, v} end)
+    |> case do
+      map when map_size(map) > 0 -> {:ok, map}
+      _ -> {:error, "invalid key value string"}
+    end
   end
 
   def decode_row_description(0, "", acc), do: Enum.reverse(acc)
@@ -169,7 +200,7 @@ defmodule Supavisor.Protocol.Server do
           {:ok, format} ->
             field = %{
               name: field_name,
-              type_info: Supavisor.Protocol.PgType.type(data_type_oid),
+              type_info: PgType.type(data_type_oid),
               table_oid: table_oid,
               attr_number: attr_num,
               data_type_oid: data_type_oid,
@@ -207,6 +238,37 @@ defmodule Supavisor.Protocol.Server do
         {string, <<0, rest::binary>>} = :erlang.split_binary(bin, pos)
         {:ok, string, rest}
     end
+  end
+
+  def send_request_authentication(socket) do
+    :gen_tcp.send(socket, <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>)
+  end
+
+  def exchange_first_message(nonce) do
+    secret = :pgo_scram.get_nonce(16) |> Base.encode64()
+    server_nonce = :pgo_scram.get_nonce(16) |> Base.encode64()
+    "r=#{nonce <> server_nonce},s=#{secret},i=4096"
+  end
+
+  @spec send_exchange_message(binary, :final | :first, port) ::
+          :ok | {:error, atom | {:timeout, binary}}
+  def send_exchange_message(message, type, socket) do
+    code =
+      case type do
+        :first ->
+          11
+
+        :final ->
+          12
+      end
+
+    :gen_tcp.send(socket, <<?R, byte_size(message) + 8::32, code::32, message::binary>>)
+  end
+
+  @spec send_error(port, integer, binary) :: :ok | {:error, atom | {:timeout, binary}}
+  def send_error(socket, type, value) do
+    message = [type, value, 0, 0]
+    :gen_tcp.send(socket, [<<?E, IO.iodata_length(message) + 4::32>>, message])
   end
 
   def decode_parameter_description("", acc), do: Enum.reverse(acc)

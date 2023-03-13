@@ -54,7 +54,7 @@ defmodule Supavisor.MixProject do
       # pooller
       {:poolboy, "~> 1.5.2"},
       {:syn, "~> 3.3"},
-      {:pgo, "~> 0.12"}
+      {:pgo, "~> 0.13"}
       # TODO: add ranch deps
     ]
   end

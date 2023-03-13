@@ -50,7 +50,7 @@ defmodule SupavisorWeb.TenantControllerTest do
   describe "create tenant" do
     test "renders tenant when data is valid", %{conn: conn} do
       conn = post(conn, Routes.tenant_path(conn, :create), tenant: @create_attrs)
-      assert %{"id" => id} = json_response(conn, 201)["data"]
+      assert %{"id" => _id} = json_response(conn, 201)["data"]
     end
 
     test "renders errors when data is invalid", %{conn: conn} do
@@ -64,7 +64,7 @@ defmodule SupavisorWeb.TenantControllerTest do
 
     test "renders tenant when data is valid", %{
       conn: conn,
-      tenant: %Tenant{external_id: external_id} = tenant
+      tenant: %Tenant{external_id: external_id} = _tenant
     } do
       conn = put(conn, Routes.tenant_path(conn, :update, external_id), tenant: @update_attrs)
       assert %{"external_id" => ^external_id} = json_response(conn, 200)["data"]
