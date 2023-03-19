@@ -12,7 +12,7 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.ClientHandler, as: Client
 
   def start_link(config) do
-    :gen_statem.start_link(__MODULE__, config, [])
+    :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
   @spec call(pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
@@ -172,11 +172,7 @@ defmodule Supavisor.DbHandler do
     ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
     :ok = Client.client_call(data.caller, bin, ready)
 
-    if ready do
-      {:keep_state_and_data, {:hibernate, true}}
-    else
-      :keep_state_and_data
-    end
+    :keep_state_and_data
   end
 
   def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{socket: socket} = data) do

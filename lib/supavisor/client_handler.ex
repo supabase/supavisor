@@ -23,10 +23,7 @@ defmodule Supavisor.ClientHandler do
 
   @impl true
   def callback_mode,
-    do: [
-      :handle_event_function
-      # :state_enter
-    ]
+    do: [:handle_event_function]
 
   def client_call(pid, bin, ready?) do
     :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
@@ -51,7 +48,7 @@ defmodule Supavisor.ClientHandler do
       manager: nil
     }
 
-    :gen_statem.enter_loop(__MODULE__, [], :exchange, data)
+    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
   end
 
   @impl true
