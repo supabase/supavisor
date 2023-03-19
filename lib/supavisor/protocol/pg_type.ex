@@ -1,6 +1,7 @@
 defmodule Supavisor.Protocol.PgType do
-  require Logger
-
+  @moduledoc """
+  A module to map PostgreSQL data types to their corresponding Elixir atoms
+  """
   def type(type) do
     case type do
       16 -> :booloid

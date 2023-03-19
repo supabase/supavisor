@@ -10,9 +10,10 @@ defmodule Supavisor.Protocol.Server do
 
   @pkt_header_size 5
 
-  defmodule(Pkt,
-    do: defstruct([:tag, :len, :payload])
-  )
+  defmodule Pkt do
+    @moduledoc "Representing a packet structure with tag, length, and payload fields."
+    defstruct([:tag, :len, :payload])
+  end
 
   def decode(data) do
     decode(data, [])
