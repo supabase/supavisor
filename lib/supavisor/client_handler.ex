@@ -80,7 +80,7 @@ defmodule Supavisor.ClientHandler do
          {:next_event, :internal, {:handle, fn -> pass end}}}
 
       _ ->
-        Server.send_error(socket, ?S, "FATAL: Tenant not found")
+        Server.send_error(socket, "XX000", "Tenant not found")
         {:stop, :normal, data}
     end
   end
@@ -111,8 +111,6 @@ defmodule Supavisor.ClientHandler do
          {:ok, %{manager: manager, pool: pool}} <-
            Supavisor.subscribe_global(node(tenant_sup), self(), tenant) do
       Process.monitor(manager)
-      # TODO: remove this sleep, when db_handler will be ready
-      :timer.sleep(500)
       {:next_state, :idle, %{data | pool: pool, manager: manager}}
     else
       error ->
@@ -137,15 +135,34 @@ defmodule Supavisor.ClientHandler do
       |> :poolboy.checkout(true, 60_000)
 
     Process.link(db_pid)
-    :ok = Db.call(db_pid, bin)
-
-    {:next_state, :busy, %{data | db_pid: db_pid}}
+    {:next_state, :busy, %{data | db_pid: db_pid}, {:next_event, :internal, {:tcp, nil, bin}}}
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :busy, data) do
-    Db.call(data.db_pid, bin)
+  def handle_event(_, {:tcp, _, bin}, :busy, data) do
+    case Db.call(data.db_pid, bin) do
+      :ok ->
+        Logger.info("DB call success")
+        :keep_state_and_data
 
-    :keep_state_and_data
+      {:buffering, size} ->
+        Logger.warn("DB call buffering #{size}}")
+
+        if size > 1_000_000 do
+          msg = "Db buffer size is too big: #{size}"
+          Logger.error(msg)
+          Server.send_error(data.socket, "XX000", msg)
+          {:stop, :normal, data}
+        else
+          Logger.debug("DB call buffering")
+          :keep_state_and_data
+        end
+
+      {:error, reason} ->
+        msg = "DB call error: #{inspect(reason)}"
+        Logger.error(msg)
+        Server.send_error(data.socket, "XX000", msg)
+        {:stop, :normal, data}
+    end
   end
 
   # client closed connection

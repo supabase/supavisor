@@ -1,6 +1,9 @@
 defmodule Supavisor.Protocol.Server do
   @moduledoc """
   The Supavisor.Protocol.Server module is responsible for decoding data received from the PostgreSQL server. It provides several functions to decode payloads from different types of messages.
+
+  Message Formats: https://www.postgresql.org/docs/current/protocol-message-formats.html
+  Error codes https://www.postgresql.org/docs/current/errcodes-appendix.html
   """
   require Logger
   alias Supavisor.Protocol.PgType
@@ -265,9 +268,10 @@ defmodule Supavisor.Protocol.Server do
     :gen_tcp.send(socket, <<?R, byte_size(message) + 8::32, code::32, message::binary>>)
   end
 
-  @spec send_error(port, integer, binary) :: :ok | {:error, atom | {:timeout, binary}}
-  def send_error(socket, type, value) do
-    message = [type, value, 0, 0]
+  @spec send_error(port, binary, binary) :: :ok | {:error, atom | {:timeout, binary}}
+  def send_error(socket, code, value) do
+    message = ["SFATAL", 0, "VFATAL", 0, "C", code, 0, "M", value, 0, 0]
+
     :gen_tcp.send(socket, [<<?E, IO.iodata_length(message) + 4::32>>, message])
   end
 

@@ -14,11 +14,10 @@ defmodule Supavisor.DbHandlerTest do
       assert data.sent == false
       assert data.auth == args.auth
       assert data.tenant == args.tenant
-      assert data.buffer == ""
+      assert data.buffer == []
       assert data.db_state == nil
       assert data.parameter_status == %{}
       assert data.nonce == nil
-      assert data.messages == ""
       assert data.server_proof == nil
     end
   end
@@ -73,5 +72,33 @@ defmodule Supavisor.DbHandlerTest do
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
       :meck.unload(:gen_tcp)
     end
+  end
+
+  test "handle_event/4 with idle state" do
+    {:ok, socket} = :gen_tcp.listen(0, [])
+    data = %{socket: socket, caller: nil, buffer: []}
+    from = {self(), :test_ref}
+    event = {:call, from}
+    payload = {:db_call, "test_data"}
+
+    {:keep_state, new_data, reply} = Db.handle_event(event, payload, :idle, data)
+
+    # check if the message arrived in gen_tcp.send
+    assert {:reply, ^from, {:error, :enotconn}} = reply
+    assert new_data.caller == self()
+  end
+
+  test "handle_event/4 with non-idle state" do
+    data = %{socket: nil, caller: nil, buffer: []}
+    from = {self(), :test_ref}
+    event = {:call, from}
+    payload = {:db_call, "test_data"}
+    state = :non_idle
+
+    {:keep_state, new_data, reply} = Db.handle_event(event, payload, state, data)
+
+    assert {:reply, ^from, {:buffering, 9}} = reply
+    assert new_data.caller == self()
+    assert new_data.buffer == ["test_data"]
   end
 end
