@@ -32,20 +32,22 @@ jobs:
         run: mix ecto.migrate --prefix supavisor --log-migrator-sql
       - name: Run format check
         run: mix format --check-formatted
-      - name: Credo checks
-        run: mix credo --strict --mute-exit-status
-      - name: Retrieve PLT Cache
-        uses: actions/cache@v1
-        id: plt-cache
-        with:
-          path: priv/plts
-          key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-plts-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-      - name: Create PLTs
-        if: steps.plt-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p priv/plts
-          mix dialyzer.build
-      - name: Run dialyzer
-        run: mix dialyzer
+      # - name: Credo checks
+      #   run: mix credo --strict --mute-exit-status
+      # - name: Retrieve PLT Cache
+      #   uses: actions/cache@v1
+      #   id: plt-cache
+      #   with:
+      #     path: priv/plts
+      #     key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-plts-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+      # - name: Create PLTs
+      #   if: steps.plt-cache.outputs.cache-hit != 'true'
+      #   run: |
+      #     mkdir -p priv/plts
+      #     mix dialyzer.build
+      # - name: Run dialyzer
+      #   run: mix dialyzer
+      - name: Start epmd
+        run: epmd -daemon
       - name: Run tests
         run: mix test

@@ -26,7 +26,7 @@ defmodule Supavisor.SynHandler do
         resp =
           if Process.alive?(stop) do
             try do
-              DynamicSupervisor.stop(stop, :shutdown, 30_000)
+              Supervisor.stop(stop, :shutdown, 30_000)
             catch
               error, reason -> {:error, {error, reason}}
             end
