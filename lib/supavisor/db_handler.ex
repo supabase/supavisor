@@ -1,5 +1,5 @@
 defmodule Supavisor.DbHandler do
-  """
+  @moduledoc """
   This module contains functions to start a link with the database, send requests to the database, and handle incoming messages from clients.
   It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
   """
@@ -12,9 +12,10 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.ClientHandler, as: Client
 
   def start_link(config) do
-    :gen_statem.start_link(__MODULE__, config, [])
+    :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
+  @spec call(pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, msg) do
     :gen_statem.call(pid, {:db_call, msg})
   end
@@ -30,7 +31,7 @@ defmodule Supavisor.DbHandler do
       sent: false,
       auth: args.auth,
       tenant: args.tenant,
-      buffer: "",
+      buffer: [],
       db_state: nil,
       parameter_status: %{},
       nonce: nil,
@@ -149,30 +150,62 @@ defmodule Supavisor.DbHandler do
         {:keep_state, %{data | server_proof: server_proof}}
 
       {ps, db_state} ->
-        Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
         Logger.debug("DB ready_for_query: #{inspect(db_state)}")
-        # send(self(), :check_messages)
-        {:next_state, :idle, %{data | parameter_status: ps}}
+
+        {:next_state, :idle, %{data | parameter_status: ps},
+         {:next_event, :internal, :check_buffer}}
     end
+  end
+
+  def handle_event(:internal, :check_buffer, :idle, %{buffer: buff} = data) do
+    if buff != [] do
+      Logger.warning("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      buff = Enum.reverse(buff)
+      :ok = :gen_tcp.send(data.socket, buff)
+    end
+
+    {:keep_state, %{data | buffer: []}}
   end
 
   def handle_event(:info, {:tcp, _, bin}, _, data) do
     # check if the response ends with "ready for query"
     ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
     :ok = Client.client_call(data.caller, bin, ready)
+
     :keep_state_and_data
   end
 
-  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, _, %{socket: socket} = data) do
-    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
-
+  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{socket: socket} = data) do
     reply = {:reply, from, :gen_tcp.send(socket, bin)}
     {:keep_state, %{data | caller: pid}, reply}
+  end
+
+  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, state, %{buffer: buff} = data) do
+    Logger.warning(
+      "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}"
+    )
+
+    new_buff = [bin | buff]
+    reply = {:reply, from, {:buffering, IO.iodata_length(new_buff)}}
+    {:keep_state, %{data | caller: pid, buffer: new_buff}, reply}
   end
 
   def handle_event(:info, {:tcp_closed, socket}, state, %{socket: socket} = data) do
     Logger.error("Connection closed when state was #{state}")
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
+  end
+
+  # linked client_handler went down
+  def handle_event(_, {:EXIT, pid, reason}, state, data) do
+    Logger.error("Client handler #{inspect(pid)} went down with reason #{inspect(reason)}")
+
+    if state == :idle do
+      :ok = :gen_tcp.send(data.socket, <<?X, 4::32>>)
+      :ok = :gen_tcp.close(data.socket)
+      {:stop, :normal, data}
+    else
+      {:keep_state, %{data | caller: nil, buffer: []}}
+    end
   end
 
   def handle_event(type, content, state, data) do
