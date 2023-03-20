@@ -7,7 +7,7 @@ defmodule Supavisor.SynHandlerTest do
   test "resolving conflict" do
     node2 = :"secondary@127.0.0.1"
     {:ok, pid2} = :erpc.call(node2, Supavisor, :start, [@tenant])
-    Node.disconnect(node2)
+    true = Node.disconnect(node2)
     {:ok, pid1} = Supavisor.start(@tenant)
     :pong = Node.ping(node2)
     :timer.sleep(250)
