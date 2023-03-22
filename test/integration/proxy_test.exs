@@ -48,8 +48,7 @@ defmodule Supavisor.Integration.ProxyTest do
   test "query via another node", %{proxy: proxy} do
     sup =
       Enum.reduce_while(1..30, nil, fn _, acc ->
-        Supavisor.get_global_sup(@tenant)
-        |> case do
+        case Supavisor.get_global_sup(@tenant) do
           nil ->
             Process.sleep(100)
             {:cont, acc}
