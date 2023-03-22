@@ -1,7 +1,6 @@
-Node.start(:"primary@127.0.0.1", :longnames) |> IO.inspect()
+{:ok, _} = Node.start(:"primary@127.0.0.1", :longnames)
 node2 = :"secondary@127.0.0.1"
-:ct_slave.start(node2) |> IO.inspect()
-:timer.sleep(1000)
+:ct_slave.start(node2)
 true = :erpc.call(node2, :code, :set_path, [:code.get_path()])
 
 Supavisor.Support.Cluster.apply_config(node2)
