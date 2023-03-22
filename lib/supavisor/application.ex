@@ -16,6 +16,7 @@ defmodule Supavisor.Application do
       []
     )
 
+    :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants])
 
     Registry.start_link(

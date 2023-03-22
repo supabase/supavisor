@@ -45,6 +45,42 @@ defmodule Supavisor.Integration.ProxyTest do
              P.query!(origin, "select * from public.test where details = 'test_insert'", [])
   end
 
+  test "query via another node", %{proxy: proxy} do
+    sup =
+      Enum.reduce_while(1..30, nil, fn _, acc ->
+        case Supavisor.get_global_sup(@tenant) do
+          nil ->
+            Process.sleep(100)
+            {:cont, acc}
+
+          pid ->
+            {:halt, pid}
+        end
+      end)
+
+    assert sup ==
+             :erpc.call(:"secondary@127.0.0.1", Supavisor, :get_global_sup, [@tenant], 15_000)
+
+    db_conf = Application.fetch_env!(:supavisor, Repo)
+
+    {:ok, proxy2} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :secondary_proxy_port),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: db_conf[:username] <> "." <> @tenant
+      )
+
+    P.query!(proxy2, "insert into public.test (details) values ('dist_test_insert')", [])
+
+    assert %P.Result{num_rows: 1} =
+             P.query!(proxy, "select * from public.test where details = 'dist_test_insert'", [])
+
+    assert sup ==
+             :erpc.call(:"secondary@127.0.0.1", Supavisor, :get_global_sup, [@tenant], 15_000)
+  end
+
   test "select", %{proxy: proxy, origin: origin} do
     P.query!(origin, "insert into public.test (details) values ('test_select')", [])
 

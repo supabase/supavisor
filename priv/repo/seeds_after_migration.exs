@@ -5,23 +5,26 @@ import Ecto.Adapters.SQL, only: [query: 3]
 db_conf = Application.get_env(:supavisor, Repo)
 
 tenant_name = "dev_tenant"
-proxy_tenant = "proxy_tenant"
 
 if Tenants.get_tenant_by_external_id(tenant_name) do
   Tenants.delete_tenant_by_external_id(tenant_name)
 end
 
-if !Tenants.get_tenant_by_external_id(proxy_tenant) do
-  %{
-    db_database: db_conf[:database],
-    db_host: db_conf[:hostname],
-    db_password: db_conf[:password],
-    db_port: db_conf[:port],
-    db_user: db_conf[:username],
-    external_id: proxy_tenant,
-    pool_size: 3
-  } |> Tenants.create_tenant()
-end
+["proxy_tenant", "syn_tenant"]
+|> Enum.each(fn tenant ->
+  if !Tenants.get_tenant_by_external_id(tenant) do
+    %{
+      db_database: db_conf[:database],
+      db_host: db_conf[:hostname],
+      db_password: db_conf[:password],
+      db_port: db_conf[:port],
+      db_user: db_conf[:username],
+      external_id: tenant,
+      pool_size: 3
+    }
+    |> Tenants.create_tenant()
+  end
+end)
 
 {:ok, _} =
   Repo.transaction(fn ->

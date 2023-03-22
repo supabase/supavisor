@@ -3,7 +3,9 @@ import Config
 config :supavisor,
   api_jwt_secret: "dev",
   jwt_claim_validators: %{},
-  proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer()
+  proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
+  secondary_proxy_port: 7655,
+  secondary_http: 4003
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",
