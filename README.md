@@ -2,11 +2,11 @@
 
 ## Overview
 
-Supavisor is a scalable cloud-native Postgres connection pooler capable of supporting millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
+Supavisor is a scalable, cloud-native Postgres connection pooler. It's capable of supporting millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
 
-For Postgres clients, goal is to provide Postgres connection pools as a service such that clients don't have to worry about connection limits of their Postgres database.
+For Postgres clients, the goal is to provide Postgres connection pools as a service so that clients don't have to worry about connection limits of their Postgres database.
 
-For managers of Postgres databases, supavisor should make managing Postgres clusters easy by handling Postgres high-availability cluster configuration and state.
+For managers of Postgres databases, supavisor makes managing Postgres clusters easy by handling Postgres high-availability cluster configuration and state.
 
 ## Postgres Features
 
