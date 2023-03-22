@@ -1,4 +1,8 @@
 defmodule Supavisor.Support.Cluster do
+  @moduledoc """
+  This module provides functionality to help handle distributive mode for testing.
+  """
+
   def apply_config(node) do
     for {app_name, _, _} <- Application.loaded_applications() do
       for {key, val} <- Application.get_all_env(app_name) do
