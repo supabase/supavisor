@@ -1,7 +1,8 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: false
   alias Supavisor.DbHandler, as: Db
-  # import Mock
+  import Logger
+  import ExUnit.CaptureLog
 
   describe "init/1" do
     test "starts with correct state" do
@@ -100,5 +101,16 @@ defmodule Supavisor.DbHandlerTest do
     assert {:reply, ^from, {:buffering, 9}} = reply
     assert new_data.caller == self()
     assert new_data.buffer == ["test_data"]
+  end
+
+  test "handle shutdown" do
+    :meck.new(:erl_signal_handler, [:unstick, :passthrough])
+    :meck.expect(:erl_signal_handler, :handle_event, fn _, _ -> :ok end)
+    Supavisor.SignalHandler.handle_event(:sigterm, nil)
+    assert Db.init(%{tenant: nil, auth: nil}) == {:ok, :wait_shutdown, nil}
+
+    msg = "Shutdown in progress, skip connection to DB"
+    assert capture_log(fn -> Logger.warn(msg) end) =~ msg
+    Application.delete_env(:supavisor, :shutdown_in_progress)
   end
 end

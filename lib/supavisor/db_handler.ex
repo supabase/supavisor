@@ -8,7 +8,7 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
-  alias Supavisor.Protocol.Server
+  alias Supavisor.{Protocol.Server, SignalHandler}
   alias Supavisor.ClientHandler, as: Client
 
   def start_link(config) do
@@ -39,7 +39,12 @@ defmodule Supavisor.DbHandler do
       server_proof: nil
     }
 
-    {:ok, :connect, data, {:next_event, :internal, :connect}}
+    if SignalHandler.shutdown_in_progress?() do
+      Logger.warn("Shutdown in progress, skip connection to DB")
+      {:ok, :wait_shutdown, nil}
+    else
+      {:ok, :connect, data, {:next_event, :internal, :connect}}
+    end
   end
 
   @impl true
