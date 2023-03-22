@@ -80,7 +80,7 @@ For managers of Postgres databases, supavisor should make managing Postgres clus
 
 ## Installation
 
-tbd
+[Installation and usage for development](https://github.com/supabase/supavisor/wiki/Installation-and-Usage)
 
 ## Benchmarking
 
