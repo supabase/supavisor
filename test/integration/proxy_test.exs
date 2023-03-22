@@ -61,7 +61,7 @@ defmodule Supavisor.Integration.ProxyTest do
     assert sup ==
              :erpc.call(:"secondary@127.0.0.1", Supavisor, :get_global_sup, [@tenant], 15_000)
 
-    db_conf = Application.get_env(:supavisor, Repo)
+    db_conf = Application.fetch_env!(:supavisor, Repo)
 
     {:ok, proxy2} =
       Postgrex.start_link(
