@@ -5,7 +5,7 @@ defmodule Supavisor.SynHandler do
   require Logger
 
   def on_process_unregistered(:tenants, tenant, _pid, _meta, reason) do
-    Logger.debug("Process unregistered: #{inspect(tenant)}")
+    Logger.debug("Process unregistered: #{inspect(tenant)} #{inspect(reason)}")
   end
 
   def resolve_registry_conflict(
