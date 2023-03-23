@@ -12,8 +12,10 @@ defmodule Supavisor.JwtTest do
       assert claims["role"] == "test"
     end
 
-    test "returns token_not_a_string for non-binary token" do
-      assert {:error, :token_not_a_string} = Jwt.authorize(123, @secret)
+    test "raises an error for non-binary token" do
+      assert_raise FunctionClauseError, fn ->
+        Jwt.authorize(123, @secret)
+      end
     end
 
     test "returns signature_error for a wrong secret" do
