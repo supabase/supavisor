@@ -19,7 +19,7 @@ defmodule Supavisor.MixProject do
   def application do
     [
       mod: {Supavisor.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools, :os_mon]
     ]
   end
 
@@ -50,6 +50,7 @@ defmodule Supavisor.MixProject do
       {:credo, "~> 1.6.4", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.1.0", only: [:dev], runtime: false},
       {:benchee, "~> 1.1.0", only: :dev},
+      {:prom_ex, "~> 1.7.1"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},

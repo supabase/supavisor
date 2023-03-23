@@ -32,7 +32,8 @@ if config_env() != :test do
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     tenant_option: System.get_env("TENANT_OPTION", "tenant"),
-    proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer()
+    proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
+    prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer()
 
   config :supavisor, Supavisor.Repo,
     hostname: System.get_env("DB_HOST", "localhost"),

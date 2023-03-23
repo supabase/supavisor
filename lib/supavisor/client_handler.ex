@@ -12,8 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.Protocol.Server
-  alias Supavisor.{Tenants, Tenants.Tenant}
+  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -127,9 +126,13 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
-    db_pid =
-      data.pool
-      |> :poolboy.checkout(true, 60_000)
+    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
+
+    :telemetry.execute(
+      [:supavisor, :pool, :checkout, :stop],
+      %{duration: time},
+      %{tenant: data.tenant}
+    )
 
     Process.link(db_pid)
     {:next_state, :busy, %{data | db_pid: db_pid}, {:next_event, :internal, {:tcp, nil, bin}}}

@@ -25,7 +25,7 @@ defmodule Supavisor.Application do
     )
 
     children = [
-      # Start the Ecto repository
+      Supavisor.Monitoring.PromEx,
       Supavisor.Repo,
       # Start the Telemetry supervisor
       SupavisorWeb.Telemetry,

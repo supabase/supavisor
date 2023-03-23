@@ -6,6 +6,8 @@ defmodule Supavisor.SynHandler do
 
   def on_process_unregistered(:tenants, tenant, _pid, _meta, reason) do
     Logger.debug("Process unregistered: #{inspect(tenant)} #{inspect(reason)}")
+    # remove all Prometheus metrics for the specified tenant
+    Supavisor.Monitoring.PromEx.remote_metrics(tenant)
   end
 
   def resolve_registry_conflict(
