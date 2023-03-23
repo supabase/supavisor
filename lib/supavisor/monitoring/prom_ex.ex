@@ -27,8 +27,8 @@ defmodule Supavisor.Monitoring.PromEx do
     ]
   end
 
-  @spec remote_metrics(String.t()) :: non_neg_integer()
-  def remote_metrics(tenant) do
+  @spec remove_metrics(String.t()) :: non_neg_integer()
+  def remove_metrics(tenant) do
     Supavisor.Monitoring.PromEx.Metrics
     |> :ets.select_delete([{{{:_, %{tenant: tenant}}, :_}, [], [nil]}])
   end
