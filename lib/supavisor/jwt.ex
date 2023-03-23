@@ -35,8 +35,6 @@ defmodule Supavisor.Jwt do
     |> verify(secret)
   end
 
-  def authorize(_token, _secret), do: {:error, :token_not_a_string}
-
   defp clean_token(token) do
     Regex.replace(~r/\s|\n/, URI.decode(token), "")
   end
