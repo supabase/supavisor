@@ -1,5 +1,5 @@
 defmodule Supavisor.JwtTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   alias Supavisor.Jwt
 
   @secret "my_secret_key"
