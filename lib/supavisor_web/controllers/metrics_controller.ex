@@ -10,18 +10,16 @@ defmodule SupavisorWeb.MetricsController do
 
   @spec index(Plug.Conn.t(), any()) :: Plug.Conn.t()
   def index(conn, _) do
-    cluster_metrics =
-      Node.list()
-      |> fetch_cluster_metrics()
+    cluster_metrics = fetch_cluster_metrics()
 
     conn
     |> put_resp_content_type("text/plain")
     |> send_resp(200, cluster_metrics)
   end
 
-  @spec fetch_cluster_metrics([atom()]) :: String.t()
-  defp fetch_cluster_metrics(nodes) do
-    nodes
+  @spec fetch_cluster_metrics() :: String.t()
+  def fetch_cluster_metrics() do
+    Node.list()
     |> Task.async_stream(&fetch_node_metrics/1, timeout: :infinity)
     |> Enum.reduce(PromEx.get_metrics(), &merge_node_metrics/2)
   end

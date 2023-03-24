@@ -129,13 +129,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     ts = System.monotonic_time()
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
-
-    :telemetry.execute(
-      [:supavisor, :pool, :checkout, :stop],
-      %{duration: time},
-      %{tenant: data.tenant}
-    )
-
+    log_checkout_time(time, data.tenant)
     Process.link(db_pid)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
@@ -267,6 +261,15 @@ defmodule Supavisor.ClientHandler do
   end
 
   ## Internal functions
+
+  @spec log_checkout_time(integer(), String.t()) :: :ok
+  def log_checkout_time(time, tenant) do
+    :telemetry.execute(
+      [:supavisor, :pool, :checkout, :stop],
+      %{duration: time},
+      %{tenant: tenant}
+    )
+  end
 
   @spec log_query_time(integer(), String.t()) :: :ok
   def log_query_time(start, tenant) do
