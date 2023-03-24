@@ -25,7 +25,7 @@ defmodule Supavisor.PromExTest do
   end
 
   test "remove tenant tag upon termination", %{proxy: proxy} do
-    P.query!(proxy, "insert into public.test (details) values ('test_insert')", [])
+    P.query!(proxy, "select 1;", [])
     Process.sleep(500)
     metrics = PromEx.get_metrics()
     assert metrics =~ "tenant=\"#{@tenant}\""
