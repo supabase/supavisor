@@ -36,6 +36,17 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
             buckets: [125, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000]
           ]
         ),
+        distribution(
+          [:supavisor, :client, :query, :duration],
+          event_name: [:supavisor, :client, :query, :stop],
+          measurement: :duration,
+          description: "Duration of processing the query.",
+          tags: [:tenant],
+          unit: {:native, :millisecond},
+          reporter_options: [
+            buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000]
+          ]
+        ),
         sum(
           [:supavisor, :client, :network, :recv],
           event_name: [:supavisor, :client, :network, :stat],
@@ -48,6 +59,12 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by clients.",
+          tags: [:tenant]
+        ),
+        counter(
+          [:supavisor, :client, :queries, :count],
+          event_name: [:supavisor, :pool, :checkout, :stop],
+          description: "The total number of queries received by clients.",
           tags: [:tenant]
         )
       ]
@@ -76,7 +93,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  defp concurrent_connections(poll_rate) do
+  def concurrent_connections(poll_rate) do
     Polling.build(
       :supavisor_concurrent_connections,
       poll_rate,
@@ -101,7 +118,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   @spec emit_telemetry_for_tenant({String.t(), pid(), :ets.tid()}) :: :ok
-  defp emit_telemetry_for_tenant({tenant, _, tid}) do
+  def emit_telemetry_for_tenant({tenant, _, tid}) do
     :telemetry.execute(
       [:supavisor, :connections],
       %{connected: :ets.info(tid, :size)},

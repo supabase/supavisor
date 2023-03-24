@@ -14,8 +14,8 @@ defmodule Supavisor.Helpers do
           %{tenant: tenant}
         )
 
-      {:error, Reason} ->
-        Logger.error("Failed to get socket stats: #{inspect(Reason)}")
+      {:error, reason} ->
+        Logger.error("Failed to get socket stats: #{inspect(reason)}")
     end
   end
 end

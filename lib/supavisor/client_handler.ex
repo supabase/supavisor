@@ -44,7 +44,8 @@ defmodule Supavisor.ClientHandler do
       db_pid: nil,
       tenant: nil,
       pool: nil,
-      manager: nil
+      manager: nil,
+      query_start: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -126,6 +127,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
+    ts = System.monotonic_time()
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
 
     :telemetry.execute(
@@ -135,7 +137,9 @@ defmodule Supavisor.ClientHandler do
     )
 
     Process.link(db_pid)
-    {:next_state, :busy, %{data | db_pid: db_pid}, {:next_event, :internal, {:tcp, nil, bin}}}
+
+    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
+     {:next_event, :internal, {:tcp, nil, bin}}}
   end
 
   def handle_event(_, {:tcp, _, bin}, :busy, data) do
@@ -204,6 +208,7 @@ defmodule Supavisor.ClientHandler do
       Process.unlink(data.db_pid)
       :poolboy.checkin(data.pool, data.db_pid)
       Helpers.log_network_usage(:client, data.socket, data.tenant)
+      log_query_time(data.query_start, data.tenant)
       {:next_state, :idle, %{data | db_pid: nil}, reply}
     else
       Logger.debug("Client is not ready")
@@ -262,6 +267,15 @@ defmodule Supavisor.ClientHandler do
   end
 
   ## Internal functions
+
+  @spec log_query_time(integer(), String.t()) :: :ok
+  def log_query_time(start, tenant) do
+    :telemetry.execute(
+      [:supavisor, :client, :query, :stop],
+      %{duration: System.monotonic_time() - start},
+      %{tenant: tenant}
+    )
+  end
 
   @spec get_external_id(String.t()) :: String.t()
   def get_external_id(username) do
