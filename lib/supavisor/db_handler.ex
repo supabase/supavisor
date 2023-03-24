@@ -8,8 +8,8 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
-  alias Supavisor.{Protocol.Server, Monitoring.PromEx}
   alias Supavisor.ClientHandler, as: Client
+  alias Supavisor.{Protocol.Server, Monitoring.PromEx}
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
