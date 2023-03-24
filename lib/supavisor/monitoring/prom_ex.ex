@@ -6,6 +6,7 @@ defmodule Supavisor.Monitoring.PromEx do
   """
 
   use PromEx, otp_app: :supavisor
+  require Logger
 
   alias PromEx.Plugins
   alias Supavisor.PromEx.Plugins.{OsMon, Tenant}
@@ -78,8 +79,23 @@ defmodule Supavisor.Monitoring.PromEx do
     metrics
   end
 
+  @spec log_network_usage(atom(), port(), string()) :: :ok
+  def log_network_usage(type, socket, tenant) do
+    case :inet.getstat(socket) do
+      {:ok, values} ->
+        :telemetry.execute(
+          [:supavisor, type, :network, :stat],
+          Map.new(values),
+          %{tenant: tenant}
+        )
+
+      {:error, reason} ->
+        Logger.error("Failed to get socket stats: #{inspect(reason)}")
+    end
+  end
+
   @spec parse_and_add_tags(String.t(), String.t()) :: String.t()
-  def parse_and_add_tags(line, def_tags) do
+  defp parse_and_add_tags(line, def_tags) do
     case Regex.run(~r/(?!\#)^(\w+)(?:{(.*?)})?\s*(.+)$/, line) do
       nil ->
         line

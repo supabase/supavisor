@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, UsersCounter, Helpers}
+  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, UsersCounter, Monitoring.PromEx}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -201,7 +201,7 @@ defmodule Supavisor.ClientHandler do
 
       Process.unlink(data.db_pid)
       :poolboy.checkin(data.pool, data.db_pid)
-      Helpers.log_network_usage(:client, data.socket, data.tenant)
+      PromEx.log_network_usage(:client, data.socket, data.tenant)
       log_query_time(data.query_start, data.tenant)
       {:next_state, :idle, %{data | db_pid: nil}, reply}
     else
