@@ -16,13 +16,14 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   @impl true
   def event_metrics(_opts) do
     [
-      pool_metrics()
+      client_metrics(),
+      db_metrics()
     ]
   end
 
-  def pool_metrics() do
+  def client_metrics() do
     Event.build(
-      :supavisor_tenant_checkout_event_metrics,
+      :supavisor_tenant_client_event_metrics,
       [
         distribution(
           [:supavisor, :pool, :checkout, :duration],
@@ -34,6 +35,42 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           reporter_options: [
             buckets: [125, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000]
           ]
+        ),
+        sum(
+          [:supavisor, :client, :network, :recv],
+          event_name: [:supavisor, :client, :network, :stat],
+          measurement: :recv_oct,
+          description: "The total number of bytes received by clients.",
+          tags: [:tenant]
+        ),
+        sum(
+          [:supavisor, :client, :network, :send],
+          event_name: [:supavisor, :client, :network, :stat],
+          measurement: :send_oct,
+          description: "The total number of bytes sent by clients.",
+          tags: [:tenant]
+        )
+      ]
+    )
+  end
+
+  def db_metrics() do
+    Event.build(
+      :supavisor_tenant_db_event_metrics,
+      [
+        sum(
+          [:supavisor, :db, :network, :recv],
+          event_name: [:supavisor, :db, :network, :stat],
+          measurement: :recv_oct,
+          description: "The total number of bytes received by db process",
+          tags: [:tenant]
+        ),
+        sum(
+          [:supavisor, :db, :network, :send],
+          event_name: [:supavisor, :db, :network, :stat],
+          measurement: :send_oct,
+          description: "The total number of bytes sent by db process",
+          tags: [:tenant]
         )
       ]
     )
@@ -63,7 +100,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     |> Enum.each(&emit_telemetry_for_tenant/1)
   end
 
-  @spec emit_telemetry_for_tenant({String.t(), pid(), reference()}) :: :ok
+  @spec emit_telemetry_for_tenant({String.t(), pid(), :ets.tid()}) :: :ok
   defp emit_telemetry_for_tenant({tenant, _, tid}) do
     :telemetry.execute(
       [:supavisor, :connections],

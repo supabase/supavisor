@@ -8,7 +8,7 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
-  alias Supavisor.Protocol.Server
+  alias Supavisor.{Protocol.Server, Helpers}
   alias Supavisor.ClientHandler, as: Client
 
   def start_link(config) do
@@ -171,6 +171,10 @@ defmodule Supavisor.DbHandler do
     # check if the response ends with "ready for query"
     ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
     :ok = Client.client_call(data.caller, bin, ready)
+
+    if ready do
+      Helpers.log_network_usage(:db, data.socket, data.tenant)
+    end
 
     :keep_state_and_data
   end
