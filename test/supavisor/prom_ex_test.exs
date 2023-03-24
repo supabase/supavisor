@@ -1,8 +1,6 @@
 defmodule Supavisor.PromExTest do
   use ExUnit.Case, async: false
-  import ExUnit.CaptureLog
   require Logger
-  alias Ecto.Adapters.SQL.Sandbox
   alias Supavisor.Monitoring.PromEx
   use Supavisor.DataCase
   alias Postgrex, as: P

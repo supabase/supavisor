@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, Monitoring.PromEx}
+  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, Monitoring.Telem}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -129,7 +129,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     ts = System.monotonic_time()
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
-    log_checkout_time(time, data.tenant)
+    Telem.pool_checkout_time(time, data.tenant)
     Process.link(db_pid)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
@@ -201,8 +201,8 @@ defmodule Supavisor.ClientHandler do
 
       Process.unlink(data.db_pid)
       :poolboy.checkin(data.pool, data.db_pid)
-      PromEx.log_network_usage(:client, data.socket, data.tenant)
-      log_query_time(data.query_start, data.tenant)
+      Telem.network_usage(:client, data.socket, data.tenant)
+      Telem.client_query_time(data.query_start, data.tenant)
       {:next_state, :idle, %{data | db_pid: nil}, reply}
     else
       Logger.debug("Client is not ready")
@@ -261,24 +261,6 @@ defmodule Supavisor.ClientHandler do
   end
 
   ## Internal functions
-
-  @spec log_checkout_time(integer(), String.t()) :: :ok
-  def log_checkout_time(time, tenant) do
-    :telemetry.execute(
-      [:supavisor, :pool, :checkout, :stop],
-      %{duration: time},
-      %{tenant: tenant}
-    )
-  end
-
-  @spec log_query_time(integer(), String.t()) :: :ok
-  def log_query_time(start, tenant) do
-    :telemetry.execute(
-      [:supavisor, :client, :query, :stop],
-      %{duration: System.monotonic_time() - start},
-      %{tenant: tenant}
-    )
-  end
 
   @spec get_external_id(String.t()) :: String.t()
   def get_external_id(username) do

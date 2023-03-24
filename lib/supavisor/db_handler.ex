@@ -9,7 +9,7 @@ defmodule Supavisor.DbHandler do
   @behaviour :gen_statem
 
   alias Supavisor.ClientHandler, as: Client
-  alias Supavisor.{Protocol.Server, Monitoring.PromEx}
+  alias Supavisor.{Protocol.Server, Monitoring.Telem}
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -173,7 +173,7 @@ defmodule Supavisor.DbHandler do
     :ok = Client.client_call(data.caller, bin, ready)
 
     if ready do
-      PromEx.log_network_usage(:db, data.socket, data.tenant)
+      Telem.network_usage(:db, data.socket, data.tenant)
     end
 
     :keep_state_and_data
