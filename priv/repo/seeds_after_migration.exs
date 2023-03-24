@@ -10,7 +10,7 @@ if Tenants.get_tenant_by_external_id(tenant_name) do
   Tenants.delete_tenant_by_external_id(tenant_name)
 end
 
-["proxy_tenant", "syn_tenant"]
+["proxy_tenant", "syn_tenant", "prom_tenant"]
 |> Enum.each(fn tenant ->
   if !Tenants.get_tenant_by_external_id(tenant) do
     %{

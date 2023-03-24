@@ -9,7 +9,7 @@ config :supavisor,
   proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
   secondary_proxy_port: 7655,
   secondary_http: 4003,
-  prom_poll_rate: 5_000
+  prom_poll_rate: 500
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",
