@@ -29,9 +29,11 @@ end
 
 if config_env() != :test do
   config :supavisor,
+    fly_region: System.get_env("FLY_REGION"),
+    fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
-    tenant_option: System.get_env("TENANT_OPTION", "tenant"),
+    metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer()
 

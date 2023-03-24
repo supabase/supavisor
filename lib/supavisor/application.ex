@@ -4,6 +4,7 @@ defmodule Supavisor.Application do
   @moduledoc false
 
   use Application
+  alias Supavisor.Monitoring.PromEx
 
   @impl true
   def start(_type, _args) do
@@ -24,8 +25,10 @@ defmodule Supavisor.Application do
       name: Supavisor.Registry.Tenants
     )
 
+    PromEx.set_metrics_tags()
+
     children = [
-      Supavisor.Monitoring.PromEx,
+      PromEx,
       Supavisor.Repo,
       # Start the Telemetry supervisor
       SupavisorWeb.Telemetry,

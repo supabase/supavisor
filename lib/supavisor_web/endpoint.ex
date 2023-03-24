@@ -22,8 +22,6 @@ defmodule SupavisorWeb.Endpoint do
     gzip: false,
     only: ~w(assets fonts images favicon.ico robots.txt)
 
-  plug PromEx.Plug, path: "/metrics", prom_ex_module: Supavisor.Monitoring.PromEx
-
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.
   if code_reloading? do

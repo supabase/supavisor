@@ -32,4 +32,64 @@ defmodule Supavisor.Monitoring.PromEx do
     Supavisor.Monitoring.PromEx.Metrics
     |> :ets.select_delete([{{{:_, %{tenant: tenant}}, :_}, [], [nil]}])
   end
+
+  @spec set_metrics_tags() :: :ok
+  def set_metrics_tags() do
+    [_, host] = node() |> Atom.to_string() |> String.split("@")
+
+    metrics_tags = %{
+      region: Application.get_env(:supavisor, :fly_region),
+      node_host: host,
+      short_alloc_id: short_node_id()
+    }
+
+    Application.put_env(:supavisor, :metrics_tags, metrics_tags)
+  end
+
+  @spec short_node_id() :: String.t()
+  def short_node_id() do
+    fly_alloc_id = Application.get_env(:supavisor, :fly_alloc_id)
+
+    case String.split(fly_alloc_id, "-", parts: 2) do
+      [short_alloc_id, _] -> short_alloc_id
+      _ -> fly_alloc_id
+    end
+  end
+
+  @spec get_metrics() :: String.t()
+  def get_metrics() do
+    %{
+      region: region,
+      node_host: node_host,
+      short_alloc_id: short_alloc_id
+    } = Application.get_env(:supavisor, :metrics_tags)
+
+    def_tags = "host=\"#{node_host}\",region=\"#{region}\",id=\"#{short_alloc_id}\""
+
+    metrics =
+      PromEx.get_metrics(__MODULE__)
+      |> String.split("\n")
+      |> Enum.map(fn line ->
+        case Regex.run(~r/(?!\#)^(\w+)(?:{(.*?)})?\s*(.+)$/, line) do
+          nil ->
+            line
+
+          [_, key, tags, value] ->
+            tags =
+              if tags == "" do
+                def_tags
+              else
+                tags <> "," <> def_tags
+              end
+
+            "#{key}{#{tags}} #{value}"
+        end
+      end)
+      |> Enum.join("\n")
+
+    __MODULE__.__ets_cron_flusher_name__()
+    |> PromEx.ETSCronFlusher.defer_ets_flush()
+
+    metrics
+  end
 end
