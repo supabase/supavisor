@@ -60,36 +60,39 @@ defmodule Supavisor.Monitoring.PromEx do
   def get_metrics() do
     %{
       region: region,
-      node_host: node_host,
+      node_host: host,
       short_alloc_id: short_alloc_id
     } = Application.get_env(:supavisor, :metrics_tags)
 
-    def_tags = "host=\"#{node_host}\",region=\"#{region}\",id=\"#{short_alloc_id}\""
+    def_tags = "host=\"#{host}\",region=\"#{region}\",id=\"#{short_alloc_id}\""
 
     metrics =
       PromEx.get_metrics(__MODULE__)
       |> String.split("\n")
-      |> Enum.map(fn line ->
-        case Regex.run(~r/(?!\#)^(\w+)(?:{(.*?)})?\s*(.+)$/, line) do
-          nil ->
-            line
-
-          [_, key, tags, value] ->
-            tags =
-              if tags == "" do
-                def_tags
-              else
-                tags <> "," <> def_tags
-              end
-
-            "#{key}{#{tags}} #{value}"
-        end
-      end)
+      |> Enum.map(&parse_and_add_tags(&1, def_tags))
       |> Enum.join("\n")
 
     __MODULE__.__ets_cron_flusher_name__()
     |> PromEx.ETSCronFlusher.defer_ets_flush()
 
     metrics
+  end
+
+  @spec parse_and_add_tags(String.t(), String.t()) :: String.t()
+  def parse_and_add_tags(line, def_tags) do
+    case Regex.run(~r/(?!\#)^(\w+)(?:{(.*?)})?\s*(.+)$/, line) do
+      nil ->
+        line
+
+      [_, key, tags, value] ->
+        tags =
+          if tags == "" do
+            def_tags
+          else
+            "#{tags},#{def_tags}"
+          end
+
+        "#{key}{#{tags}} #{value}"
+    end
   end
 end

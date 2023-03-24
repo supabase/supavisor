@@ -25,6 +25,11 @@ defmodule Supavisor.Application do
       name: Supavisor.Registry.Tenants
     )
 
+    Registry.start_link(
+      keys: :unique,
+      name: Supavisor.Registry.ManagerTables
+    )
+
     PromEx.set_metrics_tags()
 
     children = [
