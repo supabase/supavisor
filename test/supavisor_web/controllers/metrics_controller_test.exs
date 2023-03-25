@@ -19,4 +19,10 @@ defmodule SupavisorWeb.MetricsControllerTest do
     assert conn.resp_body =~ "region=\"eu\""
     assert conn.resp_body =~ "region=\"usa\""
   end
+
+  test "invalid jwt", %{conn: conn} do
+    :meck.expect(Supavisor.Jwt, :authorize, fn _token, _secret -> {:error, nil} end)
+    conn = get(conn, Routes.metrics_path(conn, :index))
+    assert conn.status == 403
+  end
 end
