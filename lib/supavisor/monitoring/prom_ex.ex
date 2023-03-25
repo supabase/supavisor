@@ -13,7 +13,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @impl true
   def plugins do
-    poll_rate = Application.get_env(:supavisor, :prom_poll_rate)
+    poll_rate = Application.fetch_env!(:supavisor, :prom_poll_rate)
 
     [
       # PromEx built in plugins
@@ -39,7 +39,7 @@ defmodule Supavisor.Monitoring.PromEx do
     [_, host] = node() |> Atom.to_string() |> String.split("@")
 
     metrics_tags = %{
-      region: Application.get_env(:supavisor, :fly_region),
+      region: Application.fetch_env!(:supavisor, :fly_region),
       node_host: host,
       short_alloc_id: short_node_id()
     }
@@ -49,7 +49,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec short_node_id() :: String.t()
   def short_node_id() do
-    fly_alloc_id = Application.get_env(:supavisor, :fly_alloc_id)
+    fly_alloc_id = Application.fetch_env!(:supavisor, :fly_alloc_id)
 
     case String.split(fly_alloc_id, "-", parts: 2) do
       [short_alloc_id, _] -> short_alloc_id
@@ -72,7 +72,7 @@ defmodule Supavisor.Monitoring.PromEx do
       |> String.split("\n")
       |> Enum.map_join("\n", &parse_and_add_tags(&1, def_tags))
 
-    __MODULE__.__ets_cron_flusher_name__()
+    Supavisor.Monitoring.PromEx.ETSCronFlusher
     |> PromEx.ETSCronFlusher.defer_ets_flush()
 
     metrics
