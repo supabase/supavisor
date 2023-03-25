@@ -70,8 +70,7 @@ defmodule Supavisor.Monitoring.PromEx do
     metrics =
       PromEx.get_metrics(__MODULE__)
       |> String.split("\n")
-      |> Enum.map(&parse_and_add_tags(&1, def_tags))
-      |> Enum.join("\n")
+      |> Enum.map_join("\n", &parse_and_add_tags(&1, def_tags))
 
     __MODULE__.__ets_cron_flusher_name__()
     |> PromEx.ETSCronFlusher.defer_ets_flush()
