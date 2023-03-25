@@ -63,7 +63,7 @@ defmodule Supavisor.Monitoring.PromEx do
       region: region,
       node_host: host,
       short_alloc_id: short_alloc_id
-    } = Application.get_env(:supavisor, :metrics_tags)
+    } = Application.fetch_env!(:supavisor, :metrics_tags)
 
     def_tags = "host=\"#{host}\",region=\"#{region}\",id=\"#{short_alloc_id}\""
 
