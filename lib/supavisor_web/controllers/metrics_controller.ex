@@ -35,6 +35,6 @@ defmodule SupavisorWeb.MetricsController do
   end
 
   defp merge_node_metrics({_, {_node, metrics}}, acc) do
-    acc <> metrics
+    [acc | metrics]
   end
 end
