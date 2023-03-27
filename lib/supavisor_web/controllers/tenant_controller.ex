@@ -1,10 +1,22 @@
 defmodule SupavisorWeb.TenantController do
   use SupavisorWeb, :controller
+  use OpenApiSpex.ControllerSpecs
+  alias OpenApiSpex.SecurityScheme
 
   alias Supavisor.Tenants
-  alias Supavisor.Tenants.Tenant
+  alias Supavisor.Tenants.Tenant, as: TenantModel
+  alias SupavisorWeb.ApiSpec
 
-  action_fallback SupavisorWeb.FallbackController
+  alias SupavisorWeb.OpenApiSchemas.{Tenant, TenantList, TenantCreate, NotFound, Created, Empty}
+
+  action_fallback(SupavisorWeb.FallbackController)
+
+  operation(:index,
+    summary: "List tenants",
+    responses: %{
+      200 => TenantList.response()
+    }
+  )
 
   def index(conn, _params) do
     tenants = Tenants.list_tenants()
@@ -12,7 +24,7 @@ defmodule SupavisorWeb.TenantController do
   end
 
   def create(conn, %{"tenant" => tenant_params}) do
-    with {:ok, %Tenant{} = tenant} <- Tenants.create_tenant(tenant_params) do
+    with {:ok, %TenantModel{} = tenant} <- Tenants.create_tenant(tenant_params) do
       conn
       |> put_status(:created)
       |> put_resp_header("location", Routes.tenant_path(conn, :show, tenant))
@@ -20,11 +32,20 @@ defmodule SupavisorWeb.TenantController do
     end
   end
 
-  def show(conn, %{"id" => id}) do
+  operation(:show,
+    summary: "Fetch Tenant",
+    parameters: [external_id: [in: :path, description: "External id", type: :string]],
+    responses: %{
+      200 => Tenant.response(),
+      404 => NotFound.response()
+    }
+  )
+
+  def show(conn, %{"external_id" => id}) do
     id
     |> Tenants.get_tenant_by_external_id()
     |> case do
-      %Tenant{} = tenant ->
+      %TenantModel{} = tenant ->
         render(conn, "show.json", tenant: tenant)
 
       nil ->
@@ -34,23 +55,40 @@ defmodule SupavisorWeb.TenantController do
     end
   end
 
-  def update(conn, %{"id" => id, "tenant" => tenant_params}) do
+  operation(:update,
+    summary: "Create or update tenant",
+    parameters: [external_id: [in: :path, description: "External id", type: :string]],
+    request_body: TenantCreate.params(),
+    responses: %{
+      201 => Created.response(Tenant),
+      404 => NotFound.response()
+    }
+  )
+
+  def update(conn, %{"external_id" => id, "tenant" => tenant_params}) do
     case Tenants.get_tenant_by_external_id(id) do
       nil ->
         create(conn, %{"tenant" => Map.put(tenant_params, "external_id", id)})
 
       tenant ->
-        with {:ok, %Tenant{} = tenant} <- Tenants.update_tenant(tenant, tenant_params) do
+        with {:ok, %TenantModel{} = tenant} <- Tenants.update_tenant(tenant, tenant_params) do
           render(conn, "show.json", tenant: tenant)
         end
     end
   end
 
-  def delete(conn, %{"id" => id}) do
-    if Tenants.delete_tenant_by_external_id(id) do
-      send_resp(conn, 204, "")
-    else
-      send_resp(conn, 404, "")
-    end
+  operation(:delete,
+    summary: "Delete source",
+    parameters: [external_id: [in: :path, description: "External id", type: :string]],
+    responses: %{
+      204 => Empty.response(),
+      404 => NotFound.response()
+    }
+  )
+
+  def delete(conn, %{"external_id" => id}) do
+    code = if Tenants.delete_tenant_by_external_id(id), do: 204, else: 404
+
+    send_resp(conn, code, "")
   end
 end
