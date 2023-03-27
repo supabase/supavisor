@@ -82,6 +82,8 @@ For managers of Postgres databases, supavisor makes managing Postgres clusters e
 
 tbd
 
+## [Metrics](https://github.com/supabase/supavisor/wiki/Metrics)
+
 ## Benchmarking
 
 Benchmarking for stateful throughput:
