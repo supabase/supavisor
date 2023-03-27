@@ -1,7 +1,11 @@
 defmodule SupavisorWeb.OpenApiSchemas do
+  @moduledoc """
+  Providing schemas and response definitions for the OpenAPI specification of the SupavisorWeb
+  """
   alias OpenApiSpex.Schema
 
   defmodule Tenant do
+    @moduledoc false
     require OpenApiSpex
 
     OpenApiSpex.schema(%{
@@ -45,6 +49,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
   end
 
   defmodule TenantList do
+    @moduledoc false
     require OpenApiSpex
 
     OpenApiSpex.schema(%{type: :array, items: Tenant})
@@ -52,14 +57,17 @@ defmodule SupavisorWeb.OpenApiSchemas do
   end
 
   defmodule TenantCreate do
+    @moduledoc false
     def params(), do: {"Tenant Create Params", "application/json", Tenant}
   end
 
   defmodule Created do
+    @moduledoc false
     def response(schema), do: {"Created Response", "application/json", schema}
   end
 
   defmodule Empty do
+    @moduledoc false
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
@@ -67,6 +75,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
   end
 
   defmodule NotFound do
+    @moduledoc false
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 

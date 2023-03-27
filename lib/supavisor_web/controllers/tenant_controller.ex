@@ -1,11 +1,9 @@
 defmodule SupavisorWeb.TenantController do
   use SupavisorWeb, :controller
   use OpenApiSpex.ControllerSpecs
-  alias OpenApiSpex.SecurityScheme
 
   alias Supavisor.Tenants
   alias Supavisor.Tenants.Tenant, as: TenantModel
-  alias SupavisorWeb.ApiSpec
 
   alias SupavisorWeb.OpenApiSchemas.{Tenant, TenantList, TenantCreate, NotFound, Created, Empty}
 
