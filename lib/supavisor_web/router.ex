@@ -12,7 +12,11 @@ defmodule SupavisorWeb.Router do
 
   pipeline :api do
     plug(:accepts, ["json"])
-    plug(:check_api_auth)
+    plug(:check_auth, :api_jwt_secret)
+  end
+
+  pipeline :metrics do
+    plug(:check_auth, :metrics_jwt_secret)
   end
 
   pipeline :openapi do
@@ -43,6 +47,12 @@ defmodule SupavisorWeb.Router do
     delete("/tenants/:external_id", TenantController, :delete)
   end
 
+  scope "/metrics", SupavisorWeb do
+    pipe_through(:metrics)
+
+    get("/", MetricsController, :index)
+  end
+
   # Other scopes may use custom stacks.
   # scope "/api", SupavisorWeb do
   #   pipe_through :api
@@ -65,8 +75,8 @@ defmodule SupavisorWeb.Router do
     end
   end
 
-  defp check_api_auth(conn, _) do
-    secret = Application.fetch_env!(:supavisor, :api_jwt_secret)
+  defp check_auth(conn, secret_key) do
+    secret = Application.fetch_env!(:supavisor, secret_key)
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
          {:ok, _claims} <- Supavisor.Jwt.authorize(token, secret) do

@@ -1,11 +1,15 @@
 import Config
 
 config :supavisor,
+  fly_region: "eu",
+  fly_alloc_id: "123e4567-e89b-12d3-a456-426614174000",
   api_jwt_secret: "dev",
+  metrics_jwt_secret: "dev",
   jwt_claim_validators: %{},
   proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
   secondary_proxy_port: 7655,
-  secondary_http: 4003
+  secondary_http: 4003,
+  prom_poll_rate: 500
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",
