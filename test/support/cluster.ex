@@ -17,11 +17,15 @@ defmodule Supavisor.Support.Cluster do
                 port: Application.get_env(:supavisor, :secondary_http)
               )
 
+            {:supavisor, :fly_region} ->
+              "usa"
+
             _ ->
               val
           end
 
         :rpc.call(node, Application, :put_env, [app_name, key, val, [persistent: true]])
+        :rpc.call(node, Supavisor.Monitoring.PromEx, :set_metrics_tags, [])
       end
     end
   end

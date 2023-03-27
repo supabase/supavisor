@@ -3,9 +3,12 @@ defmodule Supavisor.SynHandler do
   Custom defined Syn's callbacks
   """
   require Logger
+  alias Supavisor.Monitoring.PromEx
 
   def on_process_unregistered(:tenants, tenant, _pid, _meta, reason) do
     Logger.debug("Process unregistered: #{inspect(tenant)} #{inspect(reason)}")
+    # remove all Prometheus metrics for the specified tenant
+    PromEx.remove_metrics(tenant)
   end
 
   def resolve_registry_conflict(

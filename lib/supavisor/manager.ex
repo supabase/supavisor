@@ -18,11 +18,15 @@ defmodule Supavisor.Manager do
 
   @impl true
   def init(args) do
+    tid = :ets.new(__MODULE__, [:public])
+
     state = %{
       check_ref: check_subscribers(),
-      tid: :ets.new(__MODULE__, [:public]),
+      tid: tid,
       tenant: args.tenant
     }
+
+    Registry.register(Supavisor.Registry.ManagerTables, args.tenant, tid)
 
     {:ok, state}
   end

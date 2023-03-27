@@ -8,8 +8,8 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
-  alias Supavisor.Protocol.Server
   alias Supavisor.ClientHandler, as: Client
+  alias Supavisor.{Protocol.Server, Monitoring.Telem}
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -171,6 +171,10 @@ defmodule Supavisor.DbHandler do
     # check if the response ends with "ready for query"
     ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
     :ok = Client.client_call(data.caller, bin, ready)
+
+    if ready do
+      Telem.network_usage(:db, data.socket, data.tenant)
+    end
 
     :keep_state_and_data
   end

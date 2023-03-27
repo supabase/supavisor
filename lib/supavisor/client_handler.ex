@@ -12,8 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.Protocol.Server
-  alias Supavisor.{Tenants, Tenants.Tenant}
+  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, Monitoring.Telem}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -45,7 +44,8 @@ defmodule Supavisor.ClientHandler do
       db_pid: nil,
       tenant: nil,
       pool: nil,
-      manager: nil
+      manager: nil,
+      query_start: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -127,12 +127,13 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
-    db_pid =
-      data.pool
-      |> :poolboy.checkout(true, 60_000)
-
+    ts = System.monotonic_time()
+    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
+    Telem.pool_checkout_time(time, data.tenant)
     Process.link(db_pid)
-    {:next_state, :busy, %{data | db_pid: db_pid}, {:next_event, :internal, {:tcp, nil, bin}}}
+
+    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
+     {:next_event, :internal, {:tcp, nil, bin}}}
   end
 
   def handle_event(_, {:tcp, _, bin}, :busy, data) do
@@ -200,6 +201,8 @@ defmodule Supavisor.ClientHandler do
 
       Process.unlink(data.db_pid)
       :poolboy.checkin(data.pool, data.db_pid)
+      Telem.network_usage(:client, data.socket, data.tenant)
+      Telem.client_query_time(data.query_start, data.tenant)
       {:next_state, :idle, %{data | db_pid: nil}, reply}
     else
       Logger.debug("Client is not ready")
