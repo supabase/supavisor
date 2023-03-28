@@ -51,6 +51,7 @@ defmodule Supavisor.MixProject do
       {:dialyxir, "~> 1.1.0", only: [:dev], runtime: false},
       {:benchee, "~> 1.1.0", only: :dev},
       {:prom_ex, "~> 1.7.1"},
+      {:open_api_spex, "~> 3.16"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},

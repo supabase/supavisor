@@ -19,16 +19,32 @@ defmodule SupavisorWeb.Router do
     plug(:check_auth, :metrics_jwt_secret)
   end
 
+  pipeline :openapi do
+    plug(OpenApiSpex.Plug.PutApiSpec, module: SupavisorWeb.ApiSpec)
+  end
+
   scope "/", SupavisorWeb do
     pipe_through(:browser)
-
     get("/", PageController, :index)
+  end
+
+  scope "/swaggerui" do
+    pipe_through(:browser)
+    get("/", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi")
+  end
+
+  scope "/api" do
+    pipe_through(:openapi)
+    get("/openapi", OpenApiSpex.Plug.RenderSpec, [])
   end
 
   scope "/api", SupavisorWeb do
     pipe_through(:api)
 
-    resources("/tenants", TenantController)
+    get("/tenants", TenantController, :index)
+    get("/tenants/:external_id", TenantController, :show)
+    put("/tenants/:external_id", TenantController, :update)
+    delete("/tenants/:external_id", TenantController, :delete)
   end
 
   scope "/metrics", SupavisorWeb do
