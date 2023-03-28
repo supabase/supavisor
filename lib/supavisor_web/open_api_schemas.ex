@@ -79,6 +79,6 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
-    def response(), do: {"Not found", "text/json", __MODULE__}
+    def response(), do: {"Not found", "text/plain", __MODULE__}
   end
 end
