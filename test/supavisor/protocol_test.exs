@@ -33,12 +33,8 @@ defmodule Supavisor.ProtocolTest do
     key = "TimeZone"
     value = "UTC"
     result = S.encode_pkt(:parameter_status, key, value)
-    expected_payload = [key, <<0>>, value, <<0>>]
-    len = IO.iodata_length(expected_payload) + 4
 
-    assert result == [<<?S, 17>>, ["TimeZone", <<0>>, "UTC", <<0>>]]
-    assert hd(result) == <<?S, len::integer-32>>
-    assert Enum.at(result, 1) == expected_payload
+    assert result == [<<?S, 17::32>>, [key, <<0>>, value, <<0>>]]
   end
 
   test "backend_key_data/0" do
@@ -46,8 +42,15 @@ defmodule Supavisor.ProtocolTest do
     payload = Enum.at(result, 1)
     len = byte_size(payload) + 4
 
-    assert is_list(result)
-    assert hd(result) == <<?K, len::integer-32>>
+    assert [
+             %S.Pkt{
+               tag: :backend_key_data,
+               len: 13,
+               payload: %{procid: _, secret: _}
+             }
+           ] = S.decode(result |> IO.iodata_to_binary())
+
+    assert hd(result) == <<?K, len::32>>
     assert byte_size(payload) == 8
   end
 
@@ -55,9 +58,18 @@ defmodule Supavisor.ProtocolTest do
     ps = S.encode_parameter_status(@initial_data)
     result = S.greetings(ps)
 
-    assert is_list(result)
-    assert hd(result) == ps
-    assert IO.iodata_length(Enum.at(result, 1)) == 13
-    assert Enum.at(result, 2) == <<?Z, 5::integer-32, ?I>>
+    dec =
+      S.greetings(ps)
+      |> IO.iodata_to_binary()
+      |> S.decode()
+
+    ready_for_query_pos = Enum.at(dec, -1)
+    backend_key_data_pos = Enum.at(dec, -2)
+    assert %S.Pkt{tag: :ready_for_query} = ready_for_query_pos
+    assert %S.Pkt{tag: :backend_key_data} = backend_key_data_pos
+    tags = Enum.map(dec, & &1.tag)
+    assert Enum.count(tags, &(&1 == :parameter_status)) == 13
+    assert Enum.count(tags, &(&1 == :backend_key_data)) == 1
+    assert Enum.count(tags, &(&1 == :ready_for_query)) == 1
   end
 end
