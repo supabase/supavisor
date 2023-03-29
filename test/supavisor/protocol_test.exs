@@ -36,7 +36,7 @@ defmodule Supavisor.ProtocolTest do
     expected_payload = [key, <<0>>, value, <<0>>]
     len = IO.iodata_length(expected_payload) + 4
 
-    assert is_list(result)
+    assert result == [<<?S, 17>>, ["TimeZone", <<0>>, "UTC", <<0>>]]
     assert hd(result) == <<?S, len::integer-32>>
     assert Enum.at(result, 1) == expected_payload
   end
