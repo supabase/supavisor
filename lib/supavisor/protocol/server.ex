@@ -9,6 +9,8 @@ defmodule Supavisor.Protocol.Server do
   alias Supavisor.Protocol.PgType
 
   @pkt_header_size 5
+  @authentication_ok <<?R, 8::32, 0::32>>
+  @ready_for_query <<?Z, 5::32, ?I>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -308,5 +310,37 @@ defmodule Supavisor.Protocol.Server do
     <<84, 0, 0, 0, 33, 0, 1, 63, 99, 111, 108, 117, 109, 110, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       23, 0, 4, 255, 255, 255, 255, 0, 0, 68, 0, 0, 0, 11, 0, 1, 0, 0, 0, 1, 49, 67, 0, 0, 0, 13,
       83, 69, 76, 69, 67, 84, 32, 49, 0, 90, 0, 0, 0, 5, 73>>
+  end
+
+  def authentication_ok() do
+    @authentication_ok
+  end
+
+  @spec encode_parameter_status(map) :: iodata()
+  def encode_parameter_status(ps) do
+    for {key, value} <- ps do
+      encode_pkt(:parameter_status, key, value)
+    end
+  end
+
+  @spec encode_pkt(:parameter_status, binary, binary) :: iodata()
+  def encode_pkt(:parameter_status, key, value) do
+    payload = [key, <<0>>, value, <<0>>]
+    len = IO.iodata_length(payload) + 4
+    [<<?S, len::integer-32>>, payload]
+  end
+
+  @spec backend_key_data() :: iodata()
+  def backend_key_data() do
+    procid = System.unique_integer([:positive, :monotonic])
+    secret = Enum.random(0..9_999_999_999)
+    payload = <<procid::integer-32, secret::integer-32>>
+    len = IO.iodata_length(payload) + 4
+    [<<?K, len::32>>, payload]
+  end
+
+  @spec greetings(iodata()) :: iodata()
+  def greetings(ps) do
+    [ps, backend_key_data(), @ready_for_query]
   end
 end

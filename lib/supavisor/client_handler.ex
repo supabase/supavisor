@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, Monitoring.Telem}
+  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, Monitoring.Telem, Manager}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -96,7 +96,7 @@ defmodule Supavisor.ClientHandler do
 
       :ok ->
         Logger.info("Exchange success")
-        :ok = :gen_tcp.send(socket, authentication_ok())
+        :ok = :gen_tcp.send(socket, Server.authentication_ok())
         {:keep_state_and_data, {:next_event, :internal, :subscribe}}
     end
   end
@@ -106,8 +106,11 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, tenant_sup} <- Supavisor.start(tenant),
          {:ok, %{manager: manager, pool: pool}} <-
-           Supavisor.subscribe_global(node(tenant_sup), self(), tenant) do
+           Supavisor.subscribe_global(node(tenant_sup), self(), tenant),
+         ps <-
+           Manager.get_parameter_status(manager) do
       Process.monitor(manager)
+      :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
       {:next_state, :idle, %{data | pool: pool, manager: manager}}
     else
       error ->
@@ -221,43 +224,6 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
-  end
-
-  # TODO: implement authentication response
-  def authentication_ok() do
-    [
-      # authentication_ok
-      <<"R", 0, 0, 0, 8>>,
-      <<0, 0, 0, 0>>,
-      # parameter_status,<<"application_name">>,<<"nonode@nohost">>
-      <<83, 0, 0, 0, 35>>,
-      <<"application_name", 0, "nonode@nohost", 0>>,
-      # parameter_status,<<"client_encoding">>,<<"UTF8">>
-      <<83, 0, 0, 0, 25>>,
-      <<99, 108, 105, 101, 110, 116, 95, 101, 110, 99, 111, 100, 105, 110, 103, 0, 85, 84, 70, 56,
-        0>>,
-      # parameter_status,<<"server_version">>,<<"14.1">>
-      <<83, 0, 0, 0, 24>>,
-      <<115, 101, 114, 118, 101, 114, 95, 118, 101, 114, 115, 105, 111, 110, 0, "14.1", 0>>,
-      # parameter_status,<<"session_authorization">>,<<"postgres">>
-      <<83, 0, 0, 0, 35>>,
-      <<115, 101, 115, 115, 105, 111, 110, 95, 97, 117, 116, 104, 111, 114, 105, 122, 97, 116,
-        105, 111, 110, 0, 112, 111, 115, 116, 103, 114, 101, 115, 0>>,
-      # parameter_status,<<"standard_conforming_strings">>,<<"on">>
-      <<83, 0, 0, 0, 35>>,
-      <<115, 116, 97, 110, 100, 97, 114, 100, 95, 99, 111, 110, 102, 111, 114, 109, 105, 110, 103,
-        95, 115, 116, 114, 105, 110, 103, 115, 0, 111, 110, 0>>,
-      # parameter_status,<<"TimeZone">>,<<"Europe/Kiev">>
-      <<83, 0, 0, 0, 25>>,
-      <<84, 105, 109, 101, 90, 111, 110, 101, 0, 69, 117, 114, 111, 112, 101, 47, 75, 105, 101,
-        118, 0>>,
-      # backend_key_data,59194,2347138713
-      <<75, 0, 0, 0, 12>>,
-      <<0, 0, 231, 58, 139, 230, 126, 153>>,
-      # ready_for_query,idle
-      <<90, 0, 0, 0, 5>>,
-      <<"I">>
-    ]
   end
 
   ## Internal functions

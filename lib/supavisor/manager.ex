@@ -3,6 +3,8 @@ defmodule Supavisor.Manager do
   use GenServer, restart: :transient
   require Logger
 
+  alias Supavisor.Protocol.Server
+
   @check_timeout 120_000
 
   def start_link(args) do
@@ -14,6 +16,16 @@ defmodule Supavisor.Manager do
     GenServer.call(manager, {:subscribe, pid})
   end
 
+  @spec set_parameter_status(pid, map) :: :ok
+  def set_parameter_status(manager, ps) do
+    GenServer.call(manager, {:set_parameter_status, ps})
+  end
+
+  @spec get_parameter_status(pid) :: iodata() | []
+  def get_parameter_status(manager) do
+    GenServer.call(manager, :get_parameter_status)
+  end
+
   ## Callbacks
 
   @impl true
@@ -23,7 +35,8 @@ defmodule Supavisor.Manager do
     state = %{
       check_ref: check_subscribers(),
       tid: tid,
-      tenant: args.tenant
+      tenant: args.tenant,
+      parameter_status: []
     }
 
     Registry.register(Supavisor.Registry.ManagerTables, args.tenant, tid)
@@ -35,6 +48,15 @@ defmodule Supavisor.Manager do
   def handle_call({:subscribe, pid}, _, state) do
     Logger.info("Subscribing #{inspect(pid)} to tenant #{state.tenant}")
     :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
+    encoded_ps = Server.encode_parameter_status(ps)
+    {:reply, :ok, %{state | parameter_status: encoded_ps}}
+  end
+
+  def handle_call({:set_parameter_status, _ps}, _, state) do
     {:reply, :ok, state}
   end
 
