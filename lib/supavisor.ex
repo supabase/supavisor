@@ -135,4 +135,12 @@ defmodule Supavisor do
         {:error, :tenant_not_found}
     end
   end
+
+  @spec set_parameter_status(String.t(), [{binary, binary}]) :: :ok | {:error, :not_found}
+  def set_parameter_status(tenant, ps) do
+    case get_local_manager(tenant) do
+      nil -> {:error, :not_found}
+      pid -> Manager.set_parameter_status(pid, ps)
+    end
+  end
 end

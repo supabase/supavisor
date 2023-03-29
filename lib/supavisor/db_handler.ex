@@ -54,7 +54,6 @@ defmodule Supavisor.DbHandler do
       {:ok, socket} ->
         Logger.debug("auth #{inspect(auth, pretty: true)}")
 
-        # TODO: add password
         msg =
           :pgo_protocol.encode_startup_message([
             {"user", auth.user},
@@ -150,7 +149,9 @@ defmodule Supavisor.DbHandler do
         {:keep_state, %{data | server_proof: server_proof}}
 
       {ps, db_state} ->
-        Logger.debug("DB ready_for_query: #{inspect(db_state)}")
+        Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")
+
+        Supavisor.set_parameter_status(data.tenant, ps)
 
         {:next_state, :idle, %{data | parameter_status: ps},
          {:next_event, :internal, :check_buffer}}
