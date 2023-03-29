@@ -60,6 +60,10 @@ defmodule Supavisor.Manager do
     {:reply, :ok, state}
   end
 
+  def handle_call(:get_parameter_status, _, state) do
+    {:reply, state.parameter_status, state}
+  end
+
   @impl true
   def handle_info({:DOWN, ref, _, _, _}, state) do
     :ets.take(state.tid, ref)
