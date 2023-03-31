@@ -10,7 +10,7 @@ dev:
 	FLY_REGION=eu \
 	FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000 \
 	ERL_AFLAGS="-kernel shell_history enabled" \
-	iex --name node1@127.0.0.1 --cookie cookie -S mix phx.server
+	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
 
 dev.node2:
 	PROXY_PORT=7655 \
@@ -23,6 +23,9 @@ dev.node2:
 	FLY_ALLOC_ID=222e4567-e89b-12d3-a456-426614174000 \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server	
+
+dev_cli:
+	MIX_ENV=dev mix release supavisor_cli
 
 db_migrate:
 	mix ecto.migrate --prefix supavisor --log-migrator-sql

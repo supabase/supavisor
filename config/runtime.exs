@@ -38,11 +38,7 @@ if config_env() != :test do
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer()
 
   config :supavisor, Supavisor.Repo,
-    hostname: System.get_env("DB_HOST", "localhost"),
-    username: System.get_env("DB_USER", "postgres"),
-    password: System.get_env("DB_PASSWORD", "postgres"),
-    database: System.get_env("DB_NAME", "postgres"),
-    port: System.get_env("DB_PORT", "6432"),
+    url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
     pool_size: System.get_env("DB_POOL_SIZE", "5") |> String.to_integer(),
     parameters: [
       application_name: "supavisor_meta"

@@ -9,7 +9,8 @@ defmodule Supavisor.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
-      deps: deps()
+      deps: deps(),
+      releases: releases()
     ]
   end
 
@@ -52,12 +53,27 @@ defmodule Supavisor.MixProject do
       {:benchee, "~> 1.1.0", only: :dev},
       {:prom_ex, "~> 1.7.1"},
       {:open_api_spex, "~> 3.16"},
+      {:burrito, github: "burrito-elixir/burrito"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"}
       # TODO: add ranch deps
+    ]
+  end
+
+  def releases do
+    [
+      supavisor: [],
+      supavisor_cli: [
+        steps: [:assemble, &Burrito.wrap/1],
+        burrito: [
+          targets: [
+            macos_m1: [os: :darwin, cpu: :aarch64]
+          ]
+        ]
+      ]
     ]
   end
 
