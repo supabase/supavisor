@@ -18,7 +18,7 @@ if config_env() == :prod do
     http: [
       port: String.to_integer(System.get_env("PORT") || "4000"),
       transport_options: [
-        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "16384"),
+        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
         num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
         # IMPORTANT: support IPv6 addresses
         socket_opts: [:inet6]
