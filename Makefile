@@ -25,7 +25,7 @@ dev.node2:
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server	
 
 dev_bin:
-	MIX_ENV=dev mix release supavisor_cli
+	MIX_ENV=dev mix release supavisor_bin
 
 db_migrate:
 	mix ecto.migrate --prefix supavisor --log-migrator-sql
