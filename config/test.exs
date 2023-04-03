@@ -24,7 +24,6 @@ config :supavisor, Supavisor.Repo,
 # you can enable the server option below.
 config :supavisor, SupavisorWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
-  secret_key_base: "/r65VZub52YDf/CjNMeYmkJ8AitZZPIMRnC64f7P+LTOo87+/rqjydvAE65OK0/1",
   server: false
 
 config :supavisor, Supavisor.Vault,

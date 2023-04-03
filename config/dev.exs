@@ -22,7 +22,6 @@ config :supavisor, SupavisorWeb.Endpoint,
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
-  secret_key_base: "kRa84KikGELDJu0XJLAvB3N/82yGhuaOiaKYFjarHf3EAOvuAc2eI/XWxU/vhLc0",
   watchers: []
 
 # ## SSL Support

@@ -70,7 +70,9 @@ defmodule Supavisor.MixProject do
         steps: [:assemble, &Burrito.wrap/1],
         burrito: [
           targets: [
-            macos_m1: [os: :darwin, cpu: :aarch64]
+            macos_m1: [os: :darwin, cpu: :aarch64],
+            macos: [os: :darwin, cpu: :x86_64],
+            linux: [os: :linux, cpu: :x86_64]
           ]
         ]
       ]
