@@ -29,7 +29,7 @@ end
 
 if config_env() != :test do
   config :supavisor,
-    fly_region: System.get_env("FLY_REGION"),
+    region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),

@@ -65,6 +65,7 @@ config :logger, :console,
   level: :debug,
   # level: :error,
   metadata: [:error_code, :file, :line, :pid, :project]
+
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
 config :phoenix,

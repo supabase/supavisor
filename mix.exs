@@ -66,7 +66,7 @@ defmodule Supavisor.MixProject do
   def releases do
     [
       supavisor: [],
-      supavisor_cli: [
+      supavisor_bin: [
         steps: [:assemble, &Burrito.wrap/1],
         burrito: [
           targets: [
