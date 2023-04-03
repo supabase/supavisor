@@ -11,8 +11,11 @@ defmodule Supavisor.Application do
     :ranch.start_listener(
       :pg_proxy,
       :ranch_tcp,
-      # :ranch_ssl,
-      %{socket_opts: [port: Application.get_env(:supavisor, :proxy_port)]},
+      %{
+        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
+        num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+        socket_opts: [port: Application.get_env(:supavisor, :proxy_port)]
+      },
       Supavisor.ClientHandler,
       []
     )
