@@ -54,7 +54,8 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec short_node_id() :: String.t() | nil
   def short_node_id() do
-    with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <- Application.fetch_env(:supavisor, :fly_alloc_id),
+    with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <-
+           Application.fetch_env(:supavisor, :fly_alloc_id),
          [short_alloc_id, _] <- String.split(fly_alloc_id, "-", parts: 2) do
       short_alloc_id
     else
