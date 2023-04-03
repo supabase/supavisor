@@ -25,6 +25,19 @@ if config_env() == :prod do
       ]
     ],
     secret_key_base: secret_key_base
+
+  config :libcluster,
+    debug: false,
+    topologies: [
+      fly6pn: [
+        strategy: Cluster.Strategy.DNSPoll,
+        config: [
+          polling_interval: 5_000,
+          query: System.get_env("DNS_NODES"),
+          node_basename: app_name
+        ]
+      ]
+    ]
 end
 
 if config_env() != :test do
