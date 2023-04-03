@@ -52,6 +52,7 @@ defmodule Supavisor.MixProject do
       {:benchee, "~> 1.1.0", only: :dev},
       {:prom_ex, "~> 1.7.1"},
       {:open_api_spex, "~> 3.16"},
+      {:libcluster, "~> 3.3.1"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},

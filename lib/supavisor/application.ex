@@ -35,8 +35,11 @@ defmodule Supavisor.Application do
 
     PromEx.set_metrics_tags()
 
+    topologies = Application.get_env(:libcluster, :topologies) || []
+
     children = [
       PromEx,
+      {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor
       SupavisorWeb.Telemetry,
