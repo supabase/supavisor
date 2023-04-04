@@ -16,14 +16,14 @@ For managers of Postgres databases, supavisor makes managing Postgres clusters e
 ## Features
 
 - Fast
-  - Within 90% throughput as compared to `pgbouncer` running `pgbench` locally
+  - Within 90% throughput as compared to `PgBouncer` running `pgbench` locally
 - Scalable
   - 1 million Postgres connections on a cluster
   - 250_000 idle connections on a single 16 core node with 64GB of ram
 - Multi-tenant
   - Connect to multiple different Postgres instances/clusters
 - Single-tenant
-  - Easy drop-in replacement for `pgbouncer`
+  - Easy drop-in replacement for `PgBouncer`
 - Pool mode support per tenant
   - Transaction
 - Cloud-native
@@ -51,7 +51,7 @@ For managers of Postgres databases, supavisor makes managing Postgres clusters e
 - Query caching
   - Query results are optionally cached in the pool cluster and returned before hitting the tenant database
 - Session pooling
-  - Like `pgbouncer`
+  - Like `PgBouncer`
 - Multi-protocol Postgres query interface
   - Postgres binary
   - HTTPS
@@ -66,7 +66,7 @@ For managers of Postgres databases, supavisor makes managing Postgres clusters e
 
 ## Inspiration
 
-- [pgbouncer](https://www.pgbouncer.org/)
+- [PgBouncer](https://www.pgbouncer.org/)
 - [stolon](https://github.com/sorintlab/stolon)
 - [pgcat](https://github.com/levkk/pgcat)
 - [odyssey](https://github.com/yandex/odyssey)
