@@ -41,7 +41,7 @@ For managers of Postgres databases, supavisor makes managing Postgres clusters e
 - Highly available
   - When deployed as a Supavisor cluster and a node dies connection pools should be quickly spun up or already available on other nodes when clients reconnect
 - Connection buffering
-  - Brief connection buffering for transparent database restarts
+  - Brief connection buffering for transparent database restarts or failovers
 
 ## Future Work
 
