@@ -8,7 +8,7 @@ defmodule Supavisor.Tenants.Tenant do
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
-  @schema_prefix "supavisor"
+  @schema_prefix "_supavisor"
 
   schema "tenants" do
     field(:db_database, :string)

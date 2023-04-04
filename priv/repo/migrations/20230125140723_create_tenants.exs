@@ -2,7 +2,7 @@ defmodule Supavisor.Repo.Migrations.CreateTenants do
   use Ecto.Migration
 
   def change do
-    create table(:tenants, primary_key: false, prefix: "supavisor") do
+    create table(:tenants, primary_key: false, prefix: "_supavisor") do
       add(:id, :binary_id, primary_key: true)
       add(:external_id, :string, null: false)
       add(:db_host, :string, null: false)
@@ -15,6 +15,6 @@ defmodule Supavisor.Repo.Migrations.CreateTenants do
       timestamps()
     end
 
-    create(index(:tenants, [:external_id], unique: true, prefix: "supavisor"))
+    create(index(:tenants, [:external_id], unique: true, prefix: "_supavisor"))
   end
 end

@@ -77,7 +77,7 @@ defmodule Supavisor.MixProject do
       test: [
         "ecto.create",
         "run priv/repo/seeds_before_migration.exs",
-        "ecto.migrate --prefix supavisor --log-migrator-sql",
+        "ecto.migrate --prefix _supavisor --log-migrator-sql",
         "run priv/repo/seeds_after_migration.exs",
         "test"
       ]
