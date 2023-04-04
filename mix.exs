@@ -54,6 +54,7 @@ defmodule Supavisor.MixProject do
       {:prom_ex, "~> 1.7.1"},
       {:open_api_spex, "~> 3.16"},
       {:burrito, github: "burrito-elixir/burrito"},
+      {:libcluster, "~> 3.3.1"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},

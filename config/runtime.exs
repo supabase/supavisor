@@ -6,10 +6,25 @@ if config_env() == :prod do
     http: [
       port: String.to_integer(System.get_env("PORT") || "4000"),
       transport_options: [
-        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "16384"),
+        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
         num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
         # IMPORTANT: support IPv6 addresses
         socket_opts: [:inet6]
+      ]
+    ]
+    ],
+    secret_key_base: secret_key_base
+
+  config :libcluster,
+    debug: false,
+    topologies: [
+      fly6pn: [
+        strategy: Cluster.Strategy.DNSPoll,
+        config: [
+          polling_interval: 5_000,
+          query: System.get_env("DNS_NODES"),
+          node_basename: "supavisor"
+        ]
       ]
     ]
 end

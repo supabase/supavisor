@@ -8,6 +8,7 @@ processes = []
   strategy = "rolling"
 
 [env]
+  DNS_NODES = "pg-edge-stage.internal"
   PHX_HOST = "pg-edge-stage.fly.dev"
   PORT = "8080"
 
