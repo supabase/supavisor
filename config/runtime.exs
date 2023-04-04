@@ -11,8 +11,7 @@ if config_env() == :prod do
         # IMPORTANT: support IPv6 addresses
         socket_opts: [:inet6]
       ]
-    ],
-    secret_key_base: secret_key_base
+    ]
 
   config :libcluster,
     debug: false,
