@@ -67,8 +67,7 @@ defmodule Supavisor.Monitoring.PromEx do
   def get_metrics() do
     def_tags =
       Application.fetch_env!(:supavisor, :metrics_tags)
-      |> Enum.map(fn {k, v} -> "#{k}=\"#{v}\"" end)
-      |> Enum.join(",")
+      |> Enum.map_join(",", fn {k, v} -> "#{k}=\"#{v}\"" end)
 
     Logger.debug("Default prom tags: #{def_tags}")
 
