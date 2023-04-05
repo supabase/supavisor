@@ -64,6 +64,10 @@ For managers of Postgres databases, supavisor makes managing Postgres clusters e
   - Not noly for the supavisor cluster but tenant databases and tenant database clusters as well
   - Pulumi / terraform support
 
+## Acknowledgements
+
+[José Valim](https://github.com/josevalim) and the [Dashbit](https://dashbit.co/) team were incredibly helpful in informing the design decisions for Supavisor.
+
 ## Inspiration
 
 - [PgBouncer](https://www.pgbouncer.org/)
