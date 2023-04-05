@@ -8,6 +8,13 @@ defmodule Supavisor.Application do
 
   @impl true
   def start(_type, _args) do
+    :ok =
+      :gen_event.swap_sup_handler(
+        :erl_signal_server,
+        {:erl_signal_handler, []},
+        {Supavisor.SignalHandler, []}
+      )
+
     :ranch.start_listener(
       :pg_proxy,
       :ranch_tcp,
