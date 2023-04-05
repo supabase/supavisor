@@ -17,7 +17,7 @@ defmodule Supavisor.Support.Cluster do
                 port: Application.get_env(:supavisor, :secondary_http)
               )
 
-            {:supavisor, :fly_region} ->
+            {:supavisor, :region} ->
               "usa"
 
             _ ->

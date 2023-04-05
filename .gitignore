@@ -32,3 +32,4 @@ supavisor-*.tar
 npm-debug.log
 /assets/node_modules/
 
+burrito_out/*

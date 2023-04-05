@@ -22,7 +22,6 @@ config :supavisor, SupavisorWeb.Endpoint,
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
-  secret_key_base: "kRa84KikGELDJu0XJLAvB3N/82yGhuaOiaKYFjarHf3EAOvuAc2eI/XWxU/vhLc0",
   watchers: []
 
 # ## SSL Support
@@ -68,7 +67,10 @@ config :logger, :console,
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
-config :phoenix, :stacktrace_depth, 20
+config :phoenix,
+  stacktrace_depth: 20,
+  serve_endpoints: true,
+  persistent: true
 
 # Initialize plugs at runtime for faster development compilation
 config :phoenix, :plug_init_mode, :runtime

@@ -39,33 +39,37 @@ defmodule Supavisor.Monitoring.PromEx do
     [_, host] = node() |> Atom.to_string() |> String.split("@")
 
     metrics_tags = %{
-      region: Application.fetch_env!(:supavisor, :fly_region),
-      node_host: host,
-      short_alloc_id: short_node_id()
+      region: Application.fetch_env!(:supavisor, :region),
+      host: host
     }
+
+    metrics_tags =
+      case short_node_id() do
+        nil -> metrics_tags
+        short_alloc_id -> Map.put(metrics_tags, :short_alloc_id, short_alloc_id)
+      end
 
     Application.put_env(:supavisor, :metrics_tags, metrics_tags)
   end
 
-  @spec short_node_id() :: String.t()
+  @spec short_node_id() :: String.t() | nil
   def short_node_id() do
-    fly_alloc_id = Application.fetch_env!(:supavisor, :fly_alloc_id)
-
-    case String.split(fly_alloc_id, "-", parts: 2) do
-      [short_alloc_id, _] -> short_alloc_id
-      _ -> fly_alloc_id
+    with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <-
+           Application.fetch_env(:supavisor, :fly_alloc_id),
+         [short_alloc_id, _] <- String.split(fly_alloc_id, "-", parts: 2) do
+      short_alloc_id
+    else
+      _ -> nil
     end
   end
 
   @spec get_metrics() :: String.t()
   def get_metrics() do
-    %{
-      region: region,
-      node_host: host,
-      short_alloc_id: short_alloc_id
-    } = Application.fetch_env!(:supavisor, :metrics_tags)
+    def_tags =
+      Application.fetch_env!(:supavisor, :metrics_tags)
+      |> Enum.map_join(",", fn {k, v} -> "#{k}=\"#{v}\"" end)
 
-    def_tags = "host=\"#{host}\",region=\"#{region}\",id=\"#{short_alloc_id}\""
+    Logger.debug("Default prom tags: #{def_tags}")
 
     metrics =
       PromEx.get_metrics(__MODULE__)

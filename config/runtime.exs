@@ -1,20 +1,8 @@
 import Config
 
 if config_env() == :prod do
-  secret_key_base =
-    System.get_env("SECRET_KEY_BASE") ||
-      raise """
-      environment variable SECRET_KEY_BASE is missing.
-      You can generate one by calling: mix phx.gen.secret
-      """
-
-  app_name =
-    System.get_env("FLY_APP_NAME") ||
-      raise "APP_NAME not available"
-
   config :supavisor, SupavisorWeb.Endpoint,
     server: true,
-    url: [host: "#{app_name}.fly.dev", port: 80],
     http: [
       port: String.to_integer(System.get_env("PORT") || "4000"),
       transport_options: [
@@ -23,8 +11,7 @@ if config_env() == :prod do
         # IMPORTANT: support IPv6 addresses
         socket_opts: [:inet6]
       ]
-    ],
-    secret_key_base: secret_key_base
+    ]
 
   config :libcluster,
     debug: false,
@@ -34,7 +21,7 @@ if config_env() == :prod do
         config: [
           polling_interval: 5_000,
           query: System.get_env("DNS_NODES"),
-          node_basename: app_name
+          node_basename: "supavisor"
         ]
       ]
     ]
@@ -42,7 +29,7 @@ end
 
 if config_env() != :test do
   config :supavisor,
-    fly_region: System.get_env("FLY_REGION"),
+    region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
@@ -51,11 +38,7 @@ if config_env() != :test do
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer()
 
   config :supavisor, Supavisor.Repo,
-    hostname: System.get_env("DB_HOST", "localhost"),
-    username: System.get_env("DB_USER", "postgres"),
-    password: System.get_env("DB_PASSWORD", "postgres"),
-    database: System.get_env("DB_NAME", "postgres"),
-    port: System.get_env("DB_PORT", "6432"),
+    url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
     pool_size: System.get_env("DB_POOL_SIZE", "5") |> String.to_integer(),
     parameters: [
       application_name: "supavisor_meta"

@@ -1,7 +1,7 @@
 import Config
 
 config :supavisor,
-  fly_region: "eu",
+  region: "eu",
   fly_alloc_id: "123e4567-e89b-12d3-a456-426614174000",
   api_jwt_secret: "dev",
   metrics_jwt_secret: "dev",
@@ -24,7 +24,6 @@ config :supavisor, Supavisor.Repo,
 # you can enable the server option below.
 config :supavisor, SupavisorWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
-  secret_key_base: "/r65VZub52YDf/CjNMeYmkJ8AitZZPIMRnC64f7P+LTOo87+/rqjydvAE65OK0/1",
   server: false
 
 config :supavisor, Supavisor.Vault,
