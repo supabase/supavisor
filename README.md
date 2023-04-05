@@ -14,7 +14,7 @@ Connection pools are dynamic. When a tenant client connects to the Supavisor clu
 
 Because the count of Postgres connections is constrained only one tenant connection pool shoud be alive in a Supavisor cluster. In the case of two simlutaneous client connections starting a pool, as the pool process IDs are distributed across the cluster, eventually one of those pools is gracefully shutdown.
 
-The dynamic nature of tenant database connection pools gives enables high availability in the event of node outages. The pool processes are monitored by each node. If a node goes down that process ID is removed from the cluster. Tenant clients will then start a new pool automatically as they reconnect to the cluster.
+The dynamic nature of tenant database connection pools enables high availability in the event of node outages. Pool processes are monitored by each node. If a node goes down that process ID is removed from the cluster. Tenant clients will then start a new pool automatically as they reconnect to the cluster.
 
 This design enables blue-green or rolling deployments as upgrades require. A single VPC / multiple availability zone topology is possible and can provide for greater redundancy when load balancing queries across read replicas is supported ([todo](#future-work)).
 
