@@ -8,63 +8,65 @@ For Postgres clients, the goal is to provide Postgres connection pools as a serv
 
 For managers of Postgres databases, supavisor makes managing Postgres clusters easy by handling Postgres high-availability cluster configuration and state.
 
-## Postgres Features
+## Docs
 
-**Features not listed in priority**
+- [Installation and usage](https://github.com/supabase/supavisor/wiki/Installation-and-Usage)
+- [Metrics](https://github.com/supabase/supavisor/wiki/Metrics)
+
+## Features
 
 - Fast
-  - Within 90% throughput as compared to `pgbouncer` running `pgbench` locally
+  - Within 90% throughput as compared to `PgBouncer` running `pgbench` locally
 - Scalable
   - 1 million Postgres connections on a cluster
   - 250_000 idle connections on a single 16 core node with 64GB of ram
 - Multi-tenant
   - Connect to multiple different Postgres instances/clusters
+- Single-tenant
+  - Easy drop-in replacement for `PgBouncer`
+- Pool mode support per tenant
+  - Transaction
+- Cloud-native
+  - Cluster-able
+  - Resiliant during cluster resizing
+  - Supports rolling and blue/green deployment strategies
+  - NOT run in a serverless environment
+  - NOT dependant on Kubernetes
+- Observable
+  - Easily understand throughput by tenant, tenant database or individual connection
+  - Prometheus `/metrics` endpoint
+- Manageable
+  - OpenAPI spec at `/api/openapi`
+  - SwaggarUI at `/swaggerui`
+- Highly available
+  - When deployed as a Supavisor cluster and a node dies connection pools should be quickly spun up or already available on other nodes when clients reconnect
+- Connection buffering
+  - Brief connection buffering for transparent database restarts or failovers
+
+## Future Work
+
 - Load balancing
   - Queries can be load balanced across read-replicas
   - Load balancing is independant of Postgres high-availability management (see below)
 - Query caching
   - Query results are optionally cached in the pool cluster and returned before hitting the tenant database
-- Transaction pooling
-  - Like pgbouncer
 - Session pooling
-  - Like pgbouncer
+  - Like `PgBouncer`
 - Multi-protocol Postgres query interface
   - Postgres binary
   - HTTPS
   - Websocket
-- Connection buffering
-  - Supports a fast (minutes) tenant Postgres database restart without interupting clients (aside from query latency)
-- High-availability
-  - When deployed as a supavisor cluster and a supavisor node dies connection pools should be quickly spun up or already available on other nodes when clients reconnect
 - Postgres high-availability management
   - Primary database election on primary failure
   - Health checks
   - Push button read-replica configuration
-  - What else?
-- Deployable as a single or multi-tenant proxy
-  - Direct replacement for `pgbouncer`
-  - Uses specific `supavisor` schema in metadata database so when used as a `pgbouncer` replacement it can use the local database as the metadata database
-
-## General Features
-
-- Cloud-native
-  - Cluster-able
-  - Cluster should handle dynamic resizing
-  - Support rolling and blue/green deployment strategies
-  - Self-heal if instances come and go
-  - NOT run in a serverless environment
-  - NOT dependant on Kubernetes
-- Observability
-  - Easily understand throughput by tenant, tenant database or individual connection
-  - Prometheus `/metrics` endpoint
-  - Admin UI to add tenants, view metrics, sort tenants by throughput, ban tenants, etc
 - Config as code
   - Not noly for the supavisor cluster but tenant databases and tenant database clusters as well
   - Pulumi / terraform support
 
 ## Inspiration
 
-- [pgbouncer](https://www.pgbouncer.org/)
+- [PgBouncer](https://www.pgbouncer.org/)
 - [stolon](https://github.com/sorintlab/stolon)
 - [pgcat](https://github.com/levkk/pgcat)
 - [odyssey](https://github.com/yandex/odyssey)
@@ -77,12 +79,6 @@ For managers of Postgres databases, supavisor makes managing Postgres clusters e
 - [proxysql.com](https://proxysql.com/)
 - [Amazon RDS Proxy](https://aws.amazon.com/rds/proxy/)
 - [Google Cloud SQL Proxy](https://github.com/GoogleCloudPlatform/cloud-sql-proxy)
-
-## Installation
-
-[Installation and usage for development](https://github.com/supabase/supavisor/wiki/Installation-and-Usage)
-
-## [Metrics](https://github.com/supabase/supavisor/wiki/Metrics)
 
 ## Benchmarking
 
