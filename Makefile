@@ -25,7 +25,7 @@ dev.node2:
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server	
 
 db_migrate:
-	mix ecto.migrate --prefix supavisor --log-migrator-sql
+	mix ecto.migrate --prefix _supavisor --log-migrator-sql
 
 db_start:
 	docker-compose -f ./dev/docker-compose.db.yml up

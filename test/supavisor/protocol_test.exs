@@ -56,7 +56,6 @@ defmodule Supavisor.ProtocolTest do
 
   test "greetings/1" do
     ps = S.encode_parameter_status(@initial_data)
-    result = S.greetings(ps)
 
     dec =
       S.greetings(ps)
