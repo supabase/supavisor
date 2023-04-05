@@ -21,7 +21,7 @@ if config_env() == :prod do
         config: [
           polling_interval: 5_000,
           query: System.get_env("DNS_NODES"),
-          node_basename: "supavisor"
+          node_basename: System.get_env("FLY_APP_NAME") || "supavisor"
         ]
       ]
     ]
