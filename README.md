@@ -20,7 +20,7 @@ For database managers, Supavisor simplifies the task of managing Postgres cluste
 
 At Supabase we host a lot of Postgres databases. People pay Supabase for database cycles, and we want to give people as much database as possible. `PgBouncer` doesn't take a lot of resources to run but it is another thing to run on a database instance. Pulling connection pooling off the database instance into a cluster right next to tenant databases will free up some resources to serve queries for customers.
 
-Moreover, there is a lot of overhead in administrating Postgres databases. This management can cause downtime. To mitigate downtime as much as possible requires admins to jump through hoops. We see the connection pooler as a great entry point to give our devops team a convenient way to automate the administration of many Postgres databases.
+Moreover, there is a lot of overhead in administrating Postgres databases. This management can cause downtime. To mitigate downtime as much as possible requires admins to jump through hoops. We see the connection pooler as a great entry point to give our devops team a convenient way to automate the administration of many Postgres databases and minimize downtime.
 
 ## Architecture
 
