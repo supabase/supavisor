@@ -96,7 +96,10 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - c6gd.4xlarge
   - 16vCPU/32RAM
   - Ubuntu 22.04.2 aarch64
-- 200_000+ concurrents with 10_000+ QPS
+- 200_000+ concurrent client connection
+- 10_000 QPS
+- 35_000 QPS peak
+- 50 tenant Postgres connection
 - `select * from (values (1, 'one'), (2, 'two'), (3, 'three')) as t (num,letter);`
 - ~50% CPU utilization
 - 2.21G RAM usage
