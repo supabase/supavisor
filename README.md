@@ -12,23 +12,23 @@
 
 ## Overview
 
-Supavisor is a scalable, cloud-native Postgres connection pooler. A Supavisor cluster is capable of proxing millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
+Supavisor is a scalable PostgreSQL connection pooler enabling millions of clients to efficiently utilize available database connections.
 
-For database managers, Supavisor simplifies the task of managing Postgres clusters by providing easy configuration of highly available Postgres clusters ([todo](#future-work)).
+For database managers, Supavisor provides simplified configuration to manage highly available Postgres clusters ([todo](#future-work)).
 
 ## Motivation
 
-At Supabase we host a lot of Postgres databases. People pay Supabase for database cycles, and we want to give people as much database as possible. `PgBouncer` doesn't take a lot of resources to run but it is another thing to run on a database instance. Pulling connection pooling off the database instance into a cluster right next to tenant databases will free up some resources to serve queries for customers.
+At Supabase we host a lot of Postgres databases. Developers use Supabase for database cycles, and we want to give them as much database as possible. [PgBouncer](https://www.pgbouncer.org) doesn't take a lot of resources to run but it is another thing to run on a database instance (needs introduce that PgBouncer needs to be installed on the database instance. Also, if it doesn't take a lot resources why not use it then? Kind of defeats the purpose). Pulling connection pooling off the database instance into a cluster right next to tenant databases will free up some resources (e.g. alleviate database load) to (better) serve queries for customers.
 
-Moreover, there is a lot of overhead in administrating Postgres databases. This management can cause downtime. To mitigate downtime as much as possible requires admins to jump through hoops. We see the connection pooler as a great entry point to give our devops team a convenient way to automate the administration of many Postgres databases and minimize downtime.
+Moreover, there is a lot of overhead in administrating Postgres databases. This management can cause downtime. To mitigate downtime as much as possible requires admins to jump through hoops. We see the connection pooler as a great entry point to give our devops team a convenient way to automate the administration of many Postgres databases and minimize downtime. (I feel like the key selling point here is that switching between Postgres databases can cause downtime but because of Supavisor it can reroute traffic to active databases thus mitigating downtime)
 
 ## Architecture
 
-Supavisor was designed to work in a cloud computing environment as a highly available cluster of nodes. Tenant configuration is stored in a higly available Postgres database. Configuration is loaded from the Supavisor database when a tenant connection pool is initiated.
+Supavisor is designed as a highly available cluster of nodes deployed in the cloud. Tenant (need to explain here what a tenant is) configuration (essenbtially database credentials) is stored in a higly available Postgres database (not a database cluster?). Configuration is loaded from the Supavisor database when a tenant connection pool is initiated.
 
-Connection pools are dynamic. When a tenant client connects to the Supavisor cluster the tenant pool is started and all connections to the tenant database are established. The process ID of the new tenant pool is then distributed to all nodes of the cluster and stored in an in-memory key-value store. Subsequent tenant client connections live on the inbound node but connection data is proxied from the pool node to the client connection node as needed.
+Connection pools are dynamic (this sentence doesn't mean anything to me). When a tenant client (what's a tenant client? Providing an example can help here) connects to the Supavisor cluster the tenant pool is started and all connections to the tenant database are established. The process ID (probably need to mention this is the Elixir process id or pid) of the new tenant pool is then distributed to all nodes of the cluster and stored in an in-memory key-value store. Subsequent tenant client connections live on the inbound node (i think can just plainly say that tenant client is connecting to the nearest node or a node but doesn't gaurentee that it's the node with the pool) but connection data is proxied from the pool node to the client connection node as needed (I think the diagram below needs to appear much earlier because just reading this gets confusing).
 
-Because the count of Postgres connections is constrained only one tenant connection pool shoud be alive in a Supavisor cluster. In the case of two simlutaneous client connections starting a pool, as the pool process IDs are distributed across the cluster, eventually one of those pools is gracefully shutdown.
+Because the count of Postgres connections is constrained (Postgres database has an optimal number of connections to be used) only one tenant connection pool shoud be alive in a Supavisor cluster. In the case of two simlutaneous client connections starting a pool, as the pool process IDs are distributed across the cluster, eventually one of those pools is gracefully shutdown.
 
 The dynamic nature of tenant database connection pools enables high availability in the event of node outages. Pool processes are monitored by each node. If a node goes down that process ID is removed from the cluster. Tenant clients will then start a new pool automatically as they reconnect to the cluster.
 
@@ -47,11 +47,11 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - Within 90% throughput as compared to `PgBouncer` running `pgbench` locally
 - Scalable
   - 1 million Postgres connections on a cluster
-  - 250_000 idle connections on a single 16 core node with 64GB of ram
+  - 250_000 idle connections (should specify that these are client connections) on a single 16 core node with 64GB of ram
 - Multi-tenant
   - Connect to multiple different Postgres instances/clusters
 - Single-tenant
-  - Easy drop-in replacement for `PgBouncer`
+  - Easy drop-in replacement for `PgBouncer` (this would require deploying an entirely separate Elixir app though so isn't as easy. Can be something like good alternative to PgBouncer while offering high availably that PgBouncer doesn't have since it lives on database instance)
 - Pool mode support per tenant
   - Transaction
 - Cloud-native
@@ -89,12 +89,12 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - Health checks
   - Push button read-replica configuration
 - Config as code
-  - Not noly for the supavisor cluster but tenant databases and tenant database clusters as well
+  - Not only for the supavisor cluster but tenant databases and tenant database clusters as well
   - Pulumi / terraform support
 
 ## Acknowledgements
 
-[José Valim](https://github.com/josevalim) and the [Dashbit](https://dashbit.co/) team were incredibly helpful in informing the design decisions for Supavisor.
+[José Valim](https://github.com/josevalim) and the [Dashbit](https://dashbit.co) team were incredibly helpful in informing the design decisions for Supavisor.
 
 ## Benchmarks
 
