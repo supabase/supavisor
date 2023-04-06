@@ -1,4 +1,4 @@
-# supavisor
+# Supavisor
 
 - [Overview](#overiew)
 - [Motivation](#motivation)
@@ -18,21 +18,21 @@ For database managers, Supavisor simplifies the task of managing Postgres cluste
 
 ## Motivation
 
-At Supabase we host a lot of Postgres databases. People pay Supabase for database cycles, and we want to give people as much database as possible. `PgBouncer` doesn't take a lot of resources to run but it is another thing to run on a database instance. Pulling connection pooling off the database instance into a cluster right next to tenant databases will free up some resources to serve queries for customers.
+At Supabase we host a lot of Postgres databases. People pay Supabase for database cycles, and we want to give people as much database as possible. `PgBouncer` doesn't take a lot of resources to run but it is another thing to run on a database instance. Pulling connection pooling of the database instance into a cluster right next to tenant databases will free up some resources to serve queries for customers.
 
-Moreover, there is a lot of overhead in administrating Postgres databases. This management can cause downtime. To mitigate downtime as much as possible requires admins to jump through hoops. We see the connection pooler as a great entry point to give our devops team a convenient way to automate the administration of many Postgres databases and minimize downtime.
+Moreover, there is a lot of overhead in administrating Postgres databases. This management can cause downtime. To mitigate downtime as much as possible requires admins to jump through hoops. We see the connection pooler as a great entry point to give our DevOps team a convenient way to automate the administration of many Postgres databases and minimize downtime.
 
 ## Architecture
 
-Supavisor was designed to work in a cloud computing environment as a highly available cluster of nodes. Tenant configuration is stored in a higly available Postgres database. Configuration is loaded from the Supavisor database when a tenant connection pool is initiated.
+Supavisor was designed to work in a cloud computing environment as a highly available cluster of nodes. Tenant configuration is stored in a highly available Postgres database. Configuration is loaded from the Supavisor database when a tenant connection pool is initiated.
 
 Connection pools are dynamic. When a tenant client connects to the Supavisor cluster the tenant pool is started and all connections to the tenant database are established. The process ID of the new tenant pool is then distributed to all nodes of the cluster and stored in an in-memory key-value store. Subsequent tenant client connections live on the inbound node but connection data is proxied from the pool node to the client connection node as needed.
 
-Because the count of Postgres connections is constrained only one tenant connection pool shoud be alive in a Supavisor cluster. In the case of two simlutaneous client connections starting a pool, as the pool process IDs are distributed across the cluster, eventually one of those pools is gracefully shutdown.
+Because the count of Postgres connections is constrained only one tenant connection pool should be alive in a Supavisor cluster. In the case of two simultaneous client connections starting a pool, as the pool process IDs are distributed across the cluster, eventually one of those pools is gracefully shutdown.
 
 The dynamic nature of tenant database connection pools enables high availability in the event of node outages. Pool processes are monitored by each node. If a node goes down that process ID is removed from the cluster. Tenant clients will then start a new pool automatically as they reconnect to the cluster.
 
-This design enables blue-green or rolling deployments as upgrades require. A single VPC / multiple availability zone topology is possible and can provide for greater redundancy when load balancing queries across read replicas is supported ([todo](#future-work)).
+This design enables blue-green or rolling deployments as upgrades require. A single VPC / multiple availability zone topologies is possible and can provide for greater redundancy when load balancing queries across read replicas are supported ([todo](#future-work)).
 
 ![architecture diagram of Supavisor the multi-tenant Postgres connection pooler](./docs/images/arch-diagram-v1.png)
 
@@ -56,7 +56,7 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - Transaction
 - Cloud-native
   - Cluster-able
-  - Resiliant during cluster resizing
+  - Resilient during cluster resizing
   - Supports rolling and blue/green deployment strategies
   - NOT run in a serverless environment
   - NOT dependant on Kubernetes
