@@ -12,15 +12,17 @@
 
 ## Overview
 
-Supavisor is a scalable, cloud-native Postgres connection pooler. A Supavisor cluster is capable of proxing millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
+Supavisor is a scalable, cloud-native Postgres connection pooler. A Supavisor cluster is capable of proxying millions of Postgres end-client connections into a stateful pool of native Postgres database connections.
 
 For database managers, Supavisor simplifies the task of managing Postgres clusters by providing easy configuration of highly available Postgres clusters ([todo](#future-work)).
 
 ## Motivation
 
-At Supabase we host a lot of Postgres databases. People pay Supabase for database cycles, and we want to give people as much database as possible. `PgBouncer` doesn't take a lot of resources to run but it is another thing to run on a database instance. Pulling connection pooling of the database instance into a cluster right next to tenant databases will free up some resources to serve queries for customers.
+We have several goals with Supavisor:
 
-Moreover, there is a lot of overhead in administrating Postgres databases. This management can cause downtime. To mitigate downtime as much as possible requires admins to jump through hoops. We see the connection pooler as a great entry point to give our DevOps team a convenient way to automate the administration of many Postgres databases and minimize downtime.
+- **Zero-downtime scaling**: we want to scale Postgres server compute with zero-downtime. To do this, we need an external Pooler that can buffer and re-route requests while the resizing operation is in progress.
+- **Handling modern connection demands**: We need a Pooler that can absorb millions of connections. We often see developers connecting to Postgres from Serverless environments, and so we also need something that works with both TCP and HTTP protocols.
+- **Efficiency**: Our customers pay for database processing power, and our goal is to maximize their database capacity. While PgBouncer is resource-efficient, it still consumes some resources on the database instance. By moving connection pooling to a dedicated cluster adjacent to tenant databases, we can free up additional resources to better serve customer queries.
 
 ## Architecture
 
