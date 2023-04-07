@@ -1,15 +1,14 @@
-app = "pg-edge-stage"
+app = "supavisor-staging"
 kill_signal = "SIGTERM"
 kill_timeout = 5
 processes = []
 
 [deploy]
   release_command = "/app/bin/migrate"
-  strategy = "rolling"
 
 [env]
-  DNS_NODES = "pg-edge-stage.internal"
-  PHX_HOST = "pg-edge-stage.fly.dev"
+  DNS_NODES = "supavisor-staging.internal"
+  PHX_HOST = "supavisor-staging.fly.dev"
   PORT = "8080"
 
 [experimental]
