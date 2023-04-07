@@ -14,6 +14,7 @@ config :supavisor,
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,
   url: [host: "localhost"],
+  secret_key_base: "ktyW57usZxrivYdvLo9os7UGcUUZYKchOMHT3tzndmnHuxD09k+fQnPUmxlPMUI3",
   render_errors: [view: SupavisorWeb.ErrorView, accepts: ~w(html json), layout: false],
   pubsub_server: Supavisor.PubSub,
   live_view: [signing_salt: "qf3AEZ7n"]

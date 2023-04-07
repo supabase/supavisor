@@ -9,8 +9,18 @@ defmodule SupavisorWeb.TenantController do
 
   action_fallback(SupavisorWeb.FallbackController)
 
+  @authorization [
+    in: :header,
+    name: "Authorization",
+    schema: %OpenApiSpex.Schema{type: :string},
+    required: true,
+    example:
+      "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE2ODAxNjIxNTR9.U9orU6YYqXAtpF8uAiw6MS553tm4XxRzxOhz2IwDhpY"
+  ]
+
   operation(:index,
     summary: "List tenants",
+    parameters: [authorization: @authorization],
     responses: %{
       200 => TenantList.response()
     }
@@ -32,7 +42,10 @@ defmodule SupavisorWeb.TenantController do
 
   operation(:show,
     summary: "Fetch Tenant",
-    parameters: [external_id: [in: :path, description: "External id", type: :string]],
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
     responses: %{
       200 => Tenant.response(),
       404 => NotFound.response()
@@ -55,7 +68,10 @@ defmodule SupavisorWeb.TenantController do
 
   operation(:update,
     summary: "Create or update tenant",
-    parameters: [external_id: [in: :path, description: "External id", type: :string]],
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
     request_body: TenantCreate.params(),
     responses: %{
       201 => Created.response(Tenant),
@@ -77,7 +93,10 @@ defmodule SupavisorWeb.TenantController do
 
   operation(:delete,
     summary: "Delete source",
-    parameters: [external_id: [in: :path, description: "External id", type: :string]],
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
     responses: %{
       204 => Empty.response(),
       404 => NotFound.response()
