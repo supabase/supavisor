@@ -92,10 +92,6 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - Not noly for the supavisor cluster but tenant databases and tenant database clusters as well
   - Pulumi / terraform support
 
-## Acknowledgements
-
-[José Valim](https://github.com/josevalim) and the [Dashbit](https://dashbit.co/) team were incredibly helpful in informing the design decisions for Supavisor.
-
 ## Benchmarks
 
 ### Local Benchmarks
@@ -142,20 +138,23 @@ tps = 182.571632 (without initial connection time)
 
 ### Load Test
 
-![Supavisor load test htop chart](./docs/images/load-test-cpu.png)
+![Supavisor load test virtual users chart](./docs/images/load-test-vus.png)
 
-- AWS to AWS same region
-- Single Supavisor node
-  - c6gd.4xlarge
-  - 16vCPU/32RAM
+![Supavisor load test qps chart](./docs/images/load-test-qps.png)
+
+- Supavisor two node cluster
+  - 64vCPU / 246RAM
   - Ubuntu 22.04.2 aarch64
-- 200_000+ concurrent client connection
-- 10_000 QPS
-- 35_000 QPS peak
-- 50 tenant Postgres connection
+- 1_003_200 concurrent client connection
+- 20_000+ QPS
+- 400 tenant Postgres connection
 - `select * from (values (1, 'one'), (2, 'two'), (3, 'three')) as t (num,letter);`
-- ~50% CPU utilization
-- 2.21G RAM usage
+- ~50% CPU utilization (pool owner node)
+- 7.8G RAM usage
+
+## Acknowledgements
+
+[José Valim](https://github.com/josevalim) and the [Dashbit](https://dashbit.co/) team were incredibly helpful in informing the design decisions for Supavisor.
 
 ## Inspiration
 
