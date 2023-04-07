@@ -100,8 +100,45 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
 
 ### Local Benchmarks
 
-- Run pgbench for a minimum of 60 seconds
-- Connection init will be less of a percentage of time
+- Running `pgbench` on `PgBouncer` (transaction mode/pool size 60)
+
+```
+PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 100 -h localhost -p 6452 -U postgres postgres
+pgbench (15.2, server 14.6 (Debian 14.6-1.pgdg110+1))
+starting vacuum...end.
+transaction type: <builtin: TPC-B (sort of)>
+scaling factor: 1
+query mode: extended
+number of clients: 100
+number of threads: 10
+maximum number of tries: 1
+number of transactions per client: 100
+number of transactions actually processed: 10000/10000
+number of failed transactions: 0 (0.000%)
+latency average = 510.310 ms
+initial connection time = 31.388 ms
+tps = 195.959361 (without initial connection time)
+```
+
+- Running `pgbench` on `Supavisor` (pool size 60)
+
+```
+PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 100 -h localhost -p 7654 -U postgres.localhost postgres
+pgbench (15.2, server 14.6 (Debian 14.6-1.pgdg110+1))
+starting vacuum...end.
+transaction type: <builtin: TPC-B (sort of)>
+scaling factor: 1
+query mode: extended
+number of clients: 100
+number of threads: 10
+maximum number of tries: 1
+number of transactions per client: 100
+number of transactions actually processed: 10000/10000
+number of failed transactions: 0 (0.000%)
+latency average = 547.730 ms
+initial connection time = 190.708 ms
+tps = 182.571632 (without initial connection time)
+```
 
 ### Load Test
 
