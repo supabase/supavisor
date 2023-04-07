@@ -19,7 +19,7 @@ defmodule Supavisor.Application do
       :pg_proxy,
       :ranch_tcp,
       %{
-        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
+        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
         num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
         socket_opts: [port: Application.get_env(:supavisor, :proxy_port)]
       },
