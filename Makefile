@@ -34,14 +34,14 @@ db_migrate:
 	mix ecto.migrate --prefix _supavisor --log-migrator-sql
 
 db_start:
-	docker-compose -f ./dev/docker-compose.db.yml up
+	docker-compose -f ./docker-compose.db.yml up
 
 db_stop:
-	docker-compose -f ./dev/docker-compose.db.yml down --remove-orphans
+	docker-compose -f ./docker-compose.db.yml down --remove-orphans
 
 db_rebuild:
 	make db_stop
-	docker-compose -f ./dev/docker-compose.db.yml build
+	docker-compose -f ./docker-compose.db.yml build
 	make db_start
 
 pgbench_init:
