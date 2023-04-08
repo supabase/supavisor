@@ -118,7 +118,7 @@ initial connection time = 31.388 ms
 tps = 195.959361 (without initial connection time)
 ```
 
-- Running `pgbench` on `Supavisor` (pool size 60)
+- Running `pgbench` on `Supavisor` (pool size 60, no logs)
 
 ```
 PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 100 -h localhost -p 7654 -U postgres.localhost postgres
@@ -133,9 +133,9 @@ maximum number of tries: 1
 number of transactions per client: 100
 number of transactions actually processed: 10000/10000
 number of failed transactions: 0 (0.000%)
-latency average = 547.730 ms
-initial connection time = 190.708 ms
-tps = 182.571632 (without initial connection time)
+latency average = 528.463 ms
+initial connection time = 178.591 ms
+tps = 189.228103 (without initial connection time)
 ```
 
 ### Load Test
