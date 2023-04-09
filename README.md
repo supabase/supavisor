@@ -1,6 +1,6 @@
 ![Supavisor](/docs/images/supavisor-banner.png)
 
-# Supavisor - Cloud-Native Postgres Connection Pooler
+# Supavisor - Postgres connection pooler
 
 - [Overview](#overiew)
 - [Motivation](#motivation)
