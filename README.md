@@ -36,6 +36,9 @@ The dynamic nature of tenant database connection pools enables high availability
 
 This design enables blue-green or rolling deployments as upgrades require. A single VPC / multiple availability zone topologies is possible and can provide for greater redundancy when load balancing queries across read replicas are supported ([todo](#future-work)).
 
+![pooler-diagram-github--nobg](https://user-images.githubusercontent.com/8291514/230756297-f8bb4e3c-4515-46d9-b555-ef118d89b96b.svg)
+
+
 ![pooler-diagram-github](https://user-images.githubusercontent.com/8291514/230756240-2be475e9-1d4a-442c-84eb-746ce8406ed5.svg)
 
 
