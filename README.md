@@ -1,3 +1,5 @@
+![Supavisor](/docs/images/supavisor-banner.png)
+
 # Supavisor
 
 - [Overview](#overiew)
