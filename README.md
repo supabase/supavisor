@@ -38,6 +38,8 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
 
 ![pooler-diagram-github-bg](https://user-images.githubusercontent.com/8291514/230752482-ed318cd6-ac99-4fd5-9240-247a587587f0.png)
 
+![pooler-diagram-github](https://user-images.githubusercontent.com/8291514/230756182-1d0765d4-2c98-447f-a52a-f31f4ff3631f.svg)
+
 ## Docs
 
 - [Installation and usage](https://github.com/supabase/supavisor/wiki/Installation-and-Usage)
