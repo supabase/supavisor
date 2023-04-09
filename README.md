@@ -36,6 +36,9 @@ The dynamic nature of tenant database connection pools enables high availability
 
 This design enables blue-green or rolling deployments as upgrades require. A single VPC / multiple availability zone topologies is possible and can provide for greater redundancy when load balancing queries across read replicas are supported ([todo](#future-work)).
 
+![pooler-diagram](https://user-images.githubusercontent.com/8291514/230752285-3cefa5af-2f5b-4e7e-8acb-e6f56071a99c.jpg)
+
+
 ![architecture diagram of Supavisor the multi-tenant Postgres connection pooler](./docs/images/arch-diagram-v1.png)
 
 ## Docs
