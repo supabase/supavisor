@@ -72,7 +72,7 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - Prometheus `/metrics` endpoint
 - Manageable
   - OpenAPI spec at `/api/openapi`
-  - SwaggarUI at `/swaggerui`
+  - SwaggerUI at `/swaggerui`
 - Highly available
   - When deployed as a Supavisor cluster and a node dies connection pools should be quickly spun up or already available on other nodes when clients reconnect
 - Connection buffering
@@ -96,7 +96,7 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - Health checks
   - Push button read-replica configuration
 - Config as code
-  - Not noly for the supavisor cluster but tenant databases and tenant database clusters as well
+  - Not only for the supavisor cluster but tenant databases and tenant database clusters as well
   - Pulumi / terraform support
 
 ## Benchmarks
