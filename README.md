@@ -96,7 +96,7 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
   - Health checks
   - Push button read-replica configuration
 - Config as code
-  - Not noly for the supavisor cluster but tenant databases and tenant database clusters as well
+  - Not only for the supavisor cluster but tenant databases and tenant database clusters as well
   - Pulumi / terraform support
 
 ## Benchmarks
