@@ -58,7 +58,43 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
   defmodule TenantCreate do
     @moduledoc false
-    def params(), do: {"Tenant Create Params", "application/json", Tenant}
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        tenant: %Schema{
+          type: :object,
+          properties: %{
+            db_host: %Schema{type: :string, description: "Database host"},
+            db_port: %Schema{type: :integer, description: "Database port"},
+            db_user: %Schema{type: :string, description: "Database user"},
+            db_database: %Schema{type: :string, description: "Database name"},
+            db_password: %Schema{type: :string, description: "Database password"},
+            pool_size: %Schema{type: :integer, description: "Pool size"}
+          },
+          required: [
+            :db_host,
+            :db_port,
+            :db_user,
+            :db_database,
+            :db_password,
+            :pool_size
+          ],
+          example: %{
+            db_host: "localhost",
+            db_port: 5432,
+            db_user: "db_user",
+            db_database: "my_database",
+            db_password: "db_password",
+            pool_size: 10
+          }
+        }
+      },
+      required: [:tenant]
+    })
+
+    def params(), do: {"Tenant Create Params", "application/json", __MODULE__}
   end
 
   defmodule Created do
