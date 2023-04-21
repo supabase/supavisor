@@ -140,6 +140,17 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(_, {:tcp, _, bin}, :busy, data) do
+    Logger.debug(bin)
+    Logger.debug("#{inspect(bin)}")
+
+    case bin do
+      <<?Q, _length::32, query::binary>> ->
+        Logger.info("Query: #{query}")
+
+      bin ->
+        Logger.warn("Unknown message: #{inspect(bin)}")
+    end
+
     case Db.call(data.db_pid, bin) do
       :ok ->
         Logger.info("DB call success")
