@@ -117,7 +117,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     |> Enum.each(&emit_telemetry_for_tenant/1)
   end
 
-  @spec emit_telemetry_for_tenant({String.t(), pid(), :ets.tid()}) :: :ok
+  @spec emit_telemetry_for_tenant({{String.t(), String.t()}, pid(), :ets.tid()}) :: :ok
   def emit_telemetry_for_tenant({{tenant, user_alias}, _pid, tid}) do
     :telemetry.execute(
       [:supavisor, :connections],
