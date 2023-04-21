@@ -7,32 +7,33 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"
 
+  @user_valid_attrs %{
+    db_user_alias: "some db_user",
+    db_user: "some db_user",
+    db_password: "some db_password",
+    pool_size: 3,
+    mode_type: "transaction"
+  }
+
   @create_attrs %{
     db_database: "some db_database",
     db_host: "some db_host",
-    db_password: "some db_password",
     db_port: 42,
-    db_user: "some db_user",
     external_id: "dev_tenant",
-    pool_size: 42
+    users: [@user_valid_attrs]
   }
   @update_attrs %{
     db_database: "some updated db_database",
     db_host: "some updated db_host",
-    db_password: "some updated db_password",
     db_port: 43,
-    db_user: "some updated db_user",
     external_id: "dev_tenant",
-    pool_size: 43
+    users: [@user_valid_attrs]
   }
   @invalid_attrs %{
     db_database: nil,
     db_host: nil,
-    db_password: nil,
     db_port: nil,
-    db_user: nil,
-    external_id: nil,
-    pool_size: nil
+    external_id: nil
   }
 
   setup %{conn: conn} do
@@ -75,9 +76,7 @@ defmodule SupavisorWeb.TenantControllerTest do
                "external_id" => ^external_id,
                "db_database" => "some updated db_database",
                "db_host" => "some updated db_host",
-               "db_port" => 43,
-               "db_user" => "some updated db_user",
-               "pool_size" => 43
+               "db_port" => 43
              } = json_response(conn, 200)["data"]
     end
 

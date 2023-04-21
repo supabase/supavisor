@@ -13,11 +13,16 @@ defmodule Supavisor.TenantsFixtures do
       |> Enum.into(%{
         db_database: "some db_database",
         db_host: "some db_host",
-        db_password: "some db_password",
         db_port: 42,
-        db_user: "some db_user",
         external_id: "dev_tenant",
-        pool_size: 42
+        users: [
+          %{
+            "db_user" => "postgres",
+            "db_password" => "postgres",
+            "pool_size" => 3,
+            "mode_type" => "transaction"
+          }
+        ]
       })
       |> Supavisor.Tenants.create_tenant()
 

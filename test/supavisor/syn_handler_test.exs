@@ -5,20 +5,21 @@ defmodule Supavisor.SynHandlerTest do
   alias Ecto.Adapters.SQL.Sandbox
 
   @tenant "syn_tenant"
+  @user "postgres"
 
   test "resolving conflict" do
     node2 = :"secondary@127.0.0.1"
 
-    {:ok, pid2} = :erpc.call(node2, Supavisor, :start, [@tenant])
+    {:ok, pid2} = :erpc.call(node2, Supavisor, :start, [@tenant, @user])
     Process.sleep(500)
-    assert pid2 == Supavisor.get_global_sup(@tenant)
+    assert pid2 == Supavisor.get_global_sup(@tenant, @user)
     assert node(pid2) == node2
     true = Node.disconnect(node2)
     Process.sleep(500)
 
-    assert nil == Supavisor.get_global_sup(@tenant)
-    {:ok, pid1} = Supavisor.start(@tenant)
-    assert pid1 == Supavisor.get_global_sup(@tenant)
+    assert nil == Supavisor.get_global_sup(@tenant, @user)
+    {:ok, pid1} = Supavisor.start(@tenant, @user)
+    assert pid1 == Supavisor.get_global_sup(@tenant, @user)
     assert node(pid1) == node()
 
     :pong = Node.ping(node2)
@@ -29,7 +30,7 @@ defmodule Supavisor.SynHandlerTest do
     assert capture_log(fn -> Logger.warn(msg) end) =~
              msg
 
-    assert pid2 == Supavisor.get_global_sup(@tenant)
+    assert pid2 == Supavisor.get_global_sup(@tenant, @user)
     assert node(pid2) == node2
   end
 

@@ -19,17 +19,17 @@ defmodule Supavisor.PromExTest do
         username: db_conf[:username] <> "." <> @tenant
       )
 
-    %{proxy: proxy}
+    %{proxy: proxy, user: db_conf[:username]}
   end
 
-  test "remove tenant tag upon termination", %{proxy: proxy} do
+  test "remove tenant tag upon termination", %{proxy: proxy, user: user} do
     P.query!(proxy, "select 1;", [])
     Process.sleep(500)
     metrics = PromEx.get_metrics()
     assert metrics =~ "tenant=\"#{@tenant}\""
-    DynamicSupervisor.stop(proxy)
+    DynamicSupervisor.stop(proxy, user)
     Process.sleep(500)
-    Supavisor.stop(@tenant)
+    Supavisor.stop(@tenant, user)
     Process.sleep(500)
     refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
   end

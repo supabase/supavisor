@@ -14,13 +14,18 @@ end
 |> Enum.each(fn tenant ->
   if !Tenants.get_tenant_by_external_id(tenant) do
     %{
-      db_database: db_conf[:database],
       db_host: db_conf[:hostname],
-      db_password: db_conf[:password],
       db_port: db_conf[:port],
-      db_user: db_conf[:username],
+      db_database: db_conf[:database],
       external_id: tenant,
-      pool_size: 3
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 3,
+          "mode_type" => "transaction"
+        }
+      ]
     }
     |> Tenants.create_tenant()
   end
