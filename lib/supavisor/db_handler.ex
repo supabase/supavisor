@@ -30,6 +30,7 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       sent: false,
       auth: args.auth,
+      user_alias: args.user_alias,
       tenant: args.tenant,
       buffer: [],
       db_state: nil,
@@ -150,8 +151,7 @@ defmodule Supavisor.DbHandler do
 
       {ps, db_state} ->
         Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")
-
-        Supavisor.set_parameter_status(data.tenant, ps)
+        Supavisor.set_parameter_status(data.tenant, data.user_alias, ps)
 
         {:next_state, :idle, %{data | parameter_status: ps},
          {:next_event, :internal, :check_buffer}}
@@ -174,7 +174,7 @@ defmodule Supavisor.DbHandler do
     :ok = Client.client_call(data.caller, bin, ready)
 
     if ready do
-      Telem.network_usage(:db, data.socket, data.tenant)
+      Telem.network_usage(:db, data.socket, data.tenant, data.user_alias)
     end
 
     :keep_state_and_data

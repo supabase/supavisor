@@ -28,10 +28,10 @@ defmodule Supavisor.Monitoring.PromEx do
     ]
   end
 
-  @spec remove_metrics(String.t()) :: non_neg_integer()
-  def remove_metrics(tenant) do
+  @spec remove_metrics(String.t(), String.t()) :: non_neg_integer()
+  def remove_metrics(tenant, user_alias) do
     Supavisor.Monitoring.PromEx.Metrics
-    |> :ets.select_delete([{{{:_, %{tenant: tenant}}, :_}, [], [true]}])
+    |> :ets.select_delete([{{{:_, %{tenant: tenant, user_alias: user_alias}}, :_}, [], [true]}])
   end
 
   @spec set_metrics_tags() :: :ok

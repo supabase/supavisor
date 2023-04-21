@@ -8,7 +8,9 @@ defmodule Supavisor.Manager do
   @check_timeout 120_000
 
   def start_link(args) do
-    name = {:via, Registry, {Supavisor.Registry.Tenants, {:manager, args.tenant}}}
+    name =
+      {:via, Registry, {Supavisor.Registry.Tenants, {:manager, {args.tenant, args.user_alias}}}}
+
     GenServer.start_link(__MODULE__, args, name: name)
   end
 
@@ -36,17 +38,18 @@ defmodule Supavisor.Manager do
       check_ref: check_subscribers(),
       tid: tid,
       tenant: args.tenant,
+      user_alias: args.user_alias,
       parameter_status: []
     }
 
-    Registry.register(Supavisor.Registry.ManagerTables, args.tenant, tid)
+    Registry.register(Supavisor.Registry.ManagerTables, {args.tenant, args.user_alias}, tid)
 
     {:ok, state}
   end
 
   @impl true
-  def handle_call({:subscribe, pid}, _, state) do
-    Logger.info("Subscribing #{inspect(pid)} to tenant #{state.tenant}")
+  def handle_call({:subscribe, pid}, _, %{tenant: tenant, user_alias: user_alias} = state) do
+    Logger.info("Subscribing #{inspect(pid)} to tenant #{inspect({tenant, user_alias})}")
     :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
     {:reply, :ok, state}
   end
@@ -70,12 +73,12 @@ defmodule Supavisor.Manager do
     {:noreply, state}
   end
 
-  def handle_info(:check_subscribers, state) do
+  def handle_info(:check_subscribers, %{tenant: tenant, user_alias: user_alias} = state) do
     Process.cancel_timer(state.check_ref)
 
     if :ets.info(state.tid, :size) == 0 do
-      Logger.info("No subscribers for tenant #{state.tenant}, shutting down")
-      Supavisor.stop(state.tenant)
+      Logger.info("No subscribers for tenant #{inspect({tenant, user_alias})}, shutting down")
+      Supavisor.stop(tenant, user_alias)
       {:stop, :normal}
     else
       {:noreply, %{state | check_ref: check_subscribers()}}

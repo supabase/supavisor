@@ -3,21 +3,25 @@ defmodule Supavisor.Tenants.Tenant do
 
   use Ecto.Schema
   import Ecto.Changeset
+  alias Supavisor.Tenants.User
 
   @type t :: %__MODULE__{}
 
   @primary_key {:id, :binary_id, autogenerate: true}
-  @foreign_key_type :binary_id
   @schema_prefix "_supavisor"
 
   schema "tenants" do
-    field(:db_database, :string)
     field(:db_host, :string)
-    field(:db_password, Supavisor.Encrypted.Binary, source: :db_pass_encrypted)
     field(:db_port, :integer)
-    field(:db_user, :string)
+    field(:db_database, :string)
     field(:external_id, :string)
-    field(:pool_size, :integer)
+
+    has_many(:users, User,
+      foreign_key: :tenant_external_id,
+      references: :external_id,
+      on_delete: :delete_all,
+      on_replace: :delete
+    )
 
     timestamps()
   end
@@ -29,20 +33,15 @@ defmodule Supavisor.Tenants.Tenant do
       :external_id,
       :db_host,
       :db_port,
-      :db_user,
-      :db_database,
-      :db_password,
-      :pool_size
+      :db_database
     ])
     |> validate_required([
       :external_id,
       :db_host,
       :db_port,
-      :db_user,
-      :db_database,
-      :db_password,
-      :pool_size
+      :db_database
     ])
     |> unique_constraint([:external_id])
+    |> cast_assoc(:users, with: &User.changeset/2)
   end
 end

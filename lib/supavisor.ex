@@ -6,43 +6,43 @@ defmodule Supavisor do
   @registry Supavisor.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
 
-  @spec start(String.t()) :: {:ok, pid} | {:error, any()}
-  def start(tenant) do
-    case get_global_sup(tenant) do
+  @spec start(String.t(), String.t()) :: {:ok, pid} | {:error, any()}
+  def start(tenant, user_alias) do
+    case get_global_sup(tenant, user_alias) do
       nil ->
-        start_local_pool(tenant)
+        start_local_pool(tenant, user_alias)
 
       pid ->
         {:ok, pid}
     end
   end
 
-  @spec stop(String.t()) :: :ok | {:error, :tenant_not_found}
-  def stop(tenant) do
-    case get_global_sup(tenant) do
+  @spec stop(String.t(), String.t()) :: :ok | {:error, :tenant_not_found}
+  def stop(tenant, user_alias) do
+    case get_global_sup(tenant, user_alias) do
       nil -> {:error, :tenant_not_found}
       pid -> Supervisor.stop(pid)
     end
   end
 
-  @spec get_local_workers(String.t()) :: {:ok, workers} | {:error, :worker_not_found}
-  def get_local_workers(tenant) do
+  @spec get_local_workers(String.t(), String.t()) :: {:ok, workers} | {:error, :worker_not_found}
+  def get_local_workers(tenant, user_alias) do
     workers = %{
-      manager: get_local_manager(tenant),
-      pool: get_local_pool(tenant)
+      manager: get_local_manager(tenant, user_alias),
+      pool: get_local_pool(tenant, user_alias)
     }
 
     if Map.values(workers) |> Enum.member?(nil) do
-      Logger.error("Could not get workers for tenant #{tenant}")
+      Logger.error("Could not get workers for tenant #{inspect({tenant, user_alias})}")
       {:error, :worker_not_found}
     else
       {:ok, workers}
     end
   end
 
-  @spec subscribe_local(pid, String.t()) :: {:ok, workers} | {:error, any()}
-  def subscribe_local(pid, tenant) do
-    with {:ok, workers} <- get_local_workers(tenant),
+  @spec subscribe_local(pid, String.t(), String.t()) :: {:ok, workers} | {:error, any()}
+  def subscribe_local(pid, tenant, user_alias) do
+    with {:ok, workers} <- get_local_workers(tenant, user_alias),
          :ok <- Manager.subscribe(workers.manager, pid) do
       {:ok, workers}
     else
@@ -51,14 +51,15 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe_global(atom(), pid(), String.t()) :: {:ok, workers} | {:error, any()}
-  def subscribe_global(tenant_node, pid, tenant) do
+  @spec subscribe_global(atom(), pid(), String.t(), String.t()) ::
+          {:ok, workers} | {:error, any()}
+  def subscribe_global(tenant_node, pid, tenant, user_alias) do
     if node() == tenant_node do
-      subscribe_local(pid, tenant)
+      subscribe_local(pid, tenant, user_alias)
     else
       try do
         # TODO: tests for different cases
-        :erpc.call(tenant_node, __MODULE__, :subscribe_local, [pid, tenant], 15_000)
+        :erpc.call(tenant_node, __MODULE__, :subscribe_local, [pid, tenant, user_alias], 15_000)
         |> case do
           {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
           result -> result
@@ -69,25 +70,25 @@ defmodule Supavisor do
     end
   end
 
-  @spec get_global_sup(binary) :: pid() | nil
-  def get_global_sup(tenant) do
-    case :syn.whereis_name({:tenants, tenant}) do
+  @spec get_global_sup(String.t(), String.t()) :: pid() | nil
+  def get_global_sup(tenant, user_alias) do
+    case :syn.whereis_name({:tenants, {tenant, user_alias}}) do
       :undefined -> nil
       pid -> pid
     end
   end
 
-  @spec get_local_pool(String.t()) :: pid() | nil
-  def get_local_pool(tenant) do
-    case Registry.lookup(@registry, {:pool, tenant}) do
+  @spec get_local_pool(String.t(), String.t()) :: pid() | nil
+  def get_local_pool(tenant, user_alias) do
+    case Registry.lookup(@registry, {:pool, {tenant, user_alias}}) do
       [{pid, _}] -> pid
       _ -> nil
     end
   end
 
-  @spec get_local_manager(String.t()) :: pid() | nil
-  def get_local_manager(tenant) do
-    case Registry.lookup(@registry, {:manager, tenant}) do
+  @spec get_local_manager(String.t(), String.t()) :: pid() | nil
+  def get_local_manager(tenant, user_alias) do
+    case Registry.lookup(@registry, {:manager, {tenant, user_alias}}) do
       [{pid, _}] -> pid
       _ -> nil
     end
@@ -95,19 +96,23 @@ defmodule Supavisor do
 
   ## Internal functions
 
-  @spec start_local_pool(String.t()) :: {:ok, pid} | {:error, any()}
-  defp start_local_pool(tenant) do
-    Logger.debug("Starting pool for #{tenant}")
+  @spec start_local_pool(String.t(), String.t()) :: {:ok, pid} | {:error, any()}
+  defp start_local_pool(tenant, user_alias) do
+    Logger.debug("Starting pool for #{inspect({tenant, user_alias})}")
 
-    case Tenants.get_tenant_by_external_id(tenant) do
+    case Tenants.get_pool_config(tenant, user_alias) do
       %Tenant{} = tenant_record ->
         %{
           db_host: db_host,
           db_port: db_port,
-          db_user: db_user,
           db_database: db_database,
-          db_password: db_pass,
-          pool_size: pool_size
+          users: [
+            %{
+              db_user: db_user,
+              db_password: db_pass,
+              pool_size: pool_size
+            }
+          ]
         } = tenant_record
 
         auth = %{
@@ -119,10 +124,10 @@ defmodule Supavisor do
           application_name: "supavisor"
         }
 
-        args = %{tenant: tenant, auth: auth, pool_size: pool_size}
+        args = %{tenant: tenant, user_alias: user_alias, auth: auth, pool_size: pool_size}
 
         DynamicSupervisor.start_child(
-          {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, tenant}},
+          {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, {tenant, user_alias}}},
           {Supavisor.TenantSupervisor, args}
         )
         |> case do
@@ -131,14 +136,16 @@ defmodule Supavisor do
         end
 
       _ ->
-        Logger.error("Can't find tenant with external_id #{tenant}")
+        Logger.error("Can't find tenant with external_id #{inspect({tenant, user_alias})}")
+
         {:error, :tenant_not_found}
     end
   end
 
-  @spec set_parameter_status(String.t(), [{binary, binary}]) :: :ok | {:error, :not_found}
-  def set_parameter_status(tenant, ps) do
-    case get_local_manager(tenant) do
+  @spec set_parameter_status(String.t(), String.t(), [{binary, binary}]) ::
+          :ok | {:error, :not_found}
+  def set_parameter_status(tenant, user_alias, ps) do
+    case get_local_manager(tenant, user_alias) do
       nil -> {:error, :not_found}
       pid -> Manager.set_parameter_status(pid, ps)
     end

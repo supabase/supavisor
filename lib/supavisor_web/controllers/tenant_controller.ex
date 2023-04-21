@@ -2,8 +2,8 @@ defmodule SupavisorWeb.TenantController do
   use SupavisorWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
-  alias Supavisor.Tenants
-  alias Supavisor.Tenants.Tenant, as: TenantModel
+  alias Supavisor.{Tenants, Repo}
+  alias Tenants.Tenant, as: TenantModel
 
   alias SupavisorWeb.OpenApiSchemas.{Tenant, TenantList, TenantCreate, NotFound, Created, Empty}
 
@@ -85,6 +85,8 @@ defmodule SupavisorWeb.TenantController do
         create(conn, %{"tenant" => Map.put(tenant_params, "external_id", id)})
 
       tenant ->
+        tenant = Repo.preload(tenant, :users)
+
         with {:ok, %TenantModel{} = tenant} <- Tenants.update_tenant(tenant, tenant_params) do
           render(conn, "show.json", tenant: tenant)
         end
