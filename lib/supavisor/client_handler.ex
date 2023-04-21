@@ -12,7 +12,16 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, Monitoring.Telem, Manager}
+
+  alias Supavisor.{
+    CDC,
+    Tenants,
+    Tenants.Tenant,
+    Protocol.Client,
+    Protocol.Server,
+    Monitoring.Telem,
+    Manager
+  }
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -45,7 +54,9 @@ defmodule Supavisor.ClientHandler do
       tenant: nil,
       pool: nil,
       manager: nil,
-      query_start: nil
+      query_start: nil,
+      savepoint?: false,
+      captured_packets: []
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -135,8 +146,21 @@ defmodule Supavisor.ClientHandler do
     Telem.pool_checkout_time(time, data.tenant)
     Process.link(db_pid)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
-     {:next_event, :internal, {:tcp, nil, bin}}}
+    {:ok, wrapped_bin, savepoint?} = CDC.change(bin, data.savepoint?)
+
+    case Db.call(db_pid, wrapped_bin) do
+      :ok ->
+        {:next_state, :cdc, %{data | db_pid: db_pid, query_start: ts, savepoint?: savepoint?}}
+    end
+  end
+
+  def handle_event(:info, {:tcp, _, bin}, :cdc, data) do
+    {:ok, bin, savepoint?} = CDC.change(bin, data.savepoint?)
+
+    case Db.call(data.db_pid, bin) do
+      :ok ->
+        {:next_state, :cdc, %{data | savepoint?: savepoint?}}
+    end
   end
 
   def handle_event(_, {:tcp, _, bin}, :busy, data) do
@@ -163,6 +187,25 @@ defmodule Supavisor.ClientHandler do
         Logger.error(msg)
         Server.send_error(data.socket, "XX000", msg)
         {:stop, :normal, data}
+    end
+  end
+
+  def handle_event(_, :capture, :cdc, data) do
+    binary = data.captured_packets |> Enum.reverse() |> Enum.join()
+
+    case CDC.capture(binary) do
+      {:ok, query} ->
+        {:next_state, :busy, data, {:next_event, :internal, {:tcp, nil, query}}}
+
+      {:error, error} ->
+        ready_for_query = Client.encode_ready_for_query()
+        :ok = :gen_tcp.send(data.socket, error <> ready_for_query)
+
+        Process.unlink(data.db_pid)
+        :poolboy.checkin(data.pool, data.db_pid)
+        Telem.network_usage(:client, data.socket, data.tenant)
+        Telem.client_query_time(data.query_start, data.tenant)
+        {:next_state, :idle, %{data | db_pid: nil, captured_packets: []}}
     end
   end
 
@@ -194,7 +237,27 @@ defmodule Supavisor.ClientHandler do
   end
 
   # emulate handle_call
-  def handle_event({:call, from}, {:client_call, bin, ready?}, _, data) do
+  def handle_event({:call, from}, {:client_call, bin, ready?}, :cdc, data) do
+    if data.savepoint?, do: :gen_tcp.send(data.socket, bin)
+
+    if ready? do
+      Logger.debug("Client call ready: :cdc")
+      # reply = {:reply, from, :gen_tcp.send(data.socket, bin)}
+
+      {:next_state, :cdc, %{data | captured_packets: [bin | data.captured_packets]},
+       [
+         {:reply, from, :ok},
+         {:next_event, :internal, :capture}
+       ]}
+    else
+      Logger.debug("Client call NOT ready: :cdc")
+
+      {:next_state, :cdc, %{data | captured_packets: [bin | data.captured_packets]},
+       {:reply, from, :ok}}
+    end
+  end
+
+  def handle_event({:call, from}, {:client_call, bin, ready?}, :busy, data) do
     Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
 
     reply = {:reply, from, :gen_tcp.send(data.socket, bin)}
@@ -206,7 +269,7 @@ defmodule Supavisor.ClientHandler do
       :poolboy.checkin(data.pool, data.db_pid)
       Telem.network_usage(:client, data.socket, data.tenant)
       Telem.client_query_time(data.query_start, data.tenant)
-      {:next_state, :idle, %{data | db_pid: nil}, reply}
+      {:next_state, :idle, %{data | db_pid: nil, captured_packets: []}, reply}
     else
       Logger.debug("Client is not ready")
       {:keep_state_and_data, reply}
