@@ -1,0 +1,64 @@
+name: Build and Release binary on Push to Master
+
+on:
+  push:
+    branches:
+      - main
+jobs:
+  release:
+    outputs:
+      status: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
+
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Release on GitHub
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v3
+        with:
+          semantic_version: 18
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy:
+    needs: release
+    name: Create binary release
+    if: success() && needs.release.outputs.status == 'true'
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: 25.x # Define the OTP version [required]
+          elixir-version: 1.14.x # Define the elixir version [required]
+      - name: Cache Mix
+        uses: actions/cache@v1
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+      - name: Install dependencies
+        run: mix deps.get
+      - name: Setup Zig for burrito
+        uses: goto-bus-stop/setup-zig@v2
+      - name: Create release
+        run: mix release supavisor_bin
+      - uses: AButler/upload-release-assets@v2.0
+        with:
+          files: "supavisor_bin-${{ needs.release.outputs.version }}"
+          release-tag: v${{ needs.release.outputs.version }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    needs:
+      - release
+    if: success() && needs.release.outputs.status == 'true'
+    # Call publish explicitly because events from actions cannot trigger more actions
+    uses: ./.github/workflows/publish.yml
+    with:
+      version: v${{ needs.release.outputs.version }}
+    secrets: inherit
