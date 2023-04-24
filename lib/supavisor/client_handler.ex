@@ -100,7 +100,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:internal, :subscribe, _, %{tenant: tenant, user_alias: db_alias} = data) do
-    Logger.info("Subscribe to tenant #{inspect({db_alias, tenant})}")
+    Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
     with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias),
          {:ok, %{manager: manager, pool: pool}} <-
