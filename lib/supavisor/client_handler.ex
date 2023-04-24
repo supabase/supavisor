@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.Tenant, Protocol.Server, Monitoring.Telem, Manager}
+  alias Supavisor.{Tenants, Tenants.User, Protocol.Server, Monitoring.Telem, Manager}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -43,6 +43,7 @@ defmodule Supavisor.ClientHandler do
       trans: trans,
       db_pid: nil,
       tenant: nil,
+      user_alias: nil,
       pool: nil,
       manager: nil,
       query_start: nil
@@ -64,20 +65,17 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {:tcp, _, bin}, :exchange, %{socket: socket} = data) do
     hello = decode_startup_packet(bin)
     Logger.warning("Client startup message: #{inspect(hello)}")
-
-    external_id =
-      hello.payload["user"]
-      |> get_external_id()
-
+    {user, external_id} = parse_user_info(hello.payload["user"])
     Logger.metadata(project: external_id)
 
-    case Tenants.get_tenant_by_external_id(external_id) do
-      %Tenant{db_password: pass} ->
-        {:keep_state, %{data | tenant: external_id},
+    case Tenants.get_user(external_id, user) do
+      {:ok, %User{db_password: pass, db_user_alias: db_alias}} ->
+        {:keep_state, %{data | tenant: external_id, user_alias: db_alias},
          {:next_event, :internal, {:handle, fn -> pass end}}}
 
-      _ ->
-        Server.send_error(socket, "XX000", "Tenant not found")
+      {:error, reason} ->
+        Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
+        Server.send_error(socket, "XX000", "Tenant or user not found")
         {:stop, :normal, data}
     end
   end
@@ -101,12 +99,12 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, :subscribe, _, %{tenant: tenant} = data) do
-    Logger.info("Subscribe to tenant #{tenant}")
+  def handle_event(:internal, :subscribe, _, %{tenant: tenant, user_alias: db_alias} = data) do
+    Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
-    with {:ok, tenant_sup} <- Supavisor.start(tenant),
+    with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias),
          {:ok, %{manager: manager, pool: pool}} <-
-           Supavisor.subscribe_global(node(tenant_sup), self(), tenant),
+           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias),
          ps <-
            Manager.get_parameter_status(manager) do
       Process.monitor(manager)
@@ -132,7 +130,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     ts = System.monotonic_time()
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
-    Telem.pool_checkout_time(time, data.tenant)
+    Telem.pool_checkout_time(time, data.tenant, data.user_alias)
     Process.link(db_pid)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
@@ -204,8 +202,8 @@ defmodule Supavisor.ClientHandler do
 
       Process.unlink(data.db_pid)
       :poolboy.checkin(data.pool, data.db_pid)
-      Telem.network_usage(:client, data.socket, data.tenant)
-      Telem.client_query_time(data.query_start, data.tenant)
+      Telem.network_usage(:client, data.socket, data.tenant, data.user_alias)
+      Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
       {:next_state, :idle, %{data | db_pid: nil}, reply}
     else
       Logger.debug("Client is not ready")
@@ -228,11 +226,17 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  @spec get_external_id(String.t()) :: String.t()
-  def get_external_id(username) do
-    username
-    |> String.split(".")
-    |> List.last()
+  @spec parse_user_info(String.t()) :: {String.t() | nil, String.t()}
+  def parse_user_info(username) do
+    case :binary.matches(username, ".") do
+      [] ->
+        {nil, username}
+
+      matches ->
+        {pos, _} = List.last(matches)
+        {name, "." <> external_id} = String.split_at(username, pos)
+        {name, external_id}
+    end
   end
 
   def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do

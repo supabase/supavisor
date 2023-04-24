@@ -25,7 +25,7 @@ defmodule Supavisor.Integration.ProxyTest do
         username: db_conf[:username]
       )
 
-    %{proxy: proxy, origin: origin}
+    %{proxy: proxy, origin: origin, user: db_conf[:username]}
   end
 
   test "the wrong password" do
@@ -45,10 +45,10 @@ defmodule Supavisor.Integration.ProxyTest do
              P.query!(origin, "select * from public.test where details = 'test_insert'", [])
   end
 
-  test "query via another node", %{proxy: proxy} do
+  test "query via another node", %{proxy: proxy, user: user} do
     sup =
       Enum.reduce_while(1..30, nil, fn _, acc ->
-        case Supavisor.get_global_sup(@tenant) do
+        case Supavisor.get_global_sup(@tenant, user) do
           nil ->
             Process.sleep(100)
             {:cont, acc}
@@ -59,7 +59,13 @@ defmodule Supavisor.Integration.ProxyTest do
       end)
 
     assert sup ==
-             :erpc.call(:"secondary@127.0.0.1", Supavisor, :get_global_sup, [@tenant], 15_000)
+             :erpc.call(
+               :"secondary@127.0.0.1",
+               Supavisor,
+               :get_global_sup,
+               [@tenant, user],
+               15_000
+             )
 
     db_conf = Application.fetch_env!(:supavisor, Repo)
 
@@ -78,7 +84,13 @@ defmodule Supavisor.Integration.ProxyTest do
              P.query!(proxy, "select * from public.test where details = 'dist_test_insert'", [])
 
     assert sup ==
-             :erpc.call(:"secondary@127.0.0.1", Supavisor, :get_global_sup, [@tenant], 15_000)
+             :erpc.call(
+               :"secondary@127.0.0.1",
+               Supavisor,
+               :get_global_sup,
+               [@tenant, user],
+               15_000
+             )
   end
 
   test "select", %{proxy: proxy, origin: origin} do

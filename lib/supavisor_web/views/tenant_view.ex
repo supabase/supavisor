@@ -1,6 +1,7 @@
 defmodule SupavisorWeb.TenantView do
   use SupavisorWeb, :view
   alias SupavisorWeb.TenantView
+  alias SupavisorWeb.UserView
 
   def render("index.json", %{tenants: tenants}) do
     %{data: render_many(tenants, TenantView, "tenant.json")}
@@ -16,9 +17,8 @@ defmodule SupavisorWeb.TenantView do
       external_id: tenant.external_id,
       db_host: tenant.db_host,
       db_port: tenant.db_port,
-      db_user: tenant.db_user,
       db_database: tenant.db_database,
-      pool_size: tenant.pool_size
+      users: render_many(tenant.users, UserView, "user.json")
     }
   end
 end

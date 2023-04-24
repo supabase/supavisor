@@ -5,7 +5,7 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "init/1" do
     test "starts with correct state" do
-      args = %{auth: %{}, tenant: "test_tenant"}
+      args = %{auth: %{}, tenant: "test_tenant", user_alias: "test_user_alias"}
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
       assert next_event == :internal
@@ -14,6 +14,7 @@ defmodule Supavisor.DbHandlerTest do
       assert data.sent == false
       assert data.auth == args.auth
       assert data.tenant == args.tenant
+      assert data.user_alias == args.user_alias
       assert data.buffer == []
       assert data.db_state == nil
       assert data.parameter_status == %{}

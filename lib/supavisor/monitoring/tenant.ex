@@ -30,7 +30,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :pool, :checkout, :stop],
           measurement: :duration,
           description: "Duration of the checkout process in the tenant db pool.",
-          tags: [:tenant],
+          tags: [:tenant, :user_alias],
           unit: {:microsecond, :millisecond},
           reporter_options: [
             buckets: [125, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000]
@@ -41,7 +41,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :query, :stop],
           measurement: :duration,
           description: "Duration of processing the query.",
-          tags: [:tenant],
+          tags: [:tenant, :user_alias],
           unit: {:native, :millisecond},
           reporter_options: [
             buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000]
@@ -52,20 +52,20 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :recv_oct,
           description: "The total number of bytes received by clients.",
-          tags: [:tenant]
+          tags: [:tenant, :user_alias]
         ),
         sum(
           [:supavisor, :client, :network, :send],
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by clients.",
-          tags: [:tenant]
+          tags: [:tenant, :user_alias]
         ),
         counter(
           [:supavisor, :client, :queries, :count],
           event_name: [:supavisor, :pool, :checkout, :stop],
           description: "The total number of queries received by clients.",
-          tags: [:tenant]
+          tags: [:tenant, :user_alias]
         )
       ]
     )
@@ -80,14 +80,14 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :db, :network, :stat],
           measurement: :recv_oct,
           description: "The total number of bytes received by db process",
-          tags: [:tenant]
+          tags: [:tenant, :user_alias]
         ),
         sum(
           [:supavisor, :db, :network, :send],
           event_name: [:supavisor, :db, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by db process",
-          tags: [:tenant]
+          tags: [:tenant, :user_alias]
         )
       ]
     )
@@ -104,7 +104,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :connections],
           description: "The total count of connected clients for a tenant.",
           measurement: :connected,
-          tags: [:tenant]
+          tags: [:tenant, :user_alias]
         )
       ]
     )
@@ -117,12 +117,12 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     |> Enum.each(&emit_telemetry_for_tenant/1)
   end
 
-  @spec emit_telemetry_for_tenant({String.t(), pid(), :ets.tid()}) :: :ok
-  def emit_telemetry_for_tenant({tenant, _pid, tid}) do
+  @spec emit_telemetry_for_tenant({{String.t(), String.t()}, pid(), :ets.tid()}) :: :ok
+  def emit_telemetry_for_tenant({{tenant, user_alias}, _pid, tid}) do
     :telemetry.execute(
       [:supavisor, :connections],
       %{connected: :ets.info(tid, :size)},
-      %{tenant: tenant}
+      %{tenant: tenant, user_alias: user_alias}
     )
   end
 end

@@ -3,14 +3,14 @@ defmodule Supavisor.Monitoring.Telem do
 
   require Logger
 
-  @spec network_usage(atom(), port(), String.t()) :: :ok
-  def network_usage(type, socket, tenant) do
+  @spec network_usage(atom(), port(), String.t(), String.t()) :: :ok
+  def network_usage(type, socket, tenant, user_alias) do
     case :inet.getstat(socket) do
       {:ok, values} ->
         :telemetry.execute(
           [:supavisor, type, :network, :stat],
           Map.new(values),
-          %{tenant: tenant}
+          %{tenant: tenant, user_alias: user_alias}
         )
 
       {:error, reason} ->
@@ -18,21 +18,21 @@ defmodule Supavisor.Monitoring.Telem do
     end
   end
 
-  @spec pool_checkout_time(integer(), String.t()) :: :ok
-  def pool_checkout_time(time, tenant) do
+  @spec pool_checkout_time(integer(), String.t(), String.t()) :: :ok
+  def pool_checkout_time(time, tenant, user_alias) do
     :telemetry.execute(
       [:supavisor, :pool, :checkout, :stop],
       %{duration: time},
-      %{tenant: tenant}
+      %{tenant: tenant, user_alias: user_alias}
     )
   end
 
-  @spec client_query_time(integer(), String.t()) :: :ok
-  def client_query_time(start, tenant) do
+  @spec client_query_time(integer(), String.t(), String.t()) :: :ok
+  def client_query_time(start, tenant, user_alias) do
     :telemetry.execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
-      %{tenant: tenant}
+      %{tenant: tenant, user_alias: user_alias}
     )
   end
 end

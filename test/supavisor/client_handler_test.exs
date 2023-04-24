@@ -3,10 +3,17 @@ defmodule Supavisor.ClientHandlerTest do
 
   alias Supavisor.ClientHandler
 
-  describe "get_external_id/1" do
+  describe "parse_user_info/1" do
     test "extracts the external_id from the username" do
       username = "test.user.external_id"
-      external_id = ClientHandler.get_external_id(username)
+      {name, external_id} = ClientHandler.parse_user_info(username)
+      assert name == "test.user"
+      assert external_id == "external_id"
+    end
+
+    test "username consists only of external_id" do
+      username = "external_id"
+      {nil, external_id} = ClientHandler.parse_user_info(username)
       assert external_id == "external_id"
     end
   end
