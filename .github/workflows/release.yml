@@ -52,13 +52,3 @@ jobs:
           files: "supavisor_bin-${{ needs.release.outputs.version }}"
           release-tag: v${{ needs.release.outputs.version }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-  publish:
-    needs:
-      - release
-    if: success() && needs.release.outputs.status == 'true'
-    # Call publish explicitly because events from actions cannot trigger more actions
-    uses: ./.github/workflows/publish.yml
-    with:
-      version: v${{ needs.release.outputs.version }}
-    secrets: inherit
