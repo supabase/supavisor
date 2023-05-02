@@ -23,7 +23,7 @@ defmodule Supavisor.DbHandler do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    Logger.metadata(project: args.tenant)
+    Logger.metadata(project: args.tenant, user: args.user_alias)
 
     data = %{
       socket: nil,

@@ -42,6 +42,7 @@ defmodule Supavisor.Manager do
       parameter_status: []
     }
 
+    Logger.metadata(project: args.tenant, user: args.user_alias)
     Registry.register(Supavisor.Registry.ManagerTables, {args.tenant, args.user_alias}, tid)
 
     {:ok, state}
