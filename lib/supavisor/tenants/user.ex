@@ -15,7 +15,7 @@ defmodule Supavisor.Tenants.User do
     field(:is_manager, :boolean, default: false)
     field(:mode_type, Ecto.Enum, values: [:transaction, :session])
     field(:pool_size, :integer)
-    field(:pool_checkout_timeout, :integer, default: 60000)
+    field(:pool_checkout_timeout, :integer, default: 60_000)
     belongs_to(:tenant, Supavisor.Tenants.Tenant, foreign_key: :tenant_external_id, type: :string)
     timestamps()
   end
