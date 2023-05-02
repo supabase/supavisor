@@ -218,18 +218,11 @@ defmodule Supavisor.ClientHandler do
     if ready? do
       Logger.debug("Client is ready")
 
-      new_data =
-        if data.mode == :transaction do
-          Process.unlink(data.db_pid)
-          :poolboy.checkin(data.pool, data.db_pid)
-          %{data | db_pid: nil}
-        else
-          data
-        end
+      db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
       Telem.network_usage(:client, data.socket, data.tenant, data.user_alias)
       Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
-      {:next_state, :idle, new_data, reply}
+      {:next_state, :idle, %{data | db_pid: db_pid}, reply}
     else
       Logger.debug("Client is not ready")
       {:keep_state_and_data, reply}
@@ -364,4 +357,13 @@ defmodule Supavisor.ClientHandler do
     Telem.pool_checkout_time(time, tenant, user_alias)
     db_pid
   end
+
+  @spec handle_db_pid(:transaction | :session, pid(), pid()) :: nil | pid
+  defp handle_db_pid(:transaction, pool, db_pid) do
+    Process.unlink(db_pid)
+    :poolboy.checkin(pool, db_pid)
+    nil
+  end
+
+  defp handle_db_pid(:ssession, _, db_pid), do: db_pid
 end
