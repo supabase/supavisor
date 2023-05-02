@@ -21,8 +21,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
-  def callback_mode,
-    do: [:handle_event_function]
+  def callback_mode, do: [:handle_event_function]
 
   def client_call(pid, bin, ready?) do
     :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
@@ -46,7 +45,9 @@ defmodule Supavisor.ClientHandler do
       user_alias: nil,
       pool: nil,
       manager: nil,
-      query_start: nil
+      query_start: nil,
+      mode: nil,
+      timeout: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -66,11 +67,18 @@ defmodule Supavisor.ClientHandler do
     hello = decode_startup_packet(bin)
     Logger.warning("Client startup message: #{inspect(hello)}")
     {user, external_id} = parse_user_info(hello.payload["user"])
-    Logger.metadata(project: external_id)
+    Logger.metadata(project: external_id, user: user)
 
     case Tenants.get_user(external_id, user) do
-      {:ok, %User{db_password: pass, db_user_alias: db_alias}} ->
-        {:keep_state, %{data | tenant: external_id, user_alias: db_alias},
+      {:ok,
+       %User{
+         db_password: pass,
+         db_user_alias: db_alias,
+         mode_type: mode,
+         pool_checkout_timeout: timeout
+       }} ->
+        {:keep_state,
+         %{data | tenant: external_id, user_alias: db_alias, mode: mode, timeout: timeout},
          {:next_event, :internal, {:handle, fn -> pass end}}}
 
       {:error, reason} ->
@@ -107,9 +115,16 @@ defmodule Supavisor.ClientHandler do
            Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias),
          ps <-
            Manager.get_parameter_status(manager) do
+      db_pid =
+        if data.mode == :session do
+          db_checkout(pool, tenant, db_alias, data.timeout)
+        else
+          nil
+        end
+
       Process.monitor(manager)
       :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
-      {:next_state, :idle, %{data | pool: pool, manager: manager}}
+      {:next_state, :idle, %{data | pool: pool, manager: manager, db_pid: db_pid}}
     else
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
@@ -127,11 +142,14 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :idle, data) do
+  def handle_event(:info, {:tcp, _, bin}, :idle, %{mode: :session} = data) do
+    {:next_state, :busy, %{data | query_start: System.monotonic_time()},
+     {:next_event, :internal, {:tcp, nil, bin}}}
+  end
+
+  def handle_event(:info, {:tcp, _, bin}, :idle, %{mode: :transaction} = data) do
     ts = System.monotonic_time()
-    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
-    Telem.pool_checkout_time(time, data.tenant, data.user_alias)
-    Process.link(db_pid)
+    db_pid = db_checkout(data.pool, data.tenant, data.user_alias, data.timeout)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {:tcp, nil, bin}}}
@@ -200,11 +218,18 @@ defmodule Supavisor.ClientHandler do
     if ready? do
       Logger.debug("Client is ready")
 
-      Process.unlink(data.db_pid)
-      :poolboy.checkin(data.pool, data.db_pid)
+      new_data =
+        if data.mode == :transaction do
+          Process.unlink(data.db_pid)
+          :poolboy.checkin(data.pool, data.db_pid)
+          %{data | db_pid: nil}
+        else
+          data
+        end
+
       Telem.network_usage(:client, data.socket, data.tenant, data.user_alias)
       Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
-      {:next_state, :idle, %{data | db_pid: nil}, reply}
+      {:next_state, :idle, new_data, reply}
     else
       Logger.debug("Client is not ready")
       {:keep_state_and_data, reply}
@@ -223,6 +248,28 @@ defmodule Supavisor.ClientHandler do
 
     :keep_state_and_data
   end
+
+  @impl true
+  def terminate(
+        {:timeout, {_, _, [_, {:checkout, _, _}, _]}},
+        _,
+        data
+      ) do
+    msg =
+      case data.mode do
+        :session ->
+          "Too many clients already"
+
+        :transaction ->
+          "Unable to check out process from the pool due to timeout"
+      end
+
+    Logger.error(msg)
+    Server.send_error(data.socket, "XX000", msg)
+    :ok
+  end
+
+  def terminate(_reason, _state, _data), do: :ok
 
   ## Internal functions
 
@@ -308,5 +355,13 @@ defmodule Supavisor.ClientHandler do
       15_000 ->
         {:error, "Timeout while waiting for the first password message"}
     end
+  end
+
+  @spec db_checkout(pid(), String.t(), String.t(), integer()) :: pid()
+  defp db_checkout(pool, tenant, user_alias, timeout) do
+    {time, db_pid} = :timer.tc(:poolboy, :checkout, [pool, true, timeout])
+    Process.link(db_pid)
+    Telem.pool_checkout_time(time, tenant, user_alias)
+    db_pid
   end
 end

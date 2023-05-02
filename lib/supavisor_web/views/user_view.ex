@@ -7,7 +7,8 @@ defmodule SupavisorWeb.UserView do
       db_user: user.db_user,
       pool_size: user.pool_size,
       is_manager: user.is_manager,
-      mode_type: user.mode_type
+      mode_type: user.mode_type,
+      pool_checkout_timeout: user.pool_checkout_timeout
     }
   end
 end
