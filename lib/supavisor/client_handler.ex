@@ -358,7 +358,8 @@ defmodule Supavisor.ClientHandler do
     db_pid
   end
 
-  @spec handle_db_pid(:transaction | :session, pid(), pid()) :: nil | pid
+  @spec handle_db_pid(:transaction, pid(), pid()) :: nil
+  @spec handle_db_pid(:session, pid(), pid()) :: pid()
   defp handle_db_pid(:transaction, pool, db_pid) do
     Process.unlink(db_pid)
     :poolboy.checkin(pool, db_pid)
