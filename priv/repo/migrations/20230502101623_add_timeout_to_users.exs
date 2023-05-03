@@ -3,7 +3,7 @@ defmodule Supavisor.Repo.Migrations.AddTimeoutToUsers do
 
   def up do
     alter table("users") do
-      add(:pool_checkout_timeout, :integer, default: 60_000)
+      add(:pool_checkout_timeout, :integer, default: 60_000, null: false)
     end
   end
 
