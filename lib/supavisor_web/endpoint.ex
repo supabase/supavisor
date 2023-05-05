@@ -10,6 +10,14 @@ defmodule SupavisorWeb.Endpoint do
     signing_salt: "zJOrGxcM"
   ]
 
+  socket "/socket/vercel", Supavisor.Ws,
+    websocket: [path: "/"],
+    longpoll: false
+
+  socket "/v2", Supavisor.Ws,
+    websocket: [path: "/"],
+    longpoll: false
+
   socket "/live", Phoenix.LiveView.Socket, websocket: [connect_info: [session: @session_options]]
 
   # Serve at "/" the static files from "priv/static" directory.
