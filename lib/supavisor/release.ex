@@ -12,7 +12,7 @@ defmodule Supavisor.Release do
       {:ok, _, _} =
         Ecto.Migrator.with_repo(
           repo,
-          &Ecto.Migrator.run(&1, :up, all: true, prefix: "_supavisor")
+          &Ecto.Migrator.run(&1, :up, all: true)
         )
     end
   end
@@ -23,7 +23,7 @@ defmodule Supavisor.Release do
     {:ok, _, _} =
       Ecto.Migrator.with_repo(
         repo,
-        &Ecto.Migrator.run(&1, :down, to: version, prefix: "_supavisor")
+        &Ecto.Migrator.run(&1, :down, to: version)
       )
   end
 
