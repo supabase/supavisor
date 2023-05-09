@@ -42,9 +42,20 @@ defmodule Supavisor.Application do
 
     PromEx.set_metrics_tags()
 
+    children = children(Application.get_env(:supavisor, :env))
+
+    # See https://hexdocs.pm/elixir/Supervisor.html
+    # for other strategies and supported options
+    opts = [strategy: :one_for_one, name: Supavisor.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+
+  defp children(:test), do: []
+
+  defp children(_) do
     topologies = Application.get_env(:libcluster, :topologies) || []
 
-    children = [
+    [
       PromEx,
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
@@ -60,11 +71,6 @@ defmodule Supavisor.Application do
       },
       Supavisor.Vault
     ]
-
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: Supavisor.Supervisor]
-    Supervisor.start_link(children, opts)
   end
 
   # Tell Phoenix to update the endpoint configuration
