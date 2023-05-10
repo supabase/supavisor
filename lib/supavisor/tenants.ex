@@ -19,7 +19,7 @@ defmodule Supavisor.Tenants do
 
   """
   def list_tenants do
-    Repo.all(Tenant)
+    Repo.all(Tenant) |> Repo.preload([:users])
   end
 
   @doc """
