@@ -366,5 +366,5 @@ defmodule Supavisor.ClientHandler do
     nil
   end
 
-  defp handle_db_pid(:ssession, _, db_pid), do: db_pid
+  defp handle_db_pid(:session, _, db_pid), do: db_pid
 end
