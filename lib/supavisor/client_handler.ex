@@ -115,16 +115,12 @@ defmodule Supavisor.ClientHandler do
            Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias),
          ps <-
            Manager.get_parameter_status(manager) do
-      db_pid =
-        if data.mode == :session do
-          db_checkout(pool, tenant, db_alias, data.timeout)
-        else
-          nil
-        end
+      data = %{data | pool: pool}
+      db_pid = db_checkout(data)
 
       Process.monitor(manager)
       :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
-      {:next_state, :idle, %{data | pool: pool, manager: manager, db_pid: db_pid}}
+      {:next_state, :idle, %{data | manager: manager, db_pid: db_pid}}
     else
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
@@ -142,14 +138,9 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :idle, %{mode: :session} = data) do
-    {:next_state, :busy, %{data | query_start: System.monotonic_time()},
-     {:next_event, :internal, {:tcp, nil, bin}}}
-  end
-
-  def handle_event(:info, {:tcp, _, bin}, :idle, %{mode: :transaction} = data) do
+  def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     ts = System.monotonic_time()
-    db_pid = db_checkout(data.pool, data.tenant, data.user_alias, data.timeout)
+    db_pid = db_checkout(data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {:tcp, nil, bin}}}
@@ -350,11 +341,15 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec db_checkout(pid(), String.t(), String.t(), integer()) :: pid()
-  defp db_checkout(pool, tenant, user_alias, timeout) do
-    {time, db_pid} = :timer.tc(:poolboy, :checkout, [pool, true, timeout])
+  @spec db_checkout(map()) :: pid()
+  defp db_checkout(%{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
+    db_pid
+  end
+
+  defp db_checkout(data) do
+    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
     Process.link(db_pid)
-    Telem.pool_checkout_time(time, tenant, user_alias)
+    Telem.pool_checkout_time(time, data.tenant, data.user_alias)
     db_pid
   end
 
