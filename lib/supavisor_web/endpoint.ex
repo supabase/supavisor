@@ -10,11 +10,11 @@ defmodule SupavisorWeb.Endpoint do
     signing_salt: "zJOrGxcM"
   ]
 
-  socket "/socket/vercel", Supavisor.Ws,
+  socket "/socket/vercel", SupavisorWeb.WsProxy,
     websocket: [path: "/"],
     longpoll: false
 
-  socket "/v2", Supavisor.Ws,
+  socket "/v2", SupavisorWeb.WsProxy,
     websocket: [path: "/"],
     longpoll: false
 

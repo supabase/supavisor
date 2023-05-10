@@ -1,4 +1,9 @@
-defmodule Supavisor.Ws do
+defmodule SupavisorWeb.WsProxy do
+  @moduledoc """
+  The `Supavisor.WsProxy` module implements a WebSocket proxy for managing
+  TCP connections between clients and a Postgres database.
+  """
+
   require Logger
   @behaviour Phoenix.Socket.Transport
   @ready_for_query <<?Z, 5::32, ?I>>
@@ -13,7 +18,7 @@ defmodule Supavisor.Ws do
 
   def connect(map), do: {:ok, map}
 
-  def init(_state) do
+  def init(_) do
     proxy_port = Application.fetch_env!(:supavisor, :proxy_port)
 
     {:ok, socket} =
@@ -64,9 +69,10 @@ defmodule Supavisor.Ws do
     :ok
   end
 
-  defp filter_pass_pkt(<<?p, len::32, _::binary-size(len - 4), rest::binary>>) do
+  @spec filter_pass_pkt(binary()) :: binary()
+  def filter_pass_pkt(<<?p, len::32, _::binary-size(len - 4), rest::binary>>) do
     rest
   end
 
-  defp filter_pass_pkt(bin), do: bin
+  def filter_pass_pkt(bin), do: bin
 end
