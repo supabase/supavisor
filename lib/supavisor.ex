@@ -110,7 +110,8 @@ defmodule Supavisor do
             %{
               db_user: db_user,
               db_password: db_pass,
-              pool_size: pool_size
+              pool_size: pool_size,
+              mode_type: mode
             }
           ]
         } = tenant_record
@@ -124,7 +125,13 @@ defmodule Supavisor do
           application_name: "supavisor"
         }
 
-        args = %{tenant: tenant, user_alias: user_alias, auth: auth, pool_size: pool_size}
+        args = %{
+          tenant: tenant,
+          user_alias: user_alias,
+          auth: auth,
+          pool_size: pool_size,
+          mode: mode
+        }
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, {tenant, user_alias}}},

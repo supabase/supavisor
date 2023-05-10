@@ -13,11 +13,17 @@ defmodule Supavisor.TenantSupervisor do
   def init(%{tenant: tenant, user_alias: user_alias, pool_size: pool_size} = args) do
     id = {tenant, user_alias}
 
+    {size, overflow} =
+      case args.mode do
+        :session -> {0, pool_size}
+        :transaction -> {pool_size, 0}
+      end
+
     pool_spec = [
       name: {:via, Registry, {Supavisor.Registry.Tenants, {:pool, id}}},
       worker_module: Supavisor.DbHandler,
-      size: pool_size,
-      max_overflow: 0
+      size: size,
+      max_overflow: overflow
     ]
 
     children = [
