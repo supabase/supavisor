@@ -5,8 +5,8 @@ defmodule SupavisorWeb.WsProxy do
   """
 
   require Logger
+  alias Supavisor.Protocol.Server
   @behaviour Phoenix.Socket.Transport
-  @ready_for_query <<?Z, 5::32, ?I>>
 
   def child_spec(_opts) do
     %{
@@ -24,12 +24,12 @@ defmodule SupavisorWeb.WsProxy do
     {:ok, socket} =
       :gen_tcp.connect('localhost', proxy_port, [:binary, packet: :raw, active: true])
 
-    {:ok, %{status: :wait_startup, acc: "", socket: socket}}
+    {:ok, %{status: :startup, acc: "", socket: socket}}
   end
 
   def handle_in(
         {<<len::32, startup_pkt::binary-size(len - 4), rest::binary>>, _},
-        %{status: :wait_startup} = state
+        %{status: :startup} = state
       ) do
     :ok = :gen_tcp.send(state.socket, [<<len::32>>, startup_pkt])
 
@@ -41,8 +41,8 @@ defmodule SupavisorWeb.WsProxy do
     {:ok, state}
   end
 
-  def handle_info({:tcp, _, bin}, %{status: :wait_startup} = state) do
-    if String.ends_with?(bin, @ready_for_query) do
+  def handle_info({:tcp, _, bin}, %{status: :startup} = state) do
+    if String.ends_with?(bin, Server.ready_for_query()) do
       acc = filter_pass_pkt(state.acc)
       :ok = :gen_tcp.send(state.socket, acc)
       {:reply, :ok, {:binary, bin}, %{state | acc: nil, status: :idle}}

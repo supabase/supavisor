@@ -2,7 +2,7 @@ defmodule SupavisorWeb.WsProxyTest do
   use ExUnit.Case, async: true
   alias SupavisorWeb.WsProxy
 
-  @password_pkt <<?p, 13::32, 112, 111, 115, 116, 103, 114, 101, 115, 0>>
+  @password_pkt <<?p, 13::32, "postgres", 0>>
 
   test "filter the password packet" do
     bin = "hello"

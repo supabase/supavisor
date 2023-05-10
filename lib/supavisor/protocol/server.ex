@@ -343,4 +343,9 @@ defmodule Supavisor.Protocol.Server do
   def greetings(ps) do
     [ps, backend_key_data(), @ready_for_query]
   end
+
+  @spec ready_for_query() :: binary()
+  def ready_for_query() do
+    @ready_for_query
+  end
 end
