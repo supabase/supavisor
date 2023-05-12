@@ -6,67 +6,51 @@ defmodule SupavisorWeb.WsProxy do
 
   require Logger
   alias Supavisor.Protocol.Server
-  @behaviour Phoenix.Socket.Transport
+  @behaviour Plug
 
-  def child_spec(_opts) do
-    %{
-      id: Task,
-      start: {Task, :start_link, [fn -> :ok end]},
-      restart: :transient
-    }
+  import Plug.Conn
+
+  def call(conn, state) do
+    Logger.info("WsProxy is: #{inspect(self())}")
+    Plug.Conn.upgrade_adapter(conn, :websocket, {__MODULE__, state, %{compress: false}})
   end
-
-  def connect(map), do: {:ok, map}
 
   def init(_) do
-    proxy_port = Application.fetch_env!(:supavisor, :proxy_port)
-
-    {:ok, socket} =
-      :gen_tcp.connect('localhost', proxy_port, [:binary, packet: :raw, active: true])
-
-    {:ok, %{status: :startup, acc: "", socket: socket}}
+    %{socket: nil, acc: nil, status: :startup}
   end
 
-  def handle_in(
-        {<<len::32, startup_pkt::binary-size(len - 4), rest::binary>>, _},
+  def websocket_handle(
+        {:binary, <<len::32, startup_pkt::binary-size(len - 4), rest::binary>>},
         %{status: :startup} = state
       ) do
-    :ok = :gen_tcp.send(state.socket, [<<len::32>>, startup_pkt])
+    {:ok, socket} = connect_local()
+    :ok = :gen_tcp.send(socket, [<<len::32>>, startup_pkt])
 
-    {:ok, %{state | acc: rest}}
+    {:ok, %{state | acc: rest, socket: socket}}
   end
 
-  def handle_in({bin, _opts}, %{socket: socket} = state) do
+  def websocket_handle({:binary, bin}, %{socket: socket} = state) do
     :ok = :gen_tcp.send(socket, bin)
     {:ok, state}
   end
 
-  def handle_info({:tcp, _, bin}, %{status: :startup} = state) do
+  def websocket_info({:tcp, _, bin}, %{status: :startup} = state) do
     if String.ends_with?(bin, Server.ready_for_query()) do
       acc = filter_pass_pkt(state.acc)
       :ok = :gen_tcp.send(state.socket, acc)
-      {:reply, :ok, {:binary, bin}, %{state | acc: nil, status: :idle}}
+      {[{:binary, bin}], %{state | acc: nil, status: :idle}}
     else
-      {:reply, :ok, {:binary, bin}, state}
+      {[{:binary, bin}], state}
     end
   end
 
-  def handle_info({:tcp, _, bin}, %{status: :idle} = state) do
-    {:reply, :ok, {:binary, bin}, state}
+  def websocket_info({:tcp, _, bin}, %{status: :idle} = state) do
+    {[{:binary, bin}], state}
   end
 
-  def handle_info(msg, state) do
-    Logger.error("Undefined handle_info msg: #{inspect(msg, pretty: true)}")
+  def websocket_info(msg, state) do
+    Logger.error("Undefined websocket_info msg: #{inspect(msg, pretty: true)}")
     {:ok, state}
-  end
-
-  def handle_control(msg, state) do
-    Logger.error("Undefined handle_control msg: #{inspect(msg, pretty: true)}")
-    {:ok, state}
-  end
-
-  def terminate(_reason, _state) do
-    :ok
   end
 
   @spec filter_pass_pkt(binary()) :: binary()
@@ -75,4 +59,10 @@ defmodule SupavisorWeb.WsProxy do
   end
 
   def filter_pass_pkt(bin), do: bin
+
+  @spec connect_local() :: {:ok, port()} | {:error, term()}
+  defp connect_local() do
+    proxy_port = Application.fetch_env!(:supavisor, :proxy_port)
+    :gen_tcp.connect('localhost', proxy_port, [:binary, packet: :raw, active: true])
+  end
 end
