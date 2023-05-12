@@ -33,14 +33,15 @@ defmodule Supavisor.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:phoenix, "~> 1.6.13"},
+      {:phoenix, "~> 1.7.2"},
       {:phoenix_ecto, "~> 4.4"},
       {:ecto_sql, "~> 3.6"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_html, "~> 3.0"},
+      {:phoenix_view, "~> 2.0.2"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
-      {:phoenix_live_view, "~> 0.17.5"},
-      {:phoenix_live_dashboard, "~> 0.6"},
+      {:phoenix_live_view, "~> 0.18.18"},
+      {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_metrics, "~> 0.6"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
@@ -51,7 +52,7 @@ defmodule Supavisor.MixProject do
       {:credo, "~> 1.6.4", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.1.0", only: [:dev], runtime: false},
       {:benchee, "~> 1.1.0", only: :dev},
-      {:prom_ex, "~> 1.7.1"},
+      {:prom_ex, "~> 1.8.0"},
       {:open_api_spex, "~> 3.16"},
       {:burrito, github: "burrito-elixir/burrito"},
       {:libcluster, "~> 3.3.1"},
