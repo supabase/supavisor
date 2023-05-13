@@ -40,7 +40,7 @@ defmodule SupavisorWeb.Router do
 
   # websocket pg proxy
   scope "/v2" do
-    get("/", SupavisorWeb.WsProxy, :index)
+    get("/", SupavisorWeb.WsProxy, [])
   end
 
   scope "/api", SupavisorWeb do
