@@ -8,8 +8,6 @@ defmodule SupavisorWeb.WsProxy do
   alias Supavisor.Protocol.Server
   @behaviour Plug
 
-  import Plug.Conn
-
   def call(conn, state) do
     Logger.info("WsProxy is: #{inspect(self())}")
     Plug.Conn.upgrade_adapter(conn, :websocket, {__MODULE__, state, %{compress: false}})
