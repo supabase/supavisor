@@ -24,6 +24,14 @@ end
           "db_password" => db_conf[:password],
           "pool_size" => 3,
           "mode_type" => "transaction"
+        },
+        %{
+          "db_user_alias" => "session",
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 1,
+          "mode_type" => "session",
+          "pool_checkout_timeout" => 500
         }
       ]
     }
