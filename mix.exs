@@ -14,7 +14,8 @@ defmodule Supavisor.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      releases: releases()
+      releases: releases(),
+      xref: [exclude: [DbProxy.Writer]]
     ]
   end
 

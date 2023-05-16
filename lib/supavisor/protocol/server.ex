@@ -155,8 +155,8 @@ defmodule Supavisor.Protocol.Server do
     decode_row_description(count, rest, [])
   end
 
-  def decode_payload(:data_row, _payload) do
-    nil
+  def decode_payload(:data_row, <<count::integer-16, rest::binary>>) do
+    decode_data_row(count, rest, [])
   end
 
   def decode_payload(:error_response, _payload) do
@@ -182,6 +182,19 @@ defmodule Supavisor.Protocol.Server do
 
   def decode_payload(_, _) do
     :undefined
+  end
+
+  defp decode_data_row(0, _rest, acc) do
+    Enum.reverse(acc)
+  end
+
+  defp decode_data_row(count, <<len::integer-signed-32, rest::binary>>, acc) when len >= 0 do
+    <<value::binary-size(len), rest2::binary>> = rest
+    decode_data_row(count - 1, rest2, [value | acc])
+  end
+
+  defp decode_data_row(count, <<-1::integer-signed-32, rest::binary>>, acc) do
+    decode_data_row(count - 1, rest, [nil | acc])
   end
 
   @spec kv_to_map(String.t()) :: {:ok, map()} | {:error, String.t()}
