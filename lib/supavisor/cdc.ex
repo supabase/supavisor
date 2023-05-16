@@ -16,6 +16,8 @@ defmodule Supavisor.CDC do
   end
 
   def change(bin, %State{in_transaction?: false} = state) do
+    state = %{state | client_packets: [bin | state.client_packets]}
+
     if begin?(bin) do
       Logger.debug("change/2 found begin;")
       {:ok, bin, %{state | in_transaction?: true}}
@@ -27,13 +29,17 @@ defmodule Supavisor.CDC do
   end
 
   def change(bin, %State{in_transaction?: true} = state) do
+    state = %{state | client_packets: [bin | state.client_packets]}
+
     case Client.decode(bin) do
       [%Client.Pkt{tag: :query, payload: "commit;"}] ->
         Logger.debug("change/2 found commit;")
+
         {:ok, select_cdc_and_rollback(), %{state | in_transaction?: false}}
 
       [%Client.Pkt{tag: :query, payload: "rollback;"}] ->
         Logger.debug("change/2 found rollback;")
+
         {:ok, rollback(), %{state | in_transaction?: false}}
 
       [decoded_bin] ->
@@ -43,26 +49,36 @@ defmodule Supavisor.CDC do
   end
 
   def capture(%State{} = state) do
-    captured_pkts =
-      state.server_packets
-      |> Enum.reverse()
-      |> Enum.join()
-      |> Server.decode()
-      |> Enum.map(fn
-        %Server.Pkt{tag: :data_row, payload: ["_sync_cdc" | values]} -> values
-        _ -> nil
-      end)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.map(fn [_id, table, operation, payload] ->
-        %Change{
-          table: table,
-          operation: operation(operation),
-          payload: Jason.decode!(payload)
-        }
-      end)
-      |> dbg()
+    state.server_packets
+    |> Enum.reverse()
+    |> Enum.join()
+    |> Server.decode()
+    |> Enum.map(fn
+      %Server.Pkt{tag: :data_row, payload: ["_sync_cdc" | values]} -> values
+      _ -> nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(fn [_id, table, operation, payload] ->
+      %Change{
+        table: table,
+        operation: operation(operation),
+        payload: Jason.decode!(payload)
+      }
+    end)
+    |> case do
+      [] ->
+        # TODO: Return only `commit` or `rollback` for transactions
+        Logger.debug("capture/1 found no changes;")
+        query = state.client_packets |> Enum.reverse() |> Enum.join()
+        {:ok, query}
 
-    case @writer_module.handle_changes(captured_pkts) do
+      changed_packets ->
+        handle_changed_packets(changed_packets)
+    end
+  end
+
+  defp handle_changed_packets(changed_packets) do
+    case @writer_module.handle_changes(changed_packets) do
       {:ok, changed_ids} ->
         changed_ids = Enum.map_join(changed_ids, ", ", &"'#{&1}'")
         query = "SELECT unnest(ARRAY[#{changed_ids}]::TEXT[]) AS changed_ids;"
