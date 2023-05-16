@@ -55,8 +55,7 @@ defmodule Supavisor.ClientHandler do
       pool: nil,
       manager: nil,
       query_start: nil,
-      savepoint?: false,
-      captured_packets: []
+      cdc_state: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -146,20 +145,20 @@ defmodule Supavisor.ClientHandler do
     Telem.pool_checkout_time(time, data.tenant)
     Process.link(db_pid)
 
-    {:ok, wrapped_bin, savepoint?} = CDC.change(bin, data.savepoint?)
+    {:ok, wrapped_bin, cdc_state} = CDC.change(bin)
 
     case Db.call(db_pid, wrapped_bin) do
       :ok ->
-        {:next_state, :cdc, %{data | db_pid: db_pid, query_start: ts, savepoint?: savepoint?}}
+        {:next_state, :cdc, %{data | db_pid: db_pid, query_start: ts, cdc_state: cdc_state}}
     end
   end
 
   def handle_event(:info, {:tcp, _, bin}, :cdc, data) do
-    {:ok, bin, savepoint?} = CDC.change(bin, data.savepoint?)
+    {:ok, bin, cdc_state} = CDC.change(bin, data.cdc_state)
 
     case Db.call(data.db_pid, bin) do
       :ok ->
-        {:next_state, :cdc, %{data | savepoint?: savepoint?}}
+        {:next_state, :cdc, %{data | cdc_state: cdc_state}}
     end
   end
 
@@ -191,9 +190,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(_, :capture, :cdc, data) do
-    binary = data.captured_packets |> Enum.reverse() |> Enum.join()
-
-    case CDC.capture(binary) do
+    case CDC.capture(data.cdc_state) do
       {:ok, query} ->
         {:next_state, :busy, data, {:next_event, :internal, {:tcp, nil, query}}}
 
@@ -205,7 +202,7 @@ defmodule Supavisor.ClientHandler do
         :poolboy.checkin(data.pool, data.db_pid)
         Telem.network_usage(:client, data.socket, data.tenant)
         Telem.client_query_time(data.query_start, data.tenant)
-        {:next_state, :idle, %{data | db_pid: nil, captured_packets: []}}
+        {:next_state, :idle, %{data | db_pid: nil, cdc_state: nil}}
     end
   end
 
@@ -238,13 +235,12 @@ defmodule Supavisor.ClientHandler do
 
   # emulate handle_call
   def handle_event({:call, from}, {:client_call, bin, ready?}, :cdc, data) do
-    if data.savepoint?, do: :gen_tcp.send(data.socket, bin)
+    if CDC.should_forward_to_client?(data.cdc_state), do: :gen_tcp.send(data.socket, bin)
 
     if ready? do
       Logger.debug("Client call ready: :cdc")
-      # reply = {:reply, from, :gen_tcp.send(data.socket, bin)}
 
-      {:next_state, :cdc, %{data | captured_packets: [bin | data.captured_packets]},
+      {:next_state, :cdc, %{data | cdc_state: CDC.received_server_packets(data.cdc_state, bin)},
        [
          {:reply, from, :ok},
          {:next_event, :internal, :capture}
@@ -252,7 +248,7 @@ defmodule Supavisor.ClientHandler do
     else
       Logger.debug("Client call NOT ready: :cdc")
 
-      {:next_state, :cdc, %{data | captured_packets: [bin | data.captured_packets]},
+      {:next_state, :cdc, %{data | cdc_state: CDC.received_server_packets(data.cdc_state, bin)},
        {:reply, from, :ok}}
     end
   end
@@ -269,7 +265,7 @@ defmodule Supavisor.ClientHandler do
       :poolboy.checkin(data.pool, data.db_pid)
       Telem.network_usage(:client, data.socket, data.tenant)
       Telem.client_query_time(data.query_start, data.tenant)
-      {:next_state, :idle, %{data | db_pid: nil, captured_packets: []}, reply}
+      {:next_state, :idle, %{data | db_pid: nil, cdc_state: nil}, reply}
     else
       Logger.debug("Client is not ready")
       {:keep_state_and_data, reply}

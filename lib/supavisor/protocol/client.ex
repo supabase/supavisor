@@ -29,48 +29,35 @@ defmodule Supavisor.Protocol.Client do
     Enum.reverse(acc)
   end
 
-  def packet(tag, pkt_len, payload) do
-    %Pkt{
-      tag: tag,
-      len: pkt_len + 1,
-      payload: decode_payload(tag, payload)
-    }
-  end
-
-  def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>, decode_payload \\ true) do
+  defp decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
     tag = tag(char)
     payload_len = pkt_len - 4
 
     <<bin_payload::binary-size(payload_len), rest2::binary>> = rest
 
-    payload =
-      if decode_payload do
-        decode_payload(tag, bin_payload)
-      else
-        nil
-      end
+    payload = decode_payload(tag, bin_payload)
 
     {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
   end
 
-  def tag(char) do
+  defp tag(char) do
     case char do
       ?Q -> :query
       _ -> :undefined
     end
   end
 
-  def decode_payload(:query, bin) do
+  defp decode_payload(:query, bin) do
     String.trim_trailing(bin, <<0>>)
   end
 
-  def encode_pkt(:query, payload) do
+  def encode(:query, payload) do
     payload = payload <> <<0>>
     len = byte_size(payload) + 4
     <<?Q, len::integer-32, payload::binary>>
   end
 
-  def encode_error(%Error{} = error) do
+  def encode(%Error{} = error) do
     fields = [
       error_field("S", "ERROR"),
       error_field("C", error.code),

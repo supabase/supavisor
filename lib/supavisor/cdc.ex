@@ -5,42 +5,48 @@ defmodule Supavisor.CDC do
 
   require Logger
 
-  alias Supavisor.CDC.{Change, Error}
+  alias Supavisor.CDC.{Change, Error, State}
   alias Supavisor.Protocol.Client
   alias Supavisor.Protocol.Server
 
   @writer_module Application.compile_env!(:supavisor, :writer_module)
 
-  def change(bin, false) do
+  def change(bin) do
+    change(bin, %State{})
+  end
+
+  def change(bin, %State{in_transaction?: false} = state) do
     if begin?(bin) do
-      Logger.debug("change(bin, false) found begin;")
-      {:ok, bin, true}
+      Logger.debug("change/2 found begin;")
+      {:ok, bin, %{state | in_transaction?: true}}
     else
-      Logger.debug("change(bin, false) found no begin;")
+      Logger.debug("change/2 found no begin;")
       wrapped_bin = wrap(bin)
-      {:ok, wrapped_bin, false}
+      {:ok, wrapped_bin, state}
     end
   end
 
-  def change(bin, true) do
+  def change(bin, %State{in_transaction?: true} = state) do
     case Client.decode(bin) do
       [%Client.Pkt{tag: :query, payload: "commit;"}] ->
-        Logger.debug("change(bin, true) found commit;")
-        {:ok, commit(), false}
+        Logger.debug("change/2 found commit;")
+        {:ok, select_cdc_and_rollback(), %{state | in_transaction?: false}}
 
       [%Client.Pkt{tag: :query, payload: "rollback;"}] ->
-        Logger.debug("change(bin, true) found rollback;")
-        {:ok, rollback(), false}
+        Logger.debug("change/2 found rollback;")
+        {:ok, rollback(), %{state | in_transaction?: false}}
 
       [decoded_bin] ->
-        Logger.debug("change(bin, true) found decoded_bin: #{inspect(decoded_bin, pretty: true)}")
-        {:ok, bin, true}
+        Logger.debug("change/2 found decoded_bin: #{inspect(decoded_bin, pretty: true)}")
+        {:ok, bin, state}
     end
   end
 
-  def capture(bin) do
+  def capture(%State{} = state) do
     captured_pkts =
-      bin
+      state.server_packets
+      |> Enum.reverse()
+      |> Enum.join()
       |> Server.decode()
       |> Enum.map(fn
         %Server.Pkt{tag: :data_row, payload: ["_sync_cdc" | values]} -> values
@@ -54,22 +60,29 @@ defmodule Supavisor.CDC do
           payload: Jason.decode!(payload)
         }
       end)
+      |> dbg()
 
     case @writer_module.handle_changes(captured_pkts) do
       {:ok, changed_ids} ->
         changed_ids = Enum.map_join(changed_ids, ", ", &"'#{&1}'")
         query = "SELECT unnest(ARRAY[#{changed_ids}]::TEXT[]) AS changed_ids;"
-        {:ok, Client.encode_pkt(:query, query)}
+        {:ok, Client.encode(:query, query)}
 
       {:error, %Error{} = error} ->
-        {:error, Client.encode_error(error)}
+        {:error, Client.encode(error)}
     end
   end
 
+  def should_forward_to_client?(%State{in_transaction?: in_transaction?}), do: in_transaction?
+
+  def received_server_packets(%State{} = state, server_packets) do
+    %{state | server_packets: [server_packets | state.server_packets]}
+  end
+
   defp wrap(bin) do
-    begin = Client.encode_pkt(:query, "begin;")
-    cdc = Client.encode_pkt(:query, "select '_sync_cdc', * from salesforce._sync_cdc;")
-    rollback = Client.encode_pkt(:query, "rollback;")
+    begin = Client.encode(:query, "begin;")
+    cdc = Client.encode(:query, "select '_sync_cdc', * from salesforce._sync_cdc;")
+    rollback = Client.encode(:query, "rollback;")
 
     <<begin::binary, bin::binary, cdc::binary, rollback::binary>>
   end
@@ -81,15 +94,15 @@ defmodule Supavisor.CDC do
     end
   end
 
-  defp commit do
-    cdc = Client.encode_pkt(:query, "select '_sync_cdc', * from salesforce._sync_cdc;")
-    rollback = Client.encode_pkt(:query, "rollback;")
+  defp select_cdc_and_rollback do
+    cdc = Client.encode(:query, "select '_sync_cdc', * from salesforce._sync_cdc;")
+    rollback = Client.encode(:query, "rollback;")
 
     <<cdc::binary, rollback::binary>>
   end
 
   defp rollback do
-    rollback = Client.encode_pkt(:query, "rollback;")
+    rollback = Client.encode(:query, "rollback;")
 
     <<rollback::binary>>
   end
