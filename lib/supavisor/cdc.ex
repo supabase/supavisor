@@ -15,6 +15,10 @@ defmodule Supavisor.CDC do
     %State{db_namespace: db_namespace}
   end
 
+  def reset(%State{} = state) do
+    %State{db_namespace: state.db_namespace}
+  end
+
   def change(bin, %State{in_transaction?: false} = state) do
     state = %{state | client_packets: [bin | state.client_packets]}
 
