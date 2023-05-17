@@ -8,6 +8,9 @@ defmodule Supavisor.Tenants do
 
   alias Supavisor.Tenants.Tenant
 
+  @lookup_mfa Application.compile_env!(:supavisor, :tenant_lookup_mfa) ||
+                {__MODULE__, :do_get_tenant_by_external_id, 1}
+
   @doc """
   Returns the list of tenants.
 
@@ -39,6 +42,12 @@ defmodule Supavisor.Tenants do
 
   @spec get_tenant_by_external_id(String.t()) :: Tenant.t() | nil
   def get_tenant_by_external_id(external_id) do
+    {module, function, 1} = @lookup_mfa
+    apply(module, function, [external_id])
+  end
+
+  @doc false
+  def original_get_tenant_by_external_id(external_id) do
     Tenant
     |> Repo.get_by(external_id: external_id)
   end
