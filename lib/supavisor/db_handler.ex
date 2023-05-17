@@ -137,6 +137,20 @@ defmodule Supavisor.DbHandler do
         %{payload: {:authentication_server_final_message, _server_final}}, acc ->
           acc
 
+        %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
+          password = data.auth.password
+          user = data.auth.user
+
+          digest = [password.(), user] |> :erlang.md5() |> Base.encode16(case: :lower)
+          digest = [digest, salt] |> :erlang.md5() |> Base.encode16(case: :lower)
+          payload = ["md5", digest, 0]
+
+          bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
+
+          :gen_tcp.send(data.socket, bin)
+
+          {ps, :authentication_md5}
+
         _e, acc ->
           acc
       end)
@@ -147,6 +161,9 @@ defmodule Supavisor.DbHandler do
 
       {_, :authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
+
+      {_, :authentication_md5} ->
+        {:keep_state, data}
 
       {ps, db_state} ->
         Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")

@@ -101,4 +101,43 @@ defmodule Supavisor.DbHandlerTest do
     assert new_data.caller == self()
     assert new_data.buffer == ["test_data"]
   end
+
+  describe "handle_event/4 info tcp authentication authentication_md5_password payload events" do
+    test "keeps state while sending the digested md5" do
+      # `82` is `?R`, which identifies the payload tag as `:authentication`
+      # `0, 0, 0, 12` is the packet length
+      # `0, 0, 0, 5` is the authentication type, identified as `:authentication_md5_password`
+      # `100, 100, 100, 100` is the md5 salt from db, a random 4 bytes value
+      bin = <<82, 0, 0, 0, 12, 0, 0, 0, 5, 100, 100, 100, 100>>
+
+      # The incoming port (#Port<0.00>), unused
+      tcp_port = Enum.random(1..999_999)
+
+      content = {:tcp, tcp_port, bin}
+
+      # The outgoing port (#Port<0.00>), used to send message to the db, meck overrides it
+      socket_port = Enum.random(1..999_999)
+
+      data = %{
+        auth: %{
+          password: fn -> "some_password" end,
+          user: "some_user"
+        },
+        socket: socket_port
+      }
+
+      :meck.new(:gen_tcp, [:unstick, :passthrough])
+
+      :meck.expect(:gen_tcp, :send, fn port, message ->
+        assert port == socket_port
+        assert message == [?p, <<40::integer-32>>, ["md5", "ae5546ff52734a18d0277977f626946c", 0]]
+
+        :ok
+      end)
+
+      assert {:keep_state, ^data} = Db.handle_event(:info, content, :authentication, data)
+
+      :meck.unload(:gen_tcp)
+    end
+  end
 end
