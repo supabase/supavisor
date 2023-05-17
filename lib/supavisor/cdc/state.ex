@@ -9,5 +9,6 @@ defmodule Supavisor.CDC.State do
   * server_packets: the packets we have received from the server (postgres)
   """
 
-  defstruct in_transaction?: false, client_packets: [], server_packets: []
+  @enforce_keys [:db_namespace]
+  defstruct client_packets: [], db_namespace: nil, in_transaction?: false, server_packets: []
 end

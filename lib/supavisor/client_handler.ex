@@ -55,6 +55,7 @@ defmodule Supavisor.ClientHandler do
       pool: nil,
       manager: nil,
       query_start: nil,
+      db_namespace: nil,
       cdc_state: nil
     }
 
@@ -82,8 +83,8 @@ defmodule Supavisor.ClientHandler do
     Logger.metadata(project: external_id)
 
     case Tenants.get_tenant_by_external_id(external_id) do
-      %Tenant{db_password: pass} ->
-        {:keep_state, %{data | tenant: external_id},
+      %Tenant{db_namespace: ns, db_password: pass} ->
+        {:keep_state, %{data | db_namespace: ns, tenant: external_id},
          {:next_event, :internal, {:handle, fn -> pass end}}}
 
       _ ->
@@ -145,7 +146,8 @@ defmodule Supavisor.ClientHandler do
     Telem.pool_checkout_time(time, data.tenant)
     Process.link(db_pid)
 
-    {:ok, wrapped_bin, cdc_state} = CDC.change(bin)
+    initial_cdc_state = CDC.init(data.db_namespace)
+    {:ok, wrapped_bin, cdc_state} = CDC.change(bin, initial_cdc_state)
 
     case Db.call(db_pid, wrapped_bin) do
       :ok ->

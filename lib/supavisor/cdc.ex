@@ -11,8 +11,8 @@ defmodule Supavisor.CDC do
 
   @writer_module Application.compile_env!(:supavisor, :writer_module)
 
-  def change(bin) do
-    change(bin, %State{})
+  def init(db_namespace) do
+    %State{db_namespace: db_namespace}
   end
 
   def change(bin, %State{in_transaction?: false} = state) do
