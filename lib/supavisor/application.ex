@@ -58,18 +58,18 @@ defmodule Supavisor.Application do
     [
       PromEx,
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
-      Supavisor.Repo,
+      # Supavisor.Repo,
       # Start the Telemetry supervisor
-      SupavisorWeb.Telemetry,
+      # SupavisorWeb.Telemetry,
       # Start the PubSub system
-      {Phoenix.PubSub, name: Supavisor.PubSub},
+      # {Phoenix.PubSub, name: Supavisor.PubSub},
       # Start the Endpoint (http/https)
-      SupavisorWeb.Endpoint,
+      # SupavisorWeb.Endpoint,
       {
         PartitionSupervisor,
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
-      },
-      Supavisor.Vault
+      }
+      # Supavisor.Vault
     ]
   end
 
