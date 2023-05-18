@@ -52,7 +52,7 @@ defmodule Supavisor.CDC do
     end
   end
 
-  def capture(%State{} = state) do
+  def capture(%State{} = state, tenant) do
     state.server_packets
     |> Enum.reverse()
     |> Enum.join()
@@ -77,12 +77,12 @@ defmodule Supavisor.CDC do
         {:ok, query}
 
       changed_packets ->
-        handle_changed_packets(changed_packets)
+        handle_changed_packets(changed_packets, tenant)
     end
   end
 
-  defp handle_changed_packets(changed_packets) do
-    case @writer_module.handle_changes(changed_packets) do
+  defp handle_changed_packets(changed_packets, tenant) do
+    case @writer_module.handle_changes(changed_packets, tenant) do
       {:ok, changed_ids} ->
         changed_ids = Enum.map_join(changed_ids, ", ", &"'#{&1}'")
         query = "SELECT unnest(ARRAY[#{changed_ids}]::TEXT[]) AS changed_ids;"

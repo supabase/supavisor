@@ -190,7 +190,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(_, :capture, :cdc, data) do
-    case CDC.capture(data.cdc_state) do
+    case CDC.capture(data.cdc_state, data.tenant) do
       {:ok, query} ->
         {:next_state, :busy, data, {:next_event, :internal, {:tcp, nil, query}}}
 
