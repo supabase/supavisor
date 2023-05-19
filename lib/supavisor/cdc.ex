@@ -11,8 +11,12 @@ defmodule Supavisor.CDC do
 
   @writer_module Application.compile_env!(:supavisor, :writer_module)
 
-  def change(bin) do
-    change(bin, %State{})
+  def init(db_namespace) do
+    %State{db_namespace: db_namespace}
+  end
+
+  def reset(%State{} = state) do
+    %State{db_namespace: state.db_namespace}
   end
 
   def change(bin, %State{in_transaction?: false} = state) do
@@ -23,7 +27,7 @@ defmodule Supavisor.CDC do
       {:ok, bin, %{state | in_transaction?: true}}
     else
       Logger.debug("change/2 found no begin;")
-      wrapped_bin = wrap(bin)
+      wrapped_bin = wrap(bin, state.db_namespace)
       {:ok, wrapped_bin, state}
     end
   end
@@ -35,7 +39,7 @@ defmodule Supavisor.CDC do
       [%Client.Pkt{tag: :query, payload: "commit;"}] ->
         Logger.debug("change/2 found commit;")
 
-        {:ok, select_cdc_and_rollback(), %{state | in_transaction?: false}}
+        {:ok, select_cdc_and_rollback(state.db_namespace), %{state | in_transaction?: false}}
 
       [%Client.Pkt{tag: :query, payload: "rollback;"}] ->
         Logger.debug("change/2 found rollback;")
@@ -48,7 +52,7 @@ defmodule Supavisor.CDC do
     end
   end
 
-  def capture(%State{} = state) do
+  def capture(%State{} = state, tenant) do
     state.server_packets
     |> Enum.reverse()
     |> Enum.join()
@@ -73,12 +77,12 @@ defmodule Supavisor.CDC do
         {:ok, query}
 
       changed_packets ->
-        handle_changed_packets(changed_packets)
+        handle_changed_packets(changed_packets, tenant)
     end
   end
 
-  defp handle_changed_packets(changed_packets) do
-    case @writer_module.handle_changes(changed_packets) do
+  defp handle_changed_packets(changed_packets, tenant) do
+    case @writer_module.handle_changes(changed_packets, tenant) do
       {:ok, changed_ids} ->
         changed_ids = Enum.map_join(changed_ids, ", ", &"'#{&1}'")
         query = "SELECT unnest(ARRAY[#{changed_ids}]::TEXT[]) AS changed_ids;"
@@ -95,9 +99,9 @@ defmodule Supavisor.CDC do
     %{state | server_packets: [server_packets | state.server_packets]}
   end
 
-  defp wrap(bin) do
+  defp wrap(bin, db_namespace) do
     begin = Client.encode(:query, "begin;")
-    cdc = Client.encode(:query, "select '_sync_cdc', * from salesforce._sync_cdc;")
+    cdc = Client.encode(:query, "select '_sync_cdc', * from #{db_namespace}._sync_cdc;")
     rollback = Client.encode(:query, "rollback;")
 
     <<begin::binary, bin::binary, cdc::binary, rollback::binary>>
@@ -110,8 +114,8 @@ defmodule Supavisor.CDC do
     end
   end
 
-  defp select_cdc_and_rollback do
-    cdc = Client.encode(:query, "select '_sync_cdc', * from salesforce._sync_cdc;")
+  defp select_cdc_and_rollback(db_namespace) do
+    cdc = Client.encode(:query, "select '_sync_cdc', * from #{db_namespace}._sync_cdc;")
     rollback = Client.encode(:query, "rollback;")
 
     <<cdc::binary, rollback::binary>>

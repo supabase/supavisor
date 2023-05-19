@@ -18,6 +18,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:db_user, :string)
     field(:external_id, :string)
     field(:pool_size, :integer)
+    field(:db_namespace, :string, virtual: true)
 
     timestamps()
   end

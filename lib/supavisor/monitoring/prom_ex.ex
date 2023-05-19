@@ -19,8 +19,8 @@ defmodule Supavisor.Monitoring.PromEx do
       # PromEx built in plugins
       Plugins.Application,
       Plugins.Beam,
-      {Plugins.Phoenix, router: SupavisorWeb.Router, endpoint: SupavisorWeb.Endpoint},
-      Plugins.Ecto,
+      # {Plugins.Phoenix, router: SupavisorWeb.Router, endpoint: SupavisorWeb.Endpoint},
+      # Plugins.Ecto,
 
       # Custom PromEx metrics plugins
       {OsMon, poll_rate: poll_rate},

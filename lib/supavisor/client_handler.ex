@@ -82,8 +82,8 @@ defmodule Supavisor.ClientHandler do
     Logger.metadata(project: external_id)
 
     case Tenants.get_tenant_by_external_id(external_id) do
-      %Tenant{db_password: pass} ->
-        {:keep_state, %{data | tenant: external_id},
+      %Tenant{db_namespace: ns, db_password: pass} ->
+        {:keep_state, %{data | cdc_state: CDC.init(ns), tenant: external_id},
          {:next_event, :internal, {:handle, fn -> pass end}}}
 
       _ ->
@@ -145,7 +145,7 @@ defmodule Supavisor.ClientHandler do
     Telem.pool_checkout_time(time, data.tenant)
     Process.link(db_pid)
 
-    {:ok, wrapped_bin, cdc_state} = CDC.change(bin)
+    {:ok, wrapped_bin, cdc_state} = CDC.change(bin, data.cdc_state)
 
     case Db.call(db_pid, wrapped_bin) do
       :ok ->
@@ -190,7 +190,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(_, :capture, :cdc, data) do
-    case CDC.capture(data.cdc_state) do
+    case CDC.capture(data.cdc_state, data.tenant) do
       {:ok, query} ->
         {:next_state, :busy, data, {:next_event, :internal, {:tcp, nil, query}}}
 
@@ -202,7 +202,7 @@ defmodule Supavisor.ClientHandler do
         :poolboy.checkin(data.pool, data.db_pid)
         Telem.network_usage(:client, data.socket, data.tenant)
         Telem.client_query_time(data.query_start, data.tenant)
-        {:next_state, :idle, %{data | db_pid: nil, cdc_state: nil}}
+        {:next_state, :idle, %{data | db_pid: nil, cdc_state: CDC.reset(data.cdc_state)}}
     end
   end
 
@@ -265,7 +265,7 @@ defmodule Supavisor.ClientHandler do
       :poolboy.checkin(data.pool, data.db_pid)
       Telem.network_usage(:client, data.socket, data.tenant)
       Telem.client_query_time(data.query_start, data.tenant)
-      {:next_state, :idle, %{data | db_pid: nil, cdc_state: nil}, reply}
+      {:next_state, :idle, %{data | db_pid: nil, cdc_state: CDC.reset(data.cdc_state)}, reply}
     else
       Logger.debug("Client is not ready")
       {:keep_state_and_data, reply}
