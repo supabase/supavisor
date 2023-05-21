@@ -22,8 +22,7 @@ jobs:
 
   deploy:
     needs: release
-    name: Create binary release
-    if: success() && needs.release.outputs.status == 'true'
+    name: Bump version
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
@@ -42,12 +41,9 @@ jobs:
             ${{ runner.os }}-mix-
       - name: Install dependencies
         run: mix deps.get
-      - name: Setup Zig for burrito
-        uses: goto-bus-stop/setup-zig@v2
-      - name: Create release
-        run: mix release supavisor_bin
-      - uses: AButler/upload-release-assets@v2.0
+      - name: Verify Versions Updated
+        uses: tj-actions/changed-files@v35
+        id: verify_changed_files
         with:
-          files: "supavisor_bin-${{ needs.release.outputs.version }}"
-          release-tag: v${{ needs.release.outputs.version }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+             mix.exs
