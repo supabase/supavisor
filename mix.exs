@@ -4,7 +4,7 @@ defmodule Supavisor.MixProject do
   def project do
     [
       app: :supavisor,
-      version: "0.1.0",
+      version: version(),
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -103,4 +103,5 @@ defmodule Supavisor.MixProject do
     ]
   end
 
+  defp version, do: File.read!("./VERSION")
 end
