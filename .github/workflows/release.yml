@@ -1,46 +1,15 @@
 name: Build and Release binary on Push to Master
 on:
-  push:
+  pull_request:
+    types: [opened, reopened, synchronize]
     branches:
-      - main
+      - 'main'
 jobs:
-  release:
-    outputs:
-      status: ${{ steps.semantic.outputs.new_release_published }}
-      version: ${{ steps.semantic.outputs.new_release_version }}
-
+  version_updated:
+    name: Check that version has been updated
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v3
-      - name: Release on GitHub
-        id: semantic
-        uses: cycjimmy/semantic-release-action@v3
-        with:
-          semantic_version: 18
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy:
-    needs: release
-    name: Bump version
-    runs-on: ubuntu-20.04
-    steps:
-      - uses: actions/checkout@v2
-      - name: Setup elixir
-        id: beam
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: 25.x # Define the OTP version [required]
-          elixir-version: 1.14.x # Define the elixir version [required]
-      - name: Cache Mix
-        uses: actions/cache@v1
-        with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-      - name: Install dependencies
-        run: mix deps.get
       - name: Verify Versions Updated
         uses: tj-actions/changed-files@v35
         id: verify_changed_files
