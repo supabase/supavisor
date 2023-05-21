@@ -103,5 +103,4 @@ defmodule Supavisor.MixProject do
     ]
   end
 
-  defp version, do: File.read!("./VERSION")
 end
