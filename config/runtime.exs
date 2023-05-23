@@ -1,39 +1,61 @@
 import Config
 
-if config_env() == :prod do
-  secret_key_base =
-    System.get_env("SECRET_KEY_BASE") ||
-      raise """
-      environment variable SECRET_KEY_BASE is missing.
-      You can generate one by calling: mix phx.gen.secret
-      """
+secret_key_base =
+  System.get_env("SECRET_KEY_BASE") ||
+    raise """
+    environment variable SECRET_KEY_BASE is missing.
+    You can generate one by calling: mix phx.gen.secret
+    """
 
-  config :supavisor, SupavisorWeb.Endpoint,
-    server: true,
-    http: [
-      port: String.to_integer(System.get_env("PORT") || "4000"),
-      transport_options: [
-        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
-        num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-        # IMPORTANT: support IPv6 addresses
-        socket_opts: [:inet6]
-      ]
-    ],
-    secret_key_base: secret_key_base
-
-  config :libcluster,
-    debug: false,
-    topologies: [
-      fly6pn: [
-        strategy: Cluster.Strategy.DNSPoll,
-        config: [
-          polling_interval: 5_000,
-          query: System.get_env("DNS_NODES"),
-          node_basename: System.get_env("FLY_APP_NAME") || "supavisor"
-        ]
+config :supavisor, SupavisorWeb.Endpoint,
+  server: true,
+  http: [
+    port: String.to_integer(System.get_env("PORT") || "4000"),
+    transport_options: [
+      max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
+      num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+      socket_opts: [
+        System.get_env("ADDR_TYPE", "inet") |> String.to_atom()
       ]
     ]
+  ],
+  secret_key_base: secret_key_base
+
+topologies = []
+
+if System.get_env("DNS_POLL") do
+  dns_poll = [
+    strategy: Cluster.Strategy.DNSPoll,
+    config: [
+      polling_interval: 5_000,
+      query: System.get_env("DNS_POLL"),
+      node_basename: System.get_env("FLY_APP_NAME") || "supavisor"
+    ]
+  ]
+
+  Keyword.put(topologies, :dns_poll, dns_poll)
 end
+
+if System.get_env("CLUSTER_NODES") do
+  epmd = [
+    strategy: Cluster.Strategy.Epmd,
+    config: [
+      hosts:
+        System.get_env("CLUSTER_NODES", "")
+        |> String.split(",")
+        |> Enum.map(&String.to_atom/1)
+    ],
+    connect: {:net_kernel, :connect_node, []},
+    disconnect: {:erlang, :disconnect_node, []},
+    list_nodes: {:erlang, :nodes, [:connected]}
+  ]
+
+  Keyword.put(topologies, :epmd, epmd)
+end
+
+config :libcluster,
+  debug: false,
+  topologies: topologies
 
 if config_env() != :test do
   config :supavisor,

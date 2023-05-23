@@ -1,0 +1,21 @@
+[Unit]
+Description=Realtime
+After=network.target
+Requires=network.target
+StartLimitIntervalSec=5
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+User=root
+EnvironmentFile=/opt/supavisor/service_vars.ini
+WorkingDirectory=/opt/supavisor
+ExecStart=/opt/supavisor/bin/server start
+ExecStop=/opt/supavisor/bin/server stop
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+TasksMax=infinity

@@ -7,8 +7,9 @@ processes = []
   release_command = "/app/bin/migrate"
 
 [env]
-  DNS_NODES = "supavisor-staging.internal"
+  DNS_POLL = "supavisor-staging.internal"
   PHX_HOST = "supavisor-staging.fly.dev"
+  ADDR_TYPE = "inet6"  
   PORT = "8080"
 
 [experimental]

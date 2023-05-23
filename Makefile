@@ -9,6 +9,7 @@ dev:
 	METRICS_JWT_SECRET=dev \
 	REGION=eu \
 	FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000 \
+	SECRET_KEY_BASE="dev" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
 
@@ -20,7 +21,8 @@ dev.node2:
 	API_JWT_SECRET=dev \
 	METRICS_JWT_SECRET=dev \
 	REGION=usa \
-	FLY_ALLOC_ID=222e4567-e89b-12d3-a456-426614174000 \
+	SECRET_KEY_BASE="dev" \
+	CLUSTER_NODES="node1@127.0.0.1" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server	
 
