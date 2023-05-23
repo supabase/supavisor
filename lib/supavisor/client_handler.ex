@@ -62,6 +62,16 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
+  def handle_event(
+        :info,
+        {:tcp, _port, "GET /__sequin__/health HTTP/1.1\r" <> _rest},
+        _state,
+        data
+      ) do
+    :ok = :gen_tcp.send(data.socket, "HTTP/1.1 200 OK\r\n\r\n")
+    {:stop, :normal}
+  end
+
   def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, data) do
     Logger.warn("Client is trying to connect with SSL")
     # TODO: implement SSL negotiation
