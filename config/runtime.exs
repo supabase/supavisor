@@ -33,7 +33,7 @@ if System.get_env("DNS_POLL") do
     ]
   ]
 
-  Keyword.put(topologies, :dns_poll, dns_poll)
+  topologies = Keyword.put(topologies, :dns_poll, dns_poll)
 end
 
 if System.get_env("CLUSTER_NODES") do
@@ -50,7 +50,7 @@ if System.get_env("CLUSTER_NODES") do
     list_nodes: {:erlang, :nodes, [:connected]}
   ]
 
-  Keyword.put(topologies, :epmd, epmd)
+  topologies = Keyword.put(topologies, :epmd, epmd)
 end
 
 config :libcluster,
