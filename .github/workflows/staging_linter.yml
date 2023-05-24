@@ -3,10 +3,12 @@ on:
   pull_request:
     branches:
       - main
+env:
+  SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}      
 jobs:
   format:
     name: Formatting Checks
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ARM64]
 
     steps:
       - uses: actions/checkout@v2
