@@ -64,12 +64,11 @@ defmodule Supavisor.CDC do
       _ -> nil
     end)
     |> Enum.reject(&is_nil/1)
-    |> Enum.map(fn [_id, table_name, operation, changes, transaction_id, inserted_at] ->
+    |> Enum.map(fn [table_name, operation, record, inserted_at] ->
       %Change{
         table_name: table_name,
         operation: operation(operation),
-        payload: Jason.decode!(changes),
-        transaction_id: transaction_id,
+        record: Jason.decode!(record),
         inserted_at: inserted_at
       }
     end)
@@ -109,7 +108,7 @@ defmodule Supavisor.CDC do
 
   defp wrap(bin, db_namespace) do
     begin = Client.encode(:query, "begin;")
-    cdc = Client.encode(:query, "select '_sync_cdc', * from #{db_namespace}._sync_cdc;")
+    cdc = select_cdc(db_namespace)
     rollback = Client.encode(:query, "rollback;")
 
     <<begin::binary, @set_sync_user::binary, bin::binary, cdc::binary, rollback::binary>>
@@ -123,10 +122,26 @@ defmodule Supavisor.CDC do
   end
 
   defp select_cdc_and_rollback(db_namespace) do
-    cdc = Client.encode(:query, "select '_sync_cdc', * from #{db_namespace}._sync_cdc;")
+    cdc = select_cdc(db_namespace)
     rollback = Client.encode(:query, "rollback;")
 
     <<cdc::binary, rollback::binary>>
+  end
+
+  defp select_cdc(db_namespace) do
+    Client.encode(
+      :query,
+      """
+      SELECT
+        '_sync_cdc',
+        table_name,
+        operation,
+        record,
+        inserted_at
+      FROM
+        #{db_namespace}._sync_cdc;
+      """
+    )
   end
 
   defp rollback do

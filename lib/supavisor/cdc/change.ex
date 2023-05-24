@@ -7,13 +7,12 @@ defmodule Supavisor.CDC.Change do
   @type t :: %__MODULE__{
           table_name: String.t(),
           operation: operation(),
-          payload: map(),
-          transaction_id: non_neg_integer(),
+          record: map(),
           inserted_at: DateTime.t()
         }
 
   @type operation :: :insert | :update | :delete
 
-  @enforce_keys [:table_name, :operation, :payload, :transaction_id, :inserted_at]
-  defstruct [:table_name, :operation, :payload, :transaction_id, :inserted_at]
+  @enforce_keys [:table_name, :operation, :record, :inserted_at]
+  defstruct [:table_name, :operation, :record, :inserted_at]
 end
