@@ -10,6 +10,7 @@ defmodule Supavisor.CDC do
   alias Supavisor.Protocol.Server
 
   @writer_module Application.compile_env!(:supavisor, :writer_module)
+  @set_sync_user Client.encode(:query, ~s(set "sync.user" to 'sequin_proxy'))
 
   def init(db_namespace) do
     %State{db_namespace: db_namespace}
@@ -24,6 +25,7 @@ defmodule Supavisor.CDC do
 
     if begin?(bin) do
       Logger.debug("change/2 found begin;")
+      bin = prepend_sync_user(bin)
       {:ok, bin, %{state | in_transaction?: true}}
     else
       Logger.debug("change/2 found no begin;")
@@ -62,11 +64,13 @@ defmodule Supavisor.CDC do
       _ -> nil
     end)
     |> Enum.reject(&is_nil/1)
-    |> Enum.map(fn [_id, table, operation, payload] ->
+    |> Enum.map(fn [_id, table_name, operation, changes, transaction_id, inserted_at] ->
       %Change{
-        table: table,
+        table_name: table_name,
         operation: operation(operation),
-        payload: Jason.decode!(payload)
+        payload: Jason.decode!(changes),
+        transaction_id: transaction_id,
+        inserted_at: inserted_at
       }
     end)
     |> case do
@@ -99,12 +103,16 @@ defmodule Supavisor.CDC do
     %{state | server_packets: [server_packets | state.server_packets]}
   end
 
+  defp prepend_sync_user(bin) do
+    <<@set_sync_user::binary, bin::binary>>
+  end
+
   defp wrap(bin, db_namespace) do
     begin = Client.encode(:query, "begin;")
     cdc = Client.encode(:query, "select '_sync_cdc', * from #{db_namespace}._sync_cdc;")
     rollback = Client.encode(:query, "rollback;")
 
-    <<begin::binary, bin::binary, cdc::binary, rollback::binary>>
+    <<begin::binary, @set_sync_user::binary, bin::binary, cdc::binary, rollback::binary>>
   end
 
   defp begin?(bin) do
@@ -128,7 +136,7 @@ defmodule Supavisor.CDC do
   end
 
   @spec operation(String.t()) :: Change.operation()
-  defp operation("INSERT"), do: :insert
-  defp operation("UPDATE"), do: :update
-  defp operation("DELETE"), do: :delete
+  defp operation("insert"), do: :insert
+  defp operation("update"), do: :update
+  defp operation("delete"), do: :delete
 end
