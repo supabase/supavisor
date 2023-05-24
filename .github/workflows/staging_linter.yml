@@ -8,7 +8,7 @@ env:
 jobs:
   format:
     name: Formatting Checks
-    runs-on: [self-hosted, ARM64]
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v2
