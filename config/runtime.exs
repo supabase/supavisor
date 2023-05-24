@@ -23,35 +23,41 @@ config :supavisor, SupavisorWeb.Endpoint,
 
 topologies = []
 
-if System.get_env("DNS_POLL") do
-  dns_poll = [
-    strategy: Cluster.Strategy.DNSPoll,
-    config: [
-      polling_interval: 5_000,
-      query: System.get_env("DNS_POLL"),
-      node_basename: System.get_env("FLY_APP_NAME") || "supavisor"
+topologies =
+  if System.get_env("DNS_POLL") do
+    dns_poll = [
+      strategy: Cluster.Strategy.DNSPoll,
+      config: [
+        polling_interval: 5_000,
+        query: System.get_env("DNS_POLL"),
+        node_basename: System.get_env("FLY_APP_NAME") || "supavisor"
+      ]
     ]
-  ]
 
-  topologies = Keyword.put(topologies, :dns_poll, dns_poll)
-end
+    Keyword.put(topologies, :dns_poll, dns_poll)
+  else
+    topologies
+  end
 
-if System.get_env("CLUSTER_NODES") do
-  epmd = [
-    strategy: Cluster.Strategy.Epmd,
-    config: [
-      hosts:
-        System.get_env("CLUSTER_NODES", "")
-        |> String.split(",")
-        |> Enum.map(&String.to_atom/1)
-    ],
-    connect: {:net_kernel, :connect_node, []},
-    disconnect: {:erlang, :disconnect_node, []},
-    list_nodes: {:erlang, :nodes, [:connected]}
-  ]
+topologies =
+  if System.get_env("CLUSTER_NODES") do
+    epmd = [
+      strategy: Cluster.Strategy.Epmd,
+      config: [
+        hosts:
+          System.get_env("CLUSTER_NODES", "")
+          |> String.split(",")
+          |> Enum.map(&String.to_atom/1)
+      ],
+      connect: {:net_kernel, :connect_node, []},
+      disconnect: {:erlang, :disconnect_node, []},
+      list_nodes: {:erlang, :nodes, [:connected]}
+    ]
 
-  topologies = Keyword.put(topologies, :epmd, epmd)
-end
+    Keyword.put(topologies, :epmd, epmd)
+  else
+    topologies
+  end
 
 config :libcluster,
   debug: false,
