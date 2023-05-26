@@ -13,4 +13,4 @@ jobs:
       - uses: actions/checkout@v2
       - uses: superfly/flyctl-actions@1.1
         with:
-          args: "-c fly.toml deploy"
+          args: "-c deploy/fly/fly.toml deploy"

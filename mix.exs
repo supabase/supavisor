@@ -68,7 +68,9 @@ defmodule Supavisor.MixProject do
 
   def releases do
     [
-      supavisor: [],
+      supavisor: [
+        include_erts: System.get_env("INCLUDE_ERTS", "true") == "true"
+      ],
       supavisor_bin: [
         steps: [:assemble, &Burrito.wrap/1],
         burrito: [
