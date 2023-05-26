@@ -15,7 +15,13 @@ config :supavisor, SupavisorWeb.Endpoint,
       max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
       num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
       socket_opts: [
-        System.get_env("ADDR_TYPE", "inet") |> String.to_atom()
+        System.get_env("ADDR_TYPE", "inet")
+        |> tap(fn addr_type ->
+          if addr_type not in ["inet", "inet6"] do
+            raise "ADDR_TYPE env var is invalid: #{inspect(addr_type)}"
+          end
+        end)
+        |> String.to_atom()
       ]
     ]
   ],
