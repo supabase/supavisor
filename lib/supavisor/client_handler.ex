@@ -150,6 +150,25 @@ defmodule Supavisor.ClientHandler do
     case Db.call(db_pid, wrapped_bin) do
       :ok ->
         {:next_state, :cdc, %{data | db_pid: db_pid, query_start: ts, cdc_state: cdc_state}}
+
+      {:buffering, size} ->
+        Logger.warn("DB call buffering #{size}}")
+
+        if size > 1_000_000 do
+          msg = "Db buffer size is too big: #{size}"
+          Logger.error(msg)
+          Server.send_error(data.socket, "XX000", msg)
+          {:stop, :normal, data}
+        else
+          Logger.debug("DB call buffering")
+          {:next_state, :cdc, %{data | db_pid: db_pid, query_start: ts, cdc_state: cdc_state}}
+        end
+
+      {:error, reason} ->
+        msg = "DB call error: #{inspect(reason)}"
+        Logger.error(msg)
+        Server.send_error(data.socket, "XX000", msg)
+        {:stop, :normal, data}
     end
   end
 
@@ -159,6 +178,25 @@ defmodule Supavisor.ClientHandler do
     case Db.call(data.db_pid, bin) do
       :ok ->
         {:next_state, :cdc, %{data | cdc_state: cdc_state}}
+
+      {:buffering, size} ->
+        Logger.warn("DB call buffering #{size}}")
+
+        if size > 1_000_000 do
+          msg = "Db buffer size is too big: #{size}"
+          Logger.error(msg)
+          Server.send_error(data.socket, "XX000", msg)
+          {:stop, :normal, data}
+        else
+          Logger.debug("DB call buffering")
+          {:next_state, :cdc, %{data | cdc_state: cdc_state}}
+        end
+
+      {:error, reason} ->
+        msg = "DB call error: #{inspect(reason)}"
+        Logger.error(msg)
+        Server.send_error(data.socket, "XX000", msg)
+        {:stop, :normal, data}
     end
   end
 

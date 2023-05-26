@@ -117,7 +117,7 @@ defmodule Supavisor.CDC do
   defp begin?(bin) do
     case Client.decode(bin) do
       [%Client.Pkt{tag: :query, payload: "begin;"}] -> true
-      [_] -> false
+      _ -> false
     end
   end
 

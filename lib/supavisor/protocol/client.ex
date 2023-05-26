@@ -42,13 +42,28 @@ defmodule Supavisor.Protocol.Client do
 
   defp tag(char) do
     case char do
+      ?B -> :bind
+      ?D -> :describe
+      ?E -> :execute
+      ?P -> :parse
       ?Q -> :query
+      ?S -> :sync
       _ -> :undefined
     end
   end
 
   defp decode_payload(:query, bin) do
     String.trim_trailing(bin, <<0>>)
+  end
+
+  defp decode_payload(:parse, bin) do
+    [_name, rest] = String.split(bin, <<0>>, parts: 2)
+    [query, _] = String.split(rest, <<0>>, parts: 2)
+    query
+  end
+
+  defp decode_payload(_, _) do
+    nil
   end
 
   def encode(:query, payload) do
