@@ -35,7 +35,7 @@ defmodule Supavisor.ClientHandler do
 
     {:ok, socket} = :ranch.handshake(ref)
     :ok = trans.setopts(socket, [{:active, true}])
-    Logger.info("ClientHandler is: #{inspect(self())}")
+    Logger.debug("ClientHandler is: #{inspect(self())}")
 
     data = %{
       socket: socket,
@@ -55,8 +55,8 @@ defmodule Supavisor.ClientHandler do
 
   @impl true
   def handle_event(:info, {:tcp, _, <<"GET", _::binary>>}, :exchange, data) do
-    Logger.info("http check")
-    :gen_tcp.send(data.socket, "HTTP/1.1 200 OK\r\n\r\n")
+    Logger.debug("Client is trying to request HTTP")
+    :gen_tcp.send(data.socket, "HTTP/1.1 204 OK\r\n\r\n")
     {:stop, :normal, data}
   end
 

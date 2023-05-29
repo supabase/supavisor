@@ -138,4 +138,9 @@ defmodule Supavisor.Integration.ProxyTest do
     {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
     assert result =~ "FATAL:  Too many clients already"
   end
+
+  test "http to proxy server returns 200 OK" do
+    assert :httpc.request("http://localhost:#{Application.get_env(:supavisor, :proxy_port)}") ==
+             {:ok, {{'HTTP/1.1', 204, 'OK'}, [], []}}
+  end
 end
