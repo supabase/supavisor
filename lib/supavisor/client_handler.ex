@@ -125,8 +125,13 @@ defmodule Supavisor.ClientHandler do
       db_pid = db_checkout(data)
 
       Process.monitor(manager)
-      :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
-      {:next_state, :idle, %{data | manager: manager, db_pid: db_pid}}
+      data = %{data | manager: manager, db_pid: db_pid}
+
+      if ps == [] do
+        {:keep_state, data, {:timeout, 10_000, :wait_ps}}
+      else
+        {:keep_state, data, {:next_event, :internal, {:greetings, ps}}}
+      end
     else
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
@@ -134,8 +139,19 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  def handle_event(:internal, {:greetings, ps}, _, data) do
+    :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
+    {:next_state, :idle, data}
+  end
+
   def handle_event(:timeout, :subscribe, _, _) do
     {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+  end
+
+  def handle_event(:timeout, :wait_ps, _, _) do
+    Logger.error("Wait parameter status timeout")
+    ps = Server.stub_ps()
+    {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
   # ignore termination messages
@@ -177,6 +193,10 @@ defmodule Supavisor.ClientHandler do
         Server.send_error(data.socket, "XX000", msg)
         {:stop, :normal, data}
     end
+  end
+
+  def handle_event(:info, {:parameter_status, ps}, _, _) do
+    {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
   # client closed connection

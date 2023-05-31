@@ -39,7 +39,8 @@ defmodule Supavisor.Manager do
       tid: tid,
       tenant: args.tenant,
       user_alias: args.user_alias,
-      parameter_status: []
+      parameter_status: [],
+      wait_ps: []
     }
 
     Logger.metadata(project: args.tenant, user: args.user_alias)
@@ -57,11 +58,20 @@ defmodule Supavisor.Manager do
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
     encoded_ps = Server.encode_parameter_status(ps)
-    {:reply, :ok, %{state | parameter_status: encoded_ps}}
+
+    for pid <- state.wait_ps do
+      send(pid, {:parameter_status, encoded_ps})
+    end
+
+    {:reply, :ok, %{state | parameter_status: encoded_ps, wait_ps: []}}
   end
 
   def handle_call({:set_parameter_status, _ps}, _, state) do
     {:reply, :ok, state}
+  end
+
+  def handle_call(:get_parameter_status, {from, _}, %{parameter_status: []} = state) do
+    {:reply, [], update_in(state.wait_ps, &[from | &1])}
   end
 
   def handle_call(:get_parameter_status, _, state) do
