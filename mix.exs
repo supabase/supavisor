@@ -67,7 +67,8 @@ defmodule Supavisor.MixProject do
       {:opentelemetry_api, "~> 1.2"},
       {:opentelemetry_exporter, "~> 1.4"},
       {:opentelemetry_phoenix, "~> 1.1"},
-      {:opentelemetry_cowboy, "~> 0.2"}
+      {:opentelemetry_cowboy, "~> 0.2"},
+      {:opentelemetry_ecto, "~> 1.1.1"}
       # TODO: add ranch deps
     ]
   end
@@ -75,7 +76,8 @@ defmodule Supavisor.MixProject do
   def releases do
     [
       supavisor: [
-        include_erts: System.get_env("INCLUDE_ERTS", "true") == "true"
+        include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
+        applications: [opentelemetry: :temporary]
       ],
       supavisor_bin: [
         steps: [:assemble, &Burrito.wrap/1],

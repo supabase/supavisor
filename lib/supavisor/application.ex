@@ -8,6 +8,11 @@ defmodule Supavisor.Application do
 
   @impl true
   def start(_type, _args) do
+    # OpenTelemetry setup
+    :opentelemetry_cowboy.setup()
+    OpentelemetryPhoenix.setup(adapter: :cowboy2)
+    OpentelemetryEcto.setup([:supavisor, :repo])
+
     :ok =
       :gen_event.swap_sup_handler(
         :erl_signal_server,
@@ -60,6 +65,8 @@ defmodule Supavisor.Application do
       },
       Supavisor.Vault
     ]
+
+
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
