@@ -49,6 +49,15 @@ config :libcluster,
     ]
   ]
 
+config :opentelemetry, :resource, service: %{name: "Supavisor"}
+
+config :opentelemetry, :processors,
+  otel_batch_processor: %{
+    exporter: {
+      :opentelemetry_exporter,
+      %{endpoints: ["http://localhost:4318"]}
+    }
+  }
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
