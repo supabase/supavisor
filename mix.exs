@@ -62,7 +62,6 @@ defmodule Supavisor.MixProject do
       {:poolboy, "~> 1.5.2"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-
       {:opentelemetry, "~> 1.3"},
       {:opentelemetry_api, "~> 1.2"},
       {:opentelemetry_exporter, "~> 1.4"},

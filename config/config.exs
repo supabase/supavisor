@@ -58,6 +58,7 @@ config :opentelemetry, :processors,
       %{endpoints: ["http://localhost:4318"]}
     }
   }
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
