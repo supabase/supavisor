@@ -1,22 +1,6 @@
 defmodule Supavisor.Helpers do
   @moduledoc false
 
-  @type user_info :: %{
-          "db_password" => String.t(),
-          "db_user" => String.t(),
-          "db_user_alias" => String.t(),
-          "mode_type" => String.t(),
-          "pool_checkout_timeout" => integer(),
-          "pool_size" => integer()
-        }
-
-  @type creds_params :: %{
-          "db_database" => String.t(),
-          "db_host" => String.t(),
-          "db_port" => integer(),
-          "users" => [user_info]
-        }
-
   @spec check_creds_get_ver(creds_params) :: {:ok, String.t()} | {:error, String.t()}
   def check_creds_get_ver(params) do
     Enum.reduce_while(params["users"], {nil, nil}, fn user, _ ->
