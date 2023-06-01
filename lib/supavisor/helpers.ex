@@ -16,7 +16,7 @@ defmodule Supavisor.Helpers do
       check =
         Postgrex.query(conn, "select version()", [])
         |> case do
-          {:ok, %{rows: [[version]]}} = r ->
+          {:ok, %{rows: [[version]]}} ->
             {:cont, {:ok, version}}
 
           _ ->
