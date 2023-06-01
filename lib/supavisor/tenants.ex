@@ -239,7 +239,7 @@ defmodule Supavisor.Tenants do
     User.changeset(user, attrs)
   end
 
-  @spec get_user(String.t(), String.t() | nil) :: Ecto.Queryable.t()
+  @spec build_user_query(String.t(), String.t() | nil) :: Ecto.Queryable.t()
   defp build_user_query(external_id, user) do
     query =
       from(u in User,
