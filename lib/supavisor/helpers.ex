@@ -1,7 +1,7 @@
 defmodule Supavisor.Helpers do
   @moduledoc false
 
-  @spec check_creds_get_ver(creds_params) :: {:ok, String.t()} | {:error, String.t()}
+  @spec check_creds_get_ver(map) :: {:ok, String.t()} | {:error, String.t()}
   def check_creds_get_ver(params) do
     Enum.reduce_while(params["users"], {nil, nil}, fn user, _ ->
       {:ok, conn} =
