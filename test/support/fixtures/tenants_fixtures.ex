@@ -15,6 +15,7 @@ defmodule Supavisor.TenantsFixtures do
         db_host: "some db_host",
         db_port: 42,
         external_id: "dev_tenant",
+        pg_version: "15.0",
         users: [
           %{
             "db_user" => "postgres",

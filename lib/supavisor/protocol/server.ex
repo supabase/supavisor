@@ -11,7 +11,6 @@ defmodule Supavisor.Protocol.Server do
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
   @ready_for_query <<?Z, 5::32, ?I>>
-  @stub_ps [?S, <<23::32>>, "server_version", <<0>>, "0.0", <<0>>]
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -350,8 +349,9 @@ defmodule Supavisor.Protocol.Server do
     @ready_for_query
   end
 
-  @spec stub_ps() :: iodata()
-  def stub_ps() do
-    @stub_ps
+  @spec stub_ps(binary()) :: iodata()
+  def stub_ps(version) do
+    payload = ["server_version", <<0>>, version, <<0>>]
+    [?S, <<IO.iodata_length(payload) + 4::32>>, payload]
   end
 end

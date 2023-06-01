@@ -2,6 +2,7 @@ defmodule SupavisorWeb.TenantController do
   use SupavisorWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  alias Supavisor.Helpers, as: H
   alias Supavisor.{Tenants, Repo}
   alias Tenants.Tenant, as: TenantModel
 
@@ -80,15 +81,25 @@ defmodule SupavisorWeb.TenantController do
   )
 
   def update(conn, %{"external_id" => id, "tenant" => tenant_params}) do
-    case Tenants.get_tenant_by_external_id(id) do
-      nil ->
-        create(conn, %{"tenant" => Map.put(tenant_params, "external_id", id)})
+    case H.check_creds_get_ver(tenant_params) do
+      {:error, reason} ->
+        conn
+        |> put_status(400)
+        |> render("error.json", error: reason)
 
-      tenant ->
-        tenant = Repo.preload(tenant, :users)
+      {:ok, pg_version} ->
+        tenant_params = Map.put(tenant_params, "pg_version", pg_version)
 
-        with {:ok, %TenantModel{} = tenant} <- Tenants.update_tenant(tenant, tenant_params) do
-          render(conn, "show.json", tenant: tenant)
+        case Tenants.get_tenant_by_external_id(id) do
+          nil ->
+            create(conn, %{"tenant" => Map.put(tenant_params, "external_id", id)})
+
+          tenant ->
+            tenant = Repo.preload(tenant, :users)
+
+            with {:ok, %TenantModel{} = tenant} <- Tenants.update_tenant(tenant, tenant_params) do
+              render(conn, "show.json", tenant: tenant)
+            end
         end
     end
   end

@@ -1,8 +1,8 @@
 import Config
 
 secret_key_base =
-  if config_env() == :test do
-    "test"
+  if Enum.member?([:dev, :test], config_env()) do
+    "dev_secret_key_base"
   else
     System.get_env("SECRET_KEY_BASE") ||
       raise """

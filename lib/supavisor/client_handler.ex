@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.User, Protocol.Server, Monitoring.Telem, Manager}
+  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem, Manager}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -47,7 +47,8 @@ defmodule Supavisor.ClientHandler do
       manager: nil,
       query_start: nil,
       mode: nil,
-      timeout: nil
+      timeout: nil,
+      pg_ver: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -76,16 +77,11 @@ defmodule Supavisor.ClientHandler do
     Logger.metadata(project: external_id, user: user)
 
     case Tenants.get_user(external_id, user) do
-      {:ok,
-       %User{
-         db_password: pass,
-         db_user_alias: db_alias,
-         mode_type: mode,
-         pool_checkout_timeout: timeout
-       }} ->
-        {:keep_state,
-         %{data | tenant: external_id, user_alias: db_alias, mode: mode, timeout: timeout},
-         {:next_event, :internal, {:handle, fn -> pass end}}}
+      {:ok, user_info} ->
+        new_data = update_user_data(data, external_id, user_info)
+
+        {:keep_state, new_data,
+         {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
 
       {:error, reason} ->
         Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
@@ -148,9 +144,9 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:next_event, :internal, :subscribe}}
   end
 
-  def handle_event(:timeout, :wait_ps, _, _) do
+  def handle_event(:timeout, :wait_ps, _, data) do
     Logger.error("Wait parameter status timeout")
-    ps = Server.stub_ps()
+    ps = Server.stub_ps(data.pg_ver)
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
@@ -388,4 +384,15 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
+
+  defp update_user_data(data, external_id, user_info) do
+    %{
+      data
+      | tenant: external_id,
+        user_alias: user_info.db_user_alias,
+        mode: user_info.mode_type,
+        timeout: user_info.pool_checkout_timeout,
+        pg_ver: user_info.pg_version
+    }
+  end
 end

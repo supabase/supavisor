@@ -37,6 +37,8 @@ defmodule SupavisorWeb.TenantControllerTest do
   }
 
   setup %{conn: conn} do
+    :meck.expect(Supavisor.Helpers, :check_creds_get_ver, fn _ -> {:ok, "0.0"} end)
+
     new_conn =
       conn
       |> put_req_header("accept", "application/json")
