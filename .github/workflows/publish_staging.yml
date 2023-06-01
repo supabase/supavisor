@@ -1,0 +1,31 @@
+name: Publish upgrade artifacts to staging
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    runs-on: ubuntu-20.04
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: compute version string
+        run: echo "GIT_TAG=`echo $(git describe --tags --always --dirty --first-parent)`" >> $GITHUB_ENV
+
+      - name: configure aws credentials - staging
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE }}
+          aws-region: "us-east-1"
+
+      # - name: Deploy to S3
+      #   shell: bash
+      #   run: aws s3 sync ./dist/ s3://supabase-internal-artifacts-bucket/supavisor/${{ env.GIT_TAG }} --exclude '*' --include '*tar.gz'
