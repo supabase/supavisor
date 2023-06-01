@@ -18,6 +18,7 @@ end
       db_port: db_conf[:port],
       db_database: db_conf[:database],
       external_id: tenant,
+      pg_version: "15.0",
       users: [
         %{
           "db_user" => db_conf[:username],
