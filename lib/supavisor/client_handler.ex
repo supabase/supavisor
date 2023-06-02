@@ -122,7 +122,7 @@ defmodule Supavisor.ClientHandler do
          ps <-
            Manager.get_parameter_status(manager) do
       data = %{data | pool: pool}
-      db_pid = db_checkout(data)
+      db_pid = db_checkout(:on_connect, data)
 
       Process.monitor(manager)
       :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
@@ -146,7 +146,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     ts = System.monotonic_time()
-    db_pid = db_checkout(data)
+    db_pid = db_checkout(:on_query, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {:tcp, nil, bin}}}
@@ -347,12 +347,14 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec db_checkout(map()) :: pid()
-  defp db_checkout(%{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
+  @spec db_checkout(:on_connect | :on_query, map()) :: pid() | nil
+  defp db_checkout(_, %{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
     db_pid
   end
 
-  defp db_checkout(data) do
+  defp db_checkout(:on_connect, %{mode: :transaction}), do: nil
+
+  defp db_checkout(_, data) do
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
     Process.link(db_pid)
     Telem.pool_checkout_time(time, data.tenant, data.user_alias)
