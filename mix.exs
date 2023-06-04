@@ -62,12 +62,12 @@ defmodule Supavisor.MixProject do
       {:poolboy, "~> 1.5.2"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:opentelemetry, "~> 1.3"},
+      {:opentelemetry, "~> 1.3", targets: :otel},
       {:opentelemetry_api, "~> 1.2"},
-      {:opentelemetry_exporter, "~> 1.4"},
-      {:opentelemetry_phoenix, "~> 1.1"},
-      {:opentelemetry_cowboy, "~> 0.2"},
-      {:opentelemetry_ecto, "~> 1.1.1"}
+      {:opentelemetry_exporter, "~> 1.4", targets: :otel},
+      {:opentelemetry_phoenix, "~> 1.1", targets: :otel},
+      {:opentelemetry_cowboy, "~> 0.2", targets: :otel},
+      {:opentelemetry_ecto, "~> 1.1.1", targets: :otel},
       # TODO: add ranch deps
     ]
   end

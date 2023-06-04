@@ -9,9 +9,11 @@ defmodule Supavisor.Application do
   @impl true
   def start(_type, _args) do
     # OpenTelemetry setup
-    :opentelemetry_cowboy.setup()
-    OpentelemetryPhoenix.setup(adapter: :cowboy2)
-    OpentelemetryEcto.setup([:supavisor, :repo])
+    if Mix.target() == :otel do
+      :opentelemetry_cowboy.setup()
+      OpentelemetryPhoenix.setup(adapter: :cowboy2)
+      OpentelemetryEcto.setup([:supavisor, :repo])
+    end
 
     :ok =
       :gen_event.swap_sup_handler(
