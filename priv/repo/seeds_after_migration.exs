@@ -26,6 +26,13 @@ end
           "mode_type" => "transaction"
         },
         %{
+          "db_user_alias" => "transaction",
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 3,
+          "mode_type" => "transaction"
+        },
+        %{
           "db_user_alias" => "session",
           "db_user" => db_conf[:username],
           "db_password" => db_conf[:password],
