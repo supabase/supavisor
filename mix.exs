@@ -67,7 +67,7 @@ defmodule Supavisor.MixProject do
       {:opentelemetry_exporter, "~> 1.4", targets: :otel},
       {:opentelemetry_phoenix, "~> 1.1", targets: :otel},
       {:opentelemetry_cowboy, "~> 0.2", targets: :otel},
-      {:opentelemetry_ecto, "~> 1.1.1", targets: :otel},
+      {:opentelemetry_ecto, "~> 1.1.1", targets: :otel}
       # TODO: add ranch deps
     ]
   end
