@@ -88,7 +88,8 @@ defmodule SupavisorWeb.TenantController do
         |> render("error.json", error: reason)
 
       {:ok, pg_version} ->
-        tenant_params = Map.put(tenant_params, "pg_version", pg_version)
+        tenant_params =
+          Map.put(tenant_params, "default_parameter_status", %{"server_version" => pg_version})
 
         case Tenants.get_tenant_by_external_id(id) do
           nil ->

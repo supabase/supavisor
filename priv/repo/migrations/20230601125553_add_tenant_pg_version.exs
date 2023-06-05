@@ -1,15 +1,15 @@
-defmodule Supavisor.Repo.Migrations.AddTenantPgVersion do
+defmodule Supavisor.Repo.Migrations.AddTenantDefaultPS do
   use Ecto.Migration
 
   def up do
     alter table("tenants", prefix: "_supavisor") do
-      add(:pg_version, :string, default: "0.0", null: false)
+      add(:default_parameter_status, :map, null: false)
     end
   end
 
   def down do
     alter table("tenants", prefix: "_supavisor") do
-      remove(:pg_version)
+      remove(:default_parameter_status)
     end
   end
 end

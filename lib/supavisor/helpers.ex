@@ -28,16 +28,33 @@ defmodule Supavisor.Helpers do
     end)
     |> case do
       {:ok, version} ->
-        case Regex.run(~r/PostgreSQL\s(\d*.\d*)/, version) do
-          nil ->
-            {:error, "Can't parse version in #{version}"}
-
-          [_, value] ->
-            {:ok, value}
-        end
+        parse_pg_version(version)
 
       other ->
         other
+    end
+  end
+
+  ## Internal functions
+
+  @doc """
+  Parses a PostgreSQL version string and returns the version number and platform.
+
+  ## Examples
+
+      iex> Supavisor.Helpers.parse_pg_version("PostgreSQL 14.6 (Debian 14.6-1.pgdg110+1) some string")
+      {:ok, "14.6 (Debian 14.6-1.pgdg110+1)"}
+
+      iex> Supavisor.Helpers.parse_pg_version("PostgreSQL 13.4 on x86_64-pc-linux-gnu")
+      {:error, "Can't parse version in PostgreSQL 13.4 on x86_64-pc-linux-gnu"}
+  """
+  def parse_pg_version(version) do
+    case Regex.run(~r/PostgreSQL\s(\d+\.\d+)\s\(([^)]+)\)/, version) do
+      [_, version, platform] ->
+        {:ok, "#{version} (#{platform})"}
+
+      _ ->
+        {:error, "Can't parse version in #{version}"}
     end
   end
 end

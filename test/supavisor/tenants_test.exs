@@ -12,7 +12,7 @@ defmodule Supavisor.TenantsTest do
       db_database: nil,
       db_host: nil,
       external_id: nil,
-      pg_version: nil
+      default_parameter_status: nil
     }
 
     test "get_tenant!/1 returns the tenant with given id" do
@@ -33,7 +33,7 @@ defmodule Supavisor.TenantsTest do
         db_port: 42,
         db_database: "some db_database",
         external_id: "dev_tenant",
-        pg_version: "15.0",
+        default_parameter_status: %{server_version: "15.0"},
         users: [user_valid_attrs]
       }
 

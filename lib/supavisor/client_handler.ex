@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem, Manager}
+  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -48,7 +48,7 @@ defmodule Supavisor.ClientHandler do
       query_start: nil,
       mode: nil,
       timeout: nil,
-      pg_ver: nil
+      ps: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -113,15 +113,11 @@ defmodule Supavisor.ClientHandler do
     Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
     with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias),
-         {:ok, %{manager: manager, pool: pool}} <-
-           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias),
-         ps <-
-           Manager.get_parameter_status(manager) do
-      data = %{data | pool: pool}
+         {:ok, %{manager: manager, pool: pool}, ps} <-
+           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias) do
+      data = %{data | manager: manager, pool: pool}
       db_pid = db_checkout(data)
-
-      Process.monitor(manager)
-      data = %{data | manager: manager, db_pid: db_pid}
+      data = %{data | db_pid: db_pid}
 
       if ps == [] do
         {:keep_state, data, {:timeout, 10_000, :wait_ps}}
@@ -145,8 +141,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:timeout, :wait_ps, _, data) do
-    Logger.error("Wait parameter status timeout")
-    ps = Server.stub_ps(data.pg_ver)
+    Logger.error("Wait parameter status timeout, send default #{inspect(data.ps)}}")
+    ps = Server.encode_parameter_status(data.ps)
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
@@ -191,7 +187,12 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {:parameter_status, ps}, _, _) do
+  def handle_event(:info, {:parameter_status, :updated}, _, data) do
+    Logger.warning("Parameter status is updated")
+    {:stop, :normal, data}
+  end
+
+  def handle_event(:info, {:parameter_status, ps}, :exchange, _) do
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
@@ -392,7 +393,7 @@ defmodule Supavisor.ClientHandler do
         user_alias: user_info.db_user_alias,
         mode: user_info.mode_type,
         timeout: user_info.pool_checkout_timeout,
-        pg_ver: user_info.pg_version
+        ps: user_info.default_parameter_status
     }
   end
 end

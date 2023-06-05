@@ -4,6 +4,7 @@ defmodule Supavisor.Manager do
   require Logger
 
   alias Supavisor.Protocol.Server
+  alias Supavisor.Tenants
 
   @check_timeout 120_000
 
@@ -14,6 +15,7 @@ defmodule Supavisor.Manager do
     GenServer.start_link(__MODULE__, args, name: name)
   end
 
+  @spec subscribe(pid, pid) :: {:ok, iodata() | []}
   def subscribe(manager, pid) do
     GenServer.call(manager, {:subscribe, pid})
   end
@@ -40,7 +42,8 @@ defmodule Supavisor.Manager do
       tenant: args.tenant,
       user_alias: args.user_alias,
       parameter_status: [],
-      wait_ps: []
+      wait_ps: [],
+      default_parameter_status: args.default_parameter_status
     }
 
     Logger.metadata(project: args.tenant, user: args.user_alias)
@@ -53,14 +56,34 @@ defmodule Supavisor.Manager do
   def handle_call({:subscribe, pid}, _, %{tenant: tenant, user_alias: user_alias} = state) do
     Logger.info("Subscribing #{inspect(pid)} to tenant #{inspect({tenant, user_alias})}")
     :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
-    {:reply, :ok, state}
+
+    case state.parameter_status do
+      [] ->
+        {:reply, {:ok, []}, update_in(state.wait_ps, &[pid | &1])}
+
+      ps ->
+        {:reply, {:ok, ps}, state}
+    end
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
+    def_ps = state.default_parameter_status
     encoded_ps = Server.encode_parameter_status(ps)
 
+    message =
+      case check_parameter_status(ps, def_ps) do
+        :ok ->
+          encoded_ps
+
+        {:error, reason} ->
+          Logger.error("Parameter status error: #{inspect(reason)}")
+          new_ps = %{server_version: ps["server_version"]}
+          Tenants.update_tenant_ps(state.tenant, new_ps)
+          :updated
+      end
+
     for pid <- state.wait_ps do
-      send(pid, {:parameter_status, encoded_ps})
+      send(pid, {:parameter_status, message})
     end
 
     {:reply, :ok, %{state | parameter_status: encoded_ps, wait_ps: []}}
@@ -68,14 +91,6 @@ defmodule Supavisor.Manager do
 
   def handle_call({:set_parameter_status, _ps}, _, state) do
     {:reply, :ok, state}
-  end
-
-  def handle_call(:get_parameter_status, {from, _}, %{parameter_status: []} = state) do
-    {:reply, [], update_in(state.wait_ps, &[from | &1])}
-  end
-
-  def handle_call(:get_parameter_status, _, state) do
-    {:reply, state.parameter_status, state}
   end
 
   @impl true
@@ -108,5 +123,23 @@ defmodule Supavisor.Manager do
 
   defp now() do
     System.system_time(:second)
+  end
+
+  @spec check_parameter_status(map, map) :: :ok | {:error, String.t()}
+  defp check_parameter_status(ps, def_ps) do
+    Enum.reduce_while(ps, nil, fn {key, value}, _ ->
+      if def_ps[key] && def_ps[key] != value do
+        {:halt, {:error, "Parameter #{key} changed from #{def_ps[key]} to #{value}"}}
+      else
+        {:cont, nil}
+      end
+    end)
+    |> case do
+      nil ->
+        :ok
+
+      other ->
+        other
+    end
   end
 end

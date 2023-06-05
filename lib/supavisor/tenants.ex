@@ -52,14 +52,14 @@ defmodule Supavisor.Tenants do
       nil ->
         {:error, :not_found}
 
-      [[db_alias, pass, mode, timeout, pg_ver]] ->
+      [[db_alias, pass, mode, timeout, ps]] ->
         {:ok,
          %{
            db_password: pass,
            db_user_alias: db_alias,
            mode_type: mode,
            pool_checkout_timeout: timeout,
-           pg_version: pg_ver
+           default_parameter_status: ps
          }}
 
       _ ->
@@ -114,6 +114,13 @@ defmodule Supavisor.Tenants do
   def update_tenant(%Tenant{} = tenant, attrs) do
     tenant
     |> Tenant.changeset(attrs)
+    |> Repo.update()
+  end
+
+  def update_tenant_ps(external_id, new_ps) do
+    from(t in Tenant, where: t.external_id == ^external_id)
+    |> Repo.one()
+    |> Tenant.changeset(%{default_parameter_status: new_ps})
     |> Repo.update()
   end
 
@@ -251,7 +258,7 @@ defmodule Supavisor.Tenants do
           u.db_password,
           u.mode_type,
           u.pool_checkout_timeout,
-          t.pg_version
+          t.default_parameter_status
         ]
       )
 

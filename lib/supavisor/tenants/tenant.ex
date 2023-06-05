@@ -15,7 +15,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:db_port, :integer)
     field(:db_database, :string)
     field(:external_id, :string)
-    field(:pg_version, :string)
+    field(:default_parameter_status, :map)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -31,14 +31,14 @@ defmodule Supavisor.Tenants.Tenant do
   def changeset(tenant, attrs) do
     tenant
     |> cast(attrs, [
-      :pg_version,
+      :default_parameter_status,
       :external_id,
       :db_host,
       :db_port,
       :db_database
     ])
     |> validate_required([
-      :pg_version,
+      :default_parameter_status,
       :external_id,
       :db_host,
       :db_port,
