@@ -1,4 +1,4 @@
-name: Staging Formatting Checks
+name: PGBench benchmarks
 on:
   pull_request:
     branches:
@@ -32,5 +32,8 @@ jobs:
         run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Run main database migrations
         run: mix ecto.migrate --prefix _supavisor --log-migrator-sql
-      - name: Run pg bench
-        run: PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 100 -h localhost -p 7654 -U postgres.localhost postgres
+      - name: Run PGBench
+        uses: BerniWittmann/background-server-action@v1
+        with:
+          command: PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 100 -h localhost -p 7654 -U postgres.localhost postgres
+          start: make dev
