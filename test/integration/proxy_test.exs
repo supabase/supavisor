@@ -143,4 +143,26 @@ defmodule Supavisor.Integration.ProxyTest do
     assert :httpc.request("http://localhost:#{Application.get_env(:supavisor, :proxy_port)}") ==
              {:ok, {{'HTTP/1.1', 204, 'OK'}, [], []}}
   end
+
+  test "checks that client_hanlder is idle and db_pid is nil for transaction mode" do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url =
+      "postgresql://transaction.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+
+    psql_pid = spawn(fn -> System.cmd("psql", [url]) end)
+
+    :timer.sleep(500)
+
+    [{_, client_pid, _}] =
+      Supavisor.get_local_manager("proxy_tenant", "transaction")
+      |> :sys.get_state()
+      |> then(& &1[:tid])
+      |> :ets.tab2list()
+
+    {state, %{db_pid: db_pid}} = :sys.get_state(client_pid)
+
+    assert {:idle, nil} = {state, db_pid}
+    Process.exit(psql_pid, :kill)
+  end
 end
