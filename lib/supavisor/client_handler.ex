@@ -115,6 +115,7 @@ defmodule Supavisor.ClientHandler do
     with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias),
          {:ok, %{manager: manager, pool: pool}, ps} <-
            Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias) do
+      Process.monitor(manager)
       data = %{data | manager: manager, pool: pool}
       db_pid = db_checkout(:on_connect, data)
       data = %{data | db_pid: db_pid}

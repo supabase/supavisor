@@ -44,7 +44,6 @@ defmodule Supavisor do
   def subscribe_local(pid, tenant, user_alias) do
     with {:ok, workers} <- get_local_workers(tenant, user_alias),
          {:ok, ps} <- Manager.subscribe(workers.manager, pid) do
-      Process.monitor(workers.manager)
       {:ok, workers, ps}
     else
       error ->
