@@ -127,19 +127,10 @@ defmodule Supavisor.Manager do
 
   @spec check_parameter_status(map, map) :: :ok | {:error, String.t()}
   defp check_parameter_status(ps, def_ps) do
-    Enum.reduce_while(ps, nil, fn {key, value}, _ ->
+    Enum.find_value(ps, :ok, fn {key, value} ->
       if def_ps[key] && def_ps[key] != value do
-        {:halt, {:error, "Parameter #{key} changed from #{def_ps[key]} to #{value}"}}
-      else
-        {:cont, nil}
+        {:error, "Parameter #{key} changed from #{def_ps[key]} to #{value}"}
       end
     end)
-    |> case do
-      nil ->
-        :ok
-
-      other ->
-        other
-    end
   end
 end
