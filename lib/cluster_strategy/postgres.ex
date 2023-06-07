@@ -4,7 +4,6 @@ defmodule Cluster.Strategy.Postgres do
   use GenServer
 
   alias Cluster.Strategy
-  alias Cluster.Strategy.State
   alias Cluster.Logger
   alias Postgrex, as: P
 
@@ -48,8 +47,6 @@ defmodule Cluster.Strategy.Postgres do
     else
       reason ->
         Logger.error(state.topology, "Failed to connect to Postgres: #{inspect(reason)}")
-
-        {:stop, reason, state}
         {:noreply, state}
     end
   end
