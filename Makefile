@@ -21,7 +21,7 @@ dev.node2:
 	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
 	API_JWT_SECRET=dev \
 	METRICS_JWT_SECRET=dev \
-	REGION=usa \
+	REGION=eu \
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
 	ERL_AFLAGS="-kernel shell_history enabled" \

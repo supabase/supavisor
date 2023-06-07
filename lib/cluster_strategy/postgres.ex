@@ -1,27 +1,45 @@
 defmodule Cluster.Strategy.Postgres do
-  @moduledoc false
+  @moduledoc """
+  A libcluster strategy that uses Postgres LISTEN/NOTIFY to determine the cluster topology.
 
+  This strategy operates by having all nodes in the cluster listen for and send notifications to a shared Postgres channel.
+
+  When a node comes online, it begins to broadcast its name in a "heartbeat" message to the channel. All other nodes that receive this message attempt to connect to it.
+
+  This strategy does not check connectivity between nodes and does not disconnect them
+
+  ## Options
+
+  * `url` - The url of the database server (required)
+  * `heartbeat_interval` - The interval at which to send heartbeat messages in milliseconds (optional; default: 5_000)
+  * `channel_name` - The name of the channel to which nodes will listen and notify (optional; default: "cluster)
+  """
   use GenServer
 
   alias Cluster.Strategy
   alias Cluster.Logger
   alias Postgrex, as: P
 
-  @channel "cluster"
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
   def init([state]) do
-    new_config =
-      state.config
-      |> Keyword.put_new(:heartbeat_interval, 5_000)
+    if !state.config[:url] do
+      raise ArgumentError, "Missing required option :url"
+    end
 
     opts =
       Ecto.Repo.Supervisor.parse_url(state.config[:url])
       |> Keyword.put_new(:parameters, application_name: "cluster_node_#{node()}")
       |> Keyword.put_new(:auto_reconnect, true)
 
+    new_config =
+      state.config
+      |> Keyword.put_new(:heartbeat_interval, 5_000)
+      |> Keyword.put_new(:channel_name, "cluster")
+      |> Keyword.delete(:url)
+
     meta = %{
-      opts: opts,
+      opts: fn -> opts end,
       conn: nil,
       conn_notif: nil,
       heartbeat_ref: make_ref()
@@ -31,9 +49,9 @@ defmodule Cluster.Strategy.Postgres do
   end
 
   def handle_continue(:connect, state) do
-    with {:ok, conn} <- P.start_link(state.meta.opts),
-         {:ok, conn_notif} <- P.Notifications.start_link(state.meta.opts),
-         {_, _} <- P.Notifications.listen(conn_notif, @channel) do
+    with {:ok, conn} <- P.start_link(state.meta.opts.()),
+         {:ok, conn_notif} <- P.Notifications.start_link(state.meta.opts.()),
+         {_, _} <- P.Notifications.listen(conn_notif, state.config[:channel_name]) do
       Logger.info(state.topology, "Connected to Postgres database")
 
       meta = %{
@@ -53,7 +71,7 @@ defmodule Cluster.Strategy.Postgres do
 
   def handle_info(:heartbeat, state) do
     Process.cancel_timer(state.meta.heartbeat_ref)
-    P.query(state.meta.conn, "NOTIFY #{@channel}, '#{node()}'", [])
+    P.query(state.meta.conn, "NOTIFY #{state.config[:channel_name]}, '#{node()}'", [])
     ref = heartbeat(state.config[:heartbeat_interval])
     {:noreply, put_in(state.meta.heartbeat_ref, ref)}
   end

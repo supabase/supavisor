@@ -72,11 +72,15 @@ topologies =
 
 topologies =
   if System.get_env("CLUSTER_POSTGRES") do
+    [maj, min, _] = Mix.Project.config()[:version] |> String.split(".")
+    region = System.get_env("REGION") |> String.replace("-", "_")
+
     postgres = [
       strategy: Cluster.Strategy.Postgres,
       config: [
         url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
-        heartbeat_interval: 5_000
+        heartbeat_interval: 5_000,
+        channel_name: "supavisor_#{region}_#{maj}_#{min}"
       ]
     ]
 
