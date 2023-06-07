@@ -65,8 +65,16 @@ defmodule Cluster.Strategy.Postgres do
     node = String.to_atom(node)
 
     if node != node() do
-      Logger.debug(state.topology, "Trying to connect to node: #{node}")
-      connect_node(state, node)
+      topology = state.topology
+      Logger.debug(topology, "Trying to connect to node: #{node}")
+
+      case Strategy.connect_nodes(topology, state.connect, state.list_nodes, [node]) do
+        :ok ->
+          Logger.debug(topology, "Connected to node: #{node}")
+
+        {:error, _} ->
+          Logger.error(topology, "Failed to connect to node: #{node}")
+      end
     end
 
     {:noreply, state}
@@ -78,19 +86,6 @@ defmodule Cluster.Strategy.Postgres do
   end
 
   ### Internal functions
-
-  defp connect_node(%{connect: connect, list_nodes: list_nodes, topology: topology}, node) do
-    case Strategy.connect_nodes(topology, connect, list_nodes, [node]) do
-      :ok ->
-        Logger.debug(topology, "Connected to node: #{node}")
-        :ok
-
-      {:error, _} ->
-        Logger.error(topology, "Failed to connect to node: #{node}")
-        :error
-    end
-  end
-
   @spec heartbeat(non_neg_integer()) :: reference()
   defp heartbeat(interval) do
     Process.send_after(self(), :heartbeat, interval)
