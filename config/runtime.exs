@@ -1,7 +1,7 @@
 import Config
 
 secret_key_base =
-  if Enum.member?([:dev, :test], config_env()) do
+  if config_env() in [:dev, :test] do
     "dev_secret_key_base"
   else
     System.get_env("SECRET_KEY_BASE") ||
