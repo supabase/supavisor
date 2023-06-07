@@ -70,6 +70,21 @@ topologies =
     topologies
   end
 
+topologies =
+  if System.get_env("CLUSTER_POSTGRES") do
+    postgres = [
+      strategy: Cluster.Strategy.Postgres,
+      config: [
+        url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
+        heartbeat_interval: 5_000
+      ]
+    ]
+
+    Keyword.put(topologies, :postgres, postgres)
+  else
+    topologies
+  end
+
 config :libcluster,
   debug: false,
   topologies: topologies
