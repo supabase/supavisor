@@ -40,11 +40,11 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe_local(pid, String.t(), String.t()) :: {:ok, workers} | {:error, any()}
+  @spec subscribe_local(pid, String.t(), String.t()) :: {:ok, workers, iodata()} | {:error, any()}
   def subscribe_local(pid, tenant, user_alias) do
     with {:ok, workers} <- get_local_workers(tenant, user_alias),
-         :ok <- Manager.subscribe(workers.manager, pid) do
-      {:ok, workers}
+         {:ok, ps} <- Manager.subscribe(workers.manager, pid) do
+      {:ok, workers, ps}
     else
       error ->
         error
@@ -52,7 +52,7 @@ defmodule Supavisor do
   end
 
   @spec subscribe_global(atom(), pid(), String.t(), String.t()) ::
-          {:ok, workers} | {:error, any()}
+          {:ok, workers, iodata()} | {:error, any()}
   def subscribe_global(tenant_node, pid, tenant, user_alias) do
     if node() == tenant_node do
       subscribe_local(pid, tenant, user_alias)
@@ -106,6 +106,7 @@ defmodule Supavisor do
           db_host: db_host,
           db_port: db_port,
           db_database: db_database,
+          default_parameter_status: ps,
           users: [
             %{
               db_user: db_user,
@@ -130,7 +131,8 @@ defmodule Supavisor do
           user_alias: user_alias,
           auth: auth,
           pool_size: pool_size,
-          mode: mode
+          mode: mode,
+          default_parameter_status: ps
         }
 
         DynamicSupervisor.start_child(

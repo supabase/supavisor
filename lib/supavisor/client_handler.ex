@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.User, Protocol.Server, Monitoring.Telem, Manager}
+  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -47,7 +47,8 @@ defmodule Supavisor.ClientHandler do
       manager: nil,
       query_start: nil,
       mode: nil,
-      timeout: nil
+      timeout: nil,
+      ps: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -76,16 +77,11 @@ defmodule Supavisor.ClientHandler do
     Logger.metadata(project: external_id, user: user)
 
     case Tenants.get_user(external_id, user) do
-      {:ok,
-       %User{
-         db_password: pass,
-         db_user_alias: db_alias,
-         mode_type: mode,
-         pool_checkout_timeout: timeout
-       }} ->
-        {:keep_state,
-         %{data | tenant: external_id, user_alias: db_alias, mode: mode, timeout: timeout},
-         {:next_event, :internal, {:handle, fn -> pass end}}}
+      {:ok, user_info} ->
+        new_data = update_user_data(data, external_id, user_info)
+
+        {:keep_state, new_data,
+         {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
 
       {:error, reason} ->
         Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
@@ -117,16 +113,18 @@ defmodule Supavisor.ClientHandler do
     Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
     with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias),
-         {:ok, %{manager: manager, pool: pool}} <-
-           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias),
-         ps <-
-           Manager.get_parameter_status(manager) do
-      data = %{data | pool: pool}
-      db_pid = db_checkout(:on_connect, data)
-
+         {:ok, %{manager: manager, pool: pool}, ps} <-
+           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias) do
       Process.monitor(manager)
-      :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
-      {:next_state, :idle, %{data | manager: manager, db_pid: db_pid}}
+      data = %{data | manager: manager, pool: pool}
+      db_pid = db_checkout(:on_connect, data)
+      data = %{data | db_pid: db_pid}
+
+      if ps == [] do
+        {:keep_state, data, {:timeout, 10_000, :wait_ps}}
+      else
+        {:keep_state, data, {:next_event, :internal, {:greetings, ps}}}
+      end
     else
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
@@ -134,8 +132,19 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  def handle_event(:internal, {:greetings, ps}, _, data) do
+    :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
+    {:next_state, :idle, data}
+  end
+
   def handle_event(:timeout, :subscribe, _, _) do
     {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+  end
+
+  def handle_event(:timeout, :wait_ps, _, data) do
+    Logger.error("Wait parameter status timeout, send default #{inspect(data.ps)}}")
+    ps = Server.encode_parameter_status(data.ps)
+    {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
   # ignore termination messages
@@ -177,6 +186,15 @@ defmodule Supavisor.ClientHandler do
         Server.send_error(data.socket, "XX000", msg)
         {:stop, :normal, data}
     end
+  end
+
+  def handle_event(:info, {:parameter_status, :updated}, _, data) do
+    Logger.warning("Parameter status is updated")
+    {:stop, :normal, data}
+  end
+
+  def handle_event(:info, {:parameter_status, ps}, :exchange, _) do
+    {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
   # client closed connection
@@ -370,4 +388,15 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
+
+  defp update_user_data(data, external_id, user_info) do
+    %{
+      data
+      | tenant: external_id,
+        user_alias: user_info.db_user_alias,
+        mode: user_info.mode_type,
+        timeout: user_info.pool_checkout_timeout,
+        ps: user_info.default_parameter_status
+    }
+  end
 end

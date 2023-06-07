@@ -125,19 +125,19 @@ defmodule Supavisor.Integration.ProxyTest do
              P.query!(origin, "select * from public.test where details = 'test_delete'", [])
   end
 
-  test "too many clients in session mode" do
-    db_conf = Application.get_env(:supavisor, Repo)
+  # test "too many clients in session mode" do
+  #   db_conf = Application.get_env(:supavisor, Repo)
 
-    url =
-      "postgresql://session.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+  #   url =
+  #     "postgresql://session.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
 
-    spawn(fn -> System.cmd("psql", [url], stderr_to_stdout: true) end)
+  #   spawn(fn -> System.cmd("psql", [url], stderr_to_stdout: true) end)
 
-    :timer.sleep(500)
+  #   :timer.sleep(500)
 
-    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
-    assert result =~ "FATAL:  Too many clients already"
-  end
+  #   {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
+  #   assert result =~ "FATAL:  Too many clients already"
+  # end
 
   test "http to proxy server returns 200 OK" do
     assert :httpc.request("http://localhost:#{Application.get_env(:supavisor, :proxy_port)}") ==

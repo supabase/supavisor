@@ -44,38 +44,40 @@ defmodule Supavisor.Tenants do
   end
 
   @spec get_user(String.t(), String.t() | nil) ::
-          {:ok, User.t()} | {:error, :not_found | :multiple_results}
-  def get_user(external_id, nil) do
-    query = from p in User, where: p.tenant_external_id == ^external_id
+          {:ok, map()} | {:error, :not_found | :multiple_results}
+  def get_user(external_id, user) do
+    query = build_user_query(external_id, user)
 
     case Repo.all(query) do
       nil ->
         {:error, :not_found}
 
-      [%User{} = user] ->
-        {:ok, user}
+      [[db_alias, pass, mode, timeout, ps]] ->
+        {:ok,
+         %{
+           db_password: pass,
+           db_user_alias: db_alias,
+           mode_type: mode,
+           pool_checkout_timeout: timeout,
+           default_parameter_status: ps
+         }}
 
       _ ->
         {:error, :multiple_results}
     end
   end
 
-  def get_user(external_id, user) do
-    case Repo.get_by(User, db_user_alias: user, tenant_external_id: external_id) do
-      nil -> {:error, :not_found}
-      %User{} = user -> {:ok, user}
-    end
-  end
-
   def get_pool_config(external_id, user) do
     query =
-      from a in User,
+      from(a in User,
         where: a.db_user_alias == ^user
+      )
 
     Repo.one(
-      from p in Tenant,
+      from(p in Tenant,
         where: p.external_id == ^external_id,
         preload: [users: ^query]
+      )
     )
   end
 
@@ -112,6 +114,13 @@ defmodule Supavisor.Tenants do
   def update_tenant(%Tenant{} = tenant, attrs) do
     tenant
     |> Tenant.changeset(attrs)
+    |> Repo.update()
+  end
+
+  def update_tenant_ps(external_id, new_ps) do
+    from(t in Tenant, where: t.external_id == ^external_id)
+    |> Repo.one()
+    |> Tenant.changeset(%{default_parameter_status: new_ps})
     |> Repo.update()
   end
 
@@ -235,5 +244,30 @@ defmodule Supavisor.Tenants do
   """
   def change_user(%User{} = user, attrs \\ %{}) do
     User.changeset(user, attrs)
+  end
+
+  @spec build_user_query(String.t(), String.t() | nil) :: Ecto.Queryable.t()
+  defp build_user_query(external_id, user) do
+    query =
+      from(u in User,
+        join: t in Tenant,
+        on: u.tenant_external_id == t.external_id,
+        where: u.tenant_external_id == ^external_id,
+        select: [
+          u.db_user_alias,
+          u.db_password,
+          u.mode_type,
+          u.pool_checkout_timeout,
+          t.default_parameter_status
+        ]
+      )
+
+    if user do
+      from(u in query,
+        where: u.db_user_alias == ^user
+      )
+    else
+      query
+    end
   end
 end
