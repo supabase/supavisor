@@ -348,10 +348,4 @@ defmodule Supavisor.Protocol.Server do
   def ready_for_query() do
     @ready_for_query
   end
-
-  @spec stub_ps(binary()) :: iodata()
-  def stub_ps(version) do
-    payload = ["server_version", <<0>>, version, <<0>>]
-    [?S, <<IO.iodata_length(payload) + 4::32>>, payload]
-  end
 end
