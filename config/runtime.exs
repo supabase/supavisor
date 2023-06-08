@@ -72,7 +72,7 @@ topologies =
 
 topologies =
   if System.get_env("CLUSTER_POSTGRES") do
-    [maj, min, _] = Mix.Project.config()[:version] |> String.split(".")
+    %Version{major: maj, minor: min} = Version.parse!(Mix.Project.config()[:version])
     region = System.get_env("REGION") |> String.replace("-", "_")
 
     postgres = [
