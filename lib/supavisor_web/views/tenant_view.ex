@@ -21,4 +21,8 @@ defmodule SupavisorWeb.TenantView do
       users: render_many(tenant.users, UserView, "user.json")
     }
   end
+
+  def render("error.json", %{error: reason}) do
+    %{error: reason}
+  end
 end
