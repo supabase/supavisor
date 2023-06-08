@@ -102,7 +102,7 @@ defmodule Cluster.Strategy.Postgres do
 
   ### Internal functions
   @spec heartbeat(non_neg_integer()) :: reference()
-  defp heartbeat(interval) do
+  defp heartbeat(interval) when interval >= 0 do
     Process.send_after(self(), :heartbeat, interval)
   end
 end
