@@ -1,8 +1,8 @@
 import Config
 
 secret_key_base =
-  if config_env() == :test do
-    "test"
+  if config_env() in [:dev, :test] do
+    "dev_secret_key_base"
   else
     System.get_env("SECRET_KEY_BASE") ||
       raise """
@@ -66,6 +66,27 @@ topologies =
     ]
 
     Keyword.put(topologies, :epmd, epmd)
+  else
+    topologies
+  end
+
+topologies =
+  if System.get_env("CLUSTER_POSTGRES") do
+    %Version{major: maj, minor: min} =
+      Application.spec(:supavisor, :vsn) |> List.to_string() |> Version.parse!()
+
+    region = System.get_env("REGION") |> String.replace("-", "_")
+
+    postgres = [
+      strategy: Cluster.Strategy.Postgres,
+      config: [
+        url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
+        heartbeat_interval: 5_000,
+        channel_name: "supavisor_#{region}_#{maj}_#{min}"
+      ]
+    ]
+
+    Keyword.put(topologies, :postgres, postgres)
   else
     topologies
   end
