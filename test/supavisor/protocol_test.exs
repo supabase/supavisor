@@ -18,6 +18,14 @@ defmodule Supavisor.ProtocolTest do
     "standard_conforming_strings" => "on"
   }
 
+  @auth_bin_error <<69, 0, 0, 0, 111, 83, 70, 65, 84, 65, 76, 0, 86, 70, 65, 84, 65, 76, 0, 67,
+                    50, 56, 80, 48, 49, 0, 77, 112, 97, 115, 115, 119, 111, 114, 100, 32, 97, 117,
+                    116, 104, 101, 110, 116, 105, 99, 97, 116, 105, 111, 110, 32, 102, 97, 105,
+                    108, 101, 100, 32, 102, 111, 114, 32, 117, 115, 101, 114, 32, 34, 116, 101,
+                    115, 116, 95, 119, 114, 111, 110, 103, 95, 117, 115, 101, 114, 34, 0, 70, 97,
+                    117, 116, 104, 46, 99, 0, 76, 51, 51, 53, 0, 82, 97, 117, 116, 104, 95, 102,
+                    97, 105, 108, 101, 100, 0, 0>>
+
   test "encode_parameter_status/1" do
     result = S.encode_parameter_status(@initial_data)
 
@@ -70,5 +78,23 @@ defmodule Supavisor.ProtocolTest do
     assert Enum.count(tags, &(&1 == :parameter_status)) == 13
     assert Enum.count(tags, &(&1 == :backend_key_data)) == 1
     assert Enum.count(tags, &(&1 == :ready_for_query)) == 1
+  end
+
+  test "decode_payload for error_response" do
+    assert S.decode(@auth_bin_error) == [
+             %Supavisor.Protocol.Server.Pkt{
+               tag: :error_response,
+               len: 112,
+               payload: [
+                 "SFATAL",
+                 "VFATAL",
+                 "C28P01",
+                 "Mpassword authentication failed for user \"test_wrong_user\"",
+                 "Fauth.c",
+                 "L335",
+                 "Rauth_failed"
+               ]
+             }
+           ]
   end
 end

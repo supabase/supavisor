@@ -152,6 +152,9 @@ defmodule Supavisor.DbHandler do
 
           {ps, :authentication_md5}
 
+        %{tag: :error_response, payload: error}, _ ->
+          {:error_response, error}
+
         _e, acc ->
           acc
       end)
@@ -164,6 +167,10 @@ defmodule Supavisor.DbHandler do
         {:keep_state, %{data | server_proof: server_proof}}
 
       {_, :authentication_md5} ->
+        {:keep_state, data}
+
+      {:error_response, error} ->
+        Logger.error("Error auth response #{inspect(error)}")
         {:keep_state, data}
 
       {ps, db_state} ->
