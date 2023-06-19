@@ -2,13 +2,14 @@ defmodule SupavisorWeb.TenantControllerTest do
   use SupavisorWeb.ConnCase
 
   import Supavisor.TenantsFixtures
-
+  import ExUnit.CaptureLog
+  require Logger
   alias Supavisor.Tenants.Tenant
 
   @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"
 
   @user_valid_attrs %{
-    db_user_alias: "some db_user",
+    db_user_alias: "some_db_user",
     db_user: "some db_user",
     db_password: "some db_password",
     pool_size: 3,
@@ -85,6 +86,18 @@ defmodule SupavisorWeb.TenantControllerTest do
     test "renders errors when data is invalid", %{conn: conn, tenant: tenant} do
       conn = put(conn, Routes.tenant_path(conn, :update, tenant), tenant: @invalid_attrs)
       assert json_response(conn, 422)["errors"] != %{}
+    end
+
+    test "triggers Supavisor.stop/2", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      msg =
+        "Stop #{@user_valid_attrs.db_user_alias}.#{@update_attrs.external_id}: {:error, :tenant_not_found}"
+
+      assert capture_log(fn ->
+               put(conn, Routes.tenant_path(conn, :update, external_id), tenant: @update_attrs)
+             end) =~ msg
     end
   end
 
