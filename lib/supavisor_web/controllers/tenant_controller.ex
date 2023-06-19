@@ -2,6 +2,8 @@ defmodule SupavisorWeb.TenantController do
   use SupavisorWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  require Logger
+
   alias Supavisor.Helpers, as: H
   alias Supavisor.{Tenants, Repo}
   alias Tenants.Tenant, as: TenantModel
@@ -99,6 +101,12 @@ defmodule SupavisorWeb.TenantController do
             tenant = Repo.preload(tenant, :users)
 
             with {:ok, %TenantModel{} = tenant} <- Tenants.update_tenant(tenant, tenant_params) do
+              for user <- tenant.users do
+                Supavisor.stop(tenant.external_id, user.db_user_alias)
+                |> then(&"Stop #{user.db_user_alias}.#{tenant.external_id}: #{inspect(&1)}")
+                |> Logger.warning()
+              end
+
               render(conn, "show.json", tenant: tenant)
             end
         end

@@ -199,7 +199,7 @@ defmodule Supavisor.ClientHandler do
 
   # client closed connection
   def handle_event(_, {:tcp_closed, _}, _, data) do
-    Logger.info("tcp soket closed for #{inspect(data.tenant)}")
+    Logger.debug("tcp soket closed for #{inspect(data.tenant)}")
     {:stop, :normal}
   end
 
