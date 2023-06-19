@@ -16,6 +16,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:db_database, :string)
     field(:external_id, :string)
     field(:default_parameter_status, :map)
+    field(:ip_version, Ecto.Enum, values: [:v4, :v6, :auto], default: :auto)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -35,7 +36,8 @@ defmodule Supavisor.Tenants.Tenant do
       :external_id,
       :db_host,
       :db_port,
-      :db_database
+      :db_database,
+      :ip_version
     ])
     |> validate_required([
       :default_parameter_status,

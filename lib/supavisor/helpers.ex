@@ -10,7 +10,10 @@ defmodule Supavisor.Helpers do
           port: params["db_port"],
           database: params["db_database"],
           password: user["db_password"],
-          username: user["db_user"]
+          username: user["db_user"],
+          socket_options: [
+            ip_version(params["ip_version"], params["db_host"])
+          ]
         )
 
       check =
@@ -19,8 +22,8 @@ defmodule Supavisor.Helpers do
           {:ok, %{rows: [[version]]}} ->
             {:cont, {:ok, version}}
 
-          _ ->
-            {:halt, {:error, "Invalid credentials for user #{user["db_user"]}"}}
+          {:error, reason} ->
+            {:halt, {:error, "Can't connect the user #{user["db_user"]}: #{inspect(reason)}"}}
         end
 
       GenServer.stop(conn)
@@ -55,6 +58,46 @@ defmodule Supavisor.Helpers do
 
       _ ->
         {:error, "Can't parse version in #{version}"}
+    end
+  end
+
+  @doc """
+  Returns the IP version for a given host.
+
+  ## Examples
+
+      iex> Supavisor.Helpers.ip_version(:v4, "example.com")
+      :inet
+      iex> Supavisor.Helpers.ip_version(:v6, "example.com")
+      :inet6
+      iex> Supavisor.Helpers.ip_version(nil, "example.com")
+      :inet
+  """
+  @spec ip_version(any(), String.t()) :: :inet | :inet6
+  def ip_version(:v4, _), do: :inet
+  def ip_version(:v6, _), do: :inet6
+
+  def ip_version(_, host) do
+    detect_ip_version(host)
+  end
+
+  @doc """
+  Detects the IP version for a given host.
+
+  ## Examples
+
+      iex> Supavisor.Helpers.detect_ip_version("example.com")
+      :inet
+      iex> Supavisor.Helpers.detect_ip_version("ipv6.example.com")
+      :inet6
+  """
+  @spec detect_ip_version(String.t()) :: :inet | :inet6
+  def detect_ip_version(host) when is_binary(host) do
+    host = String.to_charlist(host)
+
+    case :inet.gethostbyname(host) do
+      {:ok, _} -> :inet
+      _ -> :inet6
     end
   end
 end
