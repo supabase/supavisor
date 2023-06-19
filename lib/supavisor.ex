@@ -1,8 +1,8 @@
 defmodule Supavisor do
   @moduledoc false
   require Logger
-  alias Supavisor.{Tenants, Tenants.Tenant, Manager}
   alias Supavisor.Helpers, as: H
+  alias Supavisor.{Tenants, Tenants.Tenant, Manager}
 
   @registry Supavisor.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
