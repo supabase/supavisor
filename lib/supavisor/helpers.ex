@@ -62,8 +62,7 @@ defmodule Supavisor.Helpers do
       [_, version] ->
         {:ok, version}
 
-      r ->
-        IO.inspect(r)
+      _ ->
         {:error, "Can't parse version in #{version}"}
     end
   end
