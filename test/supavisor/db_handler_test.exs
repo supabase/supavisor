@@ -34,7 +34,8 @@ defmodule Supavisor.DbHandlerTest do
         port: 0,
         user: "some user",
         database: "some database",
-        application_name: "some application name"
+        application_name: "some application name",
+        ip_version: :inet
       }
 
       state = Db.handle_event(:internal, nil, :connect, %{auth: auth, socket: nil})
@@ -47,7 +48,8 @@ defmodule Supavisor.DbHandlerTest do
                     database: "some database",
                     host: "host",
                     port: 0,
-                    user: "some user"
+                    user: "some user",
+                    ip_version: :inet
                   },
                   socket: :socket
                 }}
@@ -65,7 +67,8 @@ defmodule Supavisor.DbHandlerTest do
         port: 0,
         user: "some user",
         database: "some database",
-        application_name: "some application name"
+        application_name: "some application name",
+        ip_version: :inet
       }
 
       state = Db.handle_event(:internal, nil, :connect, %{auth: auth, socket: nil})

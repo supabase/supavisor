@@ -49,7 +49,13 @@ defmodule Supavisor.DbHandler do
   @impl true
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
     Logger.info("Try to connect to DB")
-    socket_opts = [:binary, {:packet, :raw}, {:active, true}]
+
+    socket_opts = [
+      :binary,
+      {:packet, :raw},
+      {:active, true},
+      auth.ip_version
+    ]
 
     case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
       {:ok, socket} ->

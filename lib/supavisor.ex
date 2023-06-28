@@ -1,6 +1,7 @@
 defmodule Supavisor do
   @moduledoc false
   require Logger
+  alias Supavisor.Helpers, as: H
   alias Supavisor.{Tenants, Tenants.Tenant, Manager}
 
   @registry Supavisor.Registry.Tenants
@@ -107,6 +108,7 @@ defmodule Supavisor do
           db_port: db_port,
           db_database: db_database,
           default_parameter_status: ps,
+          ip_version: ip_ver,
           users: [
             %{
               db_user: db_user,
@@ -123,7 +125,8 @@ defmodule Supavisor do
           user: db_user,
           database: db_database,
           password: fn -> db_pass end,
-          application_name: "supavisor"
+          application_name: "supavisor",
+          ip_version: H.ip_version(ip_ver, db_host)
         }
 
         args = %{
