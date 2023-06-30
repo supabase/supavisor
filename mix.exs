@@ -10,7 +10,8 @@ defmodule Supavisor.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      releases: releases()
+      releases: releases(),
+      dialyzer: [plt_add_apps: [:mix]]
     ]
   end
 
