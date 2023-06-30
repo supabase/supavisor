@@ -25,7 +25,7 @@ dev.node2:
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
-	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server	
+	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server
 
 dev_bin:
 	MIX_ENV=dev mix release supavisor_bin && ls -l burrito_out
@@ -55,3 +55,26 @@ pgbench_short:
 
 pgbench_long:
 	PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 60 -h localhost -p 7654 -U transaction.localhost postgres
+
+clean:
+	rm -rf _build && rm -rf deps
+
+dev_release:
+	mix deps.get && mix compile && mix release supavisor
+
+dev_up:
+	rm -rf _build/dev/lib/supavisor && \
+	MIX_ENV=dev mix compile && \
+	mix release supavisor
+
+dev_start_rel:
+	MIX_ENV=dev \
+	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
+	API_JWT_SECRET=dev \
+	METRICS_JWT_SECRET=dev \
+	REGION=eu \
+	FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000 \
+	SECRET_KEY_BASE="dev" \
+	CLUSTER_POSTGRES="true" \
+	ERL_AFLAGS="-kernel shell_history enabled" \
+	./_build/dev/rel/supavisor/bin/supavisor start_iex

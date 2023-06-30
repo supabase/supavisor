@@ -57,6 +57,7 @@ defmodule Supavisor.MixProject do
       {:burrito, github: "burrito-elixir/burrito"},
       {:libcluster, "~> 3.3.1"},
       {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.1-rc.1"},
+      {:distillery, "~> 2.1"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},
@@ -107,5 +108,5 @@ defmodule Supavisor.MixProject do
     ]
   end
 
-  defp version, do: File.read!("./VERSION")
+  defp version, do: File.read!("./VERSION") |> String.trim()
 end
