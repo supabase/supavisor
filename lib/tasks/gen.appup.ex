@@ -27,9 +27,9 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
     IO.puts("Generating appup from #{from_vsn} to #{to_vsn}...\n")
 
     rel_dir = Path.join([File.cwd!(), "_build", "#{Mix.env()}", "rel", "supavisor"])
-    lib_path = Path.join([rel_dir, "lib"])
-    path_from = Path.join([lib_path, "supavisor-#{from_vsn}"])
-    path_to = Path.join([lib_path, "supavisor-#{to_vsn}"])
+    lib_path = Path.join(rel_dir, "lib")
+    path_from = Path.join(lib_path, "supavisor-#{from_vsn}")
+    path_to = Path.join(lib_path, "supavisor-#{to_vsn}")
     appup_path = Path.join([path_to, "ebin", "supavisor.appup"])
 
     case Appup.make(:supavisor, from_vsn, to_vsn, path_from, path_to) do

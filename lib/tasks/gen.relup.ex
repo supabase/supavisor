@@ -28,16 +28,16 @@ defmodule Mix.Tasks.Supavisor.Gen.Relup do
     rel_dir = Path.join([File.cwd!(), "_build", "#{Mix.env()}", "rel", "supavisor"])
     prev_rel_dir = Path.join([rel_dir, "releases", from_vsn])
     curr_rel_dir = Path.join([rel_dir, "releases", to_vsn])
-    lib_path = Path.join([rel_dir, "lib"])
-    relup_path = Path.join([curr_rel_dir, "relup"])
+    lib_path = Path.join(rel_dir, "lib")
+    relup_path = Path.join(curr_rel_dir, "relup")
 
     opts = [
-      {:path, [Path.join([lib_path, "*/ebin"]) |> to_charlist()]},
+      {:path, [Path.join(lib_path, "*/ebin") |> to_charlist()]},
       {:outdir, to_charlist(curr_rel_dir)}
     ]
 
-    rel1 = Path.join([prev_rel_dir, "supavisor"]) |> to_charlist()
-    rel2 = Path.join([curr_rel_dir, "supavisor"]) |> to_charlist()
+    rel1 = Path.join(prev_rel_dir, "supavisor") |> to_charlist()
+    rel2 = Path.join(curr_rel_dir, "supavisor") |> to_charlist()
 
     case :systools.make_relup(rel2, [rel1], [rel1], opts) do
       :ok ->
