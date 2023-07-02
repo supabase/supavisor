@@ -12,7 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Tenants.User, Protocol.Server, Monitoring.Telem, Manager}
+  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -21,8 +21,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
-  def callback_mode,
-    do: [:handle_event_function]
+  def callback_mode, do: [:handle_event_function]
 
   def client_call(pid, bin, ready?) do
     :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
@@ -36,7 +35,7 @@ defmodule Supavisor.ClientHandler do
 
     {:ok, socket} = :ranch.handshake(ref)
     :ok = trans.setopts(socket, [{:active, true}])
-    Logger.info("ClientHandler is: #{inspect(self())}")
+    Logger.debug("ClientHandler is: #{inspect(self())}")
 
     data = %{
       socket: socket,
@@ -46,13 +45,22 @@ defmodule Supavisor.ClientHandler do
       user_alias: nil,
       pool: nil,
       manager: nil,
-      query_start: nil
+      query_start: nil,
+      mode: nil,
+      timeout: nil,
+      ps: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
   end
 
   @impl true
+  def handle_event(:info, {:tcp, _, <<"GET", _::binary>>}, :exchange, data) do
+    Logger.debug("Client is trying to request HTTP")
+    :gen_tcp.send(data.socket, "HTTP/1.1 204 OK\r\n\r\n")
+    {:stop, :normal, data}
+  end
+
   def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, data) do
     Logger.warn("Client is trying to connect with SSL")
     # TODO: implement SSL negotiation
@@ -66,12 +74,14 @@ defmodule Supavisor.ClientHandler do
     hello = decode_startup_packet(bin)
     Logger.warning("Client startup message: #{inspect(hello)}")
     {user, external_id} = parse_user_info(hello.payload["user"])
-    Logger.metadata(project: external_id)
+    Logger.metadata(project: external_id, user: user)
 
     case Tenants.get_user(external_id, user) do
-      {:ok, %User{db_password: pass, db_user_alias: db_alias}} ->
-        {:keep_state, %{data | tenant: external_id, user_alias: db_alias},
-         {:next_event, :internal, {:handle, fn -> pass end}}}
+      {:ok, user_info} ->
+        new_data = update_user_data(data, external_id, user_info)
+
+        {:keep_state, new_data,
+         {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
 
       {:error, reason} ->
         Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
@@ -103,13 +113,18 @@ defmodule Supavisor.ClientHandler do
     Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
     with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias),
-         {:ok, %{manager: manager, pool: pool}} <-
-           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias),
-         ps <-
-           Manager.get_parameter_status(manager) do
+         {:ok, %{manager: manager, pool: pool}, ps} <-
+           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias) do
       Process.monitor(manager)
-      :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
-      {:next_state, :idle, %{data | pool: pool, manager: manager}}
+      data = %{data | manager: manager, pool: pool}
+      db_pid = db_checkout(:on_connect, data)
+      data = %{data | db_pid: db_pid}
+
+      if ps == [] do
+        {:keep_state, data, {:timeout, 10_000, :wait_ps}}
+      else
+        {:keep_state, data, {:next_event, :internal, {:greetings, ps}}}
+      end
     else
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
@@ -117,8 +132,19 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  def handle_event(:internal, {:greetings, ps}, _, data) do
+    :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
+    {:next_state, :idle, data}
+  end
+
   def handle_event(:timeout, :subscribe, _, _) do
     {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+  end
+
+  def handle_event(:timeout, :wait_ps, _, data) do
+    Logger.error("Wait parameter status timeout, send default #{inspect(data.ps)}}")
+    ps = Server.encode_parameter_status(data.ps)
+    {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
   # ignore termination messages
@@ -129,9 +155,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {:tcp, _, bin}, :idle, data) do
     ts = System.monotonic_time()
-    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, 60_000])
-    Telem.pool_checkout_time(time, data.tenant, data.user_alias)
-    Process.link(db_pid)
+    db_pid = db_checkout(:on_query, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {:tcp, nil, bin}}}
@@ -164,9 +188,18 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  def handle_event(:info, {:parameter_status, :updated}, _, data) do
+    Logger.warning("Parameter status is updated")
+    {:stop, :normal, data}
+  end
+
+  def handle_event(:info, {:parameter_status, ps}, :exchange, _) do
+    {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
+  end
+
   # client closed connection
   def handle_event(_, {:tcp_closed, _}, _, data) do
-    Logger.info("tcp soket closed for #{inspect(data.tenant)}")
+    Logger.debug("tcp soket closed for #{inspect(data.tenant)}")
     {:stop, :normal}
   end
 
@@ -200,11 +233,11 @@ defmodule Supavisor.ClientHandler do
     if ready? do
       Logger.debug("Client is ready")
 
-      Process.unlink(data.db_pid)
-      :poolboy.checkin(data.pool, data.db_pid)
+      db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
+
       Telem.network_usage(:client, data.socket, data.tenant, data.user_alias)
       Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
-      {:next_state, :idle, %{data | db_pid: nil}, reply}
+      {:next_state, :idle, %{data | db_pid: db_pid}, reply}
     else
       Logger.debug("Client is not ready")
       {:keep_state_and_data, reply}
@@ -223,6 +256,28 @@ defmodule Supavisor.ClientHandler do
 
     :keep_state_and_data
   end
+
+  @impl true
+  def terminate(
+        {:timeout, {_, _, [_, {:checkout, _, _}, _]}},
+        _,
+        data
+      ) do
+    msg =
+      case data.mode do
+        :session ->
+          "Too many clients already"
+
+        :transaction ->
+          "Unable to check out process from the pool due to timeout"
+      end
+
+    Logger.error(msg)
+    Server.send_error(data.socket, "XX000", msg)
+    :ok
+  end
+
+  def terminate(_reason, _state, _data), do: :ok
 
   ## Internal functions
 
@@ -308,5 +363,40 @@ defmodule Supavisor.ClientHandler do
       15_000 ->
         {:error, "Timeout while waiting for the first password message"}
     end
+  end
+
+  @spec db_checkout(:on_connect | :on_query, map()) :: pid() | nil
+  defp db_checkout(_, %{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
+    db_pid
+  end
+
+  defp db_checkout(:on_connect, %{mode: :transaction}), do: nil
+
+  defp db_checkout(_, data) do
+    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
+    Process.link(db_pid)
+    Telem.pool_checkout_time(time, data.tenant, data.user_alias)
+    db_pid
+  end
+
+  @spec handle_db_pid(:transaction, pid(), pid()) :: nil
+  @spec handle_db_pid(:session, pid(), pid()) :: pid()
+  defp handle_db_pid(:transaction, pool, db_pid) do
+    Process.unlink(db_pid)
+    :poolboy.checkin(pool, db_pid)
+    nil
+  end
+
+  defp handle_db_pid(:session, _, db_pid), do: db_pid
+
+  defp update_user_data(data, external_id, user_info) do
+    %{
+      data
+      | tenant: external_id,
+        user_alias: user_info.db_user_alias,
+        mode: user_info.mode_type,
+        timeout: user_info.pool_checkout_timeout,
+        ps: user_info.default_parameter_status
+    }
   end
 end

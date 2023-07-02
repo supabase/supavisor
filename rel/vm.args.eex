@@ -9,3 +9,6 @@
 
 ## Tweak GC to run more often
 ##-env ERL_FULLSWEEP_AFTER 10
+
+-kernel inet_dist_listen_min 20000
+-kernel inet_dist_listen_max 21000

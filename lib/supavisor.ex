@@ -1,6 +1,7 @@
 defmodule Supavisor do
   @moduledoc false
   require Logger
+  alias Supavisor.Helpers, as: H
   alias Supavisor.{Tenants, Tenants.Tenant, Manager}
 
   @registry Supavisor.Registry.Tenants
@@ -40,11 +41,11 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe_local(pid, String.t(), String.t()) :: {:ok, workers} | {:error, any()}
+  @spec subscribe_local(pid, String.t(), String.t()) :: {:ok, workers, iodata()} | {:error, any()}
   def subscribe_local(pid, tenant, user_alias) do
     with {:ok, workers} <- get_local_workers(tenant, user_alias),
-         :ok <- Manager.subscribe(workers.manager, pid) do
-      {:ok, workers}
+         {:ok, ps} <- Manager.subscribe(workers.manager, pid) do
+      {:ok, workers, ps}
     else
       error ->
         error
@@ -52,7 +53,7 @@ defmodule Supavisor do
   end
 
   @spec subscribe_global(atom(), pid(), String.t(), String.t()) ::
-          {:ok, workers} | {:error, any()}
+          {:ok, workers, iodata()} | {:error, any()}
   def subscribe_global(tenant_node, pid, tenant, user_alias) do
     if node() == tenant_node do
       subscribe_local(pid, tenant, user_alias)
@@ -106,11 +107,14 @@ defmodule Supavisor do
           db_host: db_host,
           db_port: db_port,
           db_database: db_database,
+          default_parameter_status: ps,
+          ip_version: ip_ver,
           users: [
             %{
               db_user: db_user,
               db_password: db_pass,
-              pool_size: pool_size
+              pool_size: pool_size,
+              mode_type: mode
             }
           ]
         } = tenant_record
@@ -121,10 +125,18 @@ defmodule Supavisor do
           user: db_user,
           database: db_database,
           password: fn -> db_pass end,
-          application_name: "supavisor"
+          application_name: "supavisor",
+          ip_version: H.ip_version(ip_ver, db_host)
         }
 
-        args = %{tenant: tenant, user_alias: user_alias, auth: auth, pool_size: pool_size}
+        args = %{
+          tenant: tenant,
+          user_alias: user_alias,
+          auth: auth,
+          pool_size: pool_size,
+          mode: mode,
+          default_parameter_status: ps
+        }
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, {tenant, user_alias}}},

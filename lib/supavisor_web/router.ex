@@ -38,6 +38,11 @@ defmodule SupavisorWeb.Router do
     get("/openapi", OpenApiSpex.Plug.RenderSpec, [])
   end
 
+  # websocket pg proxy
+  scope "/v2" do
+    get("/", SupavisorWeb.WsProxy, [])
+  end
+
   scope "/api", SupavisorWeb do
     pipe_through(:api)
 

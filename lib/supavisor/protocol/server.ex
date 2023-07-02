@@ -159,8 +159,9 @@ defmodule Supavisor.Protocol.Server do
     nil
   end
 
-  def decode_payload(:error_response, _payload) do
-    :error
+  # https://www.postgresql.org/docs/current/protocol-error-fields.html
+  def decode_payload(:error_response, payload) do
+    String.split(payload, <<0>>, trim: true)
   end
 
   def decode_payload(
@@ -342,5 +343,10 @@ defmodule Supavisor.Protocol.Server do
   @spec greetings(iodata()) :: iodata()
   def greetings(ps) do
     [ps, backend_key_data(), @ready_for_query]
+  end
+
+  @spec ready_for_query() :: binary()
+  def ready_for_query() do
+    @ready_for_query
   end
 end

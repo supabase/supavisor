@@ -18,7 +18,12 @@ defmodule SupavisorWeb.TenantView do
       db_host: tenant.db_host,
       db_port: tenant.db_port,
       db_database: tenant.db_database,
+      ip_version: tenant.ip_version,
       users: render_many(tenant.users, UserView, "user.json")
     }
+  end
+
+  def render("error.json", %{error: reason}) do
+    %{error: reason}
   end
 end

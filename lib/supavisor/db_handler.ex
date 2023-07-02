@@ -23,7 +23,7 @@ defmodule Supavisor.DbHandler do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    Logger.metadata(project: args.tenant)
+    Logger.metadata(project: args.tenant, user: args.user_alias)
 
     data = %{
       socket: nil,
@@ -49,7 +49,13 @@ defmodule Supavisor.DbHandler do
   @impl true
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
     Logger.info("Try to connect to DB")
-    socket_opts = [:binary, {:packet, :raw}, {:active, true}]
+
+    socket_opts = [
+      :binary,
+      {:packet, :raw},
+      {:active, true},
+      auth.ip_version
+    ]
 
     case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
       {:ok, socket} ->
@@ -138,6 +144,23 @@ defmodule Supavisor.DbHandler do
         %{payload: {:authentication_server_final_message, _server_final}}, acc ->
           acc
 
+        %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
+          password = data.auth.password
+          user = data.auth.user
+
+          digest = [password.(), user] |> :erlang.md5() |> Base.encode16(case: :lower)
+          digest = [digest, salt] |> :erlang.md5() |> Base.encode16(case: :lower)
+          payload = ["md5", digest, 0]
+
+          bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
+
+          :gen_tcp.send(data.socket, bin)
+
+          {ps, :authentication_md5}
+
+        %{tag: :error_response, payload: error}, _ ->
+          {:error_response, error}
+
         _e, acc ->
           acc
       end)
@@ -148,6 +171,13 @@ defmodule Supavisor.DbHandler do
 
       {_, :authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
+
+      {_, :authentication_md5} ->
+        {:keep_state, data}
+
+      {:error_response, error} ->
+        Logger.error("Error auth response #{inspect(error)}")
+        {:keep_state, data}
 
       {ps, db_state} ->
         Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")

@@ -10,6 +10,12 @@ if Tenants.get_tenant_by_external_id(tenant_name) do
   Tenants.delete_tenant_by_external_id(tenant_name)
 end
 
+{:ok, version} =
+  case Repo.query!("select version()") do
+    %{rows: [[ver]]} -> Supavisor.Helpers.parse_pg_version(ver)
+    _ -> nil
+  end
+
 ["proxy_tenant", "syn_tenant", "prom_tenant"]
 |> Enum.each(fn tenant ->
   if !Tenants.get_tenant_by_external_id(tenant) do
@@ -18,12 +24,28 @@ end
       db_port: db_conf[:port],
       db_database: db_conf[:database],
       external_id: tenant,
+      default_parameter_status: %{server_version: version},
       users: [
         %{
           "db_user" => db_conf[:username],
           "db_password" => db_conf[:password],
           "pool_size" => 3,
           "mode_type" => "transaction"
+        },
+        %{
+          "db_user_alias" => "transaction",
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 3,
+          "mode_type" => "transaction"
+        },
+        %{
+          "db_user_alias" => "session",
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 1,
+          "mode_type" => "session",
+          "pool_checkout_timeout" => 500
         }
       ]
     }
