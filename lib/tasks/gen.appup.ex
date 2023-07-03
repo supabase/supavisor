@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
   use Mix.Task
   alias Distillery.Releases.Appup
 
-  @spec run(OptionParser.argv()) :: no_return
+  @impl true
   def run(args) do
     {parsed, _, _} = OptionParser.parse(args, strict: [from: :string, to: :string])
 
