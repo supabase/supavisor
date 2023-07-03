@@ -4,9 +4,9 @@ defmodule Mix.Tasks.Supavisor.Gen.Relup do
 
   ## Examples
 
-    # Generate an appup from 0.0.1 to 0.0.2 versions
+      # Generate an appup from 0.0.1 to 0.0.2 versions
 
-    mix supavisor.gen.appup --from=0.0.1 --to=0.0.2
+      mix supavisor.gen.appup --from=0.0.1 --to=0.0.2
   """
 
   use Mix.Task
