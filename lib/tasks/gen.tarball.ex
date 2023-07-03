@@ -11,7 +11,7 @@ defmodule Mix.Tasks.Supavisor.Gen.Tarball do
 
   use Mix.Task
 
-  @spec run(OptionParser.argv()) :: no_return
+  @impl true
   def run(args) do
     {parsed, _, _} = OptionParser.parse(args, strict: [vsn: :string])
 
