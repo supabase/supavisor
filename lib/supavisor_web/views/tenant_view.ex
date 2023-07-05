@@ -19,6 +19,8 @@ defmodule SupavisorWeb.TenantView do
       db_port: tenant.db_port,
       db_database: tenant.db_database,
       ip_version: tenant.ip_version,
+      upstream_ssl: tenant.upstream_ssl,
+      upstream_verify: tenant.upstream_verify,
       users: render_many(tenant.users, UserView, "user.json")
     }
   end

@@ -11,6 +11,7 @@ defmodule Supavisor.Protocol.Server do
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
   @ready_for_query <<?Z, 5::32, ?I>>
+  @ssl_request <<8::32, 1234::16, 5679::16>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -348,5 +349,11 @@ defmodule Supavisor.Protocol.Server do
   @spec ready_for_query() :: binary()
   def ready_for_query() do
     @ready_for_query
+  end
+
+  # SSLRequest message
+  @spec ssl_request() :: binary()
+  def ssl_request() do
+    @ssl_request
   end
 end

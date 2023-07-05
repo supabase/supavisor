@@ -4,6 +4,15 @@ defmodule Supavisor.Helpers do
   @spec check_creds_get_ver(map) :: {:ok, String.t()} | {:error, String.t()}
   def check_creds_get_ver(params) do
     Enum.reduce_while(params["users"], {nil, nil}, fn user, _ ->
+      ssl_opts =
+        if params["upstream_ssl"] and params["upstream_verify"] == "peer" do
+          [
+            {:verify, :verify_peer},
+            {:cacerts, [params["upstream_tls_ca"]]},
+            {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
+          ]
+        end
+
       {:ok, conn} =
         Postgrex.start_link(
           hostname: params["db_host"],
@@ -11,9 +20,11 @@ defmodule Supavisor.Helpers do
           database: params["db_database"],
           password: user["db_password"],
           username: user["db_user"],
+          ssl: params["upstream_ssl"],
           socket_options: [
             ip_version(params["ip_version"], params["db_host"])
-          ]
+          ],
+          ssl_opts: ssl_opts || []
         )
 
       check =

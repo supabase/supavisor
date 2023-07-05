@@ -82,6 +82,27 @@ defmodule SupavisorWeb.TenantController do
     }
   )
 
+  # conver cert to pem format
+  def update(conn, %{
+        "external_id" => id,
+        "tenant" => %{"upstream_tls_ca" => "-----BEGIN" <> _ = upstream_tls_ca} = tenant_params
+      }) do
+    case :public_key.pem_decode(upstream_tls_ca) do
+      [] ->
+        conn
+        |> put_status(400)
+        |> render("error.json", error: "Invalid 'upstream_tls_ca' certificate")
+
+      pem_entries ->
+        [cacert] = for {:Certificate, cert, :not_encrypted} <- pem_entries, do: cert
+
+        update(conn, %{
+          "external_id" => id,
+          "tenant" => %{tenant_params | "upstream_tls_ca" => cacert}
+        })
+    end
+  end
+
   def update(conn, %{"external_id" => id, "tenant" => tenant_params}) do
     case H.check_creds_get_ver(tenant_params) do
       {:error, reason} ->
