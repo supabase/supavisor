@@ -98,12 +98,12 @@ config :libcluster,
   topologies: topologies
 
 upstream_ca =
-  if System.get_env("UPSTREAM_CA_PATH") do
-    File.read!(System.get_env("UPSTREAM_CA_PATH"))
+  if System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
+    File.read!(System.get_env("GLOBAL_UPSTREAM_CA_PATH"))
     |> H.cert_to_bin()
     |> case do
       {:ok, bin} -> bin
-      {:error, _} -> raise "There is no valid certificate in $UPSTREAM_CA_PATH"
+      {:error, _} -> raise "There is no valid certificate in $GLOBAL_UPSTREAM_CA_PATH"
     end
   end
 
