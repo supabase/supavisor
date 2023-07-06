@@ -235,7 +235,7 @@ defmodule Supavisor.ClientHandler do
 
       db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
-      Telem.network_usage(:client, data.socket, data.tenant, data.user_alias)
+      Telem.network_usage(:client, {:gen_tcp, data.socket}, data.tenant, data.user_alias)
       Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
       {:next_state, :idle, %{data | db_pid: db_pid}, reply}
     else

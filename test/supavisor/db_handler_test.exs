@@ -9,7 +9,7 @@ defmodule Supavisor.DbHandlerTest do
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
       assert next_event == :internal
-      assert data.socket == nil
+      assert data.sock == nil
       assert data.caller == nil
       assert data.sent == false
       assert data.auth == args.auth
@@ -26,8 +26,10 @@ defmodule Supavisor.DbHandlerTest do
   describe "handle_event/4" do
     test "db is avaible" do
       :meck.new(:gen_tcp, [:unstick, :passthrough])
-      :meck.expect(:gen_tcp, :connect, fn _host, _port, _socket_opts -> {:ok, :socket} end)
-      :meck.expect(:gen_tcp, :send, fn _socket, _msg -> :ok end)
+      :meck.new(:inet, [:unstick, :passthrough])
+      :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:ok, :sock} end)
+      :meck.expect(:gen_tcp, :send, fn _sock, _msg -> :ok end)
+      :meck.expect(:inet, :setopts, fn _sock, _opts -> :ok end)
 
       auth = %{
         host: "host",
@@ -38,7 +40,7 @@ defmodule Supavisor.DbHandlerTest do
         ip_version: :inet
       }
 
-      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, socket: nil})
+      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: {:gen_tcp, nil}})
 
       assert state ==
                {:next_state, :authentication,
@@ -51,7 +53,7 @@ defmodule Supavisor.DbHandlerTest do
                     user: "some user",
                     ip_version: :inet
                   },
-                  socket: :socket
+                  sock: {:gen_tcp, :sock}
                 }}
 
       :meck.unload(:gen_tcp)
@@ -60,7 +62,7 @@ defmodule Supavisor.DbHandlerTest do
     test "db is not avaible" do
       :meck.new(:gen_tcp, [:unstick, :passthrough])
 
-      :meck.expect(:gen_tcp, :connect, fn _host, _port, _socket_opts -> {:error, "some error"} end)
+      :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:error, "some error"} end)
 
       auth = %{
         host: "host",
@@ -71,7 +73,7 @@ defmodule Supavisor.DbHandlerTest do
         ip_version: :inet
       }
 
-      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, socket: nil})
+      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: nil})
 
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
       :meck.unload(:gen_tcp)
@@ -79,8 +81,8 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   test "handle_event/4 with idle state" do
-    {:ok, socket} = :gen_tcp.listen(0, [])
-    data = %{socket: socket, caller: nil, buffer: []}
+    {:ok, sock} = :gen_tcp.listen(0, [])
+    data = %{sock: {:gen_tcp, sock}, caller: nil, buffer: []}
     from = {self(), :test_ref}
     event = {:call, from}
     payload = {:db_call, "test_data"}
@@ -93,7 +95,7 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   test "handle_event/4 with non-idle state" do
-    data = %{socket: nil, caller: nil, buffer: []}
+    data = %{sock: nil, caller: nil, buffer: []}
     from = {self(), :test_ref}
     event = {:call, from}
     payload = {:db_call, "test_data"}
@@ -120,20 +122,20 @@ defmodule Supavisor.DbHandlerTest do
       content = {:tcp, tcp_port, bin}
 
       # The outgoing port (#Port<0.00>), used to send message to the db, meck overrides it
-      socket_port = Enum.random(1..999_999)
+      sock_port = Enum.random(1..999_999)
 
       data = %{
         auth: %{
           password: fn -> "some_password" end,
           user: "some_user"
         },
-        socket: socket_port
+        sock: {:gen_tcp, sock_port}
       }
 
       :meck.new(:gen_tcp, [:unstick, :passthrough])
 
       :meck.expect(:gen_tcp, :send, fn port, message ->
-        assert port == socket_port
+        assert port == sock_port
         assert message == [?p, <<40::integer-32>>, ["md5", "ae5546ff52734a18d0277977f626946c", 0]]
 
         :ok

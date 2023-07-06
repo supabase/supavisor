@@ -8,7 +8,14 @@ defmodule SupavisorWeb.TenantController do
   alias Supavisor.{Tenants, Repo}
   alias Tenants.Tenant, as: TenantModel
 
-  alias SupavisorWeb.OpenApiSchemas.{Tenant, TenantList, TenantCreate, NotFound, Created, Empty}
+  alias SupavisorWeb.OpenApiSchemas.{
+    Tenant,
+    TenantList,
+    TenantCreate,
+    NotFound,
+    Created,
+    Empty
+  }
 
   action_fallback(SupavisorWeb.FallbackController)
 
@@ -87,50 +94,63 @@ defmodule SupavisorWeb.TenantController do
         "external_id" => id,
         "tenant" => %{"upstream_tls_ca" => "-----BEGIN" <> _ = upstream_tls_ca} = tenant_params
       }) do
-    case :public_key.pem_decode(upstream_tls_ca) do
-      [] ->
-        conn
-        |> put_status(400)
-        |> render("error.json", error: "Invalid 'upstream_tls_ca' certificate")
-
-      pem_entries ->
-        [cacert] = for {:Certificate, cert, :not_encrypted} <- pem_entries, do: cert
-
+    case H.cert_to_bin(upstream_tls_ca) do
+      {:ok, bin} ->
         update(conn, %{
           "external_id" => id,
-          "tenant" => %{tenant_params | "upstream_tls_ca" => cacert}
+          "tenant" => %{tenant_params | "upstream_tls_ca" => bin}
         })
+
+      {:error, realson} ->
+        conn
+        |> put_status(400)
+        |> render("error.json",
+          error: "Invalid 'upstream_tls_ca' certificate, reason: #{inspect(realson)}"
+        )
     end
   end
 
-  def update(conn, %{"external_id" => id, "tenant" => tenant_params}) do
-    case H.check_creds_get_ver(tenant_params) do
-      {:error, reason} ->
-        conn
-        |> put_status(400)
-        |> render("error.json", error: reason)
+  def update(conn, %{"external_id" => id, "tenant" => params}) do
+    cert = H.upstream_cert(params["upstream_tls_ca"])
 
-      {:ok, pg_version} ->
-        tenant_params =
-          Map.put(tenant_params, "default_parameter_status", %{"server_version" => pg_version})
+    if params["upstream_ssl"] && params["upstream_verify"] == "peer" && !cert do
+      conn
+      |> put_status(400)
+      |> render("error.json",
+        error: "Invalid 'upstream_verify' value, 'peer' is not allowed without certificate"
+      )
+    else
+      case H.check_creds_get_ver(params) do
+        {:error, reason} ->
+          conn
+          |> put_status(400)
+          |> render("error.json", error: reason)
 
-        case Tenants.get_tenant_by_external_id(id) do
-          nil ->
-            create(conn, %{"tenant" => Map.put(tenant_params, "external_id", id)})
+        {:ok, pg_version} ->
+          params =
+            Map.put(params, "default_parameter_status", %{
+              "server_version" => pg_version
+            })
 
-          tenant ->
-            tenant = Repo.preload(tenant, :users)
+          case Tenants.get_tenant_by_external_id(id) do
+            nil ->
+              create(conn, %{"tenant" => Map.put(params, "external_id", id)})
 
-            with {:ok, %TenantModel{} = tenant} <- Tenants.update_tenant(tenant, tenant_params) do
-              for user <- tenant.users do
-                Supavisor.stop(tenant.external_id, user.db_user_alias)
-                |> then(&"Stop #{user.db_user_alias}.#{tenant.external_id}: #{inspect(&1)}")
-                |> Logger.warning()
+            tenant ->
+              tenant = Repo.preload(tenant, :users)
+
+              with {:ok, %TenantModel{} = tenant} <-
+                     Tenants.update_tenant(tenant, params) do
+                for user <- tenant.users do
+                  Supavisor.stop(tenant.external_id, user.db_user_alias)
+                  |> then(&"Stop #{user.db_user_alias}.#{tenant.external_id}: #{inspect(&1)}")
+                  |> Logger.warning()
+                end
+
+                render(conn, "show.json", tenant: tenant)
               end
-
-              render(conn, "show.json", tenant: tenant)
-            end
-        end
+          end
+      end
     end
   end
 

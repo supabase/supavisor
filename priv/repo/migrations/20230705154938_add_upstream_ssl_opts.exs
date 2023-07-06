@@ -5,7 +5,7 @@ defmodule Supavisor.Repo.Migrations.AddUpstreamSslOpts do
     alter table("tenants", prefix: "_supavisor") do
       add(:upstream_ssl, :boolean, null: false, default: false)
       add(:upstream_verify, :string, null: true)
-      add(:upstream_tls_ca_encrypted, :binary, null: true)
+      add(:upstream_tls_ca, :binary, null: true)
     end
 
     create(
@@ -18,16 +18,7 @@ defmodule Supavisor.Repo.Migrations.AddUpstreamSslOpts do
     )
 
     upstream_constraints = """
-    (upstream_ssl = false AND upstream_verify IS NULL AND upstream_tls_ca_encrypted IS NULL)
-    OR (
-      upstream_ssl = true
-      AND upstream_verify IS NOT NULL
-      AND (
-        (upstream_verify = 'none' AND upstream_tls_ca_encrypted IS NULL)
-        OR
-        (upstream_verify = 'peer' AND upstream_tls_ca_encrypted IS NOT NULL)
-      )
-    )
+    (upstream_ssl = false AND upstream_verify IS NULL) OR (upstream_ssl = true AND upstream_verify IS NOT NULL)
     """
 
     create(

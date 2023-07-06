@@ -8,7 +8,7 @@ defmodule Supavisor.Helpers do
         if params["upstream_ssl"] and params["upstream_verify"] == "peer" do
           [
             {:verify, :verify_peer},
-            {:cacerts, [params["upstream_tls_ca"]]},
+            {:cacerts, [upstream_cert(params["upstream_tls_ca"])]},
             {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
           ]
         end
@@ -115,6 +115,33 @@ defmodule Supavisor.Helpers do
     case :inet.gethostbyname(host) do
       {:ok, _} -> :inet
       _ -> :inet6
+    end
+  end
+
+  @spec cert_to_bin(binary()) :: {:ok, binary()} | {:error, atom()}
+  def cert_to_bin(cert) do
+    case :public_key.pem_decode(cert) do
+      [] ->
+        {:error, :cant_decode_certificate}
+
+      pem_entries ->
+        cert = for {:Certificate, cert, :not_encrypted} <- pem_entries, do: cert
+
+        case cert do
+          [cert] -> {:ok, cert}
+          _ -> {:error, :invalid_certificte}
+        end
+    end
+  end
+
+  @spec upstream_cert(binary() | nil) :: binary() | nil
+  def upstream_cert(default) do
+    case Application.get_env(:supavisor, :global_upstream_ca) do
+      nil ->
+        default
+
+      cert ->
+        cert
     end
   end
 end
