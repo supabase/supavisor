@@ -5,7 +5,7 @@ defmodule Supavisor.DbHandler do
   """
 
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
-  @type ssl_sock :: {:ssl, :ssl.socket()}
+  @type ssl_sock :: {:ssl, :ssl.sslsocket()}
   @type sock :: tcp_sock() | ssl_sock()
 
   require Logger
@@ -76,7 +76,8 @@ defmodule Supavisor.DbHandler do
                 :ok = activate(sock)
                 {:next_state, :authentication, %{data | sock: sock}}
 
-              _ ->
+              {:error, reason} ->
+                Logger.error("Send startup error #{inspect(reason)}")
                 reconnect_callback
             end
 
@@ -341,12 +342,11 @@ defmodule Supavisor.DbHandler do
     mod.send(sock, data)
   end
 
-  @spec activate(tcp_sock) :: :ok | {:error, term}
+  @spec activate(tcp_sock | ssl_sock) :: :ok | {:error, term}
   defp activate({:gen_tcp, sock}) do
     :inet.setopts(sock, active: true)
   end
 
-  @spec activate(ssl_sock) :: :ok | {:error, term}
   defp activate({:ssl, sock}) do
     :ssl.setopts(sock, active: true)
   end
