@@ -138,12 +138,6 @@ defmodule Supavisor.Helpers do
 
   @spec upstream_cert(binary() | nil) :: binary() | nil
   def upstream_cert(default) do
-    case Application.get_env(:supavisor, :global_upstream_ca) do
-      nil ->
-        default
-
-      cert ->
-        cert
-    end
+    Application.get_env(:supavisor, :global_upstream_ca, default)
   end
 end
