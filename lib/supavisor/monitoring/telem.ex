@@ -5,7 +5,7 @@ defmodule Supavisor.Monitoring.Telem do
 
   @spec network_usage(
           atom(),
-          {:gen_tcp | :ssl, :gen_tcp.socket() | :ssl.socket()},
+          {:gen_tcp, :gen_tcp.socket()} | {:ssl, :ssl.socket()},
           String.t(),
           String.t()
         ) :: :ok
