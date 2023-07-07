@@ -4,12 +4,18 @@ defmodule Supavisor.DbHandler do
   It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
   """
 
+  @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
+  @type ssl_sock :: {:ssl, :ssl.socket()}
+  @type sock :: tcp_sock() | ssl_sock()
+
   require Logger
 
   @behaviour :gen_statem
 
   alias Supavisor.ClientHandler, as: Client
   alias Supavisor.{Protocol.Server, Monitoring.Telem}
+
+  @reconnect_timeout 2_500
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -57,25 +63,31 @@ defmodule Supavisor.DbHandler do
       auth.ip_version
     ]
 
+    reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
+
     case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
       {:ok, sock} ->
         Logger.debug("auth #{inspect(auth, pretty: true)}")
-        sock = {:gen_tcp, sock}
 
-        case handshake(sock, auth) do
+        case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            # Back to active from here
-            set_sock_opts(sock, [{:active, true}])
-            {:next_state, :authentication, %{data | sock: sock}}
+            case send_startup(sock, auth) do
+              :ok ->
+                :ok = activate(sock)
+                {:next_state, :authentication, %{data | sock: sock}}
+
+              _ ->
+                reconnect_callback
+            end
 
           {:error, error} ->
             Logger.error("Handshake error #{inspect(error)}")
-            {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
+            reconnect_callback
         end
 
       other ->
         Logger.error("Connection failed #{inspect(other)}")
-        {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
+        reconnect_callback
     end
   end
 
@@ -117,7 +129,7 @@ defmodule Supavisor.DbHandler do
                 ]
 
                 bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
-                sock_send(data.sock, bin)
+                :ok = sock_send(data.sock, bin)
                 nonce
 
               other ->
@@ -140,7 +152,7 @@ defmodule Supavisor.DbHandler do
             )
 
           bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          sock_send(data.sock, bin)
+          :ok = sock_send(data.sock, bin)
 
           {ps, :authentication_server_first_message, server_proof}
 
@@ -157,7 +169,7 @@ defmodule Supavisor.DbHandler do
 
           bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
 
-          sock_send(data.sock, bin)
+          :ok = sock_send(data.sock, bin)
 
           {ps, :authentication_md5}
 
@@ -264,36 +276,31 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
-  # Adapted from Postgrex.Protocol
-  defp handshake(sock, %{upstream_ssl: true} = auth), do: ssl(sock, auth)
-  defp handshake(sock, auth), do: send_startup(sock, auth)
-
-  defp ssl(sock, auth) do
+  @spec try_ssl_handshake(tcp_sock, map) :: {:ok, sock} | {:error, term()}
+  defp try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
     case sock_send(sock, Server.ssl_request()) do
       :ok -> ssl_recv(sock, auth)
-      {:disconnect, _, _} = dis -> dis
+      error -> error
     end
   end
 
-  @spec ssl_recv(term(), map) ::
-          {:ok, {:ssl, :sslsock}}
-          | {:error, :ssl_not_available | :ssl_connect_error}
+  defp try_ssl_handshake(sock, _), do: {:ok, sock}
+
+  @spec ssl_recv(tcp_sock, map) :: {:ok, ssl_sock} | {:error, term}
   defp ssl_recv({:gen_tcp, sock} = s, auth) do
-    case :gen_tcp.recv(sock, 1, :infinity) do
+    case :gen_tcp.recv(sock, 1, 15_000) do
       {:ok, <<?S>>} ->
         ssl_connect(s, auth)
 
       {:ok, <<?N>>} ->
-        Logger.error("SSL requested but server says it's not available")
         {:error, :ssl_not_available}
 
-      {:error, reason} ->
-        Logger.error("Error when receiving SSL response: #{inspect(reason)}")
-
-        {:error, :ssl_connect_error}
+      {:error, _} = error ->
+        error
     end
   end
 
+  @spec ssl_connect(tcp_sock, map, pos_integer) :: {:ok, ssl_sock} | {:error, term}
   defp ssl_connect({:gen_tcp, sock}, auth, timeout \\ 5000) do
     opts =
       case auth.upstream_verify do
@@ -310,15 +317,14 @@ defmodule Supavisor.DbHandler do
 
     case :ssl.connect(sock, opts, timeout) do
       {:ok, ssl_sock} ->
-        send_startup({:ssl, ssl_sock}, auth)
+        {:ok, {:ssl, ssl_sock}}
 
       {:error, reason} ->
-        Logger.error("Error when connecting with SSL: #{inspect(reason)}")
-
-        {:error, :ssl_connect_error}
+        {:error, reason}
     end
   end
 
+  @spec send_startup(sock(), map()) :: :ok | {:error, term}
   defp send_startup(sock, auth) do
     msg =
       :pgo_protocol.encode_startup_message([
@@ -327,19 +333,21 @@ defmodule Supavisor.DbHandler do
         {"application_name", auth.application_name}
       ])
 
-    :ok = sock_send(sock, msg)
-    {:ok, sock}
+    sock_send(sock, msg)
   end
 
+  @spec sock_send(tcp_sock | ssl_sock, iodata) :: :ok | {:error, term}
   defp sock_send({mod, sock}, data) do
     mod.send(sock, data)
   end
 
-  defp set_sock_opts({:gen_tcp, sock}, opts) do
-    :ok = :inet.setopts(sock, opts)
+  @spec activate(tcp_sock) :: :ok | {:error, term}
+  defp activate({:gen_tcp, sock}) do
+    :inet.setopts(sock, active: true)
   end
 
-  defp set_sock_opts({:ssl, sock}, opts) do
-    :ssl.setopts(sock, opts)
+  @spec activate(ssl_sock) :: :ok | {:error, term}
+  defp activate({:ssl, sock}) do
+    :ssl.setopts(sock, active: true)
   end
 end
