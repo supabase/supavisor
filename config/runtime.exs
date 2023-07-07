@@ -98,8 +98,8 @@ config :libcluster,
   topologies: topologies
 
 upstream_ca =
-  if System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
-    File.read!(System.get_env("GLOBAL_UPSTREAM_CA_PATH"))
+  if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
+    File.read!(path)
     |> H.cert_to_bin()
     |> case do
       {:ok, bin} -> bin
