@@ -336,7 +336,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp set_sock_opts({:gen_tcp, sock}, opts) do
-    :inet.setopts(sock, opts)
+    :ok = :inet.setopts(sock, opts)
   end
 
   defp set_sock_opts({:ssl, sock}, opts) do
