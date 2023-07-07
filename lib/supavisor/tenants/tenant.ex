@@ -17,6 +17,9 @@ defmodule Supavisor.Tenants.Tenant do
     field(:external_id, :string)
     field(:default_parameter_status, :map)
     field(:ip_version, Ecto.Enum, values: [:v4, :v6, :auto], default: :auto)
+    field(:upstream_ssl, :boolean, default: false)
+    field(:upstream_verify, Ecto.Enum, values: [:none, :peer])
+    field(:upstream_tls_ca, :binary)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -37,8 +40,13 @@ defmodule Supavisor.Tenants.Tenant do
       :db_host,
       :db_port,
       :db_database,
-      :ip_version
+      :ip_version,
+      :upstream_ssl,
+      :upstream_verify,
+      :upstream_tls_ca
     ])
+    |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")
+    |> check_constraint(:upstream_verify, name: :upstream_constraints, prefix: "_supavisor")
     |> validate_required([
       :default_parameter_status,
       :external_id,

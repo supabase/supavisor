@@ -1,5 +1,7 @@
 import Config
 
+alias Supavisor.Helpers, as: H
+
 secret_key_base =
   if config_env() in [:dev, :test] do
     "dev_secret_key_base"
@@ -95,6 +97,16 @@ config :libcluster,
   debug: false,
   topologies: topologies
 
+upstream_ca =
+  if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
+    File.read!(path)
+    |> H.cert_to_bin()
+    |> case do
+      {:ok, bin} -> bin
+      {:error, _} -> raise "There is no valid certificate in $GLOBAL_UPSTREAM_CA_PATH"
+    end
+  end
+
 if config_env() != :test do
   config :supavisor,
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
@@ -103,7 +115,8 @@ if config_env() != :test do
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
-    prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer()
+    prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
+    global_upstream_ca: upstream_ca
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
