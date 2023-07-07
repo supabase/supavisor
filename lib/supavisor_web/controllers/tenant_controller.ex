@@ -143,7 +143,10 @@ defmodule SupavisorWeb.TenantController do
                      Tenants.update_tenant(tenant, params) do
                 for user <- tenant.users do
                   result = Supavisor.stop(tenant.external_id, user.db_user_alias)
-                  Logger.warning("Stop #{user.db_user_alias}.#{tenant.external_id}: #{inspect(result)}")
+
+                  Logger.warning(
+                    "Stop #{user.db_user_alias}.#{tenant.external_id}: #{inspect(result)}"
+                  )
                 end
 
                 render(conn, "show.json", tenant: tenant)
