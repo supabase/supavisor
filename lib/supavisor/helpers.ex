@@ -129,7 +129,7 @@ defmodule Supavisor.Helpers do
 
         case cert do
           [cert] -> {:ok, cert}
-          _ -> {:error, :invalid_certificte}
+          _ -> {:error, :invalid_certificate}
         end
     end
   end
