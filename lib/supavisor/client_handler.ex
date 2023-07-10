@@ -71,22 +71,27 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {:tcp, _, bin}, :exchange, %{socket: socket} = data) do
-    hello = decode_startup_packet(bin)
-    Logger.warning("Client startup message: #{inspect(hello)}")
-    {user, external_id} = parse_user_info(hello.payload["user"])
-    Logger.metadata(project: external_id, user: user)
+    with {:ok, hello} <- decode_startup_packet(bin) do
+      Logger.warning("Client startup message: #{inspect(hello)}")
+      {user, external_id} = parse_user_info(hello.payload["user"])
+      Logger.metadata(project: external_id, user: user)
 
-    case Tenants.get_user(external_id, user) do
-      {:ok, user_info} ->
-        new_data = update_user_data(data, external_id, user_info)
+      case Tenants.get_user(external_id, user) do
+        {:ok, user_info} ->
+          new_data = update_user_data(data, external_id, user_info)
 
-        {:keep_state, new_data,
-         {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
+          {:keep_state, new_data,
+           {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
 
-      {:error, reason} ->
-        Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
-        Server.send_error(socket, "XX000", "Tenant or user not found")
-        {:stop, :normal, data}
+        {:error, reason} ->
+          Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
+          Server.send_error(socket, "XX000", "Tenant or user not found")
+          {:stop, :normal, data}
+      else
+        {:error, :bad_startup_payload} ->
+          Logger.warn("Bad startup packet received", bin: bin)
+          {:stop, :normal, data}
+      end
     end
   end
 
@@ -295,18 +300,43 @@ defmodule Supavisor.ClientHandler do
   end
 
   def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
-    %{
-      len: len,
-      payload:
-        String.split(rest, <<0>>, trim: true)
-        |> Enum.chunk_every(2)
-        |> Enum.into(%{}, fn [k, v] -> {k, v} end),
-      tag: :startup
-    }
+    with {:ok, payload} <- decode_startup_packet_payload(rest) do
+      pkt = %{
+        len: len,
+        payload: payload,
+        tag: :startup
+      }
+
+      {:ok, pkt}
+    end
   end
 
   def decode_startup_packet(_) do
     :undef
+  end
+
+  # The startup packet payload is a list of key/value pairs, separated by null bytes
+  defp decode_startup_packet_payload(payload) do
+    fields = String.split(payload, <<0>>, trim: true)
+
+    # If the number of fields is odd, then the payload is malformed
+    if rem(length(fields), 2) == 1 do
+      {:error, :bad_startup_payload}
+    else
+      map =
+        fields
+        |> Enum.chunk_every(2)
+        |> Enum.map(fn [k, v] -> {k, v} end)
+        |> Map.new()
+
+      # We only do light validation on the fields in the payload. The only field we use at the
+      # moment is `user`. If that's missing, this is a bad payload.
+      if Map.has_key?(map, "user") do
+        {:ok, map}
+      else
+        {:error, :bad_startup_payload}
+      end
+    end
   end
 
   @spec handle_exchange(port, fun) :: :ok | {:error, String.t()}
