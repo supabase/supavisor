@@ -115,7 +115,7 @@ defmodule Supavisor.ClientHandler do
       {:error, reason} ->
         Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
 
-        send_error(sock, "XX000", "Tenant or user not found")
+        :ok = send_error(sock, "XX000", "Tenant or user not found")
         {:stop, :normal, data}
     end
   end
