@@ -85,7 +85,7 @@ defmodule Supavisor.ClientHandler do
 
       case :ssl.handshake(tcp_sock, opts) do
         {:ok, ssl_sock} ->
-          :ssl.setopts(ssl_sock, active: true)
+          :ok = :ssl.setopts(ssl_sock, active: true)
           {:keep_state, %{data | sock: {:ssl, ssl_sock}, ssl: true}}
 
         error ->
