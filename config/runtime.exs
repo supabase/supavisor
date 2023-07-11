@@ -1,5 +1,6 @@
 import Config
 
+require Logger
 alias Supavisor.Helpers, as: H
 
 secret_key_base =
@@ -102,8 +103,41 @@ upstream_ca =
     File.read!(path)
     |> H.cert_to_bin()
     |> case do
-      {:ok, bin} -> bin
-      {:error, _} -> raise "There is no valid certificate in $GLOBAL_UPSTREAM_CA_PATH"
+      {:ok, bin} ->
+        Logger.info("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH",
+          ansi_color: :green
+        )
+
+        bin
+
+      {:error, _} ->
+        raise "There is no valid certificate in $GLOBAL_UPSTREAM_CA_PATH"
+    end
+  end
+
+downstream_cert =
+  if path = System.get_env("GLOBAL_DOWNSTREAM_CERT_PATH") do
+    if File.exists?(path) do
+      Logger.info("Loaded downstream cert from $GLOBAL_DOWNSTREAM_CERT_PATH, path: #{path}",
+        ansi_color: :green
+      )
+
+      path
+    else
+      raise "There is no such file in $GLOBAL_DOWNSTREAM_CERT_PATH"
+    end
+  end
+
+downstream_key =
+  if path = System.get_env("GLOBAL_DOWNSTREAM_KEY_PATH") do
+    if File.exists?(path) do
+      Logger.info("Loaded downstream key from $GLOBAL_DOWNSTREAM_KEY_PATH, path: #{path}",
+        ansi_color: :green
+      )
+
+      path
+    else
+      raise "There is no such file in $GLOBAL_DOWNSTREAM_KEY_PATH"
     end
   end
 
@@ -116,7 +150,9 @@ if config_env() != :test do
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
-    global_upstream_ca: upstream_ca
+    global_upstream_ca: upstream_ca,
+    global_downstream_cert: downstream_cert,
+    global_downstream_key: downstream_key
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),

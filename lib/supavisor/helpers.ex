@@ -140,4 +140,38 @@ defmodule Supavisor.Helpers do
   def upstream_cert(default) do
     Application.get_env(:supavisor, :global_upstream_ca) || default
   end
+
+  @spec downstream_cert() :: Path.t() | nil
+  def downstream_cert() do
+    Application.get_env(:supavisor, :global_downstream_cert)
+  end
+
+  @spec downstream_key() :: Path.t() | nil
+  def downstream_key() do
+    Application.get_env(:supavisor, :global_downstream_key)
+  end
+
+  @spec get_client_final(term(), binary(), iodata(), iodata(), binary()) :: {iodata(), binary()}
+  def get_client_final(srv_first, client_nonce, user_name, password, channel) do
+    channel_binding = "c=#{channel}"
+    nonce = ["r=", srv_first[:nonce]]
+
+    salt = srv_first[:salt]
+    i = srv_first[:i]
+
+    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(password), salt, i)
+    client_key = :pgo_scram.hmac(salted_password, "Client Key")
+    stored_key = :pgo_scram.h(client_key)
+    client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
+    server_first = srv_first[:raw]
+    client_final_without_proof = [channel_binding, ",", nonce]
+    auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
+    client_signature = :pgo_scram.hmac(stored_key, auth_message)
+    client_proof = :pgo_scram.bin_xor(client_key, client_signature)
+
+    server_key = :pgo_scram.hmac(salted_password, "Server Key")
+    server_signature = :pgo_scram.hmac(server_key, auth_message)
+
+    {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature}
+  end
 end
