@@ -16,8 +16,8 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem}
   alias Supavisor.Helpers, as: H
+  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem}
 
   @impl true
   def start_link(ref, _sock, transport, opts) do
