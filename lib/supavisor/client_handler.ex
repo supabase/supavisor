@@ -63,7 +63,7 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("Client is trying to request HTTP")
-    :gen_tcp.send(data.sock, "HTTP/1.1 204 OK\r\n\r\n")
+    sock_send(data.sock, "HTTP/1.1 204 OK\r\n\r\n")
     {:stop, :normal, data}
   end
 
@@ -191,7 +191,7 @@ defmodule Supavisor.ClientHandler do
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
-  def handle_event(:internal, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
+  def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
     case Db.call(data.db_pid, bin) do
       :ok ->
         Logger.info("DB call success")
