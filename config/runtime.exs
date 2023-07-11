@@ -104,7 +104,10 @@ upstream_ca =
     |> H.cert_to_bin()
     |> case do
       {:ok, bin} ->
-        Logger.warning("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH")
+        Logger.info("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH",
+          ansi_color: :green
+        )
+
         bin
 
       {:error, _} ->
@@ -115,7 +118,10 @@ upstream_ca =
 downstream_cert =
   if path = System.get_env("GLOBAL_DOWNSTREAM_CERT_PATH") do
     if File.exists?(path) do
-      Logger.warning("Loaded downstream cert from $GLOBAL_DOWNSTREAM_CERT_PATH, path: #{path}")
+      Logger.info("Loaded downstream cert from $GLOBAL_DOWNSTREAM_CERT_PATH, path: #{path}",
+        ansi_color: :green
+      )
+
       path
     else
       raise "There is no such file in $GLOBAL_DOWNSTREAM_CERT_PATH"
@@ -125,7 +131,10 @@ downstream_cert =
 downstream_key =
   if path = System.get_env("GLOBAL_DOWNSTREAM_KEY_PATH") do
     if File.exists?(path) do
-      Logger.warning("Loaded downstream key from $GLOBAL_DOWNSTREAM_KEY_PATH, path: #{path}")
+      Logger.info("Loaded downstream key from $GLOBAL_DOWNSTREAM_KEY_PATH, path: #{path}",
+        ansi_color: :green
+      )
+
       path
     else
       raise "There is no such file in $GLOBAL_DOWNSTREAM_KEY_PATH"

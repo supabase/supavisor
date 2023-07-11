@@ -67,7 +67,7 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal, data}
   end
 
-  def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, %{sock: {_, tcp_sock}} = data) do
+  def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, %{sock: sock} = data) do
     Logger.debug("Client is trying to connect with SSL")
 
     downstream_cert = H.downstream_cert()
@@ -75,18 +75,19 @@ defmodule Supavisor.ClientHandler do
 
     # SSL negotiation, S/N/Error
     if !!downstream_cert and !!downstream_key do
-      :ok = :inet.setopts(tcp_sock, active: false)
-      :ok = :gen_tcp.send(tcp_sock, "S")
+      :ok = setopts(sock, active: false)
+      :ok = sock_send(sock, "S")
 
       opts = [
         certfile: downstream_cert,
         keyfile: downstream_key
       ]
 
-      case :ssl.handshake(tcp_sock, opts) do
+      case :ssl.handshake(elem(sock, 1), opts) do
         {:ok, ssl_sock} ->
-          :ok = :ssl.setopts(ssl_sock, active: true)
-          {:keep_state, %{data | sock: {:ssl, ssl_sock}, ssl: true}}
+          socket = {:ssl, ssl_sock}
+          :ok = setopts(socket, active: true)
+          {:keep_state, %{data | sock: socket, ssl: true}}
 
         error ->
           Logger.error("SSL handshake error: #{inspect(error)}")
@@ -94,7 +95,7 @@ defmodule Supavisor.ClientHandler do
       end
     else
       Logger.error("User requested SSL connection but no downstream cert/key found")
-      :ok = :gen_tcp.send(tcp_sock, "N")
+      :ok = sock_send(data.sock, "N")
       :keep_state_and_data
     end
   end
@@ -439,5 +440,11 @@ defmodule Supavisor.ClientHandler do
   defp send_error(sock, code, message) do
     data = Server.error_message(code, message)
     sock_send(sock, data)
+  end
+
+  @spec setopts(sock, term()) :: :ok | {:error, term()}
+  defp setopts({mod, sock}, opts) do
+    mod = if mod == :gen_tcp, do: :inet, else: mod
+    mod.setopts(sock, opts)
   end
 end
