@@ -7,7 +7,7 @@ defmodule Supavisor.Repo.Migrations.AddEnforceSsl do
     end
   end
 
-  def up do
+  def down do
     alter table("tenants", prefix: "_supavisor") do
       remove(:enforce_ssl)
     end
