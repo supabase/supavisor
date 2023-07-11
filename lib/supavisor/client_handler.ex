@@ -94,7 +94,7 @@ defmodule Supavisor.ClientHandler do
       end
     else
       Logger.error("User requested SSL connection but no downstream cert/key found")
-      :gen_tcp.send(tcp_sock, "N")
+      :ok = :gen_tcp.send(tcp_sock, "N")
       :keep_state_and_data
     end
   end
