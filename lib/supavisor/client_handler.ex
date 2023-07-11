@@ -108,10 +108,16 @@ defmodule Supavisor.ClientHandler do
 
     case Tenants.get_user(external_id, user) do
       {:ok, user_info} ->
-        new_data = update_user_data(data, external_id, user_info)
+        if user_info.enforce_ssl and !data.ssl do
+          Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
+          :ok = send_error(sock, "XX000", "SSL connection is required")
+          {:stop, :normal, data}
+        else
+          new_data = update_user_data(data, external_id, user_info)
 
-        {:keep_state, new_data,
-         {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
+          {:keep_state, new_data,
+           {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
+        end
 
       {:error, reason} ->
         Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
