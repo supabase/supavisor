@@ -75,8 +75,8 @@ defmodule Supavisor.ClientHandler do
 
     # SSL negotiation, S/N/Error
     if !!downstream_cert and !!downstream_key do
-      :inet.setopts(tcp_sock, active: false)
-      :gen_tcp.send(tcp_sock, "S")
+      :ok = :inet.setopts(tcp_sock, active: false)
+      :ok = :gen_tcp.send(tcp_sock, "S")
 
       opts = [
         certfile: downstream_cert,
