@@ -140,4 +140,14 @@ defmodule Supavisor.Helpers do
   def upstream_cert(default) do
     Application.get_env(:supavisor, :global_upstream_ca) || default
   end
+
+  @spec downstream_cert() :: Path.t() | nil
+  def downstream_cert() do
+    Application.get_env(:supavisor, :global_downstream_cert)
+  end
+
+  @spec downstream_key() :: Path.t() | nil
+  def downstream_key() do
+    Application.get_env(:supavisor, :global_downstream_key)
+  end
 end
