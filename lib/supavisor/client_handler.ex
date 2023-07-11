@@ -360,7 +360,7 @@ defmodule Supavisor.ClientHandler do
             channel = if ssl, do: "eSws", else: "biws"
 
             {client_final_message, server_proof} =
-              :pgo_scram.get_client_final(server_first_parts, nonce, user, password.(), channel)
+              H.get_client_final(server_first_parts, nonce, user, password.(), channel)
 
             :ok = sock_send(sock, Server.exchange_message(:first, message))
 
