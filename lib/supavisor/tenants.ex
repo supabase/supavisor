@@ -52,14 +52,15 @@ defmodule Supavisor.Tenants do
       nil ->
         {:error, :not_found}
 
-      [[db_alias, pass, mode, timeout, ps]] ->
+      [[db_alias, pass, mode, timeout, ps, enforce_ssl]] ->
         {:ok,
          %{
            db_password: pass,
            db_user_alias: db_alias,
            mode_type: mode,
            pool_checkout_timeout: timeout,
-           default_parameter_status: ps
+           default_parameter_status: ps,
+           enforce_ssl: enforce_ssl
          }}
 
       _ ->
@@ -258,7 +259,8 @@ defmodule Supavisor.Tenants do
           u.db_password,
           u.mode_type,
           u.pool_checkout_timeout,
-          t.default_parameter_status
+          t.default_parameter_status,
+          t.enforce_ssl
         ]
       )
 
