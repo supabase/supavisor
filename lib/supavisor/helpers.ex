@@ -4,6 +4,17 @@ defmodule Supavisor.Helpers do
   @spec check_creds_get_ver(map) :: {:ok, String.t()} | {:error, String.t()}
   def check_creds_get_ver(params) do
     Enum.reduce_while(params["users"], {nil, nil}, fn user, _ ->
+      upstream_ssl? = !!params["upstream_ssl"]
+
+      ssl_opts =
+        if upstream_ssl? and params["upstream_verify"] == "peer" do
+          [
+            {:verify, :verify_peer},
+            {:cacerts, [upstream_cert(params["upstream_tls_ca"])]},
+            {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
+          ]
+        end
+
       {:ok, conn} =
         Postgrex.start_link(
           hostname: params["db_host"],
@@ -11,9 +22,11 @@ defmodule Supavisor.Helpers do
           database: params["db_database"],
           password: user["db_password"],
           username: user["db_user"],
+          ssl: upstream_ssl?,
           socket_options: [
             ip_version(params["ip_version"], params["db_host"])
-          ]
+          ],
+          ssl_opts: ssl_opts || []
         )
 
       check =
@@ -105,5 +118,60 @@ defmodule Supavisor.Helpers do
       {:ok, _} -> :inet
       _ -> :inet6
     end
+  end
+
+  @spec cert_to_bin(binary()) :: {:ok, binary()} | {:error, atom()}
+  def cert_to_bin(cert) do
+    case :public_key.pem_decode(cert) do
+      [] ->
+        {:error, :cant_decode_certificate}
+
+      pem_entries ->
+        cert = for {:Certificate, cert, :not_encrypted} <- pem_entries, do: cert
+
+        case cert do
+          [cert] -> {:ok, cert}
+          _ -> {:error, :invalid_certificate}
+        end
+    end
+  end
+
+  @spec upstream_cert(binary() | nil) :: binary() | nil
+  def upstream_cert(default) do
+    Application.get_env(:supavisor, :global_upstream_ca) || default
+  end
+
+  @spec downstream_cert() :: Path.t() | nil
+  def downstream_cert() do
+    Application.get_env(:supavisor, :global_downstream_cert)
+  end
+
+  @spec downstream_key() :: Path.t() | nil
+  def downstream_key() do
+    Application.get_env(:supavisor, :global_downstream_key)
+  end
+
+  @spec get_client_final(term(), binary(), iodata(), iodata(), binary()) :: {iodata(), binary()}
+  def get_client_final(srv_first, client_nonce, user_name, password, channel) do
+    channel_binding = "c=#{channel}"
+    nonce = ["r=", srv_first[:nonce]]
+
+    salt = srv_first[:salt]
+    i = srv_first[:i]
+
+    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(password), salt, i)
+    client_key = :pgo_scram.hmac(salted_password, "Client Key")
+    stored_key = :pgo_scram.h(client_key)
+    client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
+    server_first = srv_first[:raw]
+    client_final_without_proof = [channel_binding, ",", nonce]
+    auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
+    client_signature = :pgo_scram.hmac(stored_key, auth_message)
+    client_proof = :pgo_scram.bin_xor(client_key, client_signature)
+
+    server_key = :pgo_scram.hmac(salted_password, "Server Key")
+    server_signature = :pgo_scram.hmac(server_key, auth_message)
+
+    {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature}
   end
 end

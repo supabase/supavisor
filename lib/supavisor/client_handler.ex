@@ -6,16 +6,21 @@ defmodule Supavisor.ClientHandler do
   supervisor. Each client connection is assigned to a specific tenant supervisor.
   """
 
+  @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
+  @type ssl_sock :: {:ssl, :ssl.sslsocket()}
+  @type sock :: tcp_sock() | ssl_sock()
+
   require Logger
 
   @behaviour :ranch_protocol
   @behaviour :gen_statem
 
   alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Helpers, as: H
   alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem}
 
   @impl true
-  def start_link(ref, _socket, transport, opts) do
+  def start_link(ref, _sock, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
     {:ok, pid}
   end
@@ -33,12 +38,12 @@ defmodule Supavisor.ClientHandler do
   def init(ref, trans, _opts) do
     Process.flag(:trap_exit, true)
 
-    {:ok, socket} = :ranch.handshake(ref)
-    :ok = trans.setopts(socket, [{:active, true}])
+    {:ok, sock} = :ranch.handshake(ref)
+    :ok = trans.setopts(sock, active: true)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
     data = %{
-      socket: socket,
+      sock: {:gen_tcp, sock},
       trans: trans,
       db_pid: nil,
       tenant: nil,
@@ -48,29 +53,54 @@ defmodule Supavisor.ClientHandler do
       query_start: nil,
       mode: nil,
       timeout: nil,
-      ps: nil
+      ps: nil,
+      ssl: false
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
   end
 
   @impl true
-  def handle_event(:info, {:tcp, _, <<"GET", _::binary>>}, :exchange, data) do
+  def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("Client is trying to request HTTP")
-    :gen_tcp.send(data.socket, "HTTP/1.1 204 OK\r\n\r\n")
+    sock_send(data.sock, "HTTP/1.1 204 OK\r\n\r\n")
     {:stop, :normal, data}
   end
 
-  def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, data) do
-    Logger.warn("Client is trying to connect with SSL")
-    # TODO: implement SSL negotiation
-    # SSL negotiation, S/N/Error
-    :gen_tcp.send(data.socket, "N")
+  def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, %{sock: sock} = data) do
+    Logger.debug("Client is trying to connect with SSL")
 
-    :keep_state_and_data
+    downstream_cert = H.downstream_cert()
+    downstream_key = H.downstream_key()
+
+    # SSL negotiation, S/N/Error
+    if !!downstream_cert and !!downstream_key do
+      :ok = setopts(sock, active: false)
+      :ok = sock_send(sock, "S")
+
+      opts = [
+        certfile: downstream_cert,
+        keyfile: downstream_key
+      ]
+
+      case :ssl.handshake(elem(sock, 1), opts) do
+        {:ok, ssl_sock} ->
+          socket = {:ssl, ssl_sock}
+          :ok = setopts(socket, active: true)
+          {:keep_state, %{data | sock: socket, ssl: true}}
+
+        error ->
+          Logger.error("SSL handshake error: #{inspect(error)}")
+          {:stop, :normal, data}
+      end
+    else
+      Logger.error("User requested SSL connection but no downstream cert/key found")
+      :ok = sock_send(data.sock, "N")
+      :keep_state_and_data
+    end
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :exchange, %{socket: socket} = data) do
+  def handle_event(:info, {_proto, _, bin}, :exchange, %{sock: sock} = data) do
     hello = decode_startup_packet(bin)
     Logger.warning("Client startup message: #{inspect(hello)}")
     {user, external_id} = parse_user_info(hello.payload["user"])
@@ -78,33 +108,39 @@ defmodule Supavisor.ClientHandler do
 
     case Tenants.get_user(external_id, user) do
       {:ok, user_info} ->
-        new_data = update_user_data(data, external_id, user_info)
+        if user_info.enforce_ssl and !data.ssl do
+          Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
+          :ok = send_error(sock, "XX000", "SSL connection is required")
+          {:stop, :normal, data}
+        else
+          new_data = update_user_data(data, external_id, user_info)
 
-        {:keep_state, new_data,
-         {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
+          {:keep_state, new_data,
+           {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
+        end
 
       {:error, reason} ->
         Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
-        Server.send_error(socket, "XX000", "Tenant or user not found")
+
+        :ok = send_error(sock, "XX000", "Tenant or user not found")
         {:stop, :normal, data}
     end
   end
 
-  def handle_event(:internal, {:handle, pass}, _, %{socket: socket} = data) do
+  def handle_event(:internal, {:handle, pass}, _, %{sock: sock} = data) do
     Logger.info("Handle exchange")
 
-    case handle_exchange(socket, pass) do
+    case handle_exchange(sock, pass, data.ssl) do
       {:error, reason} ->
         Logger.error("Exchange error: #{inspect(reason)}")
-
-        "e=#{reason}"
-        |> Server.send_exchange_message(:final, socket)
+        msg = Server.exchange_message(:final, "e=#{reason}")
+        sock_send(sock, msg)
 
         {:stop, :normal, data}
 
       :ok ->
         Logger.info("Exchange success")
-        :ok = :gen_tcp.send(socket, Server.authentication_ok())
+        :ok = sock_send(sock, Server.authentication_ok())
         {:keep_state_and_data, {:next_event, :internal, :subscribe}}
     end
   end
@@ -132,8 +168,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, {:greetings, ps}, _, data) do
-    :ok = :gen_tcp.send(data.socket, Server.greetings(ps))
+  def handle_event(:internal, {:greetings, ps}, _, %{sock: sock} = data) do
+    :ok = sock_send(sock, Server.greetings(ps))
     {:next_state, :idle, data}
   end
 
@@ -143,25 +179,26 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:timeout, :wait_ps, _, data) do
     Logger.error("Wait parameter status timeout, send default #{inspect(data.ps)}}")
+
     ps = Server.encode_parameter_status(data.ps)
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
   # ignore termination messages
-  def handle_event(:info, {:tcp, _, <<?X, 4::32>>}, _, _) do
+  def handle_event(:info, {proto, _, <<?X, 4::32>>}, _, _) when proto in [:tcp, :ssl] do
     Logger.warn("Receive termination")
     :keep_state_and_data
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :idle, data) do
+  def handle_event(:info, {proto, _, bin}, :idle, data) do
     ts = System.monotonic_time()
     db_pid = db_checkout(:on_query, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
-     {:next_event, :internal, {:tcp, nil, bin}}}
+     {:next_event, :internal, {proto, nil, bin}}}
   end
 
-  def handle_event(_, {:tcp, _, bin}, :busy, data) do
+  def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
     case Db.call(data.db_pid, bin) do
       :ok ->
         Logger.info("DB call success")
@@ -173,7 +210,7 @@ defmodule Supavisor.ClientHandler do
         if size > 1_000_000 do
           msg = "Db buffer size is too big: #{size}"
           Logger.error(msg)
-          Server.send_error(data.socket, "XX000", msg)
+          sock_send(data.sock, Server.error_message("XX000", msg))
           {:stop, :normal, data}
         else
           Logger.debug("DB call buffering")
@@ -183,7 +220,7 @@ defmodule Supavisor.ClientHandler do
       {:error, reason} ->
         msg = "DB call error: #{inspect(reason)}"
         Logger.error(msg)
-        Server.send_error(data.socket, "XX000", msg)
+        sock_send(data.sock, Server.error_message("XX000", msg))
         {:stop, :normal, data}
     end
   end
@@ -200,6 +237,12 @@ defmodule Supavisor.ClientHandler do
   # client closed connection
   def handle_event(_, {:tcp_closed, _}, _, data) do
     Logger.debug("tcp soket closed for #{inspect(data.tenant)}")
+    {:stop, :normal}
+  end
+
+  def handle_event(_, {closed, _}, _, data)
+      when closed in [:tcp_closed, :ssl_closed] do
+    Logger.debug("#{closed} soket closed for #{inspect(data.tenant)}")
     {:stop, :normal}
   end
 
@@ -228,14 +271,14 @@ defmodule Supavisor.ClientHandler do
   def handle_event({:call, from}, {:client_call, bin, ready?}, _, data) do
     Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
 
-    reply = {:reply, from, :gen_tcp.send(data.socket, bin)}
+    reply = {:reply, from, sock_send(data.sock, bin)}
 
     if ready? do
       Logger.debug("Client is ready")
 
       db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
-      Telem.network_usage(:client, data.socket, data.tenant, data.user_alias)
+      Telem.network_usage(:client, data.sock, data.tenant, data.user_alias)
       Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
       {:next_state, :idle, %{data | db_pid: db_pid}, reply}
     else
@@ -273,7 +316,7 @@ defmodule Supavisor.ClientHandler do
       end
 
     Logger.error(msg)
-    Server.send_error(data.socket, "XX000", msg)
+    sock_send(data.sock, Server.error_message("XX000", msg))
     :ok
   end
 
@@ -309,38 +352,32 @@ defmodule Supavisor.ClientHandler do
     :undef
   end
 
-  @spec handle_exchange(port, fun) :: :ok | {:error, String.t()}
-  def handle_exchange(socket, password) do
-    :ok = Server.send_request_authentication(socket)
+  @spec handle_exchange(sock(), fun(), boolean()) :: :ok | {:error, String.t()}
+  def handle_exchange({_, socket} = sock, password, ssl) do
+    :ok = sock_send(sock, Server.auth_request())
 
     receive do
-      {:tcp, socket, bin} ->
+      {_proto, ^socket, bin} ->
         case Server.decode_pkt(bin) do
           {:ok,
            %{tag: :password_message, payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}},
            _} ->
             message = Server.exchange_first_message(nonce)
             server_first_parts = :pgo_scram.parse_server_first(message, nonce)
+            channel = if ssl, do: "eSws", else: "biws"
 
             {client_final_message, server_proof} =
-              :pgo_scram.get_client_final(
-                server_first_parts,
-                nonce,
-                user,
-                password.()
-              )
+              H.get_client_final(server_first_parts, nonce, user, password.(), channel)
 
-            :ok =
-              message
-              |> Server.send_exchange_message(:first, socket)
+            :ok = sock_send(sock, Server.exchange_message(:first, message))
 
             receive do
-              {:tcp, socket, bin} ->
+              {_proto, ^socket, bin} ->
                 case Server.decode_pkt(bin) do
                   {:ok, %{tag: :password_message, payload: {:first_msg_response, %{"p" => p}}}, _} ->
                     if p == List.last(client_final_message) do
-                      "v=#{Base.encode64(server_proof)}"
-                      |> Server.send_exchange_message(:final, socket)
+                      message = "v=#{Base.encode64(server_proof)}"
+                      :ok = sock_send(sock, Server.exchange_message(:final, message))
                     else
                       {:error, "Invalid client signature"}
                     end
@@ -398,5 +435,22 @@ defmodule Supavisor.ClientHandler do
         timeout: user_info.pool_checkout_timeout,
         ps: user_info.default_parameter_status
     }
+  end
+
+  @spec sock_send(tcp_sock() | ssl_sock(), iodata()) :: :ok | {:error, term()}
+  defp sock_send({mod, sock}, data) do
+    mod.send(sock, data)
+  end
+
+  @spec send_error(sock, String.t(), String.t()) :: :ok | {:error, term()}
+  defp send_error(sock, code, message) do
+    data = Server.error_message(code, message)
+    sock_send(sock, data)
+  end
+
+  @spec setopts(sock, term()) :: :ok | {:error, term()}
+  defp setopts({mod, sock}, opts) do
+    mod = if mod == :gen_tcp, do: :inet, else: mod
+    mod.setopts(sock, opts)
   end
 end

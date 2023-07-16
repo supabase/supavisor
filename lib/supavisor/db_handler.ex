@@ -4,12 +4,18 @@ defmodule Supavisor.DbHandler do
   It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
   """
 
+  @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
+  @type ssl_sock :: {:ssl, :ssl.sslsocket()}
+  @type sock :: tcp_sock() | ssl_sock()
+
   require Logger
 
   @behaviour :gen_statem
 
   alias Supavisor.ClientHandler, as: Client
   alias Supavisor.{Protocol.Server, Monitoring.Telem}
+
+  @reconnect_timeout 2_500
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -26,7 +32,7 @@ defmodule Supavisor.DbHandler do
     Logger.metadata(project: args.tenant, user: args.user_alias)
 
     data = %{
-      socket: nil,
+      sock: nil,
       caller: nil,
       sent: false,
       auth: args.auth,
@@ -50,30 +56,39 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
     Logger.info("Try to connect to DB")
 
-    socket_opts = [
+    sock_opts = [
       :binary,
       {:packet, :raw},
-      {:active, true},
+      {:active, false},
       auth.ip_version
     ]
 
-    case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
-      {:ok, socket} ->
+    reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
+
+    case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
+      {:ok, sock} ->
         Logger.debug("auth #{inspect(auth, pretty: true)}")
 
-        msg =
-          :pgo_protocol.encode_startup_message([
-            {"user", auth.user},
-            {"database", auth.database},
-            {"application_name", auth.application_name}
-          ])
+        case try_ssl_handshake({:gen_tcp, sock}, auth) do
+          {:ok, sock} ->
+            case send_startup(sock, auth) do
+              :ok ->
+                :ok = activate(sock)
+                {:next_state, :authentication, %{data | sock: sock}}
 
-        :ok = :gen_tcp.send(socket, msg)
-        {:next_state, :authentication, %{data | socket: socket}}
+              {:error, reason} ->
+                Logger.error("Send startup error #{inspect(reason)}")
+                reconnect_callback
+            end
+
+          {:error, error} ->
+            Logger.error("Handshake error #{inspect(error)}")
+            reconnect_callback
+        end
 
       other ->
         Logger.error("Connection failed #{inspect(other)}")
-        {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
+        reconnect_callback
     end
   end
 
@@ -82,7 +97,7 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:next_event, :internal, :connect}}
   end
 
-  def handle_event(:info, {:tcp, _, bin}, :authentication, data) do
+  def handle_event(:info, {_proto, _, bin}, :authentication, data) do
     dec_pkt = Server.decode(bin)
     Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
@@ -97,7 +112,8 @@ defmodule Supavisor.DbHandler do
         %{payload: {:authentication_sasl_password, methods_b}}, {ps, _} ->
           nonce =
             case Server.decode_string(methods_b) do
-              {:ok, "SCRAM-SHA-256", _} ->
+              {:ok, req_method, _} ->
+                Logger.debug("SASL method #{inspect(req_method)}")
                 nonce = :pgo_scram.get_nonce(16)
 
                 client_first =
@@ -114,11 +130,11 @@ defmodule Supavisor.DbHandler do
                 ]
 
                 bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
-                :gen_tcp.send(data.socket, bin)
+                :ok = sock_send(data.sock, bin)
                 nonce
 
               other ->
-                Logger.error("Undefined sasl method #{other}")
+                Logger.error("Undefined sasl method #{inspect(other)}")
                 nil
             end
 
@@ -137,7 +153,7 @@ defmodule Supavisor.DbHandler do
             )
 
           bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :gen_tcp.send(data.socket, bin)
+          :ok = sock_send(data.sock, bin)
 
           {ps, :authentication_server_first_message, server_proof}
 
@@ -154,7 +170,7 @@ defmodule Supavisor.DbHandler do
 
           bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
 
-          :gen_tcp.send(data.socket, bin)
+          :ok = sock_send(data.sock, bin)
 
           {ps, :authentication_md5}
 
@@ -192,26 +208,26 @@ defmodule Supavisor.DbHandler do
     if buff != [] do
       Logger.warning("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
       buff = Enum.reverse(buff)
-      :ok = :gen_tcp.send(data.socket, buff)
+      :ok = sock_send(data.sock, buff)
     end
 
     {:keep_state, %{data | buffer: []}}
   end
 
-  def handle_event(:info, {:tcp, _, bin}, _, data) do
+  def handle_event(:info, {_proto, _, bin}, _, data) do
     # check if the response ends with "ready for query"
     ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
     :ok = Client.client_call(data.caller, bin, ready)
 
     if ready do
-      Telem.network_usage(:db, data.socket, data.tenant, data.user_alias)
+      Telem.network_usage(:db, data.sock, data.tenant, data.user_alias)
     end
 
     :keep_state_and_data
   end
 
-  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{socket: socket} = data) do
-    reply = {:reply, from, :gen_tcp.send(socket, bin)}
+  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{sock: sock} = data) do
+    reply = {:reply, from, sock_send(sock, bin)}
     {:keep_state, %{data | caller: pid}, reply}
   end
 
@@ -225,7 +241,12 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | caller: pid, buffer: new_buff}, reply}
   end
 
-  def handle_event(:info, {:tcp_closed, socket}, state, %{socket: socket} = data) do
+  def handle_event(:info, {:tcp_closed, sock}, state, %{sock: sock} = data) do
+    Logger.error("Connection closed when state was #{state}")
+    {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
+  end
+
+  def handle_event(:info, {:ssl_closed, sock}, state, %{sock: sock} = data) do
     Logger.error("Connection closed when state was #{state}")
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
   end
@@ -235,8 +256,8 @@ defmodule Supavisor.DbHandler do
     Logger.error("Client handler #{inspect(pid)} went down with reason #{inspect(reason)}")
 
     if state == :idle do
-      :ok = :gen_tcp.send(data.socket, <<?X, 4::32>>)
-      :ok = :gen_tcp.close(data.socket)
+      :ok = sock_send(data.sock, <<?X, 4::32>>)
+      :ok = :gen_tcp.close(elem(data.sock, 1))
       {:stop, :normal, data}
     else
       {:keep_state, %{data | caller: nil, buffer: []}}
@@ -254,5 +275,79 @@ defmodule Supavisor.DbHandler do
     Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
+  end
+
+  @spec try_ssl_handshake(tcp_sock, map) :: {:ok, sock} | {:error, term()}
+  defp try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
+    case sock_send(sock, Server.ssl_request()) do
+      :ok -> ssl_recv(sock, auth)
+      error -> error
+    end
+  end
+
+  defp try_ssl_handshake(sock, _), do: {:ok, sock}
+
+  @spec ssl_recv(tcp_sock, map) :: {:ok, ssl_sock} | {:error, term}
+  defp ssl_recv({:gen_tcp, sock} = s, auth) do
+    case :gen_tcp.recv(sock, 1, 15_000) do
+      {:ok, <<?S>>} ->
+        ssl_connect(s, auth)
+
+      {:ok, <<?N>>} ->
+        {:error, :ssl_not_available}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @spec ssl_connect(tcp_sock, map, pos_integer) :: {:ok, ssl_sock} | {:error, term}
+  defp ssl_connect({:gen_tcp, sock}, auth, timeout \\ 5000) do
+    opts =
+      case auth.upstream_verify do
+        :peer ->
+          [
+            verify: :verify_peer,
+            cacerts: [auth.upstream_tls_ca],
+            customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+          ]
+
+        :none ->
+          [verify: :verify_none]
+      end
+
+    case :ssl.connect(sock, opts, timeout) do
+      {:ok, ssl_sock} ->
+        {:ok, {:ssl, ssl_sock}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @spec send_startup(sock(), map()) :: :ok | {:error, term}
+  defp send_startup(sock, auth) do
+    msg =
+      :pgo_protocol.encode_startup_message([
+        {"user", auth.user},
+        {"database", auth.database},
+        {"application_name", auth.application_name}
+      ])
+
+    sock_send(sock, msg)
+  end
+
+  @spec sock_send(tcp_sock | ssl_sock, iodata) :: :ok | {:error, term}
+  defp sock_send({mod, sock}, data) do
+    mod.send(sock, data)
+  end
+
+  @spec activate(tcp_sock | ssl_sock) :: :ok | {:error, term}
+  defp activate({:gen_tcp, sock}) do
+    :inet.setopts(sock, active: true)
+  end
+
+  defp activate({:ssl, sock}) do
+    :ssl.setopts(sock, active: true)
   end
 end

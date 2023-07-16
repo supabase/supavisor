@@ -126,7 +126,10 @@ defmodule Supavisor do
           database: db_database,
           password: fn -> db_pass end,
           application_name: "supavisor",
-          ip_version: H.ip_version(ip_ver, db_host)
+          ip_version: H.ip_version(ip_ver, db_host),
+          upstream_ssl: tenant_record.upstream_ssl,
+          upstream_verify: tenant_record.upstream_verify,
+          upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca)
         }
 
         args = %{

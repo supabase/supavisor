@@ -3,9 +3,16 @@ defmodule Supavisor.Monitoring.Telem do
 
   require Logger
 
-  @spec network_usage(atom(), port(), String.t(), String.t()) :: :ok
-  def network_usage(type, socket, tenant, user_alias) do
-    case :inet.getstat(socket) do
+  @spec network_usage(
+          atom(),
+          {:gen_tcp, :gen_tcp.socket()} | {:ssl, :ssl.socket()},
+          String.t(),
+          String.t()
+        ) :: :ok
+  def network_usage(type, {mod, socket}, tenant, user_alias) do
+    mod = if mod == :ssl, do: :ssl, else: :inet
+
+    case mod.getstat(socket) do
       {:ok, values} ->
         :telemetry.execute(
           [:supavisor, type, :network, :stat],

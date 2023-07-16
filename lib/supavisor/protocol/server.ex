@@ -11,6 +11,8 @@ defmodule Supavisor.Protocol.Server do
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
   @ready_for_query <<?Z, 5::32, ?I>>
+  @ssl_request <<8::32, 1234::16, 5679::16>>
+  @auth_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -247,8 +249,9 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def send_request_authentication(socket) do
-    :gen_tcp.send(socket, <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>)
+  @spec auth_request() :: iodata()
+  def auth_request() do
+    @auth_request
   end
 
   def exchange_first_message(nonce) do
@@ -257,9 +260,8 @@ defmodule Supavisor.Protocol.Server do
     "r=#{nonce <> server_nonce},s=#{secret},i=4096"
   end
 
-  @spec send_exchange_message(binary, :final | :first, port) ::
-          :ok | {:error, atom | {:timeout, binary}}
-  def send_exchange_message(message, type, socket) do
+  @spec exchange_message(:first | :final, binary()) :: iodata()
+  def exchange_message(type, message) do
     code =
       case type do
         :first ->
@@ -269,14 +271,13 @@ defmodule Supavisor.Protocol.Server do
           12
       end
 
-    :gen_tcp.send(socket, <<?R, byte_size(message) + 8::32, code::32, message::binary>>)
+    [<<?R, byte_size(message) + 8::32, code::32>>, message]
   end
 
-  @spec send_error(port, binary, binary) :: :ok | {:error, atom | {:timeout, binary}}
-  def send_error(socket, code, value) do
+  @spec error_message(binary(), binary()) :: iodata()
+  def error_message(code, value) do
     message = ["SFATAL", 0, "VFATAL", 0, "C", code, 0, "M", value, 0, 0]
-
-    :gen_tcp.send(socket, [<<?E, IO.iodata_length(message) + 4::32>>, message])
+    [<<?E, IO.iodata_length(message) + 4::32>>, message]
   end
 
   def decode_parameter_description("", acc), do: Enum.reverse(acc)
@@ -348,5 +349,11 @@ defmodule Supavisor.Protocol.Server do
   @spec ready_for_query() :: binary()
   def ready_for_query() do
     @ready_for_query
+  end
+
+  # SSLRequest message
+  @spec ssl_request() :: binary()
+  def ssl_request() do
+    @ssl_request
   end
 end

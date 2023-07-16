@@ -33,3 +33,5 @@ npm-debug.log
 /assets/node_modules/
 
 burrito_out/*
+
+supavisor-*.tar.gz

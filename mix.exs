@@ -10,7 +10,8 @@ defmodule Supavisor.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      releases: releases()
+      releases: releases(),
+      dialyzer: [plt_add_apps: [:mix]]
     ]
   end
 
@@ -57,6 +58,7 @@ defmodule Supavisor.MixProject do
       {:burrito, github: "burrito-elixir/burrito"},
       {:libcluster, "~> 3.3.1"},
       {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.1-rc.1"},
+      {:distillery, "~> 2.1"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},
@@ -69,6 +71,7 @@ defmodule Supavisor.MixProject do
   def releases do
     [
       supavisor: [
+        steps: [:assemble, &upgrade/1, :tar],
         include_erts: System.get_env("INCLUDE_ERTS", "true") == "true"
       ],
       supavisor_bin: [
@@ -107,5 +110,21 @@ defmodule Supavisor.MixProject do
     ]
   end
 
-  defp version, do: File.read!("./VERSION")
+  defp upgrade(release) do
+    from = System.get_env("UPGRADE_FROM")
+
+    if from do
+      vsn = release.version
+      path = Path.join([release.path, "releases", "supavisor-#{vsn}.rel"])
+      rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))
+
+      Mix.Task.run("supavisor.gen.appup", ["--from=" <> from, "--to=" <> vsn])
+      :ok = File.write!(path, rel_content)
+      Mix.Task.run("supavisor.gen.relup", ["--from=" <> from, "--to=" <> vsn])
+    end
+
+    release
+  end
+
+  defp version, do: File.read!("./VERSION") |> String.trim()
 end
