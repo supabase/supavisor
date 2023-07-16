@@ -7,7 +7,7 @@ on:
 jobs:
   generate_binary:
     name: Create binary release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
       - name: Setup elixir
@@ -16,22 +16,36 @@ jobs:
         with:
           otp-version: 25.x # Define the OTP version [required]
           elixir-version: 1.14.x # Define the elixir version [required]
-          experimental-otp: true # see https://github.com/actions/setup-elixir/issues/49
+          experimental-otp: true
       - name: Cache Mix
-        uses: actions/cache@v1
+        uses: actions/cache@v3
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
           restore-keys: |
             ${{ runner.os }}-mix-
+      - name: Cache Burrito OTP  deps
+        uses: actions/cache@v3
+        with:
+          key: ${{ runner.os }}-burrito-
+          path: |
+            ~/.cache/burrito_file_cache/
+            ~/burrito_out/
       - name: Install dependencies
         run: mix deps.get
+      - name: Install xz
+        run: sudo apt-get update && sudo apt-get install xz-utils
       - name: Setup Zig for burrito
         uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.10.0
       - name: Create release
         run: mix release supavisor_bin
-      - uses: AButler/upload-release-assets@v2.0
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
         with:
-          files: "supavisor_bin-${GITHUB_REF#refs/*/}"
-          release-tag: v${GITHUB_REF#refs/*/}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: burrito_out/*
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
