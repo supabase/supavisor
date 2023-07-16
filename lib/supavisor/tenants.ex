@@ -52,19 +52,32 @@ defmodule Supavisor.Tenants do
       nil ->
         {:error, :not_found}
 
-      [[db_alias, pass, mode, timeout, ps, enforce_ssl]] ->
-        {:ok,
-         %{
-           db_password: pass,
-           db_user_alias: db_alias,
-           mode_type: mode,
-           pool_checkout_timeout: timeout,
-           default_parameter_status: ps,
-           enforce_ssl: enforce_ssl
-         }}
+      [{%User{}, %Tenant{}} = {user, tenant}] ->
+        {:ok, %{user: user, tenant: tenant}}
+
+      [] ->
+        get_auth_user(external_id)
 
       _ ->
         {:error, :multiple_results}
+    end
+  end
+
+  def get_auth_user(external_id) do
+    query =
+      from(t in Tenant,
+        join: u in User,
+        on: u.tenant_external_id == t.external_id,
+        where: t.external_id == ^external_id and t.require_user == false,
+        select: {u, t}
+      )
+
+    case Repo.all(query) do
+      [{%User{}, %Tenant{}} = {user, tenant}] ->
+        {:ok, %{user: user, tenant: tenant}}
+
+      _ ->
+        {:error, :no_found}
     end
   end
 
@@ -254,14 +267,7 @@ defmodule Supavisor.Tenants do
         join: t in Tenant,
         on: u.tenant_external_id == t.external_id,
         where: u.tenant_external_id == ^external_id,
-        select: [
-          u.db_user_alias,
-          u.db_password,
-          u.mode_type,
-          u.pool_checkout_timeout,
-          t.default_parameter_status,
-          t.enforce_ssl
-        ]
+        select: {u, t}
       )
 
     if user do

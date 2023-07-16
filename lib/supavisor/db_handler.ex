@@ -13,6 +13,7 @@ defmodule Supavisor.DbHandler do
   @behaviour :gen_statem
 
   alias Supavisor.ClientHandler, as: Client
+  alias Supavisor.Helpers, as: H
   alias Supavisor.{Protocol.Server, Monitoring.Telem}
 
   @reconnect_timeout 2_500
@@ -71,6 +72,7 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
+            # TODO: fix user name
             case send_startup(sock, auth) do
               :ok ->
                 :ok = activate(sock)
@@ -115,11 +117,8 @@ defmodule Supavisor.DbHandler do
               {:ok, req_method, _} ->
                 Logger.debug("SASL method #{inspect(req_method)}")
                 nonce = :pgo_scram.get_nonce(16)
-
-                client_first =
-                  data.auth.user
-                  |> :pgo_scram.get_client_first(nonce)
-
+                user = get_user(data.auth)
+                client_first = :pgo_scram.get_client_first(user, nonce)
                 client_first_size = IO.iodata_length(client_first)
 
                 sasl_initial_response = [
@@ -139,6 +138,26 @@ defmodule Supavisor.DbHandler do
             end
 
           {ps, :authentication_sasl, nonce}
+
+        %{payload: {:authentication_server_first_message, server_first}}, {ps, _}
+        when data.auth.require_user == false ->
+          nonce = data.nonce
+          server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
+
+          {client_final_message, server_proof} =
+            H.get_client_final(
+              :auth_query,
+              data.auth.secrets.(),
+              server_first_parts,
+              nonce,
+              data.auth.secrets.().user,
+              "biws"
+            )
+
+          bin = :pgo_protocol.encode_scram_response_message(client_final_message)
+          :ok = sock_send(data.sock, bin)
+
+          {ps, :authentication_server_first_message, server_proof}
 
         %{payload: {:authentication_server_first_message, server_first}}, {ps, _} ->
           nonce = data.nonce
@@ -327,9 +346,11 @@ defmodule Supavisor.DbHandler do
 
   @spec send_startup(sock(), map()) :: :ok | {:error, term}
   defp send_startup(sock, auth) do
+    user = get_user(auth)
+
     msg =
       :pgo_protocol.encode_startup_message([
-        {"user", auth.user},
+        {"user", user},
         {"database", auth.database},
         {"application_name", auth.application_name}
       ])
@@ -349,5 +370,13 @@ defmodule Supavisor.DbHandler do
 
   defp activate({:ssl, sock}) do
     :ssl.setopts(sock, active: true)
+  end
+
+  defp get_user(auth) do
+    if auth.require_user do
+      auth.user
+    else
+      auth.secrets.().user
+    end
   end
 end

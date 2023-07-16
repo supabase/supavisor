@@ -63,7 +63,8 @@ defmodule Supavisor.Application do
         PartitionSupervisor,
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
-      Supavisor.Vault
+      Supavisor.Vault,
+      {Cachex, name: Supavisor.Cache}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

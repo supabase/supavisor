@@ -7,11 +7,11 @@ defmodule Supavisor do
   @registry Supavisor.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
 
-  @spec start(String.t(), String.t()) :: {:ok, pid} | {:error, any()}
-  def start(tenant, user_alias) do
+  @spec start(String.t(), String.t(), fun()) :: {:ok, pid} | {:error, any()}
+  def start(tenant, user_alias, client_key) do
     case get_global_sup(tenant, user_alias) do
       nil ->
-        start_local_pool(tenant, user_alias)
+        start_local_pool(tenant, user_alias, client_key)
 
       pid ->
         {:ok, pid}
@@ -97,8 +97,8 @@ defmodule Supavisor do
 
   ## Internal functions
 
-  @spec start_local_pool(String.t(), String.t()) :: {:ok, pid} | {:error, any()}
-  defp start_local_pool(tenant, user_alias) do
+  @spec start_local_pool(String.t(), String.t(), term()) :: {:ok, pid} | {:error, any()}
+  defp start_local_pool(tenant, user_alias, auth_secrets) do
     Logger.debug("Starting pool for #{inspect({tenant, user_alias})}")
 
     case Tenants.get_pool_config(tenant, user_alias) do
@@ -129,7 +129,9 @@ defmodule Supavisor do
           ip_version: H.ip_version(ip_ver, db_host),
           upstream_ssl: tenant_record.upstream_ssl,
           upstream_verify: tenant_record.upstream_verify,
-          upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca)
+          upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
+          require_user: tenant_record.require_user,
+          secrets: auth_secrets
         }
 
         args = %{
