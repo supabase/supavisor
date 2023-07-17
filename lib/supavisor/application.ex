@@ -16,21 +16,26 @@ defmodule Supavisor.Application do
         {Supavisor.SignalHandler, []}
       )
 
-    proxy_port = Application.get_env(:supavisor, :proxy_port)
+    proxy_ports = [
+      {Application.get_env(:supavisor, :proxy_port), :transaction},
+      {Application.get_env(:supavisor, :proxy_port_session), :session}
+    ]
 
-    :ranch.start_listener(
-      :pg_proxy,
-      :ranch_tcp,
-      %{
-        max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
-        num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-        socket_opts: [port: proxy_port]
-      },
-      Supavisor.ClientHandler,
-      []
-    )
-    |> then(&"Proxy started on port #{proxy_port}, result: #{inspect(&1)}")
-    |> Logger.warning()
+    for {port, mode} <- proxy_ports do
+      :ranch.start_listener(
+        :pg_proxy,
+        :ranch_tcp,
+        %{
+          max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
+          num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+          socket_opts: [port: port]
+        },
+        Supavisor.ClientHandler,
+        %{def_mode_type: mode}
+      )
+      |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
+      |> Logger.warning()
+    end
 
     :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants])

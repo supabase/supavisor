@@ -35,7 +35,7 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def init(_), do: :ignore
 
-  def init(ref, trans, _opts) do
+  def init(ref, trans, opts) do
     Process.flag(:trap_exit, true)
 
     {:ok, sock} = :ranch.handshake(ref)
@@ -55,7 +55,8 @@ defmodule Supavisor.ClientHandler do
       timeout: nil,
       ps: nil,
       ssl: false,
-      auth_secrets: nil
+      auth_secrets: nil,
+      def_mode_type: opts.def_mode_type
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -168,7 +169,8 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _, %{tenant: tenant, user_alias: db_alias} = data) do
     Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
-    with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias, data.auth_secrets),
+    with {:ok, tenant_sup} <-
+           Supavisor.start(tenant, db_alias, data.auth_secrets, data.def_mode_type),
          {:ok, %{manager: manager, pool: pool}, ps} <-
            Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias) do
       Process.monitor(manager)
@@ -512,17 +514,16 @@ defmodule Supavisor.ClientHandler do
     cache_key = {:secrets, tenant.external_id, user}
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {resp, ttl} =
+           resp =
              case get_secrets(info, db_user) do
                {:ok, _} = ok ->
-                 # cache for 1 hour
-                 {ok, :timer.seconds(3600)}
+                 ok
 
                error ->
-                 {error, :timer.seconds(15)}
+                 error
              end
 
-           {:commit, {:cached, resp}, ttl: ttl}
+           {:commit, {:cached, resp}, ttl: 5_000}
          end) do
       {_, {:cached, value}} ->
         value

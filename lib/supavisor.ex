@@ -7,11 +7,11 @@ defmodule Supavisor do
   @registry Supavisor.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
 
-  @spec start(String.t(), String.t(), fun()) :: {:ok, pid} | {:error, any()}
-  def start(tenant, user_alias, client_key) do
+  @spec start(String.t(), String.t(), fun(), atom() | nil) :: {:ok, pid} | {:error, any()}
+  def start(tenant, user_alias, client_key, def_mode_type \\ nil) do
     case get_global_sup(tenant, user_alias) do
       nil ->
-        start_local_pool(tenant, user_alias, client_key)
+        start_local_pool(tenant, user_alias, client_key, def_mode_type)
 
       pid ->
         {:ok, pid}
@@ -97,8 +97,9 @@ defmodule Supavisor do
 
   ## Internal functions
 
-  @spec start_local_pool(String.t(), String.t(), term()) :: {:ok, pid} | {:error, any()}
-  defp start_local_pool(tenant, user_alias, auth_secrets) do
+  @spec start_local_pool(String.t(), String.t(), term(), atom() | nil) ::
+          {:ok, pid} | {:error, any()}
+  defp start_local_pool(tenant, user_alias, auth_secrets, def_mode_type) do
     Logger.debug("Starting pool for #{inspect({tenant, user_alias})}")
 
     case Tenants.get_pool_config(tenant, user_alias) do
@@ -133,6 +134,13 @@ defmodule Supavisor do
           require_user: tenant_record.require_user,
           secrets: auth_secrets
         }
+
+        mode =
+          if is_nil(def_mode_type) do
+            mode
+          else
+            def_mode_type
+          end
 
         args = %{
           tenant: tenant,

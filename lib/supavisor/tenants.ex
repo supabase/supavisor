@@ -77,7 +77,7 @@ defmodule Supavisor.Tenants do
         {:ok, %{user: user, tenant: tenant}}
 
       _ ->
-        {:error, :no_found}
+        {:error, :not_found}
     end
   end
 

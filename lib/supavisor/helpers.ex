@@ -97,6 +97,10 @@ defmodule Supavisor.Helpers do
       %{columns: [_, _], rows: [[^user, secret]]} ->
         parse_secret(secret, user)
 
+      %{columns: [_, _], rows: []} ->
+        {:error,
+         "There is no user #{user} in the database. Please create it or change the user in the config"}
+
       %{columns: colums} ->
         {:error,
          "Authentification query returned wrong format. Should be two columns: user and secret, but got: #{inspect(colums)}"}
