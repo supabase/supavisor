@@ -17,7 +17,7 @@ defmodule Supavisor.Application do
       )
 
     proxy_ports = [
-      {Application.get_env(:supavisor, :proxy_port), :transaction},
+      {Application.get_env(:supavisor, :proxy_port_transaction), :transaction},
       {Application.get_env(:supavisor, :proxy_port_session), :session}
     ]
 

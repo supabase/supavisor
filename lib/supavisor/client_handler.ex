@@ -379,76 +379,58 @@ defmodule Supavisor.ClientHandler do
   def handle_exchange({_, socket} = sock, {method, secrets}, ssl) do
     :ok = sock_send(sock, Server.auth_request())
 
+    with {:ok,
+          %{
+            tag: :password_message,
+            payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}
+          }, _} <- receive_next(socket, "Timeout while waiting for the first password message"),
+         {:ok, signatures} = reply_first_exchange(sock, method, secrets, nonce, user, ssl),
+         {:ok,
+          %{
+            tag: :password_message,
+            payload: {:first_msg_response, %{"p" => p}}
+          }, _} <- receive_next(socket, "Timeout while waiting for the second password message"),
+         {:ok, key} <- authenticate_exchange(method, secrets, signatures, p) do
+      message = "v=#{Base.encode64(signatures.server)}"
+      :ok = sock_send(sock, Server.exchange_message(:final, message))
+      {:ok, key}
+    else
+      {:error, message} -> {:error, message}
+      other -> {:error, "Unexpected message #{inspect(other)}"}
+    end
+  end
+
+  defp receive_next(socket, timeout_message) do
     receive do
       {_proto, ^socket, bin} ->
-        case Server.decode_pkt(bin) do
-          {:ok,
-           %{
-             tag: :password_message,
-             payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}
-           }, _} ->
-            channel = if ssl, do: "eSws", else: "biws"
-            {message, signatures} = exchange_first(method, secrets, nonce, user, channel)
-            :ok = sock_send(sock, Server.exchange_message(:first, message))
-
-            receive do
-              {_proto, ^socket, bin} ->
-                case Server.decode_pkt(bin) do
-                  {:ok,
-                   %{
-                     tag: :password_message,
-                     payload: {:first_msg_response, %{"p" => p}}
-                   }, _}
-                  when method == :password ->
-                    if p == signatures.client do
-                      message = "v=#{Base.encode64(signatures.server)}"
-
-                      :ok = sock_send(sock, Server.exchange_message(:final, message))
-
-                      {:ok, nil}
-                    else
-                      {:error, "Invalid client signature"}
-                    end
-
-                  {:ok,
-                   %{
-                     tag: :password_message,
-                     payload: {:first_msg_response, %{"p" => p}}
-                   }, _}
-                  when method == :auth_query ->
-                    client_key = :crypto.exor(p |> Base.decode64!(), signatures.client)
-
-                    if H.hash(client_key) == secrets.().stored_key do
-                      message = "v=#{Base.encode64(signatures.server)}"
-
-                      :ok =
-                        sock_send(
-                          sock,
-                          Server.exchange_message(:final, message)
-                        )
-
-                      {:ok, client_key}
-                    else
-                      {:error, "Invalid client signature"}
-                    end
-
-                  other ->
-                    {:error, "Unexpected message #{inspect(other)}"}
-                end
-
-              other ->
-                {:error, "Unexpected message #{inspect(other)}"}
-            after
-              15_000 ->
-                {:error, "Timeout while waiting for the second password message"}
-            end
-
-          other ->
-            {:error, "Unexpected message #{inspect(other)}"}
-        end
+        Server.decode_pkt(bin)
     after
-      15_000 ->
-        {:error, "Timeout while waiting for the first password message"}
+      15_000 -> {:error, timeout_message}
+    end
+  end
+
+  defp reply_first_exchange(sock, method, secrets, nonce, user, ssl) do
+    channel = if ssl, do: "eSws", else: "biws"
+    {message, signatures} = exchange_first(method, secrets, nonce, user, channel)
+    :ok = sock_send(sock, Server.exchange_message(:first, message))
+    {:ok, signatures}
+  end
+
+  defp authenticate_exchange(:password, _secrets, signatures, p) do
+    if p == signatures.client do
+      {:ok, nil}
+    else
+      {:error, "Invalid client signature"}
+    end
+  end
+
+  defp authenticate_exchange(:auth_query, secrets, signatures, p) do
+    client_key = :crypto.exor(p |> Base.decode64!(), signatures.client)
+
+    if H.hash(client_key) == secrets.().stored_key do
+      {:ok, client_key}
+    else
+      {:error, "Invalid client signature"}
     end
   end
 
@@ -566,7 +548,7 @@ defmodule Supavisor.ClientHandler do
           {binary(), map()}
   defp exchange_first(:password, secret, nonce, user, channel) do
     message = Server.exchange_first_message(nonce)
-    server_first_parts = :pgo_scram.parse_server_first(message, nonce)
+    server_first_parts = H.parse_server_first(message, nonce)
 
     {client_final_message, server_proof} =
       H.get_client_final(
@@ -589,7 +571,7 @@ defmodule Supavisor.ClientHandler do
   defp exchange_first(:auth_query, secret, nonce, user, channel) do
     secret = secret.()
     message = Server.exchange_first_message(nonce, secret.salt)
-    server_first_parts = :pgo_scram.parse_server_first(message, nonce)
+    server_first_parts = H.parse_server_first(message, nonce)
 
     sings =
       H.signatures(

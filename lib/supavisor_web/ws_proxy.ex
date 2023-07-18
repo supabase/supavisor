@@ -60,7 +60,7 @@ defmodule SupavisorWeb.WsProxy do
 
   @spec connect_local() :: {:ok, port()} | {:error, term()}
   defp connect_local() do
-    proxy_port = Application.fetch_env!(:supavisor, :proxy_port)
+    proxy_port = Application.fetch_env!(:supavisor, :proxy_port_transaction)
     :gen_tcp.connect('localhost', proxy_port, [:binary, packet: :raw, active: true])
   end
 end

@@ -226,6 +226,8 @@ defmodule Supavisor.Helpers do
     Application.get_env(:supavisor, :global_downstream_key)
   end
 
+  @spec get_client_final(:password | :auth_query, map(), map(), binary(), binary(), binary()) ::
+          {iolist(), binary()}
   def get_client_final(
         :password,
         secrets,
@@ -235,16 +237,16 @@ defmodule Supavisor.Helpers do
         channel
       ) do
     channel_binding = "c=#{channel}"
-    nonce = ["r=", srv_first[:nonce]]
+    nonce = ["r=", srv_first.nonce]
 
-    salt = srv_first[:salt]
-    i = srv_first[:i]
+    salt = srv_first.salt
+    i = srv_first.i
 
     salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(secrets), salt, i)
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
     client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
-    server_first = srv_first[:raw]
+    server_first = srv_first.raw
     client_final_without_proof = [channel_binding, ",", nonce]
     auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
     client_signature = :pgo_scram.hmac(stored_key, auth_message)
@@ -265,10 +267,10 @@ defmodule Supavisor.Helpers do
         channel
       ) do
     channel_binding = "c=#{channel}"
-    nonce = ["r=", srv_first[:nonce]]
+    nonce = ["r=", srv_first.nonce]
 
     client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
-    server_first = srv_first[:raw]
+    server_first = srv_first.raw
     client_final_without_proof = [channel_binding, ",", nonce]
     auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
     client_signature = :pgo_scram.hmac(secrets.stored_key, auth_message)
@@ -281,9 +283,9 @@ defmodule Supavisor.Helpers do
 
   def signatures(stored_key, server_key, srv_first, client_nonce, user_name, channel) do
     channel_binding = "c=#{channel}"
-    nonce = ["r=", srv_first[:nonce]]
+    nonce = ["r=", srv_first.nonce]
     client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
-    server_first = srv_first[:raw]
+    server_first = srv_first.raw
     client_final_without_proof = [channel_binding, ",", nonce]
     auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
 
@@ -295,5 +297,10 @@ defmodule Supavisor.Helpers do
 
   def hash(bin) do
     :crypto.hash(:sha256, bin)
+  end
+
+  @spec parse_server_first(binary(), binary()) :: map()
+  def parse_server_first(message, nonce) do
+    :pgo_scram.parse_server_first(message, nonce) |> Map.new()
   end
 end

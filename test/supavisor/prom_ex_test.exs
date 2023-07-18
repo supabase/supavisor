@@ -13,7 +13,7 @@ defmodule Supavisor.PromExTest do
     {:ok, proxy} =
       Postgrex.start_link(
         hostname: db_conf[:hostname],
-        port: Application.get_env(:supavisor, :proxy_port),
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
         database: db_conf[:database],
         password: db_conf[:password],
         username: db_conf[:username] <> "." <> @tenant

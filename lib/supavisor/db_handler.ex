@@ -142,7 +142,7 @@ defmodule Supavisor.DbHandler do
         %{payload: {:authentication_server_first_message, server_first}}, {ps, _}
         when data.auth.require_user == false ->
           nonce = data.nonce
-          server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
+          server_first_parts = H.parse_server_first(server_first, nonce)
 
           {client_final_message, server_proof} =
             H.get_client_final(
