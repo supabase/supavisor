@@ -93,7 +93,7 @@ defmodule Supavisor.Helpers do
 
       %{columns: [_, _], rows: []} ->
         {:error,
-         "There is no user #{user} in the database. Please create it or change the user in the config"}
+         "There is no user '#{user}' in the database. Please create it or change the user in the config"}
 
       %{columns: colums} ->
         {:error,

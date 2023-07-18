@@ -43,10 +43,10 @@ defmodule Supavisor.Tenants do
     Tenant |> Repo.get_by(external_id: external_id) |> Repo.preload(:users)
   end
 
-  @spec get_user(String.t(), String.t() | nil) ::
+  @spec get_user(String.t(), String.t() | nil, String.t() | nil) ::
           {:ok, map()} | {:error, :not_found | :multiple_results}
-  def get_user(external_id, user) do
-    query = build_user_query(external_id, user)
+  def get_user(user, external_id, sni_hostname) do
+    query = build_user_query(user, external_id, sni_hostname)
 
     case Repo.all(query) do
       nil ->
@@ -56,21 +56,30 @@ defmodule Supavisor.Tenants do
         {:ok, %{user: user, tenant: tenant}}
 
       [] ->
-        get_auth_user(external_id)
+        get_auth_user(external_id, sni_hostname)
 
       _ ->
         {:error, :multiple_results}
     end
   end
 
-  def get_auth_user(external_id) do
+  def get_auth_user(external_id, sni_hostname) do
     query =
-      from(t in Tenant,
-        join: u in User,
-        on: u.tenant_external_id == t.external_id,
-        where: t.external_id == ^external_id and t.require_user == false,
-        select: {u, t}
-      )
+      if sni_hostname do
+        from(u in User,
+          join: t in Tenant,
+          on: u.tenant_external_id == t.external_id,
+          where: t.sni_hostname == ^sni_hostname and t.require_user == false,
+          select: {u, t}
+        )
+      else
+        from(t in Tenant,
+          join: u in User,
+          on: u.tenant_external_id == t.external_id,
+          where: t.external_id == ^external_id and t.require_user == false,
+          select: {u, t}
+        )
+      end
 
     case Repo.all(query) do
       [{%User{}, %Tenant{}} = {user, tenant}] ->
@@ -260,22 +269,32 @@ defmodule Supavisor.Tenants do
     User.changeset(user, attrs)
   end
 
-  @spec build_user_query(String.t(), String.t() | nil) :: Ecto.Queryable.t()
-  defp build_user_query(external_id, user) do
-    query =
-      from(u in User,
-        join: t in Tenant,
-        on: u.tenant_external_id == t.external_id,
-        where: u.tenant_external_id == ^external_id,
-        select: {u, t}
-      )
-
-    if user do
-      from(u in query,
-        where: u.db_user_alias == ^user
-      )
+  @spec build_user_query(String.t(), String.t() | nil, String.t() | nil) :: Ecto.Queryable.t()
+  defp build_user_query(user, external_id, sni_hostname) do
+    if sni_hostname do
+      query =
+        from(t in Tenant,
+          join: u in User,
+          on: u.tenant_external_id == t.external_id,
+          where: t.sni_hostname == ^sni_hostname,
+          select: {u, t}
+        )
     else
-      query
+      query =
+        from(u in User,
+          join: t in Tenant,
+          on: u.tenant_external_id == t.external_id,
+          where: u.tenant_external_id == ^external_id,
+          select: {u, t}
+        )
+
+      if user do
+        from(u in query,
+          where: u.db_user_alias == ^user
+        )
+      else
+        query
+      end
     end
   end
 end
