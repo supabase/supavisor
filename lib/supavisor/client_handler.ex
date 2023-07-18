@@ -514,16 +514,7 @@ defmodule Supavisor.ClientHandler do
     cache_key = {:secrets, tenant.external_id, user}
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           resp =
-             case get_secrets(info, db_user) do
-               {:ok, _} = ok ->
-                 ok
-
-               error ->
-                 error
-             end
-
-           {:commit, {:cached, resp}, ttl: 5_000}
+           {:commit, {:cached, get_secrets(info, db_user)}, ttl: 5_000}
          end) do
       {_, {:cached, value}} ->
         value

@@ -4,21 +4,15 @@ defmodule Supavisor.Helpers do
   @spec check_creds_get_ver(map) :: {:ok, String.t()} | {:error, String.t()}
 
   def check_creds_get_ver(%{"require_user" => false} = params) do
-    with :ok <-
-           if(length(params["users"]) == 1,
-             do: :ok,
-             else: "Can't use 'require_user' and 'auth_query' with multiple users"
-           ),
-         :ok <-
-           if(
-             hd(params["users"])["is_manager"],
-             do: :ok,
-             else: "Can't use 'require_user' and 'auth_query' with non-manager user"
-           ) do
-      do_check_creds_get_ver(params)
-    else
-      reason ->
-        {:error, reason}
+    cond do
+      length(params["users"]) != 1 ->
+        {:error, "Can't use 'require_user' and 'auth_query' with multiple users"}
+
+      !hd(params["users"])["is_manager"] ->
+        {:error, "Can't use 'require_user' and 'auth_query' with non-manager user"}
+
+      true ->
+        do_check_creds_get_ver(params)
     end
   end
 

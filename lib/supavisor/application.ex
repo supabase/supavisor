@@ -62,14 +62,14 @@ defmodule Supavisor.Application do
       SupavisorWeb.Telemetry,
       # Start the PubSub system
       {Phoenix.PubSub, name: Supavisor.PubSub},
-      # Start the Endpoint (http/https)
-      SupavisorWeb.Endpoint,
       {
         PartitionSupervisor,
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      {Cachex, name: Supavisor.Cache}
+      {Cachex, name: Supavisor.Cache},
+      # Start the Endpoint (http/https)
+      SupavisorWeb.Endpoint
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

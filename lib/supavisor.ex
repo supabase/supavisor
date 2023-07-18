@@ -135,19 +135,12 @@ defmodule Supavisor do
           secrets: auth_secrets
         }
 
-        mode =
-          if is_nil(def_mode_type) do
-            mode
-          else
-            def_mode_type
-          end
-
         args = %{
           tenant: tenant,
           user_alias: user_alias,
           auth: auth,
           pool_size: pool_size,
-          mode: mode,
+          mode: def_mode_type || mode,
           default_parameter_status: ps
         }
 
