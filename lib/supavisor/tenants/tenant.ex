@@ -24,6 +24,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:require_user, :boolean, default: false)
     field(:auth_query, :string)
     field(:default_pool_size, :integer, default: 15)
+    field(:sni_hostname, :string)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -51,7 +52,8 @@ defmodule Supavisor.Tenants.Tenant do
       :enforce_ssl,
       :require_user,
       :auth_query,
-      :default_pool_size
+      :default_pool_size,
+      :sni_hostname
     ])
     |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")
     |> check_constraint(:upstream_verify, name: :upstream_constraints, prefix: "_supavisor")

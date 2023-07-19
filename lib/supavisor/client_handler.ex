@@ -108,14 +108,16 @@ defmodule Supavisor.ClientHandler do
     {user, external_id} = parse_user_info(hello.payload["user"])
     Logger.metadata(project: external_id, user: user)
 
-    case Tenants.get_user(external_id, user) do
+    sni_hostname = try_get_sni(sock)
+
+    case Tenants.get_user(user, external_id, sni_hostname) do
       {:ok, info} ->
         if info.tenant.enforce_ssl and !data.ssl do
           Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
           :ok = send_error(sock, "XX000", "SSL connection is required")
           {:stop, :normal, data}
         else
-          new_data = update_user_data(data, external_id, info)
+          new_data = update_user_data(data, info)
 
           case auth_secrets(info, user) do
             {:ok, auth_secrets} ->
@@ -350,7 +352,7 @@ defmodule Supavisor.ClientHandler do
   def parse_user_info(username) do
     case :binary.matches(username, ".") do
       [] ->
-        {nil, username}
+        {username, nil}
 
       matches ->
         {pos, _} = List.last(matches)
@@ -458,10 +460,10 @@ defmodule Supavisor.ClientHandler do
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
-  defp update_user_data(data, external_id, info) do
+  defp update_user_data(data, info) do
     %{
       data
-      | tenant: external_id,
+      | tenant: info.tenant.external_id,
         user_alias: info.user.db_user_alias,
         mode: info.user.mode_type,
         timeout: info.user.pool_checkout_timeout,
@@ -585,4 +587,14 @@ defmodule Supavisor.ClientHandler do
 
     {message, sings}
   end
+
+  @spec try_get_sni(sock()) :: String.t() | nil
+  def try_get_sni({:ssl, sock}) do
+    case :ssl.connection_information(sock, [:sni_hostname]) do
+      {:ok, [sni_hostname: sni]} -> List.to_string(sni)
+      _ -> nil
+    end
+  end
+
+  def try_get_sni(_), do: nil
 end

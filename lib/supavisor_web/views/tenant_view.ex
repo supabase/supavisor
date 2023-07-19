@@ -24,6 +24,7 @@ defmodule SupavisorWeb.TenantView do
       enforce_ssl: tenant.enforce_ssl,
       require_user: tenant.require_user,
       auth_query: tenant.auth_query,
+      sni_hostname: tenant.sni_hostname,
       users: render_many(tenant.users, UserView, "user.json")
     }
   end
