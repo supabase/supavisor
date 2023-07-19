@@ -3,7 +3,7 @@ defmodule Supavisor.Repo.Migrations.AddAuthQuery do
 
   def up do
     alter table("tenants", prefix: "_supavisor") do
-      add(:require_user, :boolean, null: false, default: false)
+      add(:require_user, :boolean, null: false, default: true)
       add(:auth_query, :string, null: true)
       add(:default_pool_size, :integer, null: false, default: 15)
     end
