@@ -148,7 +148,9 @@ if config_env() != :test do
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
-    proxy_port: System.get_env("PROXY_PORT", "7654") |> String.to_integer(),
+    proxy_port_transaction:
+      System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
+    proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,

@@ -35,6 +35,7 @@ defmodule Supavisor.DbHandlerTest do
         host: "host",
         port: 0,
         user: "some user",
+        require_user: true,
         database: "some database",
         application_name: "some application name",
         ip_version: :inet
@@ -51,6 +52,7 @@ defmodule Supavisor.DbHandlerTest do
                     host: "host",
                     port: 0,
                     user: "some user",
+                    require_user: true,
                     ip_version: :inet
                   },
                   sock: {:gen_tcp, :sock}

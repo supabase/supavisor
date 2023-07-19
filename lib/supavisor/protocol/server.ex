@@ -254,10 +254,17 @@ defmodule Supavisor.Protocol.Server do
     @auth_request
   end
 
-  def exchange_first_message(nonce) do
-    secret = :pgo_scram.get_nonce(16) |> Base.encode64()
+  @spec exchange_first_message(binary(), binary() | boolean(), pos_integer()) :: binary()
+  def exchange_first_message(nonce, salt \\ false, iterations \\ 4096) do
+    secret =
+      if salt do
+        salt
+      else
+        :pgo_scram.get_nonce(16) |> Base.encode64()
+      end
+
     server_nonce = :pgo_scram.get_nonce(16) |> Base.encode64()
-    "r=#{nonce <> server_nonce},s=#{secret},i=4096"
+    "r=#{nonce <> server_nonce},s=#{secret},i=#{iterations}"
   end
 
   @spec exchange_message(:first | :final, binary()) :: iodata()

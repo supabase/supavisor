@@ -11,10 +11,10 @@ defmodule Supavisor.ClientHandlerTest do
       assert external_id == "external_id"
     end
 
-    test "username consists only of external_id" do
-      username = "external_id"
-      {nil, external_id} = ClientHandler.parse_user_info(username)
-      assert external_id == "external_id"
+    test "username consists only of username" do
+      username = "username"
+      {user, nil} = ClientHandler.parse_user_info(username)
+      assert username == "username"
     end
   end
 end

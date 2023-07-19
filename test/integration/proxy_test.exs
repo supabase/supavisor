@@ -10,7 +10,7 @@ defmodule Supavisor.Integration.ProxyTest do
     {:ok, proxy} =
       Postgrex.start_link(
         hostname: db_conf[:hostname],
-        port: Application.get_env(:supavisor, :proxy_port),
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
         database: db_conf[:database],
         password: db_conf[:password],
         username: db_conf[:username] <> "." <> @tenant
@@ -32,7 +32,7 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+      "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
     {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
     assert result =~ "error received from server in SCRAM exchange: Invalid client signature"
@@ -140,7 +140,9 @@ defmodule Supavisor.Integration.ProxyTest do
   # end
 
   test "http to proxy server returns 200 OK" do
-    assert :httpc.request("http://localhost:#{Application.get_env(:supavisor, :proxy_port)}") ==
+    assert :httpc.request(
+             "http://localhost:#{Application.get_env(:supavisor, :proxy_port_transaction)}"
+           ) ==
              {:ok, {{'HTTP/1.1', 204, 'OK'}, [], []}}
   end
 
@@ -148,7 +150,7 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://transaction.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+      "postgresql://transaction.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
     psql_pid = spawn(fn -> System.cmd("psql", [url]) end)
 
