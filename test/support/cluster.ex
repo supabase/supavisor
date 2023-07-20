@@ -8,7 +8,7 @@ defmodule Supavisor.Support.Cluster do
       for {key, val} <- Application.get_all_env(app_name) do
         val =
           case {app_name, key} do
-            {:supavisor, :proxy_port} ->
+            {:supavisor, :proxy_port_transaction} ->
               Application.get_env(:supavisor, :secondary_proxy_port)
 
             {:supavisor, SupavisorWeb.Endpoint} ->

@@ -35,7 +35,7 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def init(_), do: :ignore
 
-  def init(ref, trans, _opts) do
+  def init(ref, trans, opts) do
     Process.flag(:trap_exit, true)
 
     {:ok, sock} = :ranch.handshake(ref)
@@ -54,7 +54,9 @@ defmodule Supavisor.ClientHandler do
       mode: nil,
       timeout: nil,
       ps: nil,
-      ssl: false
+      ssl: false,
+      auth_secrets: nil,
+      def_mode_type: opts.def_mode_type
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -106,17 +108,28 @@ defmodule Supavisor.ClientHandler do
     {user, external_id} = parse_user_info(hello.payload["user"])
     Logger.metadata(project: external_id, user: user)
 
-    case Tenants.get_user(external_id, user) do
-      {:ok, user_info} ->
-        if user_info.enforce_ssl and !data.ssl do
+    sni_hostname = try_get_sni(sock)
+
+    case Tenants.get_user(user, external_id, sni_hostname) do
+      {:ok, info} ->
+        if info.tenant.enforce_ssl and !data.ssl do
           Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
           :ok = send_error(sock, "XX000", "SSL connection is required")
           {:stop, :normal, data}
         else
-          new_data = update_user_data(data, external_id, user_info)
+          new_data = update_user_data(data, info)
 
-          {:keep_state, new_data,
-           {:next_event, :internal, {:handle, fn -> user_info.db_password end}}}
+          case auth_secrets(info, user) do
+            {:ok, auth_secrets} ->
+              Logger.debug("Authentication method: #{inspect(auth_secrets)}")
+              {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets}}}
+
+            {:error, reason} ->
+              Logger.error("Authentication auth_secrets error: #{inspect(reason)}")
+
+              :ok = send_error(sock, "XX000", "Authentication error")
+              {:stop, :normal, data}
+          end
         end
 
       {:error, reason} ->
@@ -127,10 +140,10 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, {:handle, pass}, _, %{sock: sock} = data) do
-    Logger.info("Handle exchange")
+  def handle_event(:internal, {:handle, {method, secrets}}, _, %{sock: sock} = data) do
+    Logger.info("Handle exchange, auth method: #{inspect(method)}")
 
-    case handle_exchange(sock, pass, data.ssl) do
+    case handle_exchange(sock, {method, secrets}, data.ssl) do
       {:error, reason} ->
         Logger.error("Exchange error: #{inspect(reason)}")
         msg = Server.exchange_message(:final, "e=#{reason}")
@@ -138,17 +151,28 @@ defmodule Supavisor.ClientHandler do
 
         {:stop, :normal, data}
 
-      :ok ->
+      {:ok, client_key} ->
+        secrets =
+          if client_key do
+            fn ->
+              Map.put(secrets.(), :client_key, client_key)
+            end
+          else
+            nil
+          end
+
         Logger.info("Exchange success")
         :ok = sock_send(sock, Server.authentication_ok())
-        {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+
+        {:keep_state, %{data | auth_secrets: secrets}, {:next_event, :internal, :subscribe}}
     end
   end
 
   def handle_event(:internal, :subscribe, _, %{tenant: tenant, user_alias: db_alias} = data) do
     Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
-    with {:ok, tenant_sup} <- Supavisor.start(tenant, db_alias),
+    with {:ok, tenant_sup} <-
+           Supavisor.start(tenant, db_alias, data.auth_secrets, data.def_mode_type),
          {:ok, %{manager: manager, pool: pool}, ps} <-
            Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias) do
       Process.monitor(manager)
@@ -328,7 +352,7 @@ defmodule Supavisor.ClientHandler do
   def parse_user_info(username) do
     case :binary.matches(username, ".") do
       [] ->
-        {nil, username}
+        {username, nil}
 
       matches ->
         {pos, _} = List.last(matches)
@@ -352,53 +376,63 @@ defmodule Supavisor.ClientHandler do
     :undef
   end
 
-  @spec handle_exchange(sock(), fun(), boolean()) :: :ok | {:error, String.t()}
-  def handle_exchange({_, socket} = sock, password, ssl) do
+  @spec handle_exchange(sock(), {atom(), fun()}, boolean()) ::
+          {:ok, binary() | nil} | {:error, String.t()}
+  def handle_exchange({_, socket} = sock, {method, secrets}, ssl) do
     :ok = sock_send(sock, Server.auth_request())
 
+    with {:ok,
+          %{
+            tag: :password_message,
+            payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}
+          }, _} <- receive_next(socket, "Timeout while waiting for the first password message"),
+         {:ok, signatures} = reply_first_exchange(sock, method, secrets, nonce, user, ssl),
+         {:ok,
+          %{
+            tag: :password_message,
+            payload: {:first_msg_response, %{"p" => p}}
+          }, _} <- receive_next(socket, "Timeout while waiting for the second password message"),
+         {:ok, key} <- authenticate_exchange(method, secrets, signatures, p) do
+      message = "v=#{Base.encode64(signatures.server)}"
+      :ok = sock_send(sock, Server.exchange_message(:final, message))
+      {:ok, key}
+    else
+      {:error, message} -> {:error, message}
+      other -> {:error, "Unexpected message #{inspect(other)}"}
+    end
+  end
+
+  defp receive_next(socket, timeout_message) do
     receive do
       {_proto, ^socket, bin} ->
-        case Server.decode_pkt(bin) do
-          {:ok,
-           %{tag: :password_message, payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}},
-           _} ->
-            message = Server.exchange_first_message(nonce)
-            server_first_parts = :pgo_scram.parse_server_first(message, nonce)
-            channel = if ssl, do: "eSws", else: "biws"
-
-            {client_final_message, server_proof} =
-              H.get_client_final(server_first_parts, nonce, user, password.(), channel)
-
-            :ok = sock_send(sock, Server.exchange_message(:first, message))
-
-            receive do
-              {_proto, ^socket, bin} ->
-                case Server.decode_pkt(bin) do
-                  {:ok, %{tag: :password_message, payload: {:first_msg_response, %{"p" => p}}}, _} ->
-                    if p == List.last(client_final_message) do
-                      message = "v=#{Base.encode64(server_proof)}"
-                      :ok = sock_send(sock, Server.exchange_message(:final, message))
-                    else
-                      {:error, "Invalid client signature"}
-                    end
-
-                  other ->
-                    {:error, "Unexpected message #{inspect(other)}"}
-                end
-
-              other ->
-                {:error, "Unexpected message #{inspect(other)}"}
-            after
-              15_000 ->
-                {:error, "Timeout while waiting for the second password message"}
-            end
-
-          other ->
-            {:error, "Unexpected message #{inspect(other)}"}
-        end
+        Server.decode_pkt(bin)
     after
-      15_000 ->
-        {:error, "Timeout while waiting for the first password message"}
+      15_000 -> {:error, timeout_message}
+    end
+  end
+
+  defp reply_first_exchange(sock, method, secrets, nonce, user, ssl) do
+    channel = if ssl, do: "eSws", else: "biws"
+    {message, signatures} = exchange_first(method, secrets, nonce, user, channel)
+    :ok = sock_send(sock, Server.exchange_message(:first, message))
+    {:ok, signatures}
+  end
+
+  defp authenticate_exchange(:password, _secrets, signatures, p) do
+    if p == signatures.client do
+      {:ok, nil}
+    else
+      {:error, "Invalid client signature"}
+    end
+  end
+
+  defp authenticate_exchange(:auth_query, secrets, signatures, p) do
+    client_key = :crypto.exor(p |> Base.decode64!(), signatures.client)
+
+    if H.hash(client_key) == secrets.().stored_key do
+      {:ok, client_key}
+    else
+      {:error, "Invalid client signature"}
     end
   end
 
@@ -426,14 +460,14 @@ defmodule Supavisor.ClientHandler do
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
-  defp update_user_data(data, external_id, user_info) do
+  defp update_user_data(data, info) do
     %{
       data
-      | tenant: external_id,
-        user_alias: user_info.db_user_alias,
-        mode: user_info.mode_type,
-        timeout: user_info.pool_checkout_timeout,
-        ps: user_info.default_parameter_status
+      | tenant: info.tenant.external_id,
+        user_alias: info.user.db_user_alias,
+        mode: info.user.mode_type,
+        timeout: info.user.pool_checkout_timeout,
+        ps: info.tenant.default_parameter_status
     }
   end
 
@@ -453,4 +487,114 @@ defmodule Supavisor.ClientHandler do
     mod = if mod == :gen_tcp, do: :inet, else: mod
     mod.setopts(sock, opts)
   end
+
+  @spec auth_secrets(map, String.t()) ::
+          {:ok, {:password | :auth_query, fun()}} | {:error, term()}
+  def auth_secrets(%{user: user, tenant: %{require_user: true}}, _) do
+    {:ok, {:password, fn -> user.db_password end}}
+  end
+
+  def auth_secrets(%{user: user, tenant: tenant} = info, db_user) do
+    cache_key = {:secrets, tenant.external_id, user}
+
+    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+           {:commit, {:cached, get_secrets(info, db_user)}, ttl: 5_000}
+         end) do
+      {_, {:cached, value}} ->
+        value
+
+      {_, {:cached, value}, _} ->
+        value
+    end
+  end
+
+  @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
+  def get_secrets(%{user: user, tenant: tenant}, db_user) do
+    ssl_opts =
+      if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
+        [
+          {:verify, :verify_peer},
+          {:cacerts, [H.upstream_cert(tenant.upstream_tls_ca)]},
+          {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
+        ]
+      end
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: tenant.db_host,
+        port: tenant.db_port,
+        database: tenant.db_database,
+        password: user.db_password,
+        username: user.db_user,
+        ssl: tenant.upstream_ssl,
+        socket_options: [
+          H.ip_version(tenant.ip_version, tenant.db_host)
+        ],
+        ssl_opts: ssl_opts || []
+      )
+
+    resp =
+      case H.get_user_secret(conn, tenant.auth_query, db_user) do
+        {:ok, secret} ->
+          {:ok, {:auth_query, fn -> secret end}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+    GenServer.stop(conn, :normal)
+    resp
+  end
+
+  @spec exchange_first(:password | :auth_query, fun(), binary(), binary(), binary()) ::
+          {binary(), map()}
+  defp exchange_first(:password, secret, nonce, user, channel) do
+    message = Server.exchange_first_message(nonce)
+    server_first_parts = H.parse_server_first(message, nonce)
+
+    {client_final_message, server_proof} =
+      H.get_client_final(
+        :password,
+        secret.(),
+        server_first_parts,
+        nonce,
+        user,
+        channel
+      )
+
+    sings = %{
+      client: List.last(client_final_message),
+      server: server_proof
+    }
+
+    {message, sings}
+  end
+
+  defp exchange_first(:auth_query, secret, nonce, user, channel) do
+    secret = secret.()
+    message = Server.exchange_first_message(nonce, secret.salt)
+    server_first_parts = H.parse_server_first(message, nonce)
+
+    sings =
+      H.signatures(
+        secret.stored_key,
+        secret.server_key,
+        server_first_parts,
+        nonce,
+        user,
+        channel
+      )
+
+    {message, sings}
+  end
+
+  @spec try_get_sni(sock()) :: String.t() | nil
+  def try_get_sni({:ssl, sock}) do
+    case :ssl.connection_information(sock, [:sni_hostname]) do
+      {:ok, [sni_hostname: sni]} -> List.to_string(sni)
+      _ -> nil
+    end
+  end
+
+  def try_get_sni(_), do: nil
 end

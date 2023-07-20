@@ -59,6 +59,7 @@ defmodule Supavisor.MixProject do
       {:libcluster, "~> 3.3.1"},
       {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.1-rc.1"},
       {:distillery, "~> 2.1"},
+      {:cachex, "~> 3.6"},
 
       # pooller
       {:poolboy, "~> 1.5.2"},

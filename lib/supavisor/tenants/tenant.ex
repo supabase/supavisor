@@ -21,6 +21,10 @@ defmodule Supavisor.Tenants.Tenant do
     field(:upstream_verify, Ecto.Enum, values: [:none, :peer])
     field(:upstream_tls_ca, :binary)
     field(:enforce_ssl, :boolean, default: false)
+    field(:require_user, :boolean, default: false)
+    field(:auth_query, :string)
+    field(:default_pool_size, :integer, default: 15)
+    field(:sni_hostname, :string)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -45,7 +49,11 @@ defmodule Supavisor.Tenants.Tenant do
       :upstream_ssl,
       :upstream_verify,
       :upstream_tls_ca,
-      :enforce_ssl
+      :enforce_ssl,
+      :require_user,
+      :auth_query,
+      :default_pool_size,
+      :sni_hostname
     ])
     |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")
     |> check_constraint(:upstream_verify, name: :upstream_constraints, prefix: "_supavisor")
@@ -54,7 +62,8 @@ defmodule Supavisor.Tenants.Tenant do
       :external_id,
       :db_host,
       :db_port,
-      :db_database
+      :db_database,
+      :require_user
     ])
     |> unique_constraint([:external_id])
     |> cast_assoc(:users, with: &User.changeset/2)

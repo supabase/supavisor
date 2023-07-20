@@ -21,6 +21,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     db_host: "some db_host",
     db_port: 42,
     external_id: "dev_tenant",
+    require_user: true,
     users: [@user_valid_attrs]
   }
   @update_attrs %{
@@ -28,6 +29,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     db_host: "some updated db_host",
     db_port: 43,
     external_id: "dev_tenant",
+    require_user: true,
     users: [@user_valid_attrs]
   }
   @invalid_attrs %{

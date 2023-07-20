@@ -25,6 +25,7 @@ defmodule Supavisor.TenantsTest do
         "db_user" => "some db_user",
         "db_password" => "some db_password",
         "pool_size" => 3,
+        "require_user" => true,
         "mode_type" => "transaction"
       }
 
@@ -34,6 +35,7 @@ defmodule Supavisor.TenantsTest do
         db_database: "some db_database",
         external_id: "dev_tenant",
         default_parameter_status: %{"server_version" => "15.0"},
+        require_user: true,
         users: [user_valid_attrs]
       }
 

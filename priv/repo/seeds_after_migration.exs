@@ -25,6 +25,7 @@ end
       db_database: db_conf[:database],
       external_id: tenant,
       default_parameter_status: %{server_version: version},
+      require_user: true,
       users: [
         %{
           "db_user" => db_conf[:username],

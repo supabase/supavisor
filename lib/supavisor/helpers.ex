@@ -2,7 +2,25 @@ defmodule Supavisor.Helpers do
   @moduledoc false
 
   @spec check_creds_get_ver(map) :: {:ok, String.t()} | {:error, String.t()}
+
+  def check_creds_get_ver(%{"require_user" => false} = params) do
+    cond do
+      length(params["users"]) != 1 ->
+        {:error, "Can't use 'require_user' and 'auth_query' with multiple users"}
+
+      !hd(params["users"])["is_manager"] ->
+        {:error, "Can't use 'require_user' and 'auth_query' with non-manager user"}
+
+      true ->
+        do_check_creds_get_ver(params)
+    end
+  end
+
   def check_creds_get_ver(params) do
+    do_check_creds_get_ver(params)
+  end
+
+  def do_check_creds_get_ver(params) do
     Enum.reduce_while(params["users"], {nil, nil}, fn user, _ ->
       upstream_ssl? = !!params["upstream_ssl"]
 
@@ -33,7 +51,17 @@ defmodule Supavisor.Helpers do
         Postgrex.query(conn, "select version()", [])
         |> case do
           {:ok, %{rows: [[version]]}} ->
-            {:cont, {:ok, version}}
+            if !params["require_user"] do
+              case get_user_secret(conn, params["auth_query"], user["db_user"]) do
+                {:ok, _} ->
+                  {:halt, {:ok, version}}
+
+                {:error, reason} ->
+                  {:halt, {:error, reason}}
+              end
+            else
+              {:cont, {:ok, version}}
+            end
 
           {:error, reason} ->
             {:halt, {:error, "Can't connect the user #{user["db_user"]}: #{inspect(reason)}"}}
@@ -50,6 +78,53 @@ defmodule Supavisor.Helpers do
         other
     end
   end
+
+  @spec get_user_secret(pid(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  def get_user_secret(conn, auth_query, user) do
+    try do
+      Postgrex.query!(conn, auth_query, [user])
+    catch
+      _error, reason ->
+        {:error, "Authentication query failed: #{inspect(reason)}"}
+    end
+    |> case do
+      %{columns: [_, _], rows: [[^user, secret]]} ->
+        parse_secret(secret, user)
+
+      %{columns: [_, _], rows: []} ->
+        {:error,
+         "There is no user '#{user}' in the database. Please create it or change the user in the config"}
+
+      %{columns: colums} ->
+        {:error,
+         "Authentification query returned wrong format. Should be two columns: user and secret, but got: #{inspect(colums)}"}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @spec parse_secret(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  def parse_secret("SCRAM-SHA-256" <> _ = secret, user) do
+    # <digest>$<iteration>:<salt>$<stored_key>:<server_key>
+    case Regex.run(~r/^(.+)\$(\d+):(.+)\$(.+):(.+)$/, secret) do
+      [_, digest, iterations, salt, stored_key, server_key] ->
+        {:ok,
+         %{
+           digest: digest,
+           iterations: String.to_integer(iterations),
+           salt: salt,
+           stored_key: Base.decode64!(stored_key),
+           server_key: Base.decode64!(server_key),
+           user: user
+         }}
+
+      _ ->
+        {:error, "Can't parse secret"}
+    end
+  end
+
+  def parse_postgres_secret(_), do: {:error, "Digest not supported"}
 
   ## Internal functions
 
@@ -151,19 +226,27 @@ defmodule Supavisor.Helpers do
     Application.get_env(:supavisor, :global_downstream_key)
   end
 
-  @spec get_client_final(term(), binary(), iodata(), iodata(), binary()) :: {iodata(), binary()}
-  def get_client_final(srv_first, client_nonce, user_name, password, channel) do
+  @spec get_client_final(:password | :auth_query, map(), map(), binary(), binary(), binary()) ::
+          {iolist(), binary()}
+  def get_client_final(
+        :password,
+        secrets,
+        srv_first,
+        client_nonce,
+        user_name,
+        channel
+      ) do
     channel_binding = "c=#{channel}"
-    nonce = ["r=", srv_first[:nonce]]
+    nonce = ["r=", srv_first.nonce]
 
-    salt = srv_first[:salt]
-    i = srv_first[:i]
+    salt = srv_first.salt
+    i = srv_first.i
 
-    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(password), salt, i)
+    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(secrets), salt, i)
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
     client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
-    server_first = srv_first[:raw]
+    server_first = srv_first.raw
     client_final_without_proof = [channel_binding, ",", nonce]
     auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
     client_signature = :pgo_scram.hmac(stored_key, auth_message)
@@ -173,5 +256,51 @@ defmodule Supavisor.Helpers do
     server_signature = :pgo_scram.hmac(server_key, auth_message)
 
     {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature}
+  end
+
+  def get_client_final(
+        :auth_query,
+        secrets,
+        srv_first,
+        client_nonce,
+        user_name,
+        channel
+      ) do
+    channel_binding = "c=#{channel}"
+    nonce = ["r=", srv_first.nonce]
+
+    client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
+    server_first = srv_first.raw
+    client_final_without_proof = [channel_binding, ",", nonce]
+    auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
+    client_signature = :pgo_scram.hmac(secrets.stored_key, auth_message)
+    client_proof = :pgo_scram.bin_xor(secrets.client_key, client_signature)
+
+    server_signature = :pgo_scram.hmac(secrets.server_key, auth_message)
+
+    {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature}
+  end
+
+  def signatures(stored_key, server_key, srv_first, client_nonce, user_name, channel) do
+    channel_binding = "c=#{channel}"
+    nonce = ["r=", srv_first.nonce]
+    client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
+    server_first = srv_first.raw
+    client_final_without_proof = [channel_binding, ",", nonce]
+    auth_message = [client_first_bare, ",", server_first, ",", client_final_without_proof]
+
+    %{
+      client: :pgo_scram.hmac(stored_key, auth_message),
+      server: :pgo_scram.hmac(server_key, auth_message)
+    }
+  end
+
+  def hash(bin) do
+    :crypto.hash(:sha256, bin)
+  end
+
+  @spec parse_server_first(binary(), binary()) :: map()
+  def parse_server_first(message, nonce) do
+    :pgo_scram.parse_server_first(message, nonce) |> Map.new()
   end
 end
