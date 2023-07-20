@@ -17,13 +17,14 @@ defmodule Supavisor.Application do
       )
 
     proxy_ports = [
-      {Application.get_env(:supavisor, :proxy_port_transaction), :transaction},
-      {Application.get_env(:supavisor, :proxy_port_session), :session}
+      {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
+       :transaction},
+      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session}
     ]
 
-    for {port, mode} <- proxy_ports do
+    for {key, port, mode} <- proxy_ports do
       :ranch.start_listener(
-        :pg_proxy,
+        key,
         :ranch_tcp,
         %{
           max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
