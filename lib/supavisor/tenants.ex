@@ -250,7 +250,7 @@ defmodule Supavisor.Tenants do
       join: t in Tenant,
       on: u.tenant_external_id == t.external_id,
       where:
-        (u.db_user == ^user and t.require_user == true) or
+        (u.db_user_alias == ^user and t.require_user == true) or
           t.require_user == false,
       select: {u, t}
     )
