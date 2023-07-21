@@ -45,6 +45,10 @@ defmodule Supavisor.Tenants do
 
   @spec get_user(String.t(), String.t() | nil, String.t() | nil) ::
           {:ok, map()} | {:error, :not_found | :multiple_results}
+  def get_user(_, nil, nil) do
+    {:error, "Either external_id or sni_hostname must be provided"}
+  end
+
   def get_user(user, external_id, sni_hostname) do
     query = build_user_query(user, external_id, sni_hostname)
 
