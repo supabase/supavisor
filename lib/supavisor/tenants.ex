@@ -258,10 +258,10 @@ defmodule Supavisor.Tenants do
   end
 
   defp with_tenant(nil, sni_hostname) do
-    [sni_hostname: sni_hostname]
+    dynamic([_, t], t.sni_hostname == ^sni_hostname)
   end
 
   defp with_tenant(external_id, _) do
-    [external_id: external_id]
+    dynamic([_, t], t.external_id == ^external_id)
   end
 end
