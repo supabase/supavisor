@@ -74,7 +74,7 @@ topologies =
   end
 
 topologies =
-  if System.get_env("CLUSTER_POSTGRES") do
+  if System.get_env("CLUSTER_POSTGRES") && Application.spec(:supavisor, :vsn) do
     %Version{major: maj, minor: min} =
       Application.spec(:supavisor, :vsn) |> List.to_string() |> Version.parse!()
 
