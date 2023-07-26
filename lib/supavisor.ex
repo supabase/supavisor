@@ -7,7 +7,8 @@ defmodule Supavisor do
   @registry Supavisor.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
 
-  @spec start(String.t(), String.t(), fun(), String.t(), atom() | nil) :: {:ok, pid} | {:error, any()}
+  @spec start(String.t(), String.t(), fun(), String.t(), atom() | nil) ::
+          {:ok, pid} | {:error, any()}
   def start(tenant, user_alias, client_key, conn_user, def_mode_type \\ nil) do
     case get_global_sup(tenant, conn_user) do
       nil ->

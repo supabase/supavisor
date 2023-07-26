@@ -219,7 +219,8 @@ defmodule Supavisor.DbHandler do
         Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")
         Supavisor.set_parameter_status(data.id, ps)
 
-        {:next_state, :idle, %{data | parameter_status: ps}, {:next_event, :internal, :check_buffer}}
+        {:next_state, :idle, %{data | parameter_status: ps},
+         {:next_event, :internal, :check_buffer}}
     end
   end
 
@@ -251,7 +252,9 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, {pid, _} = from}, {:db_call, bin}, state, %{buffer: buff} = data) do
-    Logger.warning("state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
+    Logger.warning(
+      "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}"
+    )
 
     new_buff = [bin | buff]
     reply = {:reply, from, {:buffering, IO.iodata_length(new_buff)}}
