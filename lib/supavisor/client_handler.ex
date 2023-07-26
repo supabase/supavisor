@@ -165,7 +165,8 @@ defmodule Supavisor.ClientHandler do
         Logger.info("Exchange success")
         :ok = sock_send(sock, Server.authentication_ok())
 
-        {:keep_state, %{data | auth_secrets: {method, secrets}}, {:next_event, :internal, :subscribe}}
+        {:keep_state, %{data | auth_secrets: {method, secrets}},
+         {:next_event, :internal, :subscribe}}
     end
   end
 
@@ -226,7 +227,8 @@ defmodule Supavisor.ClientHandler do
     ts = System.monotonic_time()
     db_pid = db_checkout(:on_query, data)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts}, {:next_event, :internal, {proto, nil, bin}}}
+    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
+     {:next_event, :internal, {proto, nil, bin}}}
   end
 
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
@@ -285,7 +287,9 @@ defmodule Supavisor.ClientHandler do
 
   # pool's manager went down
   def handle_event(:info, {:DOWN, _, _, _, reason}, state, data) do
-    Logger.error("Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}")
+    Logger.error(
+      "Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}"
+    )
 
     case state do
       :idle ->
@@ -466,18 +470,11 @@ defmodule Supavisor.ClientHandler do
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
   defp update_user_data(data, info) do
-    proxy_type =
+    {proxy_type, mode} =
       if info.tenant.require_user do
-        :password
+        {:password, info.user.mode_type}
       else
-        :auth_query
-      end
-
-    mode =
-      if proxy_type == :auth_query do
-        data.def_mode_type
-      else
-        info.user.mode_type
+        {:auth_query, data.def_mode_type}
       end
 
     %{
