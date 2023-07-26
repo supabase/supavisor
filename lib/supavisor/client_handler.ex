@@ -56,6 +56,7 @@ defmodule Supavisor.ClientHandler do
       ps: nil,
       ssl: false,
       auth_secrets: nil,
+      proxy_type: nil,
       def_mode_type: opts.def_mode_type
     }
 
@@ -104,7 +105,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_proto, _, bin}, :exchange, %{sock: sock} = data) do
     hello = decode_startup_packet(bin)
-    Logger.warning("Client startup message: #{inspect(hello)}")
+    Logger.debug("Client startup message: #{inspect(hello)}")
     {user, external_id} = parse_user_info(hello.payload["user"])
     Logger.metadata(project: external_id, user: user)
 
@@ -164,17 +165,24 @@ defmodule Supavisor.ClientHandler do
         Logger.info("Exchange success")
         :ok = sock_send(sock, Server.authentication_ok())
 
-        {:keep_state, %{data | auth_secrets: secrets}, {:next_event, :internal, :subscribe}}
+        {:keep_state, %{data | auth_secrets: {method, secrets}}, {:next_event, :internal, :subscribe}}
     end
   end
 
   def handle_event(:internal, :subscribe, _, %{tenant: tenant, user_alias: db_alias} = data) do
     Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
+    conn_user =
+      if data.proxy_type == :auth_query do
+        elem(data.auth_secrets, 1).().user
+      else
+        db_alias
+      end
+
     with {:ok, tenant_sup} <-
-           Supavisor.start(tenant, db_alias, data.auth_secrets, data.def_mode_type),
+           Supavisor.start(tenant, db_alias, data.auth_secrets, conn_user, data.def_mode_type),
          {:ok, %{manager: manager, pool: pool}, ps} <-
-           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, db_alias) do
+           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, conn_user) do
       Process.monitor(manager)
       data = %{data | manager: manager, pool: pool}
       db_pid = db_checkout(:on_connect, data)
@@ -218,8 +226,7 @@ defmodule Supavisor.ClientHandler do
     ts = System.monotonic_time()
     db_pid = db_checkout(:on_query, data)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
-     {:next_event, :internal, {proto, nil, bin}}}
+    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts}, {:next_event, :internal, {proto, nil, bin}}}
   end
 
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
@@ -278,9 +285,7 @@ defmodule Supavisor.ClientHandler do
 
   # pool's manager went down
   def handle_event(:info, {:DOWN, _, _, _, reason}, state, data) do
-    Logger.error(
-      "Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}"
-    )
+    Logger.error("Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}")
 
     case state do
       :idle ->
@@ -461,13 +466,28 @@ defmodule Supavisor.ClientHandler do
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
   defp update_user_data(data, info) do
+    proxy_type =
+      if info.tenant.require_user do
+        :password
+      else
+        :auth_query
+      end
+
+    mode =
+      if proxy_type == :auth_query do
+        data.def_mode_type
+      else
+        info.user.mode_type
+      end
+
     %{
       data
       | tenant: info.tenant.external_id,
         user_alias: info.user.db_user_alias,
-        mode: info.user.mode_type,
+        mode: mode,
         timeout: info.user.pool_checkout_timeout,
-        ps: info.tenant.default_parameter_status
+        ps: info.tenant.default_parameter_status,
+        proxy_type: proxy_type
     }
   end
 
@@ -498,7 +518,7 @@ defmodule Supavisor.ClientHandler do
     cache_key = {:secrets, tenant.external_id, user}
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_secrets(info, db_user)}, ttl: 5_000}
+           {:commit, {:cached, get_secrets(info, db_user)}, ttl: 15_000}
          end) do
       {_, {:cached, value}} ->
         value

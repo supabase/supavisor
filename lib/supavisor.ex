@@ -7,9 +7,9 @@ defmodule Supavisor do
   @registry Supavisor.Registry.Tenants
   @type workers :: %{manager: pid, pool: pid}
 
-  @spec start(String.t(), String.t(), fun(), atom() | nil) :: {:ok, pid} | {:error, any()}
-  def start(tenant, user_alias, client_key, def_mode_type \\ nil) do
-    case get_global_sup(tenant, user_alias) do
+  @spec start(String.t(), String.t(), fun(), String.t(), atom() | nil) :: {:ok, pid} | {:error, any()}
+  def start(tenant, user_alias, client_key, conn_user, def_mode_type \\ nil) do
+    case get_global_sup(tenant, conn_user) do
       nil ->
         start_local_pool(tenant, user_alias, client_key, def_mode_type)
 
@@ -100,7 +100,8 @@ defmodule Supavisor do
   @spec start_local_pool(String.t(), String.t(), term(), atom() | nil) ::
           {:ok, pid} | {:error, any()}
   defp start_local_pool(tenant, user_alias, auth_secrets, def_mode_type) do
-    Logger.debug("Starting pool for #{inspect({tenant, user_alias})}")
+    {method, secrets} = auth_secrets
+    Logger.debug("Starting pool for #{inspect({tenant, user_alias, method})}")
 
     case Tenants.get_pool_config(tenant, user_alias) do
       %Tenant{} = tenant_record ->
@@ -110,15 +111,23 @@ defmodule Supavisor do
           db_database: db_database,
           default_parameter_status: ps,
           ip_version: ip_ver,
+          default_pool_size: def_pool_size,
           users: [
             %{
               db_user: db_user,
               db_password: db_pass,
               pool_size: pool_size,
-              mode_type: mode
+              mode_type: mode_type
             }
           ]
         } = tenant_record
+
+        {id, mode, pool_size} =
+          if method == :auth_query do
+            {{tenant, secrets.().user}, def_mode_type, def_pool_size}
+          else
+            {{tenant, user_alias}, mode_type, pool_size}
+          end
 
         auth = %{
           host: String.to_charlist(db_host),
@@ -132,20 +141,21 @@ defmodule Supavisor do
           upstream_verify: tenant_record.upstream_verify,
           upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
           require_user: tenant_record.require_user,
-          secrets: auth_secrets
+          secrets: secrets
         }
 
         args = %{
+          id: id,
           tenant: tenant,
           user_alias: user_alias,
           auth: auth,
           pool_size: pool_size,
-          mode: def_mode_type || mode,
+          mode: mode,
           default_parameter_status: ps
         }
 
         DynamicSupervisor.start_child(
-          {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, {tenant, user_alias}}},
+          {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
           {Supavisor.TenantSupervisor, args}
         )
         |> case do
@@ -160,10 +170,10 @@ defmodule Supavisor do
     end
   end
 
-  @spec set_parameter_status(String.t(), String.t(), [{binary, binary}]) ::
+  @spec set_parameter_status({String.t(), String.t()}, [{binary, binary}]) ::
           :ok | {:error, :not_found}
-  def set_parameter_status(tenant, user_alias, ps) do
-    case get_local_manager(tenant, user_alias) do
+  def set_parameter_status({tenant, user}, ps) do
+    case get_local_manager(tenant, user) do
       nil -> {:error, :not_found}
       pid -> Manager.set_parameter_status(pid, ps)
     end
