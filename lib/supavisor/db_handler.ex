@@ -30,7 +30,13 @@ defmodule Supavisor.DbHandler do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    Logger.metadata(project: args.tenant, user: args.user_alias)
+
+    Logger.metadata(
+      project: args.tenant,
+      user: args.user_alias,
+      region: System.get_env("REGION"),
+      instance_id: System.get_env("INSTANCE_ID")
+    )
 
     data = %{
       id: args.id,
