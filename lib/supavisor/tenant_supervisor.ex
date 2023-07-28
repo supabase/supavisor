@@ -10,17 +10,15 @@ defmodule Supavisor.TenantSupervisor do
   end
 
   @impl true
-  def init(%{tenant: tenant, user_alias: user_alias, pool_size: pool_size} = args) do
-    id = {tenant, user_alias}
-
+  def init(%{pool_size: pool_size} = args) do
     {size, overflow} =
       case args.mode do
-        :session -> {0, pool_size}
+        :session -> {1, pool_size}
         :transaction -> {pool_size, 0}
       end
 
     pool_spec = [
-      name: {:via, Registry, {Supavisor.Registry.Tenants, {:pool, id}}},
+      name: {:via, Registry, {Supavisor.Registry.Tenants, {:pool, args.id}}},
       worker_module: Supavisor.DbHandler,
       size: size,
       max_overflow: overflow
@@ -28,7 +26,7 @@ defmodule Supavisor.TenantSupervisor do
 
     children = [
       %{
-        id: {:pool, id},
+        id: {:pool, args.id},
         start: {:poolboy, :start_link, [pool_spec, args]},
         restart: :transient
       },
@@ -40,7 +38,7 @@ defmodule Supavisor.TenantSupervisor do
 
   def child_spec(args) do
     %{
-      id: {args.tenant, args.user_alias},
+      id: args.id,
       start: {__MODULE__, :start_link, [args]},
       restart: :transient
     }

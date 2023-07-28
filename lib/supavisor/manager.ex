@@ -9,8 +9,7 @@ defmodule Supavisor.Manager do
   @check_timeout 120_000
 
   def start_link(args) do
-    name =
-      {:via, Registry, {Supavisor.Registry.Tenants, {:manager, {args.tenant, args.user_alias}}}}
+    name = {:via, Registry, {Supavisor.Registry.Tenants, {:manager, args.id}}}
 
     GenServer.start_link(__MODULE__, args, name: name)
   end
