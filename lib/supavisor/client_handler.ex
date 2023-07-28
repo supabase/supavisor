@@ -175,7 +175,8 @@ defmodule Supavisor.ClientHandler do
 
     conn_user =
       if data.proxy_type == :auth_query do
-        elem(data.auth_secrets, 1).().user
+        {_method, secrets} = data.auth_secrets
+        secrets.().user
       else
         db_alias
       end
