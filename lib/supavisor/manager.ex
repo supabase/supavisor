@@ -45,12 +45,7 @@ defmodule Supavisor.Manager do
       default_parameter_status: args.default_parameter_status
     }
 
-    Logger.metadata(
-      project: args.tenant,
-      user: args.user_alias,
-      region: System.get_env("REGION"),
-      instance_id: System.get_env("INSTANCE_ID")
-    )
+    Logger.metadata(project: args.tenant, user: args.user_alias)
 
     Registry.register(Supavisor.Registry.ManagerTables, {args.tenant, args.user_alias}, tid)
 
