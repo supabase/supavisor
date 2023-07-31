@@ -46,7 +46,6 @@ defmodule Supavisor.Manager do
     }
 
     Logger.metadata(project: args.tenant, user: args.user_alias)
-
     Registry.register(Supavisor.Registry.ManagerTables, {args.tenant, args.user_alias}, tid)
 
     {:ok, state}
