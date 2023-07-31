@@ -107,7 +107,6 @@ defmodule Supavisor.ClientHandler do
     hello = decode_startup_packet(bin)
     Logger.debug("Client startup message: #{inspect(hello)}")
     {user, external_id} = parse_user_info(hello.payload["user"])
-
     Logger.metadata(project: external_id, user: user)
 
     sni_hostname = try_get_sni(sock)
