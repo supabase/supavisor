@@ -196,6 +196,11 @@ defmodule Supavisor.ClientHandler do
         {:keep_state, data, {:next_event, :internal, {:greetings, ps}}}
       end
     else
+      {:error, :max_clients_reached} ->
+        Logger.error("Max client connections reached")
+        :ok = send_error(data.sock, "XX000", "Max client connections reached")
+        {:stop, :normal, data}
+
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
         {:keep_state_and_data, {:timeout, 1000, :subscribe}}

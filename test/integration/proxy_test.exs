@@ -167,4 +167,14 @@ defmodule Supavisor.Integration.ProxyTest do
     assert {:idle, nil} = {state, db_pid}
     Process.exit(psql_pid, :kill)
   end
+
+  test "limit client connections" do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url =
+      "postgresql://max_clients.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+
+    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
+    assert result =~ "FATAL:  Max client connections reached"
+  end
 end
