@@ -9,6 +9,17 @@ defmodule Supavisor.Application do
 
   @impl true
   def start(_type, _args) do
+    primary_config = :logger.get_primary_config()
+
+    :ok =
+      :logger.set_primary_config(
+        :metadata,
+        Enum.into(
+          [region: System.get_env("REGION"), instance_id: System.get_env("INSTANCE_ID")],
+          primary_config.metadata
+        )
+      )
+
     :ok =
       :gen_event.swap_sup_handler(
         :erl_signal_server,
