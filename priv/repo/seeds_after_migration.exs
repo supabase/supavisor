@@ -47,6 +47,15 @@ end
           "pool_size" => 1,
           "mode_type" => "session",
           "pool_checkout_timeout" => 500
+        },
+        %{
+          "db_user_alias" => "max_clients",
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 2,
+          "max_clients" => -1,
+          "mode_type" => "transaction",
+          "pool_checkout_timeout" => 500
         }
       ]
     }

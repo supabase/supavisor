@@ -113,21 +113,23 @@ defmodule Supavisor do
           default_parameter_status: ps,
           ip_version: ip_ver,
           default_pool_size: def_pool_size,
+          default_max_clients: def_max_clients,
           users: [
             %{
               db_user: db_user,
               db_password: db_pass,
               pool_size: pool_size,
-              mode_type: mode_type
+              mode_type: mode_type,
+              max_clients: max_clients
             }
           ]
         } = tenant_record
 
-        {id, mode, pool_size} =
+        {id, mode, pool_size, max_clients} =
           if method == :auth_query do
-            {{tenant, secrets.().user}, def_mode_type, def_pool_size}
+            {{tenant, secrets.().user}, def_mode_type, def_pool_size, def_max_clients}
           else
-            {{tenant, user_alias}, mode_type, pool_size}
+            {{tenant, user_alias}, mode_type, pool_size, max_clients}
           end
 
         auth = %{
@@ -152,7 +154,8 @@ defmodule Supavisor do
           auth: auth,
           pool_size: pool_size,
           mode: mode,
-          default_parameter_status: ps
+          default_parameter_status: ps,
+          max_clients: max_clients
         }
 
         DynamicSupervisor.start_child(
