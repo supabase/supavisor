@@ -80,6 +80,54 @@ defmodule Supavisor do
     end
   end
 
+  @doc """
+  During netsplits, or due to certain internal conflicts, :syn may store inconsistent data across the cluster.
+  This function terminates all connection trees related to a specific tenant.
+  It accomplishes this by going through all dynamic supervisor shards and searching for all supervisors
+  """
+  @spec dirty_terminate(String.t(), pos_integer()) :: map()
+  def dirty_terminate(tenant, timeout \\ 15_000) do
+    :erlang.whereis(Supavisor.DynamicSupervisor)
+    |> :supervisor.which_children()
+    |> Enum.reduce(%{}, fn {_, pid, _, _}, acc ->
+      case :sys.get_state(pid, timeout) do
+        %{children: kids} when map_size(kids) > 0 ->
+          do_dirty_terminate(tenant, kids, acc)
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  @spec do_dirty_terminate(String.t(), map(), map(), pos_integer()) :: map()
+  defp do_dirty_terminate(tenant, kids, acc0, timeout \\ 15_000) do
+    Enum.reduce(kids, acc0, fn
+      {pid, {{_, _, [%{id: {^tenant, user}}]}, _, _, _, _}}, acc ->
+        stop =
+          try do
+            Supervisor.stop(pid, :shutdown, timeout)
+          catch
+            error, reason -> {:error, {error, reason}}
+          end
+
+        resp = %{
+          stop: stop,
+          cache: del_all_cache(tenant, user)
+        }
+
+        Map.put(acc, user, resp)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  @spec del_all_cache(String.t(), String.t()) :: map()
+  def del_all_cache(tenant, user) do
+    %{secrets: Cachex.del(Supavisor.Cache, {:secrets, tenant, user})}
+  end
+
   @spec get_local_pool(String.t(), String.t()) :: pid() | nil
   def get_local_pool(tenant, user_alias) do
     case Registry.lookup(@registry, {:pool, {tenant, user_alias}}) do
