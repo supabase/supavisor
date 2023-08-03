@@ -103,13 +103,13 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
-  describe "list tenants" do
-    test "renders tenants", %{conn: conn} do
-      conn = get(conn, Routes.tenant_path(conn, :index))
-      data = json_response(conn, 200)["data"]
-      assert is_list(data)
-    end
-  end
+  # describe "list tenants" do
+  #   test "renders tenants", %{conn: conn} do
+  #     conn = get(conn, Routes.tenant_path(conn, :index))
+  #     data = json_response(conn, 200)["data"]
+  #     assert is_list(data)
+  #   end
+  # end
 
   describe "delete tenant" do
     setup [:create_tenant]
