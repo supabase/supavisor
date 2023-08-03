@@ -178,7 +178,7 @@ defmodule SupavisorWeb.TenantController do
     Logger.metadata(project: external_id)
 
     result =
-      [node(), :"node2@127.0.0.1" | Node.list()]
+      [node() | Node.list()]
       |> Task.async_stream(
         fn node ->
           %{node => :rpc.call(node, Supavisor, :dirty_terminate, [external_id], 60_000)}
