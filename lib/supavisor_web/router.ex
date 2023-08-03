@@ -46,7 +46,6 @@ defmodule SupavisorWeb.Router do
   scope "/api", SupavisorWeb do
     pipe_through(:api)
 
-    # get("/tenants", TenantController, :index)
     get("/tenants/:external_id", TenantController, :show)
     put("/tenants/:external_id", TenantController, :update)
     delete("/tenants/:external_id", TenantController, :delete)
