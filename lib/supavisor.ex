@@ -86,7 +86,7 @@ defmodule Supavisor do
   """
   @spec dirty_terminate(String.t(), pos_integer()) :: map()
   def dirty_terminate(tenant, timeout \\ 15_000) do
-    Registry.lookup(Supavisor.Registry.TenantsSups, tenant)
+    Registry.lookup(Supavisor.Registry.TenantSups, tenant)
     |> Enum.reduce(%{}, fn {pid, %{user: user}}, acc ->
       stop =
         try do
