@@ -33,6 +33,7 @@ defmodule Supavisor.TenantSupervisor do
       {Manager, args}
     ]
 
+    Registry.register(Supavisor.Registry.TenantSups, args.tenant, %{user: args.user_alias})
     Supervisor.init(children, strategy: :one_for_all, max_restarts: 10, max_seconds: 60)
   end
 

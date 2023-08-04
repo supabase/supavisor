@@ -52,22 +52,15 @@ defmodule Supavisor.Application do
     :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants])
 
-    Registry.start_link(
-      keys: :unique,
-      name: Supavisor.Registry.Tenants
-    )
-
-    Registry.start_link(
-      keys: :unique,
-      name: Supavisor.Registry.ManagerTables
-    )
-
     PromEx.set_metrics_tags()
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
       PromEx,
+      {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
+      {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
+      {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor

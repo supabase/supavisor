@@ -173,4 +173,23 @@ defmodule SupavisorWeb.TenantController do
 
     send_resp(conn, code, "")
   end
+
+  def terminate(conn, %{"external_id" => external_id}) do
+    Logger.metadata(project: external_id)
+
+    result =
+      [node() | Node.list()]
+      |> Task.async_stream(
+        fn node ->
+          %{node => :rpc.call(node, Supavisor, :dirty_terminate, [external_id], 60_000)}
+        end,
+        timeout: :infinity
+      )
+      |> Enum.reduce([], fn resp, acc ->
+        [inspect(resp) | acc]
+      end)
+
+    Logger.warning("Terminate #{external_id}: #{inspect(result)}")
+    render(conn, "show_terminate.json", result: result)
+  end
 end

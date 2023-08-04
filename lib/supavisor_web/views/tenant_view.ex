@@ -33,4 +33,8 @@ defmodule SupavisorWeb.TenantView do
   def render("error.json", %{error: reason}) do
     %{error: reason}
   end
+
+  def render("show_terminate.json", %{result: result}) do
+    %{result: result}
+  end
 end
