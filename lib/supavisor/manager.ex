@@ -54,7 +54,7 @@ defmodule Supavisor.Manager do
 
   @impl true
   def handle_call({:subscribe, pid}, _, %{tenant: tenant, user_alias: user_alias} = state) do
-    Logger.info("Subscribing #{inspect(pid)} to tenant #{inspect({tenant, user_alias})}")
+    Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect({tenant, user_alias})}")
 
     # don't limit if max_clients is null
     {reply, new_state} =

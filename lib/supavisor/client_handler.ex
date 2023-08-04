@@ -142,7 +142,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:internal, {:handle, {method, secrets}}, _, %{sock: sock} = data) do
-    Logger.info("Handle exchange, auth method: #{inspect(method)}")
+    Logger.debug("Handle exchange, auth method: #{inspect(method)}")
 
     case handle_exchange(sock, {method, secrets}, data.ssl) do
       {:error, reason} ->
@@ -162,7 +162,7 @@ defmodule Supavisor.ClientHandler do
             nil
           end
 
-        Logger.info("Exchange success")
+        Logger.debug("Exchange success")
         :ok = sock_send(sock, Server.authentication_ok())
 
         {:keep_state, %{data | auth_secrets: {method, secrets}},
@@ -171,7 +171,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:internal, :subscribe, _, %{tenant: tenant, user_alias: db_alias} = data) do
-    Logger.info("Subscribe to tenant #{inspect({tenant, db_alias})}")
+    Logger.debug("Subscribe to tenant #{inspect({tenant, db_alias})}")
 
     conn_user =
       if data.proxy_type == :auth_query do
@@ -240,7 +240,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
     case Db.call(data.db_pid, bin) do
       :ok ->
-        Logger.info("DB call success")
+        Logger.debug("DB call success")
         :keep_state_and_data
 
       {:buffering, size} ->
