@@ -56,7 +56,7 @@ defmodule Supavisor.DbHandler do
 
   @impl true
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
-    Logger.info("Try to connect to DB")
+    Logger.debug("Try to connect to DB")
 
     sock_opts = [
       :binary,
