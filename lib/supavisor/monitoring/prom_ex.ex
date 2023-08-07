@@ -82,6 +82,31 @@ defmodule Supavisor.Monitoring.PromEx do
     metrics
   end
 
+  @spec do_cache_tenants_metrics() :: :ok
+  def do_cache_tenants_metrics() do
+    metrics = get_metrics()
+
+    Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.uniq()
+    |> Enum.each(fn tenant ->
+      filtered =
+        metrics
+        |> String.split("\n")
+        |> Enum.filter(&String.contains?(&1, "tenant=\"#{tenant}\""))
+        |> Enum.join("\n")
+
+      Cachex.put(Supavisor.Cache, {:metrics, tenant}, filtered)
+    end)
+  end
+
+  @spec get_tenant_metrics(String.t()) :: String.t()
+  def get_tenant_metrics(tenant) do
+    case Cachex.get(Supavisor.Cache, {:metrics, tenant}) do
+      {_, metrics} when is_binary(metrics) -> metrics
+      _ -> ""
+    end
+  end
+
   @spec parse_and_add_tags(String.t(), String.t()) :: String.t()
   defp parse_and_add_tags(line, def_tags) do
     case Regex.run(~r/(?!\#)^(\w+)(?:{(.*?)})?\s*(.+)$/, line) do

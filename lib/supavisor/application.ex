@@ -73,6 +73,7 @@ defmodule Supavisor.Application do
       },
       Supavisor.Vault,
       {Cachex, name: Supavisor.Cache},
+      Supavisor.TenantsMetrics,
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]
