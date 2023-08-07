@@ -91,7 +91,7 @@ defmodule Supavisor.Monitoring.PromEx do
     |> Enum.each(fn tenant ->
       filtered =
         metrics
-        |> Enum.filter(&String.contains?(&1, "tenant=\"#{tenant}\""))
+        |> Stream.filter(&String.contains?(&1, "tenant=\"#{tenant}\""))
         |> Enum.join("\n")
 
       Cachex.put(Supavisor.Cache, {:metrics, tenant}, filtered)
