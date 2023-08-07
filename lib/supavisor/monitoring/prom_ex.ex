@@ -84,14 +84,13 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec do_cache_tenants_metrics() :: :ok
   def do_cache_tenants_metrics() do
-    metrics = get_metrics()
+    metrics = get_metrics() |> String.split("\n")
 
     Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
     |> Enum.uniq()
     |> Enum.each(fn tenant ->
       filtered =
         metrics
-        |> String.split("\n")
         |> Enum.filter(&String.contains?(&1, "tenant=\"#{tenant}\""))
         |> Enum.join("\n")
 
