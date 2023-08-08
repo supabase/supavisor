@@ -71,7 +71,10 @@ defmodule SupavisorWeb.OpenApiSchemas do
         upstream_ssl: %Schema{type: :boolean, description: true},
         upstream_verify: %Schema{type: :string, description: "none"},
         enforce_ssl: %Schema{type: :boolean, description: false},
-        auth_query: %Schema{type: :string, description: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"},
+        auth_query: %Schema{
+          type: :string,
+          description: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"
+        },
         users: %Schema{type: :array, items: User},
         inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
         updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
@@ -141,7 +144,10 @@ defmodule SupavisorWeb.OpenApiSchemas do
             upstream_ssl: %Schema{type: :boolean, description: true},
             upstream_verify: %Schema{type: :string, description: "none"},
             enforce_ssl: %Schema{type: :boolean, description: false},
-            auth_query: %Schema{type: :string, description: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"},
+            auth_query: %Schema{
+              type: :string,
+              description: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"
+            },
             users: %Schema{type: :array, items: User},
             inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
             updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
