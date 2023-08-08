@@ -23,11 +23,6 @@ defmodule SupavisorWeb.Router do
     plug(OpenApiSpex.Plug.PutApiSpec, module: SupavisorWeb.ApiSpec)
   end
 
-  scope "/", SupavisorWeb do
-    pipe_through(:browser)
-    get("/", PageController, :index)
-  end
-
   scope "/swaggerui" do
     pipe_through(:browser)
     get("/", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi")

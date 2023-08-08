@@ -174,6 +174,18 @@ defmodule SupavisorWeb.TenantController do
     send_resp(conn, code, "")
   end
 
+  operation(:terminate,
+    summary: "Stop tenant's pools and clear cache",
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    responses: %{
+      204 => Empty.response(),
+      404 => NotFound.response()
+    }
+  )
+
   def terminate(conn, %{"external_id" => external_id}) do
     Logger.metadata(project: external_id)
 

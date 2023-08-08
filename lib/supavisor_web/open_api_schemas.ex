@@ -18,6 +18,8 @@ defmodule SupavisorWeb.OpenApiSchemas do
         db_password: %Schema{type: :string, description: "Database password"},
         pool_size: %Schema{type: :integer, description: "Pool size"},
         mode_type: %Schema{type: :string, description: "Pooling mode type"},
+        max_clients: %Schema{type: :integer, description: "Max clients count"},
+        pool_checkout_timeout: %Schema{type: :integer, description: "Pool checkout timeout"},
         is_manager: %Schema{
           type: :boolean,
           description: "The users who can be used for internal needs"
@@ -41,6 +43,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         db_password: "postgres",
         pool_size: 10,
         is_manager: false,
+        max_clients: 25000,
         mode_type: "transaction",
         inserted_at: "2023-03-27T12:00:00Z",
         updated_at: "2023-03-27T12:00:00Z"
@@ -62,6 +65,13 @@ defmodule SupavisorWeb.OpenApiSchemas do
         db_host: %Schema{type: :string, description: "Database host"},
         db_port: %Schema{type: :integer, description: "Database port"},
         db_database: %Schema{type: :string, description: "Database name"},
+        ip_version: %Schema{type: :string, description: "auto"},
+        require_user: %Schema{type: :boolean, description: false},
+        sni_hostname: %Schema{type: :string, description: "your.domain.com"},
+        upstream_ssl: %Schema{type: :boolean, description: true},
+        upstream_verify: %Schema{type: :string, description: "none"},
+        enforce_ssl: %Schema{type: :boolean, description: false},
+        auth_query: %Schema{type: :string, description: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"},
         users: %Schema{type: :array, items: User},
         inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
         updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
@@ -88,6 +98,8 @@ defmodule SupavisorWeb.OpenApiSchemas do
             db_user: "postgres",
             db_password: "postgres",
             pool_size: 10,
+            max_clients: 25000,
+            pool_checkout_timeout: 1000,
             is_manager: false,
             mode_type: "transaction",
             inserted_at: "2023-03-27T12:00:00Z",
@@ -123,6 +135,13 @@ defmodule SupavisorWeb.OpenApiSchemas do
             db_host: %Schema{type: :string, description: "Database host"},
             db_port: %Schema{type: :integer, description: "Database port"},
             db_database: %Schema{type: :string, description: "Database name"},
+            ip_version: %Schema{type: :string, description: "auto"},
+            require_user: %Schema{type: :boolean, description: false},
+            sni_hostname: %Schema{type: :string, description: "your.domain.com"},
+            upstream_ssl: %Schema{type: :boolean, description: true},
+            upstream_verify: %Schema{type: :string, description: "none"},
+            enforce_ssl: %Schema{type: :boolean, description: false},
+            auth_query: %Schema{type: :string, description: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"},
             users: %Schema{type: :array, items: User},
             inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
             updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
@@ -131,18 +150,24 @@ defmodule SupavisorWeb.OpenApiSchemas do
             :db_host,
             :db_port,
             :db_database,
-            :users
+            :users,
+            :require_user
           ],
           example: %{
             db_host: "localhost",
             db_port: 5432,
             db_database: "postgres",
+            ip_version: "auto",
+            enforce_ssl: false,
+            require_user: true,
             users: [
               %{
                 db_user: "postgres",
                 db_password: "postgres",
                 pool_size: 10,
-                mode_type: "transaction"
+                mode_type: "transaction",
+                max_clients: 25000,
+                pool_checkout_timeout: 1000
               }
             ]
           }
