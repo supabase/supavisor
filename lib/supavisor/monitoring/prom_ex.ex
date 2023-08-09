@@ -88,13 +88,14 @@ defmodule Supavisor.Monitoring.PromEx do
 
     Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
     |> Enum.uniq()
-    |> Enum.each(fn tenant ->
-      filtered =
-        metrics
-        |> Stream.filter(&String.contains?(&1, "tenant=\"#{tenant}\""))
-        |> Enum.join("\n")
+    |> Enum.reduce(metrics, fn tenant, acc ->
+      {matched, rest} = Enum.split_with(acc, &String.contains?(&1, "tenant=\"#{tenant}\""))
 
-      Cachex.put(Supavisor.Cache, {:metrics, tenant}, filtered)
+      if matched != [] do
+        Cachex.put(Supavisor.Cache, {:metrics, tenant}, Enum.join(matched, "\n"))
+      end
+
+      rest
     end)
   end
 
