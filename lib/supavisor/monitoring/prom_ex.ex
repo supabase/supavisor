@@ -69,8 +69,6 @@ defmodule Supavisor.Monitoring.PromEx do
       Application.fetch_env!(:supavisor, :metrics_tags)
       |> Enum.map_join(",", fn {k, v} -> "#{k}=\"#{v}\"" end)
 
-    Logger.debug("Default prom tags: #{def_tags}")
-
     metrics =
       PromEx.get_metrics(__MODULE__)
       |> String.split("\n")
