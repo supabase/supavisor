@@ -204,4 +204,16 @@ defmodule SupavisorWeb.TenantController do
     Logger.warning("Terminate #{external_id}: #{inspect(result)}")
     render(conn, "show_terminate.json", result: result)
   end
+
+  operation(:health,
+    summary: "Health check",
+    parameters: [],
+    responses: %{
+      204 => Empty.response()
+    }
+  )
+
+  def health(conn, _) do
+    send_resp(conn, 204, "")
+  end
 end
