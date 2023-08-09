@@ -57,7 +57,8 @@ defmodule Supavisor.ClientHandler do
       ssl: false,
       auth_secrets: nil,
       proxy_type: nil,
-      def_mode_type: opts.def_mode_type
+      def_mode_type: opts.def_mode_type,
+      stats: %{}
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -317,9 +318,11 @@ defmodule Supavisor.ClientHandler do
 
       db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
-      Telem.network_usage(:client, data.sock, data.tenant, data.user_alias)
+      {_, stats} =
+        Telem.network_usage(:client, data.sock, data.tenant, data.user_alias, data.stats)
+
       Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
-      {:next_state, :idle, %{data | db_pid: db_pid}, reply}
+      {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, reply}
     else
       Logger.debug("Client is not ready")
       {:keep_state_and_data, reply}

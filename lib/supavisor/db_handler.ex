@@ -45,7 +45,8 @@ defmodule Supavisor.DbHandler do
       parameter_status: %{},
       nonce: nil,
       messages: "",
-      server_proof: nil
+      server_proof: nil,
+      stats: %{}
     }
 
     {:ok, :connect, data, {:next_event, :internal, :connect}}
@@ -240,10 +241,11 @@ defmodule Supavisor.DbHandler do
     :ok = Client.client_call(data.caller, bin, ready)
 
     if ready do
-      Telem.network_usage(:db, data.sock, data.tenant, data.user_alias)
+      {_, stats} = Telem.network_usage(:db, data.sock, data.tenant, data.user_alias, data.stats)
+      {:keep_state, %{data | stats: stats}}
+    else
+      :keep_state_and_data
     end
-
-    :keep_state_and_data
   end
 
   def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{sock: sock} = data) do
