@@ -63,7 +63,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
         ),
         counter(
           [:supavisor, :client, :queries, :count],
-          event_name: [:supavisor, :pool, :checkout, :stop],
+          event_name: [:supavisor, :client, :query, :stop],
           description: "The total number of queries received by clients.",
           tags: [:tenant, :user_alias]
         )
