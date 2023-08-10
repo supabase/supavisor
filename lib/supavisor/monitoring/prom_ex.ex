@@ -69,8 +69,6 @@ defmodule Supavisor.Monitoring.PromEx do
       Application.fetch_env!(:supavisor, :metrics_tags)
       |> Enum.map_join(",", fn {k, v} -> "#{k}=\"#{v}\"" end)
 
-    Logger.debug("Default prom tags: #{def_tags}")
-
     metrics =
       PromEx.get_metrics(__MODULE__)
       |> String.split("\n")
@@ -80,6 +78,31 @@ defmodule Supavisor.Monitoring.PromEx do
     |> PromEx.ETSCronFlusher.defer_ets_flush()
 
     metrics
+  end
+
+  @spec do_cache_tenants_metrics() :: :ok
+  def do_cache_tenants_metrics() do
+    metrics = get_metrics() |> String.split("\n")
+
+    Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.uniq()
+    |> Enum.reduce(metrics, fn tenant, acc ->
+      {matched, rest} = Enum.split_with(acc, &String.contains?(&1, "tenant=\"#{tenant}\""))
+
+      if matched != [] do
+        Cachex.put(Supavisor.Cache, {:metrics, tenant}, Enum.join(matched, "\n"))
+      end
+
+      rest
+    end)
+  end
+
+  @spec get_tenant_metrics(String.t()) :: String.t()
+  def get_tenant_metrics(tenant) do
+    case Cachex.get(Supavisor.Cache, {:metrics, tenant}) do
+      {_, metrics} when is_binary(metrics) -> metrics
+      _ -> ""
+    end
   end
 
   @spec parse_and_add_tags(String.t(), String.t()) :: String.t()

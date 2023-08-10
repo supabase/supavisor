@@ -107,6 +107,7 @@ defmodule Supavisor do
   @spec del_all_cache(String.t(), String.t()) :: map()
   def del_all_cache(tenant, user) do
     %{secrets: Cachex.del(Supavisor.Cache, {:secrets, tenant, user})}
+    %{metrics: Cachex.del(Supavisor.Cache, {:metrics, tenant})}
   end
 
   @spec get_local_pool(String.t(), String.t()) :: pid() | nil

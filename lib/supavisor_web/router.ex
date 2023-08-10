@@ -52,6 +52,7 @@ defmodule SupavisorWeb.Router do
     pipe_through(:metrics)
 
     get("/", MetricsController, :index)
+    get("/:external_id", MetricsController, :tenant)
   end
 
   # Other scopes may use custom stacks.
