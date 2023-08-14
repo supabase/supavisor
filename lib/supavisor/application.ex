@@ -61,6 +61,7 @@ defmodule Supavisor.Application do
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
+      {Registry, keys: :duplicate, name: Supavisor.Registry.TenantClients},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor

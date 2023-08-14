@@ -111,17 +111,16 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   def execute_tenant_metrics() do
-    Registry.select(Supavisor.Registry.ManagerTables, [
-      {{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}
-    ])
+    Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.frequencies()
     |> Enum.each(&emit_telemetry_for_tenant/1)
   end
 
-  @spec emit_telemetry_for_tenant({{String.t(), String.t()}, pid(), :ets.tid()}) :: :ok
-  def emit_telemetry_for_tenant({{tenant, user_alias}, _pid, tid}) do
+  @spec emit_telemetry_for_tenant({{String.t(), String.t()}, non_neg_integer()}) :: :ok
+  def emit_telemetry_for_tenant({{tenant, user_alias}, count}) do
     :telemetry.execute(
       [:supavisor, :connections],
-      %{connected: :ets.info(tid, :size)},
+      %{connected: count},
       %{tenant: tenant, user_alias: user_alias}
     )
   end
