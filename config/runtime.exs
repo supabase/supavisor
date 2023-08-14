@@ -5,7 +5,7 @@ alias Supavisor.Helpers, as: H
 
 secret_key_base =
   if config_env() in [:dev, :test] do
-    "dev_secret_key_base"
+    "3S1V5RyqQcuPrMVuR4BjH9XBayridj56JA0EE6wYidTEc6H84KSFY6urVX7GfOhK"
   else
     System.get_env("SECRET_KEY_BASE") ||
       raise """
@@ -74,7 +74,7 @@ topologies =
   end
 
 topologies =
-  if System.get_env("CLUSTER_POSTGRES") do
+  if System.get_env("CLUSTER_POSTGRES") && Application.spec(:supavisor, :vsn) do
     %Version{major: maj, minor: min} =
       Application.spec(:supavisor, :vsn) |> List.to_string() |> Version.parse!()
 

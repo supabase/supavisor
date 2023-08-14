@@ -23,11 +23,6 @@ defmodule SupavisorWeb.Router do
     plug(OpenApiSpex.Plug.PutApiSpec, module: SupavisorWeb.ApiSpec)
   end
 
-  scope "/", SupavisorWeb do
-    pipe_through(:browser)
-    get("/", PageController, :index)
-  end
-
   scope "/swaggerui" do
     pipe_through(:browser)
     get("/", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi")
@@ -46,16 +41,18 @@ defmodule SupavisorWeb.Router do
   scope "/api", SupavisorWeb do
     pipe_through(:api)
 
-    get("/tenants", TenantController, :index)
     get("/tenants/:external_id", TenantController, :show)
     put("/tenants/:external_id", TenantController, :update)
     delete("/tenants/:external_id", TenantController, :delete)
+    get("/tenants/:external_id/terminate", TenantController, :terminate)
+    get("/health", TenantController, :health)
   end
 
   scope "/metrics", SupavisorWeb do
     pipe_through(:metrics)
 
     get("/", MetricsController, :index)
+    get("/:external_id", MetricsController, :tenant)
   end
 
   # Other scopes may use custom stacks.
@@ -79,6 +76,8 @@ defmodule SupavisorWeb.Router do
       live_dashboard("/dashboard", metrics: SupavisorWeb.Telemetry)
     end
   end
+
+  defp check_auth(%{request_path: "/api/health"} = conn, _), do: conn
 
   defp check_auth(conn, secret_key) do
     secret = Application.fetch_env!(:supavisor, secret_key)

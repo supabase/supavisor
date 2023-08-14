@@ -9,6 +9,17 @@ defmodule Supavisor.Application do
 
   @impl true
   def start(_type, _args) do
+    primary_config = :logger.get_primary_config()
+
+    :ok =
+      :logger.set_primary_config(
+        :metadata,
+        Enum.into(
+          [region: System.get_env("REGION"), instance_id: System.get_env("INSTANCE_ID")],
+          primary_config.metadata
+        )
+      )
+
     :ok =
       :gen_event.swap_sup_handler(
         :erl_signal_server,
@@ -41,22 +52,15 @@ defmodule Supavisor.Application do
     :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants])
 
-    Registry.start_link(
-      keys: :unique,
-      name: Supavisor.Registry.Tenants
-    )
-
-    Registry.start_link(
-      keys: :unique,
-      name: Supavisor.Registry.ManagerTables
-    )
-
     PromEx.set_metrics_tags()
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
       PromEx,
+      {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
+      {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
+      {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor
@@ -69,6 +73,7 @@ defmodule Supavisor.Application do
       },
       Supavisor.Vault,
       {Cachex, name: Supavisor.Cache},
+      Supavisor.TenantsMetrics,
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]

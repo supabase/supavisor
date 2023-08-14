@@ -173,4 +173,47 @@ defmodule SupavisorWeb.TenantController do
 
     send_resp(conn, code, "")
   end
+
+  operation(:terminate,
+    summary: "Stop tenant's pools and clear cache",
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    responses: %{
+      204 => Empty.response(),
+      404 => NotFound.response()
+    }
+  )
+
+  def terminate(conn, %{"external_id" => external_id}) do
+    Logger.metadata(project: external_id)
+
+    result =
+      [node() | Node.list()]
+      |> Task.async_stream(
+        fn node ->
+          %{node => :rpc.call(node, Supavisor, :dirty_terminate, [external_id], 60_000)}
+        end,
+        timeout: :infinity
+      )
+      |> Enum.reduce([], fn resp, acc ->
+        [inspect(resp) | acc]
+      end)
+
+    Logger.warning("Terminate #{external_id}: #{inspect(result)}")
+    render(conn, "show_terminate.json", result: result)
+  end
+
+  operation(:health,
+    summary: "Health check",
+    parameters: [],
+    responses: %{
+      204 => Empty.response()
+    }
+  )
+
+  def health(conn, _) do
+    send_resp(conn, 204, "")
+  end
 end

@@ -8,7 +8,8 @@ defmodule SupavisorWeb.UserView do
       pool_size: user.pool_size,
       is_manager: user.is_manager,
       mode_type: user.mode_type,
-      pool_checkout_timeout: user.pool_checkout_timeout
+      pool_checkout_timeout: user.pool_checkout_timeout,
+      max_clients: user.max_clients
     }
   end
 end

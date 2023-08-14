@@ -14,7 +14,7 @@ defmodule Supavisor.ClientHandlerTest do
     test "username consists only of username" do
       username = "username"
       {user, nil} = ClientHandler.parse_user_info(username)
-      assert username == "username"
+      assert username == user
     end
   end
 end

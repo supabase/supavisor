@@ -6,7 +6,7 @@ defmodule Supavisor.Release do
   @app :supavisor
 
   def migrate do
-    load_app()
+    ensure_ssl_started()
 
     for repo <- repos() do
       {:ok, _, _} =
@@ -18,7 +18,7 @@ defmodule Supavisor.Release do
   end
 
   def rollback(repo, version) do
-    load_app()
+    ensure_ssl_started()
 
     {:ok, _, _} =
       Ecto.Migrator.with_repo(
@@ -31,7 +31,7 @@ defmodule Supavisor.Release do
     Application.fetch_env!(@app, :ecto_repos)
   end
 
-  defp load_app do
-    Application.load(@app)
+  defp ensure_ssl_started do
+    Application.ensure_all_started(:ssl)
   end
 end

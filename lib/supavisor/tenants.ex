@@ -44,7 +44,11 @@ defmodule Supavisor.Tenants do
   end
 
   @spec get_user(String.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, map()} | {:error, :not_found | :multiple_results}
+          {:ok, map()} | {:error, any()}
+  def get_user(_, nil, nil) do
+    {:error, "Either external_id or sni_hostname must be provided"}
+  end
+
   def get_user(user, external_id, sni_hostname) do
     query = build_user_query(user, external_id, sni_hostname)
 
@@ -55,38 +59,8 @@ defmodule Supavisor.Tenants do
       [{%User{}, %Tenant{}} = {user, tenant}] ->
         {:ok, %{user: user, tenant: tenant}}
 
-      [] ->
-        get_auth_user(external_id, sni_hostname)
-
       _ ->
         {:error, :multiple_results}
-    end
-  end
-
-  def get_auth_user(external_id, sni_hostname) do
-    query =
-      if sni_hostname do
-        from(u in User,
-          join: t in Tenant,
-          on: u.tenant_external_id == t.external_id,
-          where: t.sni_hostname == ^sni_hostname and t.require_user == false,
-          select: {u, t}
-        )
-      else
-        from(t in Tenant,
-          join: u in User,
-          on: u.tenant_external_id == t.external_id,
-          where: t.external_id == ^external_id and t.require_user == false,
-          select: {u, t}
-        )
-      end
-
-    case Repo.all(query) do
-      [{%User{}, %Tenant{}} = {user, tenant}] ->
-        {:ok, %{user: user, tenant: tenant}}
-
-      _ ->
-        {:error, :not_found}
     end
   end
 
@@ -269,32 +243,25 @@ defmodule Supavisor.Tenants do
     User.changeset(user, attrs)
   end
 
-  @spec build_user_query(String.t(), String.t() | nil, String.t() | nil) :: Ecto.Queryable.t()
+  @spec build_user_query(String.t(), String.t() | nil, String.t() | nil) ::
+          Ecto.Queryable.t()
   defp build_user_query(user, external_id, sni_hostname) do
-    if sni_hostname do
-      query =
-        from(t in Tenant,
-          join: u in User,
-          on: u.tenant_external_id == t.external_id,
-          where: t.sni_hostname == ^sni_hostname,
-          select: {u, t}
-        )
-    else
-      query =
-        from(u in User,
-          join: t in Tenant,
-          on: u.tenant_external_id == t.external_id,
-          where: u.tenant_external_id == ^external_id,
-          select: {u, t}
-        )
+    from(u in User,
+      join: t in Tenant,
+      on: u.tenant_external_id == t.external_id,
+      where:
+        (u.db_user_alias == ^user and t.require_user == true) or
+          t.require_user == false,
+      select: {u, t}
+    )
+    |> where(^with_tenant(external_id, sni_hostname))
+  end
 
-      if user do
-        from(u in query,
-          where: u.db_user_alias == ^user
-        )
-      else
-        query
-      end
-    end
+  defp with_tenant(nil, sni_hostname) do
+    dynamic([_, t], t.sni_hostname == ^sni_hostname)
+  end
+
+  defp with_tenant(external_id, _) do
+    dynamic([_, t], t.external_id == ^external_id)
   end
 end

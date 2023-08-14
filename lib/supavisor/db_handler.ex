@@ -33,6 +33,7 @@ defmodule Supavisor.DbHandler do
     Logger.metadata(project: args.tenant, user: args.user_alias)
 
     data = %{
+      id: args.id,
       sock: nil,
       caller: nil,
       sent: false,
@@ -44,7 +45,8 @@ defmodule Supavisor.DbHandler do
       parameter_status: %{},
       nonce: nil,
       messages: "",
-      server_proof: nil
+      server_proof: nil,
+      stats: %{}
     }
 
     {:ok, :connect, data, {:next_event, :internal, :connect}}
@@ -55,7 +57,7 @@ defmodule Supavisor.DbHandler do
 
   @impl true
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
-    Logger.info("Try to connect to DB")
+    Logger.debug("Try to connect to DB")
 
     sock_opts = [
       :binary,
@@ -216,7 +218,7 @@ defmodule Supavisor.DbHandler do
 
       {ps, db_state} ->
         Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")
-        Supavisor.set_parameter_status(data.tenant, data.user_alias, ps)
+        Supavisor.set_parameter_status(data.id, ps)
 
         {:next_state, :idle, %{data | parameter_status: ps},
          {:next_event, :internal, :check_buffer}}
@@ -239,10 +241,11 @@ defmodule Supavisor.DbHandler do
     :ok = Client.client_call(data.caller, bin, ready)
 
     if ready do
-      Telem.network_usage(:db, data.sock, data.tenant, data.user_alias)
+      {_, stats} = Telem.network_usage(:db, data.sock, data.tenant, data.user_alias, data.stats)
+      {:keep_state, %{data | stats: stats}}
+    else
+      :keep_state_and_data
     end
-
-    :keep_state_and_data
   end
 
   def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{sock: sock} = data) do

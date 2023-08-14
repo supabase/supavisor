@@ -9,13 +9,12 @@ defmodule Supavisor.Manager do
   @check_timeout 120_000
 
   def start_link(args) do
-    name =
-      {:via, Registry, {Supavisor.Registry.Tenants, {:manager, {args.tenant, args.user_alias}}}}
+    name = {:via, Registry, {Supavisor.Registry.Tenants, {:manager, args.id}}}
 
     GenServer.start_link(__MODULE__, args, name: name)
   end
 
-  @spec subscribe(pid, pid) :: {:ok, iodata() | []}
+  @spec subscribe(pid, pid) :: {:ok, iodata() | []} | {:error, :max_clients_reached}
   def subscribe(manager, pid) do
     GenServer.call(manager, {:subscribe, pid})
   end
@@ -43,7 +42,8 @@ defmodule Supavisor.Manager do
       user_alias: args.user_alias,
       parameter_status: [],
       wait_ps: [],
-      default_parameter_status: args.default_parameter_status
+      default_parameter_status: args.default_parameter_status,
+      max_clients: args.max_clients
     }
 
     Logger.metadata(project: args.tenant, user: args.user_alias)
@@ -54,16 +54,25 @@ defmodule Supavisor.Manager do
 
   @impl true
   def handle_call({:subscribe, pid}, _, %{tenant: tenant, user_alias: user_alias} = state) do
-    Logger.info("Subscribing #{inspect(pid)} to tenant #{inspect({tenant, user_alias})}")
-    :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
+    Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect({tenant, user_alias})}")
 
-    case state.parameter_status do
-      [] ->
-        {:reply, {:ok, []}, update_in(state.wait_ps, &[pid | &1])}
+    # don't limit if max_clients is null
+    {reply, new_state} =
+      if :ets.info(state.tid, :size) < state.max_clients do
+        :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
 
-      ps ->
-        {:reply, {:ok, ps}, state}
-    end
+        case state.parameter_status do
+          [] ->
+            {{:ok, []}, update_in(state.wait_ps, &[pid | &1])}
+
+          ps ->
+            {{:ok, ps}, state}
+        end
+      else
+        {{:error, :max_clients_reached}, state}
+      end
+
+    {:reply, reply, new_state}
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do

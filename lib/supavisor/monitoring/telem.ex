@@ -7,21 +7,28 @@ defmodule Supavisor.Monitoring.Telem do
           atom(),
           {:gen_tcp, :gen_tcp.socket()} | {:ssl, :ssl.socket()},
           String.t(),
-          String.t()
-        ) :: :ok
-  def network_usage(type, {mod, socket}, tenant, user_alias) do
+          String.t(),
+          map()
+        ) :: {:ok | :error, map()}
+  def network_usage(type, {mod, socket}, tenant, user_alias, stats) do
     mod = if mod == :ssl, do: :ssl, else: :inet
 
     case mod.getstat(socket) do
       {:ok, values} ->
+        values = Map.new(values)
+        diff = Map.merge(values, stats, fn _, v1, v2 -> v1 - v2 end)
+
         :telemetry.execute(
           [:supavisor, type, :network, :stat],
-          Map.new(values),
+          diff,
           %{tenant: tenant, user_alias: user_alias}
         )
 
+        {:ok, values}
+
       {:error, reason} ->
         Logger.error("Failed to get socket stats: #{inspect(reason)}")
+        {:error, stats}
     end
   end
 

@@ -10,7 +10,8 @@ defmodule Supavisor.SynHandlerTest do
   test "resolving conflict" do
     node2 = :"secondary@127.0.0.1"
 
-    {:ok, pid2} = :erpc.call(node2, Supavisor, :start, [@tenant, @user, fn -> :ok end])
+    secret = {:password, fn -> :ok end}
+    {:ok, pid2} = :erpc.call(node2, Supavisor, :start, [@tenant, @user, secret, @user])
     Process.sleep(500)
     assert pid2 == Supavisor.get_global_sup(@tenant, @user)
     assert node(pid2) == node2
@@ -18,7 +19,7 @@ defmodule Supavisor.SynHandlerTest do
     Process.sleep(500)
 
     assert nil == Supavisor.get_global_sup(@tenant, @user)
-    {:ok, pid1} = Supavisor.start(@tenant, @user, fn -> :ok end)
+    {:ok, pid1} = Supavisor.start(@tenant, @user, secret, @user)
     assert pid1 == Supavisor.get_global_sup(@tenant, @user)
     assert node(pid1) == node()
 
