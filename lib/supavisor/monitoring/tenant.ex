@@ -9,7 +9,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     poll_rate = Keyword.get(opts, :poll_rate, 5_000)
 
     [
-      concurrent_connections(poll_rate)
+      concurrent_connections(poll_rate),
+      concurrent_tenants(poll_rate)
     ]
   end
 
@@ -110,11 +111,39 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  def execute_tenant_metrics() do
+  def concurrent_tenants(poll_rate) do
+    Polling.build(
+      :supavisor_concurrent_tenants,
+      poll_rate,
+      {__MODULE__, :execute_conn_tenants_metrics, []},
+      [
+        last_value(
+          [:supavisor, :tenants, :connected],
+          event_name: [:supavisor, :tenants],
+          description: "The total count of connected tenants.",
+          measurement: :connected
+        )
+      ]
+    )
+  end
+
+  def execute_conn_tenants_metrics() do
     Registry.select(Supavisor.Registry.ManagerTables, [
       {{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}
     ])
     |> Enum.each(&emit_telemetry_for_tenant/1)
+  end
+
+  def execute_tenant_metrics() do
+    num =
+      Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
+      |> Enum.uniq()
+      |> Enum.count()
+
+    :telemetry.execute(
+      [:supavisor, :tenants],
+      %{connected: num}
+    )
   end
 
   @spec emit_telemetry_for_tenant({{String.t(), String.t()}, pid(), :ets.tid()}) :: :ok
