@@ -147,7 +147,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, {:handle, {method, secrets}}, _, %{sock: sock} = data) do
     Logger.debug("Handle exchange, auth method: #{inspect(method)}")
 
-    case handle_exchange(sock, {method, secrets}, data.ssl) do
+    case handle_exchange(sock, {method, secrets}) do
       {:error, reason} ->
         Logger.error("Exchange error: #{inspect(reason)}")
         msg = Server.exchange_message(:final, "e=#{reason}")
@@ -396,17 +396,16 @@ defmodule Supavisor.ClientHandler do
     :undef
   end
 
-  @spec handle_exchange(sock(), {atom(), fun()}, boolean()) ::
-          {:ok, binary() | nil} | {:error, String.t()}
-  def handle_exchange({_, socket} = sock, {method, secrets}, ssl) do
+  @spec handle_exchange(sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
+  def handle_exchange({_, socket} = sock, {method, secrets}) do
     :ok = sock_send(sock, Server.auth_request())
 
     with {:ok,
           %{
             tag: :password_message,
-            payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}
+            payload: {:scram_sha_256, %{"n" => user, "r" => nonce, "c" => channel}}
           }, _} <- receive_next(socket, "Timeout while waiting for the first password message"),
-         {:ok, signatures} = reply_first_exchange(sock, method, secrets, nonce, user, ssl),
+         {:ok, signatures} = reply_first_exchange(sock, method, secrets, channel, nonce, user),
          {:ok,
           %{
             tag: :password_message,
@@ -431,8 +430,7 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  defp reply_first_exchange(sock, method, secrets, nonce, user, ssl) do
-    channel = if ssl, do: "eSws", else: "biws"
+  defp reply_first_exchange(sock, method, secrets, channel, nonce, user) do
     {message, signatures} = exchange_first(method, secrets, nonce, user, channel)
     :ok = sock_send(sock, Server.exchange_message(:first, message))
     {:ok, signatures}

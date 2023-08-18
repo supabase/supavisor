@@ -168,11 +168,20 @@ defmodule Supavisor.Protocol.Server do
 
   def decode_payload(
         :password_message,
-        <<"SCRAM-SHA-256", 0, _::32, bin::binary>>
+        <<"SCRAM-SHA-256", 0, _::32, channel::binary-3, bin::binary>>
       ) do
     case kv_to_map(bin) do
-      {:ok, map} -> {:scram_sha_256, map}
-      {:error, _} -> :undefined
+      {:ok, map} ->
+        channel =
+          case channel do
+            "n,," -> "biws"
+            "y,," -> "eSws"
+          end
+
+        {:scram_sha_256, Map.put(map, "c", channel)}
+
+      {:error, _} ->
+        :undefined
     end
   end
 
