@@ -1,5 +1,6 @@
 defmodule Supavisor.Helpers do
   @moduledoc false
+  require Logger
 
   @spec check_creds_get_ver(map) :: {:ok, String.t()} | {:error, String.t()}
 
@@ -302,5 +303,22 @@ defmodule Supavisor.Helpers do
   @spec parse_server_first(binary(), binary()) :: map()
   def parse_server_first(message, nonce) do
     :pgo_scram.parse_server_first(message, nonce) |> Map.new()
+  end
+
+  def cached(key, fun, ttl \\ 0) do
+    Logger.debug("Fetching #{inspect(key)} from cache")
+
+    opts = if ttl > 0, do: [ttl: ttl], else: []
+
+    Cachex.fetch(Supavisor.Cache, key, fn _key ->
+      {:commit, {:cached, fun.()}, opts}
+    end)
+    |> case do
+      {_, {:cached, value}} ->
+        value
+
+      {_, {:cached, value}, _} ->
+        value
+    end
   end
 end

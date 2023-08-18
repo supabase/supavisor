@@ -5,6 +5,8 @@ defmodule Supavisor.Application do
 
   use Application
   require Logger
+  import Cachex.Spec
+
   alias Supavisor.Monitoring.PromEx
 
   @impl true
@@ -72,8 +74,13 @@ defmodule Supavisor.Application do
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      {Cachex, name: Supavisor.Cache},
+      {Cachex,
+       [
+         name: Supavisor.Cache,
+         limit: limit(size: 50_000, policy: Cachex.Policy.LRW, reclaim: 0.5)
+       ]},
       Supavisor.TenantsMetrics,
+      Supavisor.CacheBuster,
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]
