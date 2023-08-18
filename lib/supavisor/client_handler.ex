@@ -424,7 +424,7 @@ defmodule Supavisor.ClientHandler do
   defp receive_next(socket, timeout_message) do
     receive do
       {_proto, ^socket, bin} ->
-        Server.decode_pkt(bin) |> IO.inspect()
+        Server.decode_pkt(bin)
     after
       15_000 -> {:error, timeout_message}
     end
