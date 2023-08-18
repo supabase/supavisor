@@ -114,6 +114,8 @@ defmodule Supavisor.ClientHandler do
 
     case Tenants.get_user(user, external_id, sni_hostname) do
       {:ok, info} ->
+        Registry.register(Supavisor.Registry.TenantClients, {info.tenant.external_id, user}, [])
+
         if info.tenant.enforce_ssl and !data.ssl do
           Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
           :ok = send_error(sock, "XX000", "SSL connection is required")
