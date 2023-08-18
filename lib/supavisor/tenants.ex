@@ -5,6 +5,7 @@ defmodule Supavisor.Tenants do
 
   import Ecto.Query, warn: false
   alias Supavisor.Repo
+  alias Supavisor.Helpers, as: H
 
   alias Supavisor.Tenants.Tenant
   alias Supavisor.Tenants.User
@@ -38,9 +39,23 @@ defmodule Supavisor.Tenants do
   """
   def get_tenant!(id), do: Repo.get!(Tenant, id)
 
+  @spec get_tenant_by_external_id(:cached, any()) :: Tenant.t() | nil
+  def get_tenant_by_external_id(:cached, external_id) do
+    key = {:tenant_by_external_id, external_id}
+    fun = fn -> get_tenant_by_external_id(external_id) end
+    H.cached(key, fun)
+  end
+
   @spec get_tenant_by_external_id(String.t()) :: Tenant.t() | nil
   def get_tenant_by_external_id(external_id) do
     Tenant |> Repo.get_by(external_id: external_id) |> Repo.preload(:users)
+  end
+
+  @spec get_user(:cached, any(), any(), any()) :: {:ok, map()} | {:error, any()}
+  def get_user(:cached, user, external_id, sni_hostname) do
+    key = {:user, user, external_id, sni_hostname}
+    fun = fn -> get_user(user, external_id, sni_hostname) end
+    H.cached(key, fun)
   end
 
   @spec get_user(String.t(), String.t() | nil, String.t() | nil) ::
@@ -62,6 +77,12 @@ defmodule Supavisor.Tenants do
       _ ->
         {:error, :multiple_results}
     end
+  end
+
+  def get_pool_config(:cached, external_id, user) do
+    key = {:pool_config, external_id, user}
+    fun = fn -> get_pool_config(external_id, user) end
+    H.cached(key, fun)
   end
 
   def get_pool_config(external_id, user) do

@@ -112,7 +112,7 @@ defmodule Supavisor.ClientHandler do
 
     sni_hostname = try_get_sni(sock)
 
-    case Tenants.get_user(user, external_id, sni_hostname) do
+    case Tenants.get_user(:cached, user, external_id, sni_hostname) do
       {:ok, info} ->
         Registry.register(Supavisor.Registry.TenantClients, {info.tenant.external_id, user}, [])
 
@@ -522,16 +522,8 @@ defmodule Supavisor.ClientHandler do
 
   def auth_secrets(%{user: user, tenant: tenant} = info, db_user) do
     cache_key = {:secrets, tenant.external_id, user}
-
-    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_secrets(info, db_user)}, ttl: 15_000}
-         end) do
-      {_, {:cached, value}} ->
-        value
-
-      {_, {:cached, value}, _} ->
-        value
-    end
+    fun = fn -> get_secrets(info, db_user) end
+    H.cached(cache_key, fun, 60_000)
   end
 
   @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}

@@ -134,7 +134,7 @@ defmodule Supavisor do
     {method, secrets} = auth_secrets
     Logger.debug("Starting pool for #{inspect({tenant, user_alias, method})}")
 
-    case Tenants.get_pool_config(tenant, user_alias) do
+    case Tenants.get_pool_config(:cached, tenant, user_alias) do
       %Tenant{} = tenant_record ->
         %{
           db_host: db_host,
