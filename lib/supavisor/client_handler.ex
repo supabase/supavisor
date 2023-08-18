@@ -402,9 +402,10 @@ defmodule Supavisor.ClientHandler do
     with {:ok,
           %{
             tag: :password_message,
-            payload: {:scram_sha_256, %{"n" => user, "r" => nonce}}
+            payload: {:scram_sha_256, %{"n" => user, "r" => nonce, "c" => channel}}
           }, _} <- receive_next(socket, "Timeout while waiting for the first password message"),
-         {:ok, signatures} = reply_first_exchange(sock, method, secrets, nonce, user, ssl),
+         {:ok, signatures} =
+           reply_first_exchange(sock, method, secrets, channel, nonce, user, ssl),
          {:ok,
           %{
             tag: :password_message,
@@ -423,14 +424,13 @@ defmodule Supavisor.ClientHandler do
   defp receive_next(socket, timeout_message) do
     receive do
       {_proto, ^socket, bin} ->
-        Server.decode_pkt(bin)
+        Server.decode_pkt(bin) |> IO.inspect()
     after
       15_000 -> {:error, timeout_message}
     end
   end
 
-  defp reply_first_exchange(sock, method, secrets, nonce, user, ssl) do
-    channel = if ssl, do: "eSws", else: "biws"
+  defp reply_first_exchange(sock, method, secrets, channel, nonce, user, ssl) do
     {message, signatures} = exchange_first(method, secrets, nonce, user, channel)
     :ok = sock_send(sock, Server.exchange_message(:first, message))
     {:ok, signatures}
