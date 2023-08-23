@@ -69,5 +69,11 @@ defmodule Supavisor.TenantsTest do
       tenant = tenant_fixture()
       assert %Ecto.Changeset{} = Tenants.change_tenant(tenant)
     end
+
+    test "get_user/3" do
+      tenant = tenant_fixture()
+      assert {:error, :not_found} = Tenants.get_user("no_user", "no_tenant", "")
+      assert {:ok, %{tenant: _, user: _}} = Tenants.get_user("postgres", "dev_tenant", "")
+    end
   end
 end
