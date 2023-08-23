@@ -3,6 +3,7 @@ defmodule Supavisor.Manager do
   use GenServer, restart: :transient
   require Logger
 
+  alias Supavisor.PromEx.Plugins.Tenant, as: M
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
 
@@ -103,8 +104,14 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, _, _, _}, state) do
+  def handle_info({:DOWN, ref, _, _, _}, %{tenant: tenant, user_alias: user_alias} = state) do
     :ets.take(state.tid, ref)
+
+    if :ets.info(state.tid, :size) == 0 do
+      # display 0 in metrics
+      M.emit_telemetry_for_tenant({{tenant, user_alias}, 0})
+    end
+
     {:noreply, state}
   end
 
