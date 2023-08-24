@@ -152,9 +152,6 @@ defmodule Supavisor do
   defp start_local_pool({tenant, user, mode} = id, {method, secrets}) do
     Logger.debug("Starting pool for #{inspect(id)}")
 
-    ###
-    IO.inspect({111, apply(secrets, [1])})
-
     case Tenants.get_pool_config(tenant, secrets.().alias) do
       %Tenant{} = tenant_record ->
         %{

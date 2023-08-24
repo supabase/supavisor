@@ -507,9 +507,7 @@ defmodule Supavisor.ClientHandler do
   @spec auth_secrets(map, String.t()) :: {:ok, S.secrets()} | {:error, term()}
   ## password secrets
   def auth_secrets(%{user: user, tenant: %{require_user: true}}, _) do
-    secrets =
-      %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
-      |> IO.inspect()
+    secrets = %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
 
     {:ok, {:password, fn -> secrets end}}
   end
