@@ -21,7 +21,7 @@ defmodule Supavisor.SynHandler do
 
   def resolve_registry_conflict(
         :tenants,
-        {tenant, user_alias},
+        id,
         {pid1, _, time1},
         {pid2, _, time2}
       ) do
@@ -46,13 +46,11 @@ defmodule Supavisor.SynHandler do
           end
 
         Logger.warn(
-          "Resolving #{inspect({tenant, user_alias})} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
+          "Resolving #{inspect(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
         )
       end)
     else
-      Logger.warn(
-        "Resolving #{inspect({tenant, user_alias})} conflict, remote pid: #{inspect(stop)}"
-      )
+      Logger.warn("Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}")
     end
 
     keep

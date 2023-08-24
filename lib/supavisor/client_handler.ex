@@ -513,8 +513,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   ## auth_query secrets
-  def auth_secrets(%{user: user, tenant: tenant} = info, db_user) do
-    cache_key = {:secrets, tenant.external_id, user}
+  def auth_secrets(%{tenant: tenant} = info, db_user) do
+    cache_key = {:secrets, tenant.external_id, db_user}
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
            {:commit, {:cached, get_secrets(info, db_user)}, ttl: 15_000}

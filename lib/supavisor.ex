@@ -111,10 +111,25 @@ defmodule Supavisor do
     end)
   end
 
+  def terminate_global(tenant) do
+    [node() | Node.list()]
+    |> Task.async_stream(
+      fn node ->
+        %{node => :rpc.call(node, Supavisor, :dirty_terminate, [tenant], 60_000)}
+      end,
+      timeout: :infinity
+    )
+    |> Enum.reduce([], fn resp, acc ->
+      [inspect(resp) | acc]
+    end)
+  end
+
   @spec del_all_cache(String.t(), String.t()) :: map()
   def del_all_cache(tenant, user) do
-    %{secrets: Cachex.del(Supavisor.Cache, {:secrets, tenant, user})}
-    %{metrics: Cachex.del(Supavisor.Cache, {:metrics, tenant})}
+    %{
+      secrets: Cachex.del(Supavisor.Cache, {:secrets, tenant, user}),
+      metrics: Cachex.del(Supavisor.Cache, {:metrics, tenant})
+    }
   end
 
   @spec get_local_pool(id) :: pid | nil
@@ -143,7 +158,7 @@ defmodule Supavisor do
         port_mode
       end
 
-    {tenant, user, mode} |> IO.inspect()
+    {tenant, user, mode}
   end
 
   ## Internal functions
