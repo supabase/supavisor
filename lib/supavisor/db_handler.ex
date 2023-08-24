@@ -4,17 +4,14 @@ defmodule Supavisor.DbHandler do
   It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
   """
 
-  @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
-  @type ssl_sock :: {:ssl, :ssl.sslsocket()}
-  @type sock :: tcp_sock() | ssl_sock()
-
   require Logger
 
   @behaviour :gen_statem
 
-  alias Supavisor.ClientHandler, as: Client
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.{Protocol.Server, Monitoring.Telem}
+  alias Supavisor, as: S
+  alias S.ClientHandler, as: Client
+  alias S.Helpers, as: H
+  alias S.{Protocol.Server, Monitoring.Telem}
 
   @reconnect_timeout 2_500
 
@@ -30,7 +27,7 @@ defmodule Supavisor.DbHandler do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    Logger.metadata(project: args.tenant, user: args.user_alias)
+    Logger.metadata(project: args.tenant, user: args.user, mode: args.mode)
 
     data = %{
       id: args.id,
@@ -38,7 +35,7 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       sent: false,
       auth: args.auth,
-      user_alias: args.user_alias,
+      user: args.user,
       tenant: args.tenant,
       buffer: [],
       db_state: nil,
@@ -46,7 +43,8 @@ defmodule Supavisor.DbHandler do
       nonce: nil,
       messages: "",
       server_proof: nil,
-      stats: %{}
+      stats: %{},
+      mode: args.mode
     }
 
     {:ok, :connect, data, {:next_event, :internal, :connect}}
@@ -124,7 +122,7 @@ defmodule Supavisor.DbHandler do
                 client_first_size = IO.iodata_length(client_first)
 
                 sasl_initial_response = [
-                  <<"SCRAM-SHA-256">>,
+                  "SCRAM-SHA-256",
                   0,
                   <<client_first_size::32-integer>>,
                   client_first
@@ -237,11 +235,11 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:info, {_proto, _, bin}, _, data) do
     # check if the response ends with "ready for query"
-    ready = String.ends_with?(bin, <<?Z, 5::32, ?I>>)
+    ready = String.ends_with?(bin, Server.ready_for_query())
     :ok = Client.client_call(data.caller, bin, ready)
 
     if ready do
-      {_, stats} = Telem.network_usage(:db, data.sock, data.tenant, data.user_alias, data.stats)
+      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats}}
     else
       :keep_state_and_data
@@ -299,7 +297,7 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
-  @spec try_ssl_handshake(tcp_sock, map) :: {:ok, sock} | {:error, term()}
+  @spec try_ssl_handshake(S.tcp_sock(), map) :: {:ok, S.sock()} | {:error, term()}
   defp try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
     case sock_send(sock, Server.ssl_request()) do
       :ok -> ssl_recv(sock, auth)
@@ -309,7 +307,7 @@ defmodule Supavisor.DbHandler do
 
   defp try_ssl_handshake(sock, _), do: {:ok, sock}
 
-  @spec ssl_recv(tcp_sock, map) :: {:ok, ssl_sock} | {:error, term}
+  @spec ssl_recv(S.tcp_sock(), map) :: {:ok, S.ssl_sock()} | {:error, term}
   defp ssl_recv({:gen_tcp, sock} = s, auth) do
     case :gen_tcp.recv(sock, 1, 15_000) do
       {:ok, <<?S>>} ->
@@ -323,7 +321,7 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec ssl_connect(tcp_sock, map, pos_integer) :: {:ok, ssl_sock} | {:error, term}
+  @spec ssl_connect(S.tcp_sock(), map, pos_integer) :: {:ok, S.ssl_sock()} | {:error, term}
   defp ssl_connect({:gen_tcp, sock}, auth, timeout \\ 5000) do
     opts =
       case auth.upstream_verify do
@@ -347,7 +345,7 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec send_startup(sock(), map()) :: :ok | {:error, term}
+  @spec send_startup(S.sock(), map()) :: :ok | {:error, term}
   defp send_startup(sock, auth) do
     user = get_user(auth)
 
@@ -361,12 +359,12 @@ defmodule Supavisor.DbHandler do
     sock_send(sock, msg)
   end
 
-  @spec sock_send(tcp_sock | ssl_sock, iodata) :: :ok | {:error, term}
+  @spec sock_send(S.sock(), iodata) :: :ok | {:error, term}
   defp sock_send({mod, sock}, data) do
     mod.send(sock, data)
   end
 
-  @spec activate(tcp_sock | ssl_sock) :: :ok | {:error, term}
+  @spec activate(S.sock()) :: :ok | {:error, term}
   defp activate({:gen_tcp, sock}) do
     :inet.setopts(sock, active: true)
   end
@@ -377,7 +375,7 @@ defmodule Supavisor.DbHandler do
 
   defp get_user(auth) do
     if auth.require_user do
-      auth.user
+      auth.secrets.().db_user
     else
       auth.secrets.().user
     end

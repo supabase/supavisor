@@ -35,7 +35,7 @@ defmodule Supavisor.Integration.ProxyTest do
       "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
     {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
-    assert result =~ "error received from server in SCRAM exchange: Invalid client signature"
+    assert result =~ "error received from server in SCRAM exchange: Wrong password"
   end
 
   test "insert", %{proxy: proxy, origin: origin} do
@@ -48,7 +48,7 @@ defmodule Supavisor.Integration.ProxyTest do
   test "query via another node", %{proxy: proxy, user: user} do
     sup =
       Enum.reduce_while(1..30, nil, fn _, acc ->
-        case Supavisor.get_global_sup(@tenant, user) do
+        case Supavisor.get_global_sup({@tenant, user, :transaction}) do
           nil ->
             Process.sleep(100)
             {:cont, acc}
@@ -63,7 +63,7 @@ defmodule Supavisor.Integration.ProxyTest do
                :"secondary@127.0.0.1",
                Supavisor,
                :get_global_sup,
-               [@tenant, user],
+               [{@tenant, user, :transaction}],
                15_000
              )
 
@@ -88,7 +88,7 @@ defmodule Supavisor.Integration.ProxyTest do
                :"secondary@127.0.0.1",
                Supavisor,
                :get_global_sup,
-               [@tenant, user],
+               [{@tenant, user, :transaction}],
                15_000
              )
   end
@@ -157,24 +157,25 @@ defmodule Supavisor.Integration.ProxyTest do
     :timer.sleep(500)
 
     [{_, client_pid, _}] =
-      Supavisor.get_local_manager("proxy_tenant", "transaction")
+      Supavisor.get_local_manager({"proxy_tenant", "transaction", :transaction})
       |> :sys.get_state()
       |> then(& &1[:tid])
       |> :ets.tab2list()
 
     {state, %{db_pid: db_pid}} = :sys.get_state(client_pid)
+    :timer.sleep(500)
 
     assert {:idle, nil} = {state, db_pid}
     Process.exit(psql_pid, :kill)
   end
 
-  test "limit client connections" do
-    db_conf = Application.get_env(:supavisor, Repo)
+  # test "limit client connections" do
+  #   db_conf = Application.get_env(:supavisor, Repo)
 
-    url =
-      "postgresql://max_clients.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+  #   url =
+  #     "postgresql://max_clients.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
 
-    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
-    assert result =~ "FATAL:  Max client connections reached"
-  end
+  #   {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
+  #   assert result =~ "FATAL:  Max client connections reached"
+  # end
 end

@@ -53,14 +53,14 @@ defmodule Supavisor.Tenants do
     query = build_user_query(user, external_id, sni_hostname)
 
     case Repo.all(query) do
-      nil ->
-        {:error, :not_found}
-
       [{%User{}, %Tenant{}} = {user, tenant}] ->
         {:ok, %{user: user, tenant: tenant}}
 
-      _ ->
+      [_ | _] ->
         {:error, :multiple_results}
+
+      _ ->
+        {:error, :not_found}
     end
   end
 

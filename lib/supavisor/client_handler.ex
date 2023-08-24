@@ -6,18 +6,15 @@ defmodule Supavisor.ClientHandler do
   supervisor. Each client connection is assigned to a specific tenant supervisor.
   """
 
-  @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
-  @type ssl_sock :: {:ssl, :ssl.sslsocket()}
-  @type sock :: tcp_sock() | ssl_sock()
-
   require Logger
 
   @behaviour :ranch_protocol
   @behaviour :gen_statem
 
-  alias Supavisor.DbHandler, as: Db
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.{Tenants, Protocol.Server, Monitoring.Telem}
+  alias Supavisor, as: S
+  alias S.DbHandler, as: Db
+  alias S.Helpers, as: H
+  alias S.{Tenants, Protocol.Server, Monitoring.Telem}
 
   @impl true
   def start_link(ref, _sock, transport, opts) do
@@ -43,21 +40,21 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
     data = %{
+      id: nil,
       sock: {:gen_tcp, sock},
       trans: trans,
       db_pid: nil,
       tenant: nil,
-      user_alias: nil,
+      user: nil,
       pool: nil,
       manager: nil,
       query_start: nil,
-      mode: nil,
       timeout: nil,
       ps: nil,
       ssl: false,
       auth_secrets: nil,
       proxy_type: nil,
-      def_mode_type: opts.def_mode_type,
+      mode: opts.mode,
       stats: %{}
     }
 
@@ -108,20 +105,21 @@ defmodule Supavisor.ClientHandler do
     hello = decode_startup_packet(bin)
     Logger.debug("Client startup message: #{inspect(hello)}")
     {user, external_id} = parse_user_info(hello.payload["user"])
-    Logger.metadata(project: external_id, user: user)
+    Logger.metadata(project: external_id, user: user, mode: data.mode)
 
     sni_hostname = try_get_sni(sock)
 
     case Tenants.get_user(user, external_id, sni_hostname) do
       {:ok, info} ->
-        Registry.register(Supavisor.Registry.TenantClients, {info.tenant.external_id, user}, [])
+        id = Supavisor.id(info.tenant.external_id, user, data.mode, info.user.mode_type)
+        Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         if info.tenant.enforce_ssl and !data.ssl do
           Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
           :ok = send_error(sock, "XX000", "SSL connection is required")
           {:stop, :normal, data}
         else
-          new_data = update_user_data(data, info)
+          new_data = update_user_data(data, info, user, id)
 
           case auth_secrets(info, user) do
             {:ok, auth_secrets} ->
@@ -162,7 +160,7 @@ defmodule Supavisor.ClientHandler do
               Map.put(secrets.(), :client_key, client_key)
             end
           else
-            nil
+            secrets
           end
 
         Logger.debug("Exchange success")
@@ -173,35 +171,29 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, :subscribe, _, %{tenant: tenant, user_alias: db_alias} = data) do
-    Logger.debug("Subscribe to tenant #{inspect({tenant, db_alias})}")
+  def handle_event(:internal, :subscribe, _, data) do
+    Logger.debug("Subscribe to tenant #{inspect(data.id)}")
 
-    conn_user =
-      if data.proxy_type == :auth_query do
-        {_method, secrets} = data.auth_secrets
-        secrets.().user
-      else
-        db_alias
-      end
-
-    with {:ok, tenant_sup} <-
-           Supavisor.start(tenant, db_alias, data.auth_secrets, conn_user, data.def_mode_type),
-         {:ok, %{manager: manager, pool: pool}, ps} <-
-           Supavisor.subscribe_global(node(tenant_sup), self(), tenant, conn_user) do
-      Process.monitor(manager)
-      data = %{data | manager: manager, pool: pool}
+    with {:ok, sup} <- Supavisor.start(data.id, data.auth_secrets),
+         {:ok, workers, ps} <- Supavisor.subscribe(sup, data.id) do
+      Process.monitor(workers.manager)
+      data = Map.merge(data, workers)
       db_pid = db_checkout(:on_connect, data)
       data = %{data | db_pid: db_pid}
 
-      if ps == [] do
-        {:keep_state, data, {:timeout, 10_000, :wait_ps}}
-      else
-        {:keep_state, data, {:next_event, :internal, {:greetings, ps}}}
-      end
+      next =
+        if ps == [] do
+          {:timeout, 10_000, :wait_ps}
+        else
+          {:next_event, :internal, {:greetings, ps}}
+        end
+
+      {:keep_state, data, next}
     else
       {:error, :max_clients_reached} ->
-        Logger.error("Max client connections reached")
-        :ok = send_error(data.sock, "XX000", "Max client connections reached")
+        msg = "Max client connections reached"
+        Logger.error(msg)
+        :ok = send_error(data.sock, "XX000", msg)
         {:stop, :normal, data}
 
       error ->
@@ -228,7 +220,7 @@ defmodule Supavisor.ClientHandler do
 
   # ignore termination messages
   def handle_event(:info, {proto, _, <<?X, 4::32>>}, _, _) when proto in [:tcp, :ssl] do
-    Logger.warn("Receive termination")
+    Logger.debug("Receive termination")
     :keep_state_and_data
   end
 
@@ -320,10 +312,8 @@ defmodule Supavisor.ClientHandler do
 
       db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
-      {_, stats} =
-        Telem.network_usage(:client, data.sock, data.tenant, data.user_alias, data.stats)
-
-      Telem.client_query_time(data.query_start, data.tenant, data.user_alias)
+      {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
+      Telem.client_query_time(data.query_start, data.id)
       {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, reply}
     else
       Logger.debug("Client is not ready")
@@ -396,7 +386,7 @@ defmodule Supavisor.ClientHandler do
     :undef
   end
 
-  @spec handle_exchange(sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
+  @spec handle_exchange(S.sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
   def handle_exchange({_, socket} = sock, {method, secrets}) do
     :ok = sock_send(sock, Server.auth_request())
 
@@ -440,7 +430,7 @@ defmodule Supavisor.ClientHandler do
     if p == signatures.client do
       {:ok, nil}
     else
-      {:error, "Invalid client signature"}
+      {:error, "Wrong password"}
     end
   end
 
@@ -450,7 +440,7 @@ defmodule Supavisor.ClientHandler do
     if H.hash(client_key) == secrets.().stored_key do
       {:ok, client_key}
     else
-      {:error, "Invalid client signature"}
+      {:error, "Wrong password"}
     end
   end
 
@@ -464,7 +454,7 @@ defmodule Supavisor.ClientHandler do
   defp db_checkout(_, data) do
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
     Process.link(db_pid)
-    Telem.pool_checkout_time(time, data.tenant, data.user_alias)
+    Telem.pool_checkout_time(time, data.id)
     db_pid
   end
 
@@ -478,48 +468,53 @@ defmodule Supavisor.ClientHandler do
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
-  defp update_user_data(data, info) do
-    {proxy_type, mode} =
+  defp update_user_data(data, info, user, id) do
+    proxy_type =
       if info.tenant.require_user do
-        {:password, info.user.mode_type}
+        :password
       else
-        {:auth_query, data.def_mode_type}
+        :auth_query
       end
 
     %{
       data
       | tenant: info.tenant.external_id,
-        user_alias: info.user.db_user_alias,
-        mode: mode,
+        user: user,
         timeout: info.user.pool_checkout_timeout,
         ps: info.tenant.default_parameter_status,
-        proxy_type: proxy_type
+        proxy_type: proxy_type,
+        id: id
     }
   end
 
-  @spec sock_send(tcp_sock() | ssl_sock(), iodata()) :: :ok | {:error, term()}
+  @spec sock_send(S.sock(), iodata()) :: :ok | {:error, term()}
   defp sock_send({mod, sock}, data) do
     mod.send(sock, data)
   end
 
-  @spec send_error(sock, String.t(), String.t()) :: :ok | {:error, term()}
+  @spec send_error(S.sock(), String.t(), String.t()) :: :ok | {:error, term()}
   defp send_error(sock, code, message) do
     data = Server.error_message(code, message)
     sock_send(sock, data)
   end
 
-  @spec setopts(sock, term()) :: :ok | {:error, term()}
+  @spec setopts(S.sock(), term()) :: :ok | {:error, term()}
   defp setopts({mod, sock}, opts) do
     mod = if mod == :gen_tcp, do: :inet, else: mod
     mod.setopts(sock, opts)
   end
 
-  @spec auth_secrets(map, String.t()) ::
-          {:ok, {:password | :auth_query, fun()}} | {:error, term()}
+  @spec auth_secrets(map, String.t()) :: {:ok, S.secrets()} | {:error, term()}
+  ## password secrets
   def auth_secrets(%{user: user, tenant: %{require_user: true}}, _) do
-    {:ok, {:password, fn -> user.db_password end}}
+    secrets =
+      %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
+      |> IO.inspect()
+
+    {:ok, {:password, fn -> secrets end}}
   end
 
+  ## auth_query secrets
   def auth_secrets(%{user: user, tenant: tenant} = info, db_user) do
     cache_key = {:secrets, tenant.external_id, user}
 
@@ -562,7 +557,7 @@ defmodule Supavisor.ClientHandler do
     resp =
       case H.get_user_secret(conn, tenant.auth_query, db_user) do
         {:ok, secret} ->
-          {:ok, {:auth_query, fn -> secret end}}
+          {:ok, {:auth_query, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
 
         {:error, reason} ->
           {:error, reason}
@@ -581,7 +576,7 @@ defmodule Supavisor.ClientHandler do
     {client_final_message, server_proof} =
       H.get_client_final(
         :password,
-        secret.(),
+        secret.().password,
         server_first_parts,
         nonce,
         user,
@@ -614,7 +609,7 @@ defmodule Supavisor.ClientHandler do
     {message, sings}
   end
 
-  @spec try_get_sni(sock()) :: String.t() | nil
+  @spec try_get_sni(S.sock()) :: String.t() | nil
   def try_get_sni({:ssl, sock}) do
     case :ssl.connection_information(sock, [:sni_hostname]) do
       {:ok, [sni_hostname: sni]} -> List.to_string(sni)

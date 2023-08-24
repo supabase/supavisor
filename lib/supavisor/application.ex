@@ -43,7 +43,7 @@ defmodule Supavisor.Application do
           socket_opts: [port: port]
         },
         Supavisor.ClientHandler,
-        %{def_mode_type: mode}
+        %{mode: mode}
       )
       |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
       |> Logger.warning()

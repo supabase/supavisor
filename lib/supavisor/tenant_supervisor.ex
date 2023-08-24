@@ -5,7 +5,7 @@ defmodule Supavisor.TenantSupervisor do
   alias Supavisor.Manager
 
   def start_link(args) do
-    name = {:via, :syn, {:tenants, {args.tenant, args.user_alias}}}
+    name = {:via, :syn, {:tenants, args.id}}
     Supervisor.start_link(__MODULE__, args, name: name)
   end
 
@@ -33,7 +33,9 @@ defmodule Supavisor.TenantSupervisor do
       {Manager, args}
     ]
 
-    Registry.register(Supavisor.Registry.TenantSups, args.tenant, %{user: args.user_alias})
+    {tenant, user, mode} = args.id
+    map_id = %{user: user, mode: mode}
+    Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
     Supervisor.init(children, strategy: :one_for_all, max_restarts: 10, max_seconds: 60)
   end
 

@@ -9,6 +9,7 @@ defmodule Supavisor.Monitoring.PromEx do
   require Logger
 
   alias PromEx.Plugins
+  alias Supavisor, as: S
   alias Supavisor.PromEx.Plugins.{OsMon, Tenant}
 
   @impl true
@@ -28,10 +29,12 @@ defmodule Supavisor.Monitoring.PromEx do
     ]
   end
 
-  @spec remove_metrics(String.t(), String.t()) :: non_neg_integer()
-  def remove_metrics(tenant, user_alias) do
+  @spec remove_metrics(S.id()) :: non_neg_integer
+  def remove_metrics({tenant, user, mode}) do
+    meta = %{tenant: tenant, user: user, mode: mode}
+
     Supavisor.Monitoring.PromEx.Metrics
-    |> :ets.select_delete([{{{:_, %{tenant: tenant, user_alias: user_alias}}, :_}, [], [true]}])
+    |> :ets.select_delete([{{{:_, meta}, :_}, [], [true]}])
   end
 
   @spec set_metrics_tags() :: :ok
