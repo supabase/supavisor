@@ -6,7 +6,7 @@ defmodule Supavisor.Manager do
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
 
-  @check_timeout 10_000
+  @check_timeout 120_000
 
   def start_link(args) do
     name = {:via, Registry, {Supavisor.Registry.Tenants, {:manager, args.id}}}
