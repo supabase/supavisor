@@ -163,7 +163,6 @@ defmodule Supavisor.Integration.ProxyTest do
       |> :ets.tab2list()
 
     {state, %{db_pid: db_pid}} = :sys.get_state(client_pid)
-    :timer.sleep(500)
 
     assert {:idle, nil} = {state, db_pid}
     Process.exit(psql_pid, :kill)
