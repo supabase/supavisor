@@ -11,8 +11,8 @@ defmodule Supavisor.ClientHandler do
   @behaviour :ranch_protocol
   @behaviour :gen_statem
 
+  alias Supavisor.DbHandler, as: Db
   alias Supavisor, as: S
-  alias S.DbHandler, as: Db
   alias S.Helpers, as: H
   alias S.{Tenants, Protocol.Server, Monitoring.Telem}
 
@@ -101,12 +101,20 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {_proto, _, bin}, :exchange, %{sock: sock} = data) do
-    hello = decode_startup_packet(bin)
-    Logger.debug("Client startup message: #{inspect(hello)}")
-    {user, external_id} = parse_user_info(hello.payload["user"])
-    Logger.metadata(project: external_id, user: user, mode: data.mode)
+  def handle_event(:info, {_, _, bin}, :exchange, data) do
+    with {:ok, hello} <- decode_startup_packet(bin) do
+      Logger.debug("Client startup message: #{inspect(hello)}")
+      {user, external_id} = parse_user_info(hello.payload["user"])
+      Logger.metadata(project: external_id, user: user, mode: data.mode)
+      {:keep_state, data, {:next_event, :internal, {:hello, {user, external_id}}}}
+    else
+      {:error, :bad_startup_payload} ->
+        Logger.error("Bad startup packet received")
+        {:stop, :normal, data}
+    end
+  end
 
+  def handle_event(:internal, {:hello, {user, external_id}}, :exchange, %{sock: sock} = data) do
     sni_hostname = try_get_sni(sock)
 
     case Tenants.get_user(user, external_id, sni_hostname) do
@@ -372,18 +380,43 @@ defmodule Supavisor.ClientHandler do
   end
 
   def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
-    %{
-      len: len,
-      payload:
-        String.split(rest, <<0>>, trim: true)
-        |> Enum.chunk_every(2)
-        |> Enum.into(%{}, fn [k, v] -> {k, v} end),
-      tag: :startup
-    }
+    with {:ok, payload} <- decode_startup_packet_payload(rest) do
+      pkt = %{
+        len: len,
+        payload: payload,
+        tag: :startup
+      }
+
+      {:ok, pkt}
+    end
   end
 
   def decode_startup_packet(_) do
-    :undef
+    {:error, :bad_startup_payload}
+  end
+
+  # The startup packet payload is a list of key/value pairs, separated by null bytes
+  defp decode_startup_packet_payload(payload) do
+    fields = String.split(payload, <<0>>, trim: true)
+
+    # If the number of fields is odd, then the payload is malformed
+    if rem(length(fields), 2) == 1 do
+      {:error, :bad_startup_payload}
+    else
+      map =
+        fields
+        |> Enum.chunk_every(2)
+        |> Enum.map(fn [k, v] -> {k, v} end)
+        |> Map.new()
+
+      # We only do light validation on the fields in the payload. The only field we use at the
+      # moment is `user`. If that's missing, this is a bad payload.
+      if Map.has_key?(map, "user") do
+        {:ok, map}
+      else
+        {:error, :bad_startup_payload}
+      end
+    end
   end
 
   @spec handle_exchange(S.sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}

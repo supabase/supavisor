@@ -1,5 +1,5 @@
 defmodule Supavisor.PromExTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   require Logger
   alias Supavisor.Monitoring.PromEx
   use Supavisor.DataCase

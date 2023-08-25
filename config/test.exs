@@ -6,6 +6,7 @@ config :supavisor,
   api_jwt_secret: "dev",
   metrics_jwt_secret: "dev",
   jwt_claim_validators: %{},
+  proxy_port_session: System.get_env("PROXY_PORT_TRANSACTION", "7653") |> String.to_integer(),
   proxy_port_transaction: System.get_env("PROXY_PORT_TRANSACTION", "7654") |> String.to_integer(),
   secondary_proxy_port: 7655,
   secondary_http: 4003,
@@ -35,7 +36,10 @@ config :supavisor, Supavisor.Vault,
   ]
 
 # Print only warnings and errors during test
-config :logger, level: :warn
+config :logger, :console,
+  level: :info,
+  format: "$time [$level] $message $metadata\n",
+  metadata: [:error_code, :file, :line, :pid, :project, :user, :mode]
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime

@@ -1,5 +1,5 @@
 defmodule Supavisor.Integration.ProxyTest do
-  use Supavisor.DataCase
+  use Supavisor.DataCase, async: true
   alias Postgrex, as: P
 
   @tenant "proxy_tenant"
@@ -169,13 +169,13 @@ defmodule Supavisor.Integration.ProxyTest do
     Process.exit(psql_pid, :kill)
   end
 
-  # test "limit client connections" do
-  #   db_conf = Application.get_env(:supavisor, Repo)
+  test "limit client connections" do
+    db_conf = Application.get_env(:supavisor, Repo)
 
-  #   url =
-  #     "postgresql://max_clients.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+    url =
+      "postgresql://max_clients.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
 
-  #   {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
-  #   assert result =~ "FATAL:  Max client connections reached"
-  # end
+    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
+    assert result =~ "FATAL:  Max client connections reached"
+  end
 end
