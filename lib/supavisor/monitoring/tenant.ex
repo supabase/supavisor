@@ -105,10 +105,10 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       {__MODULE__, :execute_tenant_metrics, []},
       [
         last_value(
-          [:supavisor, :connections, :connected],
+          [:supavisor, :connections, :active],
           event_name: [:supavisor, :connections],
-          description: "The total count of connected clients for a tenant.",
-          measurement: :connected,
+          description: "The total count of active clients for a tenant.",
+          measurement: :active,
           tags: @tags
         )
       ]
@@ -125,7 +125,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   def emit_telemetry_for_tenant({{tenant, user, mode}, count}) do
     :telemetry.execute(
       [:supavisor, :connections],
-      %{connected: count},
+      %{active: count},
       %{tenant: tenant, user: user, mode: mode}
     )
   end
@@ -137,10 +137,10 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       {__MODULE__, :execute_conn_tenants_metrics, []},
       [
         last_value(
-          [:supavisor, :tenants, :connected],
+          [:supavisor, :tenants, :active],
           event_name: [:supavisor, :tenants],
-          description: "The total count of connected tenants.",
-          measurement: :connected
+          description: "The total count of active tenants.",
+          measurement: :active
         )
       ]
     )
@@ -154,7 +154,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
     :telemetry.execute(
       [:supavisor, :tenants],
-      %{connected: num}
+      %{active: num}
     )
   end
 end

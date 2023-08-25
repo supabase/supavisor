@@ -24,8 +24,10 @@ dev.node2:
 	REGION=eu \
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
+	PROXY_PORT_SESSION="5442" \
+	PROXY_PORT_TRANSACTION="6553" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
-	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server
+	iex --name node2@node2.supavisor.io --cookie cookie -S mix phx.server
 
 dev_bin:
 	MIX_ENV=dev mix release supavisor_bin && ls -l burrito_out
