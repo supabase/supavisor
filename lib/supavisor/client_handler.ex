@@ -11,10 +11,10 @@ defmodule Supavisor.ClientHandler do
   @behaviour :ranch_protocol
   @behaviour :gen_statem
 
-  alias Supavisor.DbHandler, as: Db
   alias Supavisor, as: S
-  alias S.Helpers, as: H
-  alias S.{Tenants, Protocol.Server, Monitoring.Telem}
+  alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Helpers, as: H
+  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Server }
 
   @impl true
   def start_link(ref, _sock, transport, opts) do
@@ -102,14 +102,14 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {_, _, bin}, :exchange, data) do
-    with {:ok, hello} <- decode_startup_packet(bin) do
-      Logger.debug("Client startup message: #{inspect(hello)}")
-      {user, external_id} = parse_user_info(hello.payload["user"])
-      Logger.metadata(project: external_id, user: user, mode: data.mode)
-      {:keep_state, data, {:next_event, :internal, {:hello, {user, external_id}}}}
-    else
-      {:error, :bad_startup_payload} ->
-        Logger.error("Bad startup packet received")
+    case decode_startup_packet(bin) do
+      {:ok, hello} ->
+        Logger.debug("Client startup message: #{inspect(hello)}")
+        {user, external_id} = parse_user_info(hello.payload["user"])
+        Logger.metadata(project: external_id, user: user, mode: data.mode)
+        {:keep_state, data, {:next_event, :internal, {:hello, {user, external_id}}}}
+      {:error, error} ->
+        Logger.error("Client startup message error: #{inspect(error)}")
         {:stop, :normal, data}
     end
   end

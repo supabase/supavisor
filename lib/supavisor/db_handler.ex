@@ -9,9 +9,9 @@ defmodule Supavisor.DbHandler do
   @behaviour :gen_statem
 
   alias Supavisor, as: S
-  alias S.ClientHandler, as: Client
-  alias S.Helpers, as: H
-  alias S.{Protocol.Server, Monitoring.Telem}
+  alias Supavisor.ClientHandler, as: Client
+  alias Supavisor.Helpers, as: H
+  alias Supavisor.{Monitoring.Telem, Protocol.Server}
 
   @reconnect_timeout 2_500
 
@@ -72,7 +72,6 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            # TODO: fix user name
             case send_startup(sock, auth) do
               :ok ->
                 :ok = activate(sock)
