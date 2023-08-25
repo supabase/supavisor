@@ -14,7 +14,7 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor, as: S
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Helpers, as: H
-  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Server }
+  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Server}
 
   @impl true
   def start_link(ref, _sock, transport, opts) do
@@ -108,6 +108,7 @@ defmodule Supavisor.ClientHandler do
         {user, external_id} = parse_user_info(hello.payload["user"])
         Logger.metadata(project: external_id, user: user, mode: data.mode)
         {:keep_state, data, {:next_event, :internal, {:hello, {user, external_id}}}}
+
       {:error, error} ->
         Logger.error("Client startup message error: #{inspect(error)}")
         {:stop, :normal, data}
