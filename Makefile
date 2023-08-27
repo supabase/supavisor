@@ -15,7 +15,6 @@ dev:
 	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
 
 dev.node2:
-	PROXY_PORT_TRANSACTION=7655 \
 	PORT=4001 \
 	MIX_ENV=dev \
 	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
