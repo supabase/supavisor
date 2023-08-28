@@ -182,8 +182,8 @@ defmodule SupavisorWeb.TenantController do
 
   def terminate(conn, %{"external_id" => external_id}) do
     Logger.metadata(project: external_id)
-    result = Supavisor.terminate_global(external_id)
-    Logger.warning("Terminate #{external_id}: #{inspect(result)}")
+    result = Supavisor.terminate_global(external_id) |> inspect()
+    Logger.warning("Terminate #{external_id}: #{result}")
     render(conn, "show_terminate.json", result: result)
   end
 

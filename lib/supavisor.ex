@@ -113,15 +113,7 @@ defmodule Supavisor do
 
   def terminate_global(tenant) do
     [node() | Node.list()]
-    |> Task.async_stream(
-      fn node ->
-        %{node => :rpc.call(node, Supavisor, :dirty_terminate, [tenant], 60_000)}
-      end,
-      timeout: :infinity
-    )
-    |> Enum.reduce([], fn resp, acc ->
-      [inspect(resp) | acc]
-    end)
+    |> :erpc.multicall(Supavisor, :dirty_terminate, [tenant], 60_000)
   end
 
   @spec del_all_cache(String.t(), String.t()) :: map()
