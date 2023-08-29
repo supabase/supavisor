@@ -3,14 +3,10 @@ defmodule Supavisor.Monitoring.Telem do
 
   require Logger
 
-  @spec network_usage(
-          atom(),
-          {:gen_tcp, :gen_tcp.socket()} | {:ssl, :ssl.socket()},
-          String.t(),
-          String.t(),
-          map()
-        ) :: {:ok | :error, map()}
-  def network_usage(type, {mod, socket}, tenant, user_alias, stats) do
+  alias Supavisor, as: S
+
+  @spec network_usage(:client | :db, S.sock(), S.id(), map()) :: {:ok | :error, map()}
+  def network_usage(type, {mod, socket}, id, stats) do
     mod = if mod == :ssl, do: :ssl, else: :inet
 
     case mod.getstat(socket) do
@@ -18,10 +14,12 @@ defmodule Supavisor.Monitoring.Telem do
         values = Map.new(values)
         diff = Map.merge(values, stats, fn _, v1, v2 -> v1 - v2 end)
 
+        {tenant, user, mode} = id
+
         :telemetry.execute(
           [:supavisor, type, :network, :stat],
           diff,
-          %{tenant: tenant, user_alias: user_alias}
+          %{tenant: tenant, user: user, mode: mode}
         )
 
         {:ok, values}
@@ -32,21 +30,21 @@ defmodule Supavisor.Monitoring.Telem do
     end
   end
 
-  @spec pool_checkout_time(integer(), String.t(), String.t()) :: :ok
-  def pool_checkout_time(time, tenant, user_alias) do
+  @spec pool_checkout_time(integer(), S.id()) :: :ok
+  def pool_checkout_time(time, {tenant, user, mode}) do
     :telemetry.execute(
       [:supavisor, :pool, :checkout, :stop],
       %{duration: time},
-      %{tenant: tenant, user_alias: user_alias}
+      %{tenant: tenant, user: user, mode: mode}
     )
   end
 
-  @spec client_query_time(integer(), String.t(), String.t()) :: :ok
-  def client_query_time(start, tenant, user_alias) do
+  @spec client_query_time(integer(), S.id()) :: :ok
+  def client_query_time(start, {tenant, user, mode}) do
     :telemetry.execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
-      %{tenant: tenant, user_alias: user_alias}
+      %{tenant: tenant, user: user, mode: mode}
     )
   end
 end

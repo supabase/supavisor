@@ -94,8 +94,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       conn: conn,
       tenant: %Tenant{external_id: external_id}
     } do
-      msg =
-        "Stop #{@user_valid_attrs.db_user_alias}.#{@update_attrs.external_id}: {:error, :tenant_not_found}"
+      msg = "Stop #{@update_attrs.external_id}"
 
       assert capture_log(fn ->
                put(conn, Routes.tenant_path(conn, :update, external_id), tenant: @update_attrs)

@@ -7,21 +7,21 @@ defmodule Supavisor.SynHandler do
 
   def on_process_unregistered(
         :tenants,
-        {tenant, user_alias},
+        {tenant, user, _mode} = id,
         _pid,
         _meta,
         reason
       ) do
-    Logger.debug("Process unregistered: #{inspect({tenant, user_alias})} #{inspect(reason)}")
+    Logger.debug("Process unregistered: #{inspect(id)} #{inspect(reason)}")
 
     # remove all Prometheus metrics for the specified tenant
-    PromEx.remove_metrics(tenant, user_alias)
-    Supavisor.del_all_cache(tenant, user_alias)
+    PromEx.remove_metrics(id)
+    Supavisor.del_all_cache(tenant, user)
   end
 
   def resolve_registry_conflict(
         :tenants,
-        {tenant, user_alias},
+        id,
         {pid1, _, time1},
         {pid2, _, time2}
       ) do
@@ -46,13 +46,11 @@ defmodule Supavisor.SynHandler do
           end
 
         Logger.warn(
-          "Resolving #{inspect({tenant, user_alias})} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
+          "Resolving #{inspect(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
         )
       end)
     else
-      Logger.warn(
-        "Resolving #{inspect({tenant, user_alias})} conflict, remote pid: #{inspect(stop)}"
-      )
+      Logger.warn("Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}")
     end
 
     keep

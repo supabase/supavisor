@@ -3,7 +3,6 @@ defmodule Supavisor.Manager do
   use GenServer, restart: :transient
   require Logger
 
-  alias Supavisor.PromEx.Plugins.Tenant, as: M
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
 
@@ -37,25 +36,26 @@ defmodule Supavisor.Manager do
     tid = :ets.new(__MODULE__, [:public])
 
     state = %{
+      id: args.id,
       check_ref: check_subscribers(),
       tid: tid,
       tenant: args.tenant,
-      user_alias: args.user_alias,
       parameter_status: [],
       wait_ps: [],
       default_parameter_status: args.default_parameter_status,
       max_clients: args.max_clients
     }
 
-    Logger.metadata(project: args.tenant, user: args.user_alias)
-    Registry.register(Supavisor.Registry.ManagerTables, {args.tenant, args.user_alias}, tid)
+    {tenant, user, _mode} = args.id
+    Logger.metadata(project: tenant, user: user)
+    Registry.register(Supavisor.Registry.ManagerTables, args.id, tid)
 
     {:ok, state}
   end
 
   @impl true
-  def handle_call({:subscribe, pid}, _, %{tenant: tenant, user_alias: user_alias} = state) do
-    Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect({tenant, user_alias})}")
+  def handle_call({:subscribe, pid}, _, state) do
+    Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect(state.id)}")
 
     # don't limit if max_clients is null
     {reply, new_state} =
@@ -104,23 +104,17 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, _, _, _}, %{tenant: tenant, user_alias: user_alias} = state) do
+  def handle_info({:DOWN, ref, _, _, _}, state) do
     :ets.take(state.tid, ref)
-
-    if :ets.info(state.tid, :size) == 0 do
-      # display 0 in metrics
-      M.emit_telemetry_for_tenant({{tenant, user_alias}, 0})
-    end
-
     {:noreply, state}
   end
 
-  def handle_info(:check_subscribers, %{tenant: tenant, user_alias: user_alias} = state) do
+  def handle_info(:check_subscribers, state) do
     Process.cancel_timer(state.check_ref)
 
     if :ets.info(state.tid, :size) == 0 do
-      Logger.info("No subscribers for tenant #{inspect({tenant, user_alias})}, shutting down")
-      Supavisor.stop(tenant, user_alias)
+      Logger.info("No subscribers for pool #{inspect(state.id)}, shutting down")
+      Supavisor.stop(state.id)
       {:stop, :normal}
     else
       {:noreply, %{state | check_ref: check_subscribers()}}

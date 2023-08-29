@@ -16,16 +16,22 @@ defmodule Supavisor.TenantsMetrics do
   @impl true
   def init(_args) do
     send(self(), :check_metrics)
-    {:ok, %{check_ref: make_ref()}}
+    {:ok, %{check_ref: make_ref(), pools: MapSet.new()}}
   end
 
   @impl true
   def handle_info(:check_metrics, state) do
     Process.cancel_timer(state.check_ref)
 
-    PromEx.do_cache_tenants_metrics()
+    active_pools = PromEx.do_cache_tenants_metrics() |> MapSet.new()
 
-    {:noreply, %{state | check_ref: check_metrics()}}
+    MapSet.difference(state.pools, active_pools)
+    |> Enum.each(fn {tenant, _, _} = pool ->
+      Logger.debug("Removing cached metrics for #{inspect(pool)}")
+      Cachex.del(Supavisor.Cache, {:metrics, tenant})
+    end)
+
+    {:noreply, %{state | check_ref: check_metrics(), pools: active_pools}}
   end
 
   ## Internal functions
