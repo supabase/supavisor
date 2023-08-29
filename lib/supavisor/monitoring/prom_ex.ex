@@ -9,6 +9,7 @@ defmodule Supavisor.Monitoring.PromEx do
   require Logger
 
   alias PromEx.Plugins
+  alias Supavisor, as: S
   alias Supavisor.PromEx.Plugins.{OsMon, Tenant}
 
   @impl true
@@ -28,10 +29,12 @@ defmodule Supavisor.Monitoring.PromEx do
     ]
   end
 
-  @spec remove_metrics(String.t(), String.t()) :: non_neg_integer()
-  def remove_metrics(tenant, user_alias) do
+  @spec remove_metrics(S.id()) :: non_neg_integer
+  def remove_metrics({tenant, user, mode}) do
+    meta = %{tenant: tenant, user: user, mode: mode}
+
     Supavisor.Monitoring.PromEx.Metrics
-    |> :ets.select_delete([{{{:_, %{tenant: tenant, user_alias: user_alias}}, :_}, [], [true]}])
+    |> :ets.select_delete([{{{:_, meta}, :_}, [], [true]}])
   end
 
   @spec set_metrics_tags() :: :ok
@@ -80,13 +83,15 @@ defmodule Supavisor.Monitoring.PromEx do
     metrics
   end
 
-  @spec do_cache_tenants_metrics() :: :ok
+  @spec do_cache_tenants_metrics() :: list
   def do_cache_tenants_metrics() do
     metrics = get_metrics() |> String.split("\n")
 
-    Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
-    |> Enum.uniq()
-    |> Enum.reduce(metrics, fn tenant, acc ->
+    pools =
+      Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
+      |> Enum.uniq()
+
+    Enum.reduce(pools, metrics, fn {tenant, _, _}, acc ->
       {matched, rest} = Enum.split_with(acc, &String.contains?(&1, "tenant=\"#{tenant}\""))
 
       if matched != [] do
@@ -95,6 +100,8 @@ defmodule Supavisor.Monitoring.PromEx do
 
       rest
     end)
+
+    pools
   end
 
   @spec get_tenant_metrics(String.t()) :: String.t()

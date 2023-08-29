@@ -1,5 +1,5 @@
 defmodule Supavisor.PromExTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   require Logger
   alias Supavisor.Monitoring.PromEx
   use Supavisor.DataCase
@@ -29,7 +29,7 @@ defmodule Supavisor.PromExTest do
     assert metrics =~ "tenant=\"#{@tenant}\""
     DynamicSupervisor.stop(proxy, user)
     Process.sleep(500)
-    Supavisor.stop(@tenant, user)
+    Supavisor.stop({@tenant, user, :transaction})
     Process.sleep(500)
     refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
   end

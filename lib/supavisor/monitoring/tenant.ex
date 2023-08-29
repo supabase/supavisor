@@ -4,12 +4,17 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   use PromEx.Plugin
   require Logger
 
+  alias Supavisor, as: S
+
+  @tags [:tenant, :user, :mode]
+
   @impl true
   def polling_metrics(opts) do
     poll_rate = Keyword.get(opts, :poll_rate, 5_000)
 
     [
-      concurrent_connections(poll_rate)
+      concurrent_connections(poll_rate),
+      concurrent_tenants(poll_rate)
     ]
   end
 
@@ -30,7 +35,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :pool, :checkout, :stop],
           measurement: :duration,
           description: "Duration of the checkout process in the tenant db pool.",
-          tags: [:tenant, :user_alias],
+          tags: @tags,
           unit: {:microsecond, :millisecond},
           reporter_options: [
             buckets: [125, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000]
@@ -41,7 +46,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :query, :stop],
           measurement: :duration,
           description: "Duration of processing the query.",
-          tags: [:tenant, :user_alias],
+          tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
             buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000]
@@ -52,20 +57,20 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :recv_oct,
           description: "The total number of bytes received by clients.",
-          tags: [:tenant, :user_alias]
+          tags: @tags
         ),
         sum(
           [:supavisor, :client, :network, :send],
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by clients.",
-          tags: [:tenant, :user_alias]
+          tags: @tags
         ),
         counter(
           [:supavisor, :client, :queries, :count],
           event_name: [:supavisor, :client, :query, :stop],
           description: "The total number of queries received by clients.",
-          tags: [:tenant, :user_alias]
+          tags: @tags
         )
       ]
     )
@@ -80,14 +85,14 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :db, :network, :stat],
           measurement: :recv_oct,
           description: "The total number of bytes received by db process",
-          tags: [:tenant, :user_alias]
+          tags: @tags
         ),
         sum(
           [:supavisor, :db, :network, :send],
           event_name: [:supavisor, :db, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by db process",
-          tags: [:tenant, :user_alias]
+          tags: @tags
         )
       ]
     )
@@ -100,29 +105,56 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       {__MODULE__, :execute_tenant_metrics, []},
       [
         last_value(
-          [:supavisor, :connections, :connected],
+          [:supavisor, :connections, :active],
           event_name: [:supavisor, :connections],
-          description: "The total count of connected clients for a tenant.",
-          measurement: :connected,
-          tags: [:tenant, :user_alias]
+          description: "The total count of active clients for a tenant.",
+          measurement: :active,
+          tags: @tags
         )
       ]
     )
   end
 
   def execute_tenant_metrics() do
-    Registry.select(Supavisor.Registry.ManagerTables, [
-      {{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}
-    ])
+    Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.frequencies()
     |> Enum.each(&emit_telemetry_for_tenant/1)
   end
 
-  @spec emit_telemetry_for_tenant({{String.t(), String.t()}, pid(), :ets.tid()}) :: :ok
-  def emit_telemetry_for_tenant({{tenant, user_alias}, _pid, tid}) do
+  @spec emit_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
+  def emit_telemetry_for_tenant({{tenant, user, mode}, count}) do
     :telemetry.execute(
       [:supavisor, :connections],
-      %{connected: :ets.info(tid, :size)},
-      %{tenant: tenant, user_alias: user_alias}
+      %{active: count},
+      %{tenant: tenant, user: user, mode: mode}
+    )
+  end
+
+  def concurrent_tenants(poll_rate) do
+    Polling.build(
+      :supavisor_concurrent_tenants,
+      poll_rate,
+      {__MODULE__, :execute_conn_tenants_metrics, []},
+      [
+        last_value(
+          [:supavisor, :tenants, :active],
+          event_name: [:supavisor, :tenants],
+          description: "The total count of active tenants.",
+          measurement: :active
+        )
+      ]
+    )
+  end
+
+  def execute_conn_tenants_metrics() do
+    num =
+      Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
+      |> Enum.uniq()
+      |> Enum.count()
+
+    :telemetry.execute(
+      [:supavisor, :tenants],
+      %{active: num}
     )
   end
 end

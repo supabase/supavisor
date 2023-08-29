@@ -43,7 +43,7 @@ defmodule Supavisor.Application do
           socket_opts: [port: port]
         },
         Supavisor.ClientHandler,
-        %{def_mode_type: mode}
+        %{mode: mode}
       )
       |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
       |> Logger.warning()
@@ -61,6 +61,7 @@ defmodule Supavisor.Application do
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
+      {Registry, keys: :duplicate, name: Supavisor.Registry.TenantClients},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor

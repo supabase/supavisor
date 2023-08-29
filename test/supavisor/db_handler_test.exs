@@ -5,7 +5,14 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "init/1" do
     test "starts with correct state" do
-      args = %{id: {"a", "b"}, auth: %{}, tenant: "test_tenant", user_alias: "test_user_alias"}
+      args = %{
+        id: {"a", "b"},
+        auth: %{},
+        tenant: "test_tenant",
+        user_alias: "test_user_alias",
+        user: "user",
+        mode: :transaction
+      }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
       assert next_event == :internal
@@ -14,7 +21,6 @@ defmodule Supavisor.DbHandlerTest do
       assert data.sent == false
       assert data.auth == args.auth
       assert data.tenant == args.tenant
-      assert data.user_alias == args.user_alias
       assert data.buffer == []
       assert data.db_state == nil
       assert data.parameter_status == %{}
@@ -31,6 +37,8 @@ defmodule Supavisor.DbHandlerTest do
       :meck.expect(:gen_tcp, :send, fn _sock, _msg -> :ok end)
       :meck.expect(:inet, :setopts, fn _sock, _opts -> :ok end)
 
+      secrets = fn -> %{user: "some user", db_user: "some user"} end
+
       auth = %{
         host: "host",
         port: 0,
@@ -38,7 +46,8 @@ defmodule Supavisor.DbHandlerTest do
         require_user: true,
         database: "some database",
         application_name: "some application name",
-        ip_version: :inet
+        ip_version: :inet,
+        secrets: secrets
       }
 
       state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: {:gen_tcp, nil}})
@@ -53,7 +62,8 @@ defmodule Supavisor.DbHandlerTest do
                     port: 0,
                     user: "some user",
                     require_user: true,
-                    ip_version: :inet
+                    ip_version: :inet,
+                    secrets: secrets
                   },
                   sock: {:gen_tcp, :sock}
                 }}

@@ -4,23 +4,23 @@ defmodule Supavisor.SynHandlerTest do
   require Logger
   alias Ecto.Adapters.SQL.Sandbox
 
-  @tenant "syn_tenant"
-  @user "postgres"
+  @id {"syn_tenant", "postgres", :session}
 
   test "resolving conflict" do
     node2 = :"secondary@127.0.0.1"
 
-    secret = {:password, fn -> :ok end}
-    {:ok, pid2} = :erpc.call(node2, Supavisor, :start, [@tenant, @user, secret, @user])
+    secret = %{alias: "postgres"}
+    auth_secret = {:password, fn -> secret end}
+    {:ok, pid2} = :erpc.call(node2, Supavisor.FixturesHelpers, :start_pool, [@id, secret])
     Process.sleep(500)
-    assert pid2 == Supavisor.get_global_sup(@tenant, @user)
+    assert pid2 == Supavisor.get_global_sup(@id)
     assert node(pid2) == node2
     true = Node.disconnect(node2)
     Process.sleep(500)
 
-    assert nil == Supavisor.get_global_sup(@tenant, @user)
-    {:ok, pid1} = Supavisor.start(@tenant, @user, secret, @user)
-    assert pid1 == Supavisor.get_global_sup(@tenant, @user)
+    assert nil == Supavisor.get_global_sup(@id)
+    {:ok, pid1} = Supavisor.start(@id, auth_secret)
+    assert pid1 == Supavisor.get_global_sup(@id)
     assert node(pid1) == node()
 
     :pong = Node.ping(node2)
@@ -31,7 +31,7 @@ defmodule Supavisor.SynHandlerTest do
     assert capture_log(fn -> Logger.warn(msg) end) =~
              msg
 
-    assert pid2 == Supavisor.get_global_sup(@tenant, @user)
+    assert pid2 == Supavisor.get_global_sup(@id)
     assert node(pid2) == node2
   end
 
