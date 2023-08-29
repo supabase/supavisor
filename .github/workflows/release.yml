@@ -1,7 +1,7 @@
 name: Build and Release binary on Push to Master
 on:
   release:
-    types: [published]
+    types: [published, edited]
     branches:
       - main
 jobs:
