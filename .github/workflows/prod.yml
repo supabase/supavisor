@@ -39,7 +39,7 @@ jobs:
       - name: configure aws credentials - staging
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          role-to-assume: ${{ secrets.DEV_AWS_ROLE }}
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
           aws-region: "us-east-1"
       - name: Deploy to S3
         shell: bash
