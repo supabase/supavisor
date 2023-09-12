@@ -14,7 +14,7 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor, as: S
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Helpers, as: H
-  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Server}
+  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Client, Protocol.Server}
 
   @impl true
   def start_link(ref, _sock, transport, opts) do
@@ -187,7 +187,7 @@ defmodule Supavisor.ClientHandler do
          {:ok, workers, ps} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(workers.manager)
       data = Map.merge(data, workers)
-      db_pid = db_checkout(:on_connect, data)
+      db_pid = db_checkout(nil, :on_connect, data)
       data = %{data | db_pid: db_pid}
 
       next =
@@ -233,16 +233,48 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {proto, _, bin}, :idle, data) do
+  # incoming query
+  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data) when is_pid(pid) do
     ts = System.monotonic_time()
-    db_pid = db_checkout(:on_query, data)
+    db_pid = db_checkout(nil, :on_query, data)
+
+    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
+     {:next_event, :internal, {proto, nil, bin}}}
+  end
+
+  def handle_event(:info, {proto, _, bin}, :idle, data) do
+    query_type =
+      with {:ok, pkt, _} <- Client.decode_pkt(bin),
+           {:ok, statements} <- Supavisor.PgParser.statement_types(pkt.payload) do
+        Logger.debug(
+          "Receive pkt #{inspect(pkt, pretty: true)} statements #{inspect(statements)}"
+        )
+
+        case statements do
+          # naive check for read only queries
+          ["SelectStmt"] ->
+            :read
+
+          _ ->
+            :write
+        end
+      else
+        other ->
+          Logger.error("Receive query error: #{inspect(other)}")
+          :write
+      end
+
+    ts = System.monotonic_time()
+    db_pid = db_checkout(query_type, :on_query, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
-    case Db.call(data.db_pid, bin) do
+    {_, db_pid} = data.db_pid
+
+    case Db.call(db_pid, bin) do
       :ok ->
         Logger.debug("DB call success")
         :keep_state_and_data
@@ -478,23 +510,34 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec db_checkout(:on_connect | :on_query, map()) :: pid() | nil
-  defp db_checkout(_, %{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
+  @spec db_checkout(:write | :read | nil, :on_connect | :on_query, map) :: {pid, pid} | nil
+  defp db_checkout(_, _, %{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
     db_pid
   end
 
-  defp db_checkout(:on_connect, %{mode: :transaction}), do: nil
+  defp db_checkout(_, :on_connect, %{mode: :transaction}), do: nil
 
-  defp db_checkout(_, data) do
+  defp db_checkout(query_type, _, data) when query_type in [:write, :read] do
+    pool =
+      data.pool[query_type]
+      |> Enum.random()
+
+    {time, db_pid} = :timer.tc(:poolboy, :checkout, [pool, true, data.timeout])
+    Process.link(db_pid)
+    Telem.pool_checkout_time(time, data.id)
+    {pool, db_pid}
+  end
+
+  defp db_checkout(_, _, data) do
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
     Process.link(db_pid)
     Telem.pool_checkout_time(time, data.id)
-    db_pid
+    {data.pool, db_pid}
   end
 
-  @spec handle_db_pid(:transaction, pid(), pid()) :: nil
-  @spec handle_db_pid(:session, pid(), pid()) :: pid()
-  defp handle_db_pid(:transaction, pool, db_pid) do
+  # @spec handle_db_pid(:transaction, pid(), pid()) :: nil
+  # @spec handle_db_pid(:session, pid(), pid()) :: pid()
+  defp handle_db_pid(:transaction, _pool, {pool, db_pid}) do
     Process.unlink(db_pid)
     :poolboy.checkin(pool, db_pid)
     nil

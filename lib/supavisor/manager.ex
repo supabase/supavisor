@@ -35,6 +35,8 @@ defmodule Supavisor.Manager do
   def init(args) do
     tid = :ets.new(__MODULE__, [:public])
 
+    [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
+
     state = %{
       id: args.id,
       check_ref: check_subscribers(),

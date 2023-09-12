@@ -10,33 +10,31 @@ defmodule Supavisor.TenantSupervisor do
   end
 
   @impl true
-  def init(%{pool_size: pool_size} = args) do
-    {size, overflow} =
-      case args.mode do
-        :session -> {1, pool_size}
-        :transaction -> {pool_size, 0}
-      end
+  def init(%{replicas: replicas} = args) do
+    pools =
+      replicas
+      |> Enum.with_index()
+      |> Enum.map(fn {e, i} ->
+        id = {:pool, e.replica_type, i, args.id}
 
-    pool_spec = [
-      name: {:via, Registry, {Supavisor.Registry.Tenants, {:pool, args.id}}},
-      worker_module: Supavisor.DbHandler,
-      size: size,
-      max_overflow: overflow
-    ]
+        %{
+          id: {:pool, id},
+          start: {:poolboy, :start_link, [pool_spec(id, e), e]},
+          restart: :temporary
+        }
+      end)
 
-    children = [
-      %{
-        id: {:pool, args.id},
-        start: {:poolboy, :start_link, [pool_spec, args]},
-        restart: :transient
-      },
-      {Manager, args}
-    ]
+    children = [{Manager, args} | pools]
 
     {tenant, user, mode} = args.id
     map_id = %{user: user, mode: mode}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
-    Supervisor.init(children, strategy: :one_for_all, max_restarts: 10, max_seconds: 60)
+
+    Supervisor.init(children,
+      strategy: :one_for_all,
+      max_restarts: 10,
+      max_seconds: 60
+    )
   end
 
   def child_spec(args) do
@@ -45,5 +43,22 @@ defmodule Supavisor.TenantSupervisor do
       start: {__MODULE__, :start_link, [args]},
       restart: :transient
     }
+  end
+
+  @spec pool_spec(tuple, map) :: Keyword.t()
+  defp pool_spec(id, args) do
+    {size, overflow} =
+      case args.mode do
+        :session -> {1, args.pool_size}
+        :transaction -> {args.pool_size, 0}
+      end
+
+    [
+      name: {:via, Registry, {Supavisor.Registry.Tenants, id, args.replica_type}},
+      worker_module: Supavisor.DbHandler,
+      size: size,
+      max_overflow: overflow,
+      strategy: :fifo
+    ]
   end
 end

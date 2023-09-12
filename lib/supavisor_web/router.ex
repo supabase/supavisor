@@ -46,6 +46,12 @@ defmodule SupavisorWeb.Router do
     delete("/tenants/:external_id", TenantController, :delete)
     get("/tenants/:external_id/terminate", TenantController, :terminate)
     get("/health", TenantController, :health)
+
+    # get("/clusters/:external_id", TenantController, :show)
+    # put("/clusters/:external_id", TenantController, :update)
+    # delete("/clusters/:external_id", TenantController, :delete)
+    # get("/clusters/:external_id/terminate", TenantController, :terminate)
+    # get("/health", TenantController, :health)
   end
 
   scope "/metrics", SupavisorWeb do
