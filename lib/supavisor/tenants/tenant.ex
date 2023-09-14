@@ -26,7 +26,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:default_pool_size, :integer, default: 15)
     field(:sni_hostname, :string)
     field(:default_max_clients, :integer, default: 1000)
-    field(:idle_timeout_downstream, :integer, default: 10_000)
+    field(:idle_timeout_downstream, :integer, default: 0)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
