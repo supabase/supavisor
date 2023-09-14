@@ -14,7 +14,7 @@ defmodule Supavisor.Manager do
     GenServer.start_link(__MODULE__, args, name: name)
   end
 
-  @spec subscribe(pid, pid) :: {:ok, iodata() | []} | {:error, :max_clients_reached}
+  @spec subscribe(pid, pid) :: {:ok, iodata() | [], integer} | {:error, :max_clients_reached}
   def subscribe(manager, pid) do
     GenServer.call(manager, {:subscribe, pid})
   end
@@ -43,7 +43,8 @@ defmodule Supavisor.Manager do
       parameter_status: [],
       wait_ps: [],
       default_parameter_status: args.default_parameter_status,
-      max_clients: args.max_clients
+      max_clients: args.max_clients,
+      idle_timeout: args.idle_timeout_downstream
     }
 
     {tenant, user, _mode} = args.id
@@ -64,10 +65,10 @@ defmodule Supavisor.Manager do
 
         case state.parameter_status do
           [] ->
-            {{:ok, []}, update_in(state.wait_ps, &[pid | &1])}
+            {{:ok, [], state.idle_timeout}, update_in(state.wait_ps, &[pid | &1])}
 
           ps ->
-            {{:ok, ps}, state}
+            {{:ok, ps, state.idle_timeout}, state}
         end
       else
         {{:error, :max_clients_reached}, state}
