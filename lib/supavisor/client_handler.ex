@@ -25,8 +25,8 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def callback_mode, do: [:handle_event_function]
 
-  def client_call(pid, bin, ready?) do
-    :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
+  def client_call(pid, bin, status) do
+    :gen_statem.call(pid, {:client_call, bin, status}, 5000)
   end
 
   @impl true
@@ -55,7 +55,8 @@ defmodule Supavisor.ClientHandler do
       auth_secrets: nil,
       proxy_type: nil,
       mode: opts.mode,
-      stats: %{}
+      stats: %{},
+      last_query: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -233,7 +234,7 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
-  # incoming query
+  # incoming query with a single pool
   def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data) when is_pid(pid) do
     ts = System.monotonic_time()
     db_pid = db_checkout(nil, :on_query, data)
@@ -242,6 +243,7 @@ defmodule Supavisor.ClientHandler do
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
+  # incoming query with read/write pools
   def handle_event(:info, {proto, _, bin}, :idle, data) do
     query_type =
       with {:ok, pkt, _} <- Client.decode_pkt(bin),
@@ -267,7 +269,7 @@ defmodule Supavisor.ClientHandler do
     ts = System.monotonic_time()
     db_pid = db_checkout(query_type, :on_query, data)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
+    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts, last_query: bin},
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
@@ -343,22 +345,35 @@ defmodule Supavisor.ClientHandler do
   end
 
   # emulate handle_call
-  def handle_event({:call, from}, {:client_call, bin, ready?}, _, data) do
+  def handle_event({:call, from}, {:client_call, bin, status}, _, data) do
     Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
 
-    reply = {:reply, from, sock_send(data.sock, bin)}
+    case status do
+      :ready_for_query ->
+        Logger.debug("Client is ready")
 
-    if ready? do
-      Logger.debug("Client is ready")
+        db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
-      db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
+        {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
+        Telem.client_query_time(data.query_start, data.id)
+        reply = {:reply, from, sock_send(data.sock, bin)}
+        {:next_state, :idle, %{data | db_pid: db_pid, stats: stats, last_query: nil}, reply}
 
-      {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
-      Telem.client_query_time(data.query_start, data.id)
-      {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, reply}
-    else
-      Logger.debug("Client is not ready")
-      {:keep_state_and_data, reply}
+      :continue ->
+        Logger.debug("Client is not ready")
+        reply = {:reply, from, sock_send(data.sock, bin)}
+        {:keep_state_and_data, reply}
+
+      :read_sql_error ->
+        Logger.error("read only sql transaction, reruning the query to write pool")
+        # release the read pool
+        _ = handle_db_pid(data.mode, data.pool, data.db_pid)
+
+        ts = System.monotonic_time()
+        db_pid = db_checkout(:write, :on_query, data)
+
+        {:keep_state, %{data | db_pid: db_pid, query_start: ts},
+         [{:next_event, :internal, {:tcp, nil, data.last_query}}, {:reply, from, :ok}]}
     end
   end
 

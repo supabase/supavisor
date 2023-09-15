@@ -19,6 +19,7 @@ defmodule Supavisor.Protocol.Server do
     defstruct([:tag, :len, :payload])
   end
 
+  @spec decode(iodata()) :: [Pkt.t()] | []
   def decode(data) do
     decode(data, [])
   end
@@ -371,5 +372,13 @@ defmodule Supavisor.Protocol.Server do
   @spec ssl_request() :: binary()
   def ssl_request() do
     @ssl_request
+  end
+
+  @spec has_read_only_error?(list) :: boolean
+  def has_read_only_error?(pkts) do
+    Enum.any?(pkts, fn
+      %{payload: ["SERROR", "VERROR", "C25006" | _]} -> true
+      _ -> false
+    end)
   end
 end

@@ -44,7 +44,8 @@ defmodule Supavisor.DbHandler do
       messages: "",
       server_proof: nil,
       stats: %{},
-      mode: args.mode
+      mode: args.mode,
+      replica_type: args.replica_type
     }
 
     {:ok, :connect, data, {:next_event, :internal, :connect}}
@@ -232,17 +233,51 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | buffer: []}}
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, data) do
-    # check if the response ends with "ready for query"
-    ready = String.ends_with?(bin, Server.ready_for_query())
-    :ok = Client.client_call(data.caller, bin, ready)
+  def handle_event(:info, {_proto, _, bin}, _, %{replica_type: :read} = data) do
+    pkts = Server.decode(bin)
 
-    if ready do
+    resp =
+      cond do
+        Server.has_read_only_error?(pkts) ->
+          Logger.error("read only error")
+
+          if length(pkts) == 1 do
+            # need to flush ready_for_query if it's not in same packet
+            :ok = receive_ready_for_query()
+          end
+
+          :read_sql_error
+
+        List.last(pkts).tag == :ready_for_query ->
+          :ready_for_query
+
+        true ->
+          :continue
+      end
+
+    :ok = Client.client_call(data.caller, bin, resp)
+
+    if resp != :continue do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats}}
     else
       :keep_state_and_data
     end
+  end
+
+  def handle_event(:info, {_proto, _, bin}, _, data) do
+    # check if the response ends with "ready for query"
+    {ready, data} =
+      if String.ends_with?(bin, Server.ready_for_query()) do
+        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+        {:ready_for_query, %{data | stats: stats}}
+      else
+        {:continue, data}
+      end
+
+    :ok = Client.client_call(data.caller, bin, ready)
+
+    {:keep_state, data}
   end
 
   def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{sock: sock} = data) do
@@ -377,6 +412,16 @@ defmodule Supavisor.DbHandler do
       auth.secrets.().db_user
     else
       auth.secrets.().user
+    end
+  end
+
+  @spec receive_ready_for_query() :: :ok | :timeout_error
+  defp receive_ready_for_query() do
+    receive do
+      {_proto, _socket, <<?Z, 5::32, ?I>>} ->
+        :ok
+    after
+      15_000 -> :timeout_error
     end
   end
 end
