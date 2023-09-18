@@ -170,7 +170,7 @@ defmodule Supavisor do
           ip_version: ip_ver,
           default_pool_size: def_pool_size,
           default_max_clients: def_max_clients,
-          idle_timeout_downstream: idle_timeout_downstream,
+          client_idle_timeout: client_idle_timeout,
           users: [
             %{
               db_user: db_user,
@@ -213,7 +213,7 @@ defmodule Supavisor do
           mode: mode,
           default_parameter_status: ps,
           max_clients: max_clients,
-          idle_timeout_downstream: idle_timeout_downstream
+          client_idle_timeout: client_idle_timeout
         }
 
         DynamicSupervisor.start_child(

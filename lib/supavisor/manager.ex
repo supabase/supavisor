@@ -44,7 +44,7 @@ defmodule Supavisor.Manager do
       wait_ps: [],
       default_parameter_status: args.default_parameter_status,
       max_clients: args.max_clients,
-      idle_timeout: args.idle_timeout_downstream
+      idle_timeout: args.client_idle_timeout
     }
 
     {tenant, user, _mode} = args.id

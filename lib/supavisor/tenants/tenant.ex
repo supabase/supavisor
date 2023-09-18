@@ -26,7 +26,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:default_pool_size, :integer, default: 15)
     field(:sni_hostname, :string)
     field(:default_max_clients, :integer, default: 1000)
-    field(:idle_timeout_downstream, :integer, default: 0)
+    field(:client_idle_timeout, :integer, default: 0)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -57,7 +57,7 @@ defmodule Supavisor.Tenants.Tenant do
       :default_pool_size,
       :sni_hostname,
       :default_max_clients,
-      :idle_timeout_downstream
+      :client_idle_timeout
     ])
     |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")
     |> check_constraint(:upstream_verify, name: :upstream_constraints, prefix: "_supavisor")
