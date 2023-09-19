@@ -9,12 +9,7 @@ defmodule Supavisor.Tenants.Cluster do
   @schema_prefix "_supavisor"
 
   schema "clusters" do
-    field(:is_active, :boolean)
-
-    # has_many(:cluster_tenants, ClusterTenants,
-    #   on_delete: :delete_all,
-    #   on_replace: :delete
-    # )
+    field :active, :boolean, default: false
 
     timestamps()
   end
@@ -22,9 +17,7 @@ defmodule Supavisor.Tenants.Cluster do
   @doc false
   def changeset(cluster, attrs) do
     cluster
-    |> cast(attrs, [:cluster_tenants, :is_active])
-    |> validate_required([:cluster_tenants, :is_active])
-
-    # |> unique_constraint(:tenant_external_id)
+    |> cast(attrs, [:active])
+    |> validate_required([:active])
   end
 end

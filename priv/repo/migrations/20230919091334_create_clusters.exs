@@ -4,9 +4,7 @@ defmodule Supavisor.Repo.Migrations.CreateClusters do
   def change do
     create table("clusters", primary_key: false, prefix: "_supavisor") do
       add(:id, :binary_id, primary_key: true)
-      add(:is_active, :boolean, default: false, null: false)
-
-      add(:cluster_tenants_id, :string)
+      add :active, :boolean, default: false, null: false
 
       timestamps()
     end

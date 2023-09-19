@@ -83,7 +83,7 @@ defmodule Supavisor.Tenants do
   @spec get_cluster_config(String.t(), String.t()) :: [ClusterTenants.t()] | nil
   def get_cluster_config(external_id, user) do
     case Repo.get_by(ClusterTenants, tenant_external_id: external_id) do
-      %{cluster_id: cluster_id, is_active: true} ->
+      %{cluster_id: cluster_id, active: true} ->
         user =
           from(u in User,
             where: u.db_user_alias == ^user
@@ -388,5 +388,101 @@ defmodule Supavisor.Tenants do
   """
   def change_cluster(%Cluster{} = cluster, attrs \\ %{}) do
     Cluster.changeset(cluster, attrs)
+  end
+
+  alias Supavisor.Tenants.ClusterTenants
+
+  @doc """
+  Returns the list of cluster_tenants.
+
+  ## Examples
+
+      iex> list_cluster_tenants()
+      [%ClusterTenants{}, ...]
+
+  """
+  def list_cluster_tenants do
+    Repo.all(ClusterTenants)
+  end
+
+  @doc """
+  Gets a single cluster_tenants.
+
+  Raises `Ecto.NoResultsError` if the Cluster tenants does not exist.
+
+  ## Examples
+
+      iex> get_cluster_tenants!(123)
+      %ClusterTenants{}
+
+      iex> get_cluster_tenants!(456)
+      ** (Ecto.NoResultsError)
+
+  """
+  def get_cluster_tenants!(id), do: Repo.get!(ClusterTenants, id)
+
+  @doc """
+  Creates a cluster_tenants.
+
+  ## Examples
+
+      iex> create_cluster_tenants(%{field: value})
+      {:ok, %ClusterTenants{}}
+
+      iex> create_cluster_tenants(%{field: bad_value})
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def create_cluster_tenants(attrs \\ %{}) do
+    %ClusterTenants{}
+    |> ClusterTenants.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Updates a cluster_tenants.
+
+  ## Examples
+
+      iex> update_cluster_tenants(cluster_tenants, %{field: new_value})
+      {:ok, %ClusterTenants{}}
+
+      iex> update_cluster_tenants(cluster_tenants, %{field: bad_value})
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def update_cluster_tenants(%ClusterTenants{} = cluster_tenants, attrs) do
+    cluster_tenants
+    |> ClusterTenants.changeset(attrs)
+    |> Repo.update()
+  end
+
+  @doc """
+  Deletes a cluster_tenants.
+
+  ## Examples
+
+      iex> delete_cluster_tenants(cluster_tenants)
+      {:ok, %ClusterTenants{}}
+
+      iex> delete_cluster_tenants(cluster_tenants)
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def delete_cluster_tenants(%ClusterTenants{} = cluster_tenants) do
+    Repo.delete(cluster_tenants)
+  end
+
+  @doc """
+  Returns an `%Ecto.Changeset{}` for tracking cluster_tenants changes.
+
+  ## Examples
+
+      iex> change_cluster_tenants(cluster_tenants)
+      %Ecto.Changeset{data: %ClusterTenants{}}
+
+  """
+  def change_cluster_tenants(%ClusterTenants{} = cluster_tenants, attrs \\ %{}) do
+    ClusterTenants.changeset(cluster_tenants, attrs)
   end
 end
