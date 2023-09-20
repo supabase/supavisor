@@ -14,12 +14,12 @@ defmodule Supavisor.Monitoring.Telem do
         values = Map.new(values)
         diff = Map.merge(values, stats, fn _, v1, v2 -> v1 - v2 end)
 
-        {tenant, user, mode} = id
+        {{ptype, tenant}, user, mode} = id
 
         :telemetry.execute(
           [:supavisor, type, :network, :stat],
           diff,
-          %{tenant: tenant, user: user, mode: mode}
+          %{tenant: tenant, user: user, mode: mode, type: ptype}
         )
 
         {:ok, values}
@@ -31,20 +31,20 @@ defmodule Supavisor.Monitoring.Telem do
   end
 
   @spec pool_checkout_time(integer(), S.id()) :: :ok
-  def pool_checkout_time(time, {tenant, user, mode}) do
+  def pool_checkout_time(time, {{type, tenant}, user, mode}) do
     :telemetry.execute(
       [:supavisor, :pool, :checkout, :stop],
       %{duration: time},
-      %{tenant: tenant, user: user, mode: mode}
+      %{tenant: tenant, user: user, mode: mode, type: type}
     )
   end
 
   @spec client_query_time(integer(), S.id()) :: :ok
-  def client_query_time(start, {tenant, user, mode}) do
+  def client_query_time(start, {{type, tenant}, user, mode}) do
     :telemetry.execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
-      %{tenant: tenant, user: user, mode: mode}
+      %{tenant: tenant, user: user, mode: mode, type: type}
     )
   end
 end

@@ -45,13 +45,37 @@ defmodule Supavisor.Tenants do
     Tenant |> Repo.get_by(external_id: external_id) |> Repo.preload(:users)
   end
 
-  @spec get_user(String.t(), String.t() | nil, String.t() | nil) ::
+  @spec get_cluster_by_alias(String.t()) :: Cluster.t() | nil
+  def get_cluster_by_alias(alias) do
+    Cluster |> Repo.get_by(alias: alias) |> Repo.preload(:cluster_tenants)
+  end
+
+  @spec get_user(atom(), String.t(), String.t() | nil, String.t() | nil) ::
           {:ok, map()} | {:error, any()}
-  def get_user(_, nil, nil) do
+  def get_user(_, _, nil, nil) do
     {:error, "Either external_id or sni_hostname must be provided"}
   end
 
-  def get_user(user, external_id, sni_hostname) do
+  def get_user(:cluster, user, external_id, sni_hostname) do
+    query =
+      from(ct in ClusterTenants,
+        where: ct.cluster_alias == ^external_id and ct.active == true,
+        limit: 1
+      )
+
+    case Repo.all(query) do
+      [%ClusterTenants{} = ct] ->
+        get_user(:single, user, ct.tenant_external_id, sni_hostname)
+
+      [_ | _] ->
+        {:error, :multiple_results}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  def get_user(:single, user, external_id, sni_hostname) do
     query = build_user_query(user, external_id, sni_hostname)
 
     case Repo.all(query) do
@@ -82,8 +106,8 @@ defmodule Supavisor.Tenants do
 
   @spec get_cluster_config(String.t(), String.t()) :: [ClusterTenants.t()] | nil
   def get_cluster_config(external_id, user) do
-    case Repo.get_by(ClusterTenants, tenant_external_id: external_id) do
-      %{cluster_id: cluster_id, active: true} ->
+    case Repo.all(ClusterTenants, cluster_alias: external_id) do
+      [%{cluster_alias: cluster_alias, active: true} | _] ->
         user =
           from(u in User,
             where: u.db_user_alias == ^user
@@ -96,7 +120,7 @@ defmodule Supavisor.Tenants do
 
         query =
           from(ct in ClusterTenants,
-            where: ct.cluster_id == ^cluster_id,
+            where: ct.cluster_alias == ^cluster_alias,
             preload: [tenant: ^tenant]
           )
 
@@ -169,6 +193,19 @@ defmodule Supavisor.Tenants do
   @spec delete_tenant_by_external_id(String.t()) :: boolean()
   def delete_tenant_by_external_id(id) do
     from(t in Tenant, where: t.external_id == ^id)
+    |> Repo.delete_all()
+    |> case do
+      {num, _} when num > 0 ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  @spec delete_cluster_by_alias(String.t()) :: boolean()
+  def delete_cluster_by_alias(id) do
+    from(t in Cluster, where: t.alias == ^id)
     |> Repo.delete_all()
     |> case do
       {num, _} when num > 0 ->
@@ -324,6 +361,17 @@ defmodule Supavisor.Tenants do
 
   """
   def get_cluster!(id), do: Repo.get!(Cluster, id)
+
+  @spec get_cluster_with_rel(String.t()) :: {:ok, Cluster.t()} | {:error, any()}
+  def get_cluster_with_rel(id) do
+    case Repo.get(Cluster, id) do
+      nil ->
+        {:error, :not_found}
+
+      cluster ->
+        {:ok, Repo.preload(cluster, :cluster_tenants)}
+    end
+  end
 
   @doc """
   Creates a cluster.

@@ -106,9 +106,10 @@ defmodule Supavisor.ClientHandler do
     case decode_startup_packet(bin) do
       {:ok, hello} ->
         Logger.debug("Client startup message: #{inspect(hello)}")
-        {user, external_id} = parse_user_info(hello.payload["user"])
-        Logger.metadata(project: external_id, user: user, mode: data.mode)
-        {:keep_state, data, {:next_event, :internal, {:hello, {user, external_id}}}}
+        {type, {user, tenant_or_alias}} = parse_user_info(hello.payload["user"])
+        Logger.metadata(project: tenant_or_alias, user: user, mode: data.mode, type: type)
+
+        {:keep_state, data, {:next_event, :internal, {:hello, {type, {user, tenant_or_alias}}}}}
 
       {:error, error} ->
         Logger.error("Client startup message error: #{inspect(error)}")
@@ -116,12 +117,17 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, {:hello, {user, external_id}}, :exchange, %{sock: sock} = data) do
+  def handle_event(
+        :internal,
+        {:hello, {type, {user, tenant_or_alias}}},
+        :exchange,
+        %{sock: sock} = data
+      ) do
     sni_hostname = try_get_sni(sock)
 
-    case Tenants.get_user(user, external_id, sni_hostname) do
+    case Tenants.get_user(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
-        id = Supavisor.id(info.tenant.external_id, user, data.mode, info.user.mode_type)
+        id = Supavisor.id({type, tenant_or_alias}, user, data.mode, info.user.mode_type)
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         if info.tenant.enforce_ssl and !data.ssl do
@@ -145,7 +151,9 @@ defmodule Supavisor.ClientHandler do
         end
 
       {:error, reason} ->
-        Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
+        Logger.error(
+          "User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}"
+        )
 
         :ok = send_error(sock, "XX000", "Tenant or user not found")
         {:stop, :normal, data}
@@ -414,17 +422,28 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  @spec parse_user_info(String.t()) :: {String.t() | nil, String.t()}
+  @spec parse_user_info(String.t()) :: {:single | :cluster, {String.t() | nil, String.t()}}
   def parse_user_info(username) do
-    case :binary.matches(username, ".") do
-      [] ->
-        {username, nil}
+    case String.split(username, ".") do
+      [username] ->
+        {:single, {username, nil}}
 
       matches ->
-        {pos, _} = List.last(matches)
-        {name, "." <> external_id} = String.split_at(username, pos)
-        {name, external_id}
+        {alias_or_tenant, rest} = List.pop_at(matches, -1)
+
+        case List.pop_at(rest, -1) do
+          {"cluster", rest2} ->
+            {:cluster, {list2str(rest2), alias_or_tenant}}
+
+          {a, rest2} ->
+            {:single, {list2str([a | rest2]), alias_or_tenant}}
+        end
     end
+  end
+
+  @spec list2str([String.t()]) :: String.t()
+  defp list2str(list) do
+    Enum.join(list, ".")
   end
 
   def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do

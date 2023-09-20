@@ -5,11 +5,11 @@ defmodule Supavisor.Repo.Migrations.CreateClusterTenants do
     create table("cluster_tenants", primary_key: false, prefix: "_supavisor") do
       add(:id, :binary_id, primary_key: true)
       add(:type, :string, null: false)
-      add(:is_active, :boolean, default: false, null: false)
+      add(:active, :boolean, default: false, null: false)
 
       add(
-        :cluster_id,
-        references(:clusters, on_delete: :delete_all, type: :uuid)
+        :cluster_alias,
+        references(:clusters, on_delete: :delete_all, type: :string, column: :alias)
       )
 
       add(
@@ -29,7 +29,7 @@ defmodule Supavisor.Repo.Migrations.CreateClusterTenants do
     )
 
     create(
-      index(:cluster_tenants, [:tenant_external_id, :is_active],
+      index(:cluster_tenants, [:tenant_external_id],
         unique: true,
         prefix: "_supavisor"
       )

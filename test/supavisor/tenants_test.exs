@@ -190,4 +190,58 @@ defmodule Supavisor.TenantsTest do
       assert %Ecto.Changeset{} = Tenants.change_cluster(cluster)
     end
   end
+
+  describe "cluster_tenants" do
+    alias Supavisor.Tenants.ClusterTenants
+
+    import Supavisor.TenantsFixtures
+
+    @invalid_attrs %{active: nil}
+
+    test "list_cluster_tenants/0 returns all cluster_tenants" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert Tenants.list_cluster_tenants() == [cluster_tenants]
+    end
+
+    test "get_cluster_tenants!/1 returns the cluster_tenants with given id" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert Tenants.get_cluster_tenants!(cluster_tenants.id) == cluster_tenants
+    end
+
+    test "create_cluster_tenants/1 with valid data creates a cluster_tenants" do
+      valid_attrs = %{active: true}
+
+      assert {:ok, %ClusterTenants{} = cluster_tenants} = Tenants.create_cluster_tenants(valid_attrs)
+      assert cluster_tenants.active == true
+    end
+
+    test "create_cluster_tenants/1 with invalid data returns error changeset" do
+      assert {:error, %Ecto.Changeset{}} = Tenants.create_cluster_tenants(@invalid_attrs)
+    end
+
+    test "update_cluster_tenants/2 with valid data updates the cluster_tenants" do
+      cluster_tenants = cluster_tenants_fixture()
+      update_attrs = %{active: false}
+
+      assert {:ok, %ClusterTenants{} = cluster_tenants} = Tenants.update_cluster_tenants(cluster_tenants, update_attrs)
+      assert cluster_tenants.active == false
+    end
+
+    test "update_cluster_tenants/2 with invalid data returns error changeset" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert {:error, %Ecto.Changeset{}} = Tenants.update_cluster_tenants(cluster_tenants, @invalid_attrs)
+      assert cluster_tenants == Tenants.get_cluster_tenants!(cluster_tenants.id)
+    end
+
+    test "delete_cluster_tenants/1 deletes the cluster_tenants" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert {:ok, %ClusterTenants{}} = Tenants.delete_cluster_tenants(cluster_tenants)
+      assert_raise Ecto.NoResultsError, fn -> Tenants.get_cluster_tenants!(cluster_tenants.id) end
+    end
+
+    test "change_cluster_tenants/1 returns a cluster_tenants changeset" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert %Ecto.Changeset{} = Tenants.change_cluster_tenants(cluster_tenants)
+    end
+  end
 end

@@ -11,8 +11,8 @@ defmodule Supavisor.Tenants.ClusterTenants do
 
   schema "cluster_tenants" do
     field(:type, Ecto.Enum, values: [:write, :read])
-    field(:is_active, :boolean)
-    belongs_to(:cluster, Cluster, type: :string, foreign_key: :cluster_id)
+    field(:active, :boolean, default: false)
+    belongs_to(:cluster, Cluster, foreign_key: :cluster_alias, type: :string)
 
     belongs_to(:tenant, Tenant,
       type: :string,
@@ -26,9 +26,8 @@ defmodule Supavisor.Tenants.ClusterTenants do
   @doc false
   def changeset(cluster, attrs) do
     cluster
-    |> cast(attrs, [:type, :is_active, :cluster_id, :tenant_external_id])
-    |> validate_required([:type, :is_active, :cluster_id, :tenant_external_id])
-
-    # |> unique_constraint(:tenant_external_id)
+    |> cast(attrs, [:type, :active, :cluster_alias, :tenant_external_id])
+    |> validate_required([:type, :active, :cluster_alias, :tenant_external_id])
+    |> unique_constraint([:tenant_external_id])
   end
 end

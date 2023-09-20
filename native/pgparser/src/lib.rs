@@ -17,8 +17,8 @@ struct Response {
 fn statement_types(query: &str) -> Result<Response, RustlerError> {
     let result = pg_query::parse(&query);
 
-    if result.is_ok() {
-        let message = result.unwrap().statement_types().into_iter().map(|s| s.to_string()).collect();
+    if let Ok(result) = result {
+        let message = result.statement_types().into_iter().map(|s| s.to_string()).collect();
         return Ok(Response{status: atoms::ok(), message});
     } else {
         return Err(RustlerError::Term(Box::new("Error parsing query")));

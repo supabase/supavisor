@@ -55,4 +55,18 @@ defmodule Supavisor.TenantsFixtures do
 
     cluster
   end
+
+  @doc """
+  Generate a cluster_tenants.
+  """
+  def cluster_tenants_fixture(attrs \\ %{}) do
+    {:ok, cluster_tenants} =
+      attrs
+      |> Enum.into(%{
+        active: true
+      })
+      |> Supavisor.Tenants.create_cluster_tenants()
+
+    cluster_tenants
+  end
 end

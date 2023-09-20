@@ -48,8 +48,8 @@ defmodule Supavisor.Manager do
       max_clients: args.max_clients
     }
 
-    {tenant, user, _mode} = args.id
-    Logger.metadata(project: tenant, user: user)
+    {{type, tenant}, user, _mode} = args.id
+    Logger.metadata(project: tenant, user: user, type: type)
     Registry.register(Supavisor.Registry.ManagerTables, args.id, tid)
 
     {:ok, state}

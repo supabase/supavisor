@@ -1,7 +1,7 @@
 defmodule SupavisorWeb.ClusterView do
   use SupavisorWeb, :view
   alias SupavisorWeb.ClusterView
-  alias SupavisorWeb.UserView
+  alias SupavisorWeb.ClusterTenantsView
 
   def render("index.json", %{clusters: clusters}) do
     %{data: render_many(clusters, ClusterView, "cluster.json")}
@@ -13,20 +13,13 @@ defmodule SupavisorWeb.ClusterView do
 
   def render("cluster.json", %{cluster: cluster}) do
     %{
-      id: cluster.id
-      # external_id: tenant.external_id,
-      # db_host: tenant.db_host,
-      # db_port: tenant.db_port,
-      # db_database: tenant.db_database,
-      # ip_version: tenant.ip_version,
-      # upstream_ssl: tenant.upstream_ssl,
-      # upstream_verify: tenant.upstream_verify,
-      # enforce_ssl: tenant.enforce_ssl,
-      # require_user: tenant.require_user,
-      # auth_query: tenant.auth_query,
-      # sni_hostname: tenant.sni_hostname,
-      # default_max_clients: tenant.default_max_clients,
-      # users: render_many(tenant.users, UserView, "user.json")
+      id: cluster.id,
+      alias: cluster.alias,
+      active: cluster.active,
+      inserted_at: cluster.inserted_at,
+      updated_at: cluster.updated_at,
+      cluster_tenants:
+        render_many(cluster.cluster_tenants, ClusterTenantsView, "cluster_tenant.json")
     }
   end
 

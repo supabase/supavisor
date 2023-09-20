@@ -11,7 +11,7 @@ defmodule Supavisor do
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
   @type mode :: :transaction | :session
-  @type id :: {String.t(), String.t(), mode}
+  @type id :: {{:single | :cluster, String.t()}, String.t(), mode}
 
   @registry Supavisor.Registry.Tenants
 
@@ -152,7 +152,7 @@ defmodule Supavisor do
     end
   end
 
-  @spec id(String.t(), String.t(), mode, mode) :: id
+  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode) :: id
   def id(tenant, user, port_mode, user_mode) do
     # temporary hack
     mode =
@@ -168,12 +168,16 @@ defmodule Supavisor do
   ## Internal functions
 
   @spec start_local_pool(id, secrets) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({tenant, _user, _mode} = id, secrets) do
-    Logger.warn("Starting pool for #{inspect(id)}")
+  defp start_local_pool({{type, tenant}, _user, _mode} = id, secrets) do
+    Logger.warn("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
 
-    case T.get_cluster_config(tenant, user) || T.get_pool_config(tenant, user) do
+    case type do
+      :single -> T.get_pool_config(tenant, user)
+      :cluster -> T.get_cluster_config(tenant, user)
+    end
+    |> case do
       [_ | _] = replicas ->
         opts =
           Enum.map(replicas, fn replica ->
@@ -196,8 +200,8 @@ defmodule Supavisor do
           resp -> resp
         end
 
-      _ ->
-        Logger.error("Can't find tenant with external_id #{inspect(id)}")
+      error ->
+        Logger.error("Can't find tenant with external_id #{inspect(id)} #{inspect(error)}")
 
         {:error, :tenant_not_found}
     end
