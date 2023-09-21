@@ -241,7 +241,7 @@ defmodule Supavisor.DbHandler do
         Server.has_read_only_error?(pkts) ->
           Logger.error("read only error")
 
-          if length(pkts) == 1 do
+          with [_] <- pkts do
             # need to flush ready_for_query if it's not in same packet
             :ok = receive_ready_for_query()
           end
