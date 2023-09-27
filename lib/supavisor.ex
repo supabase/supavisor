@@ -12,6 +12,7 @@ defmodule Supavisor do
   @type secrets :: {:password | :auth_query, fun()}
   @type mode :: :transaction | :session
   @type id :: {{:single | :cluster, String.t()}, String.t(), mode}
+  @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
 
@@ -49,18 +50,18 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe_local(pid, id) :: {:ok, workers, iodata()} | {:error, any()}
-  def subscribe_local(pid, id) do
+  @spec subscribe_local(pid, id) :: {:ok, subscribe_opts} | {:error, any()}
+  def(subscribe_local(pid, id)) do
     with {:ok, workers} <- get_local_workers(id),
-         {:ok, ps} <- Manager.subscribe(workers.manager, pid) do
-      {:ok, workers, ps}
+         {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
+      {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
     else
       error ->
         error
     end
   end
 
-  @spec subscribe(pid, id, pid) :: {:ok, workers, iodata()} | {:error, any()}
+  @spec subscribe(pid, id, pid) :: {:ok, subscribe_opts} | {:error, any()}
   def subscribe(sup, id, pid \\ self()) do
     dest_node = node(sup)
 
@@ -216,6 +217,7 @@ defmodule Supavisor do
       ip_version: ip_ver,
       default_pool_size: def_pool_size,
       default_max_clients: def_max_clients,
+      client_idle_timeout: client_idle_timeout,
       replica_type: replica_type,
       users: [
         %{
@@ -258,7 +260,8 @@ defmodule Supavisor do
       pool_size: pool_size,
       mode: mode,
       default_parameter_status: ps,
-      max_clients: max_clients
+      max_clients: max_clients,
+      client_idle_timeout: client_idle_timeout
     }
   end
 

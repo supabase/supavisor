@@ -40,7 +40,7 @@ defmodule Supavisor.Application do
         %{
           max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
           num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-          socket_opts: [port: port]
+          socket_opts: [port: port, keepalive: true]
         },
         Supavisor.ClientHandler,
         %{mode: mode}

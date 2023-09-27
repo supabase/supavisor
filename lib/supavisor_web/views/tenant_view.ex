@@ -26,6 +26,7 @@ defmodule SupavisorWeb.TenantView do
       auth_query: tenant.auth_query,
       sni_hostname: tenant.sni_hostname,
       default_max_clients: tenant.default_max_clients,
+      client_idle_timeout: tenant.client_idle_timeout,
       users: render_many(tenant.users, UserView, "user.json")
     }
   end

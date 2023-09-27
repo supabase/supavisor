@@ -56,6 +56,7 @@ defmodule Supavisor.ClientHandler do
       proxy_type: nil,
       mode: opts.mode,
       stats: %{},
+      idle_timeout: 0,
       last_query: nil
     }
 
@@ -193,17 +194,17 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("Subscribe to tenant #{inspect(data.id)}")
 
     with {:ok, sup} <- Supavisor.start(data.id, data.auth_secrets),
-         {:ok, workers, ps} <- Supavisor.subscribe(sup, data.id) do
-      Process.monitor(workers.manager)
-      data = Map.merge(data, workers)
+         {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
+      Process.monitor(opts.workers.manager)
+      data = Map.merge(data, opts.workers)
       db_pid = db_checkout(nil, :on_connect, data)
-      data = %{data | db_pid: db_pid}
+      data = %{data | db_pid: db_pid, idle_timeout: opts.idle_timeout}
 
       next =
-        if ps == [] do
+        if opts.ps == [] do
           {:timeout, 10_000, :wait_ps}
         else
-          {:next_event, :internal, {:greetings, ps}}
+          {:next_event, :internal, {:greetings, opts.ps}}
         end
 
       {:keep_state, data, next}
@@ -222,7 +223,12 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:internal, {:greetings, ps}, _, %{sock: sock} = data) do
     :ok = sock_send(sock, Server.greetings(ps))
-    {:next_state, :idle, data}
+
+    if data.idle_timeout > 0 do
+      {:next_state, :idle, data, idle_check(data.idle_timeout)}
+    else
+      {:next_state, :idle, data}
+    end
   end
 
   def handle_event(:timeout, :subscribe, _, _) do
@@ -236,10 +242,27 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
-  # ignore termination messages
-  def handle_event(:info, {proto, _, <<?X, 4::32>>}, _, _) when proto in [:tcp, :ssl] do
+  def handle_event(:timeout, :idle_terminate, _, data) do
+    Logger.warning("Terminate an idle connection by #{data.idle_timeout} timeout")
+    {:stop, :normal, data}
+  end
+
+  # handle Terminate message
+  def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, data) when proto in [:tcp, :ssl] do
     Logger.debug("Receive termination")
-    :keep_state_and_data
+    {:stop, :normal, data}
+  end
+
+  # handle Sync message
+  def handle_event(:info, {proto, _, <<?S, 4::32>>}, :idle, data) when proto in [:tcp, :ssl] do
+    Logger.debug("Receive sync")
+    :ok = sock_send(data.sock, Server.ready_for_query())
+
+    if data.idle_timeout > 0 do
+      {:keep_state_and_data, idle_check(data.idle_timeout)}
+    else
+      :keep_state_and_data
+    end
   end
 
   # incoming query with a single pool
@@ -365,7 +388,14 @@ defmodule Supavisor.ClientHandler do
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
         Telem.client_query_time(data.query_start, data.id)
         reply = {:reply, from, sock_send(data.sock, bin)}
-        {:next_state, :idle, %{data | db_pid: db_pid, stats: stats, last_query: nil}, reply}
+              actions =
+        if data.idle_timeout > 0 do
+          [reply, idle_check(data.idle_timeout)]
+        else
+          reply
+        end
+
+      {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, actions}
 
       :continue ->
         Logger.debug("Client is not ready")
@@ -725,4 +755,9 @@ defmodule Supavisor.ClientHandler do
   end
 
   def try_get_sni(_), do: nil
+
+  @spec idle_check(non_neg_integer) :: {:timeout, non_neg_integer, :idle_terminate}
+  defp idle_check(timeout) do
+    {:timeout, timeout, :idle_terminate}
+  end
 end

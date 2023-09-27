@@ -1,9 +1,9 @@
-name: Publish upgrade artifacts to staging
+name: Publish upgrade artifacts to production
 
 on:
   push:
     branches:
-      - main
+      - release
 env:
   INCLUDE_ERTS: false
   MIX_ENV: prod
@@ -35,12 +35,12 @@ jobs:
       - name: Make release
         run: mix release supavisor
       - name: Create tarball
-        run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_STAGE }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
-      - name: configure aws credentials - staging
+        run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_PROD }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
+      - name: configure aws credentials - production
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.DEV_AWS_ROLE }}
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
           aws-region: "us-east-1"
       - name: Deploy to S3
         shell: bash
-        run: aws s3 sync ./_build/prod/rel/ ${{ secrets.TARBALLS_PATH_STAGE }} --exclude '*' --include '*tar.gz'
+        run: aws s3 sync ./_build/prod/rel/ ${{ secrets.TARBALLS_PATH_PROD }} --exclude '*' --include '*tar.gz'
