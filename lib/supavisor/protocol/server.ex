@@ -17,6 +17,12 @@ defmodule Supavisor.Protocol.Server do
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
     defstruct([:tag, :len, :payload])
+
+    @type t :: %Pkt{
+            tag: atom,
+            len: integer,
+            payload: any
+          }
   end
 
   @spec decode(iodata()) :: [Pkt.t()] | []

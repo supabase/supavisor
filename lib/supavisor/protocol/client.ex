@@ -3,9 +3,16 @@ defmodule Supavisor.Protocol.Client do
 
   @pkt_header_size 5
 
-  defmodule(Pkt,
-    do: defstruct([:tag, :len, :payload, :bin])
-  )
+  defmodule Pkt do
+    defstruct([:tag, :len, :payload, :bin])
+
+    @type t :: %Pkt{
+            tag: atom,
+            len: integer,
+            payload: any,
+            bin: binary
+          }
+  end
 
   def pkt_header_size, do: @pkt_header_size
 
