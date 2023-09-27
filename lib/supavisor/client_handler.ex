@@ -278,7 +278,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {proto, _, bin}, :idle, data) do
     query_type =
       with {:ok, pkt, _} <- Client.decode_pkt(bin),
-           {:ok, statements} <- Supavisor.PgParser.statement_types(pkt.payload) do
+           {:ok, statements} <- Supavisor.PgParser.statements(pkt.payload) do
         Logger.debug(
           "Receive pkt #{inspect(pkt, pretty: true)} statements #{inspect(statements)}"
         )
@@ -388,14 +388,15 @@ defmodule Supavisor.ClientHandler do
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
         Telem.client_query_time(data.query_start, data.id)
         reply = {:reply, from, sock_send(data.sock, bin)}
-              actions =
-        if data.idle_timeout > 0 do
-          [reply, idle_check(data.idle_timeout)]
-        else
-          reply
-        end
 
-      {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, actions}
+        actions =
+          if data.idle_timeout > 0 do
+            [reply, idle_check(data.idle_timeout)]
+          else
+            reply
+          end
+
+        {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, actions}
 
       :continue ->
         Logger.debug("Client is not ready")
