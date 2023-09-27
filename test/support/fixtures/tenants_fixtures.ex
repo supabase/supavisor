@@ -49,24 +49,19 @@ defmodule Supavisor.TenantsFixtures do
     {:ok, cluster} =
       attrs
       |> Enum.into(%{
-        active: true
+        active: true,
+        alias: "some_alias",
+        cluster_tenants: [
+          %{
+            type: "write",
+            cluster_alias: "some_alias",
+            tenant_external_id: "proxy_tenant",
+            active: true
+          }
+        ]
       })
       |> Supavisor.Tenants.create_cluster()
 
     cluster
-  end
-
-  @doc """
-  Generate a cluster_tenants.
-  """
-  def cluster_tenants_fixture(attrs \\ %{}) do
-    {:ok, cluster_tenants} =
-      attrs
-      |> Enum.into(%{
-        active: true
-      })
-      |> Supavisor.Tenants.create_cluster_tenants()
-
-    cluster_tenants
   end
 end

@@ -436,15 +436,13 @@ defmodule Supavisor.ClientHandler do
             {:cluster, {list2str(rest2), alias_or_tenant}}
 
           {a, rest2} ->
-            {:single, {list2str([a | rest2]), alias_or_tenant}}
+            {:single, {list2str(Enum.reverse([a | rest2])), alias_or_tenant}}
         end
     end
   end
 
   @spec list2str([String.t()]) :: String.t()
-  defp list2str(list) do
-    Enum.join(list, ".")
-  end
+  defp list2str(list), do: Enum.join(list, ".")
 
   def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
     with {:ok, payload} <- decode_startup_packet_payload(rest) do

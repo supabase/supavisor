@@ -18,7 +18,7 @@ defmodule Supavisor.ClientHandlerTest do
     end
 
     test "consist cluster" do
-      username = "username"
+      username = "some.user.cluster.alias"
       {t, {u, a}} = ClientHandler.parse_user_info(username)
       assert {t, {u, a}} == {:cluster, {"some.user", "alias"}}
     end

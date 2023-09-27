@@ -157,7 +157,7 @@ defmodule Supavisor.Integration.ProxyTest do
     :timer.sleep(500)
 
     [{_, client_pid, _}] =
-      Supavisor.get_local_manager({"proxy_tenant", "transaction", :transaction})
+      Supavisor.get_local_manager({{:single, "proxy_tenant"}, "transaction", :transaction})
       |> :sys.get_state()
       |> then(& &1[:tid])
       |> :ets.tab2list()

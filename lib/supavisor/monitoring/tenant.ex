@@ -6,7 +6,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   alias Supavisor, as: S
 
-  @tags [:tenant, :user, :mode]
+  @tags [:tenant, :user, :mode, :type]
 
   @impl true
   def polling_metrics(opts) do

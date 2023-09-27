@@ -27,9 +27,9 @@ defmodule Supavisor.PromExTest do
     Process.sleep(500)
     metrics = PromEx.get_metrics()
     assert metrics =~ "tenant=\"#{@tenant}\""
-    DynamicSupervisor.stop(proxy, user)
+    GenServer.stop(proxy)
     Process.sleep(500)
-    Supavisor.stop({@tenant, user, :transaction})
+    Supavisor.stop({{:single, @tenant}, "postgres", :transaction})
     Process.sleep(500)
     refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
   end
