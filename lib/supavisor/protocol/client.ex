@@ -58,6 +58,20 @@ defmodule Supavisor.Protocol.Client do
 
   def decode_pkt(_), do: {:error, :header_mismatch}
 
+  @spec get_payload(binary) :: {:ok, String.t()} | {:error, any}
+  def get_payload(<<char::8, pkt_len::32, rest::binary>>) do
+    case tag(char) do
+      nil ->
+        {:error, {:undefined_tag, <<char>>}}
+
+      tag ->
+        payload_len = pkt_len - 4
+        <<bin_payload::binary-size(payload_len), _::binary>> = rest
+
+        {:ok, decode_payload(tag, bin_payload)}
+    end
+  end
+
   @spec tag(byte) :: atom | nil
   def tag(char) do
     case char do

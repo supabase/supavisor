@@ -136,9 +136,9 @@ defmodule Supavisor do
         pool
 
       [_ | _] = pools ->
-        Enum.reduce(pools, %{write: [], read: []}, fn {pid, type}, acc ->
-          update_in(acc[type], &[pid | &1])
-        end)
+        # transform [{pid1, :read}, {pid2, :read}, {pid3, :write}]
+        # to %{read: [pid1, pid2], write: [pid3]}
+        Enum.group_by(pools, &elem(&1, 1), &elem(&1, 0))
 
       _ ->
         nil
@@ -182,13 +182,13 @@ defmodule Supavisor do
       [_ | _] = replicas ->
         opts =
           Enum.map(replicas, fn replica ->
-            # cluster config has "type" field, pool config doesn't
-            if Map.has_key?(replica, :type) do
-              replica.tenant
-            else
-              replica
+            case replica do
+              %T.ClusterTenants{tenant: tenant, type: type} ->
+                Map.put(tenant, :replica_type, type)
+
+              %T.Tenant{} = tenant ->
+                Map.put(tenant, :replica_type, :write)
             end
-            |> Map.merge(%{replica_type: Map.get(replica, :type, :write)})
             |> supervisor_args(id, secrets)
           end)
 

@@ -60,7 +60,12 @@ defmodule Supavisor.ClientHandler do
       last_query: nil
     }
 
-    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
+    :gen_statem.enter_loop(
+      __MODULE__,
+      [hibernate_after: 5_000],
+      :exchange,
+      data
+    )
   end
 
   @impl true
@@ -108,7 +113,13 @@ defmodule Supavisor.ClientHandler do
       {:ok, hello} ->
         Logger.debug("Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias}} = parse_user_info(hello.payload["user"])
-        Logger.metadata(project: tenant_or_alias, user: user, mode: data.mode, type: type)
+
+        Logger.metadata(
+          project: tenant_or_alias,
+          user: user,
+          mode: data.mode,
+          type: type
+        )
 
         {:keep_state, data, {:next_event, :internal, {:hello, {type, {user, tenant_or_alias}}}}}
 
@@ -128,11 +139,19 @@ defmodule Supavisor.ClientHandler do
 
     case Tenants.get_user(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
-        id = Supavisor.id({type, tenant_or_alias}, user, data.mode, info.user.mode_type)
+        id =
+          Supavisor.id(
+            {type, tenant_or_alias},
+            user,
+            data.mode,
+            info.user.mode_type
+          )
+
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         if info.tenant.enforce_ssl and !data.ssl do
           Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
+
           :ok = send_error(sock, "XX000", "SSL connection is required")
           {:stop, :normal, data}
         else
@@ -141,6 +160,7 @@ defmodule Supavisor.ClientHandler do
           case auth_secrets(info, user) do
             {:ok, auth_secrets} ->
               Logger.debug("Authentication method: #{inspect(auth_secrets)}")
+
               {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets}}}
 
             {:error, reason} ->
@@ -161,7 +181,12 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, {:handle, {method, secrets}}, _, %{sock: sock} = data) do
+  def handle_event(
+        :internal,
+        {:handle, {method, secrets}},
+        _,
+        %{sock: sock} = data
+      ) do
     Logger.debug("Handle exchange, auth method: #{inspect(method)}")
 
     case handle_exchange(sock, {method, secrets}) do
@@ -197,7 +222,7 @@ defmodule Supavisor.ClientHandler do
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
-      db_pid = db_checkout(nil, :on_connect, data)
+      db_pid = db_checkout(:both, :on_connect, data)
       data = %{data | db_pid: db_pid, idle_timeout: opts.idle_timeout}
 
       next =
@@ -248,13 +273,15 @@ defmodule Supavisor.ClientHandler do
   end
 
   # handle Terminate message
-  def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, data) when proto in [:tcp, :ssl] do
+  def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, data)
+      when proto in [:tcp, :ssl] do
     Logger.debug("Receive termination")
     {:stop, :normal, data}
   end
 
   # handle Sync message
-  def handle_event(:info, {proto, _, <<?S, 4::32>>}, :idle, data) when proto in [:tcp, :ssl] do
+  def handle_event(:info, {proto, _, <<?S, 4::32>>}, :idle, data)
+      when proto in [:tcp, :ssl] do
     Logger.debug("Receive sync")
     :ok = sock_send(data.sock, Server.ready_for_query())
 
@@ -266,9 +293,10 @@ defmodule Supavisor.ClientHandler do
   end
 
   # incoming query with a single pool
-  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data) when is_pid(pid) do
+  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
+      when is_pid(pid) do
     ts = System.monotonic_time()
-    db_pid = db_checkout(nil, :on_query, data)
+    db_pid = db_checkout(:both, :on_query, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {proto, nil, bin}}}
@@ -277,10 +305,10 @@ defmodule Supavisor.ClientHandler do
   # incoming query with read/write pools
   def handle_event(:info, {proto, _, bin}, :idle, data) do
     query_type =
-      with {:ok, pkt, _} <- Client.decode_pkt(bin),
-           {:ok, statements} <- Supavisor.PgParser.statements(pkt.payload) do
+      with {:ok, payload} <- Client.get_payload(bin),
+           {:ok, statements} <- Supavisor.PgParser.statements(payload) do
         Logger.debug(
-          "Receive pkt #{inspect(pkt, pretty: true)} statements #{inspect(statements)}"
+          "Receive payload #{inspect(payload, pretty: true)} statements #{inspect(statements)}"
         )
 
         case statements do
@@ -304,7 +332,8 @@ defmodule Supavisor.ClientHandler do
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
-  def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
+  def handle_event(_, {proto, _, bin}, :busy, data)
+      when proto in [:tcp, :ssl] do
     {_, db_pid} = data.db_pid
 
     case Db.call(db_pid, bin) do
@@ -386,6 +415,7 @@ defmodule Supavisor.ClientHandler do
         db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
+
         Telem.client_query_time(data.query_start, data.id)
         reply = {:reply, from, sock_send(data.sock, bin)}
 
@@ -405,6 +435,7 @@ defmodule Supavisor.ClientHandler do
 
       :read_sql_error ->
         Logger.error("read only sql transaction, reruning the query to write pool")
+
         # release the read pool
         _ = handle_db_pid(data.mode, data.pool, data.db_pid)
 
@@ -412,7 +443,10 @@ defmodule Supavisor.ClientHandler do
         db_pid = db_checkout(:write, :on_query, data)
 
         {:keep_state, %{data | db_pid: db_pid, query_start: ts},
-         [{:next_event, :internal, {:tcp, nil, data.last_query}}, {:reply, from, :ok}]}
+         [
+           {:next_event, :internal, {:tcp, nil, data.last_query}},
+           {:reply, from, :ok}
+         ]}
     end
   end
 
@@ -453,7 +487,8 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  @spec parse_user_info(String.t()) :: {:single | :cluster, {String.t() | nil, String.t()}}
+  @spec parse_user_info(String.t()) ::
+          {:single | :cluster, {String.t() | nil, String.t()}}
   def parse_user_info(username) do
     case String.split(username, ".") do
       [username] ->
@@ -515,7 +550,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec handle_exchange(S.sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
+  @spec handle_exchange(S.sock(), {atom(), fun()}) ::
+          {:ok, binary() | nil} | {:error, String.t()}
   def handle_exchange({_, socket} = sock, {method, secrets}) do
     :ok = sock_send(sock, Server.auth_request())
 
@@ -523,13 +559,23 @@ defmodule Supavisor.ClientHandler do
           %{
             tag: :password_message,
             payload: {:scram_sha_256, %{"n" => user, "r" => nonce, "c" => channel}}
-          }, _} <- receive_next(socket, "Timeout while waiting for the first password message"),
+          },
+          _} <-
+           receive_next(
+             socket,
+             "Timeout while waiting for the first password message"
+           ),
          {:ok, signatures} = reply_first_exchange(sock, method, secrets, channel, nonce, user),
          {:ok,
           %{
             tag: :password_message,
             payload: {:first_msg_response, %{"p" => p}}
-          }, _} <- receive_next(socket, "Timeout while waiting for the second password message"),
+          },
+          _} <-
+           receive_next(
+             socket,
+             "Timeout while waiting for the second password message"
+           ),
          {:ok, key} <- authenticate_exchange(method, secrets, signatures, p) do
       message = "v=#{Base.encode64(signatures.server)}"
       :ok = sock_send(sock, Server.exchange_message(:final, message))
@@ -551,6 +597,7 @@ defmodule Supavisor.ClientHandler do
 
   defp reply_first_exchange(sock, method, secrets, channel, nonce, user) do
     {message, signatures} = exchange_first(method, secrets, nonce, user, channel)
+
     :ok = sock_send(sock, Server.exchange_message(:first, message))
     {:ok, signatures}
   end
@@ -573,8 +620,10 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec db_checkout(:write | :read | nil, :on_connect | :on_query, map) :: {pid, pid} | nil
-  defp db_checkout(_, _, %{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
+  @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) ::
+          {pid, pid} | nil
+  defp db_checkout(_, _, %{mode: :session, db_pid: db_pid})
+       when is_pid(db_pid) do
     db_pid
   end
 
@@ -593,6 +642,7 @@ defmodule Supavisor.ClientHandler do
 
   defp db_checkout(_, _, data) do
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
+
     Process.link(db_pid)
     Telem.pool_checkout_time(time, data.id)
     {data.pool, db_pid}
@@ -647,7 +697,11 @@ defmodule Supavisor.ClientHandler do
   @spec auth_secrets(map, String.t()) :: {:ok, S.secrets()} | {:error, term()}
   ## password secrets
   def auth_secrets(%{user: user, tenant: %{require_user: true}}, _) do
-    secrets = %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
+    secrets = %{
+      db_user: user.db_user,
+      password: user.db_password,
+      alias: user.db_user_alias
+    }
 
     {:ok, {:password, fn -> secrets end}}
   end
@@ -667,7 +721,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
+  @spec get_secrets(map, String.t()) ::
+          {:ok, {:auth_query, fun()}} | {:error, term()}
   def get_secrets(%{user: user, tenant: tenant}, db_user) do
     ssl_opts =
       if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
@@ -705,7 +760,13 @@ defmodule Supavisor.ClientHandler do
     resp
   end
 
-  @spec exchange_first(:password | :auth_query, fun(), binary(), binary(), binary()) ::
+  @spec exchange_first(
+          :password | :auth_query,
+          fun(),
+          binary(),
+          binary(),
+          binary()
+        ) ::
           {binary(), map()}
   defp exchange_first(:password, secret, nonce, user, channel) do
     message = Server.exchange_first_message(nonce)
@@ -757,7 +818,8 @@ defmodule Supavisor.ClientHandler do
 
   def try_get_sni(_), do: nil
 
-  @spec idle_check(non_neg_integer) :: {:timeout, non_neg_integer, :idle_terminate}
+  @spec idle_check(non_neg_integer) ::
+          {:timeout, non_neg_integer, :idle_terminate}
   defp idle_check(timeout) do
     {:timeout, timeout, :idle_terminate}
   end

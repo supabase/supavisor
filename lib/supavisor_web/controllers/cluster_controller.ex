@@ -38,16 +38,12 @@ defmodule SupavisorWeb.ClusterController do
   end
 
   def update(conn, %{"alias" => id, "cluster" => params}) do
-    IO.inspect({"---------", id})
-
     cluster_tenants =
       Enum.map(params["cluster_tenants"], fn e ->
         Map.put(e, "cluster_alias", id)
       end)
 
     params = %{params | "cluster_tenants" => cluster_tenants}
-
-    IO.inspect({123_123, params})
 
     case Tenants.get_cluster_by_alias(id) do
       nil ->
