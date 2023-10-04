@@ -27,6 +27,7 @@ defmodule SupavisorWeb.TenantView do
       sni_hostname: tenant.sni_hostname,
       default_max_clients: tenant.default_max_clients,
       client_idle_timeout: tenant.client_idle_timeout,
+      default_pool_strategy: tenant.default_pool_strategy,
       users: render_many(tenant.users, UserView, "user.json")
     }
   end

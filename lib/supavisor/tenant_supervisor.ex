@@ -21,7 +21,8 @@ defmodule Supavisor.TenantSupervisor do
       name: {:via, Registry, {Supavisor.Registry.Tenants, {:pool, args.id}}},
       worker_module: Supavisor.DbHandler,
       size: size,
-      max_overflow: overflow
+      max_overflow: overflow,
+      strategy: args.default_pool_strategy
     ]
 
     children = [
