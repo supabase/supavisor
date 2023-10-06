@@ -179,11 +179,11 @@ defmodule Supavisor.DbHandler do
           acc
 
         %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
-          Logger.warn("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+          Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
           digest =
             if data.auth.method == :password do
-              H.md5([data.auth.password, data.auth.user])
+              H.md5([data.auth.password.(), data.auth.user])
             else
               data.auth.secrets.().secret
             end

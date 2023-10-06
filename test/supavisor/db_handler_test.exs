@@ -139,7 +139,8 @@ defmodule Supavisor.DbHandlerTest do
       data = %{
         auth: %{
           password: fn -> "some_password" end,
-          user: "some_user"
+          user: "some_user",
+          method: :password
         },
         sock: {:gen_tcp, sock_port}
       }
