@@ -124,6 +124,10 @@ defmodule Supavisor.Helpers do
     end
   end
 
+  def parse_secret("md5" <> secret, user) do
+    {:ok, %{digest: :md5, secret: secret, user: user}}
+  end
+
   def parse_postgres_secret(_), do: {:error, "Digest not supported"}
 
   ## Internal functions
@@ -302,5 +306,12 @@ defmodule Supavisor.Helpers do
   @spec parse_server_first(binary(), binary()) :: map()
   def parse_server_first(message, nonce) do
     :pgo_scram.parse_server_first(message, nonce) |> Map.new()
+  end
+
+  @spec md5([String.t()]) :: String.t()
+  def md5(strings) do
+    strings
+    |> :erlang.md5()
+    |> Base.encode16(case: :lower)
   end
 end

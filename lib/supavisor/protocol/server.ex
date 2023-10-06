@@ -185,6 +185,13 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
+  def decode_payload(:password_message, "md5" <> _ = bin) do
+    case String.split(bin, <<0>>) do
+      [digest, ""] -> {:md5, digest}
+      _ -> :undefined
+    end
+  end
+
   def decode_payload(:password_message, bin) do
     case kv_to_map(bin) do
       {:ok, map} -> {:first_msg_response, map}
@@ -258,12 +265,15 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  @spec auth_request() :: iodata()
-  def auth_request() do
-    @auth_request
+  @spec auth_request(:scram | :md5) :: iodata
+  def auth_request(method \\ :scram, salt \\ nil) do
+    case method do
+      :scram -> @auth_request
+      :md5 -> [<<?R, 12::32, 5::32>>, salt]
+    end
   end
 
-  @spec exchange_first_message(binary(), binary() | boolean(), pos_integer()) :: binary()
+  @spec exchange_first_message(binary, binary | boolean, pos_integer) :: binary
   def exchange_first_message(nonce, salt \\ false, iterations \\ 4096) do
     secret =
       if salt do

@@ -201,6 +201,7 @@ defmodule Supavisor do
           upstream_verify: tenant_record.upstream_verify,
           upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
           require_user: tenant_record.require_user,
+          method: method,
           secrets: secrets
         }
 

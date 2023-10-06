@@ -16,3 +16,16 @@ services:
       POSTGRES_PASSWORD: postgres
       # Uncomment to set MD5 authentication method on unitialized databases
       # POSTGRES_INITDB_ARGS: --auth-host=md5
+    db12:
+      image: supabase/postgres:12.5.0
+      container_name: supavisor-db-12
+      ports:
+        - "6433:5432"
+      volumes:
+        - ./dev/postgres12:/docker-entrypoint-initdb.d/
+      command:
+      - postgres
+      - -c
+      - wal_level=logical
+      environment:
+        POSTGRES_PASSWORD: postgres
