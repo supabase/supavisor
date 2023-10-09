@@ -26,5 +26,12 @@ defmodule Supavisor.ClientHandlerTest do
       assert user1 == user
       assert external_id1 == external_id
     end
+
+    test "unicode in username" do
+      payload = %{"user" => "тестовe.імʼя.external_id"}
+      {name, external_id} = ClientHandler.parse_user_info(payload)
+      assert name == "тестовe.імʼя"
+      assert external_id == "external_id"
+    end
   end
 end

@@ -12,7 +12,7 @@ defmodule Supavisor.Protocol.Server do
   @authentication_ok <<?R, 8::32, 0::32>>
   @ready_for_query <<?Z, 5::32, ?I>>
   @ssl_request <<8::32, 1234::16, 5679::16>>
-  @auth_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
+  @scram_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -265,12 +265,14 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  @spec auth_request(:scram | :md5) :: iodata
-  def auth_request(method \\ :scram, salt \\ nil) do
-    case method do
-      :scram -> @auth_request
-      :md5 -> [<<?R, 12::32, 5::32>>, salt]
-    end
+  @spec scram_request() :: iodata
+  def scram_request() do
+    @scram_request
+  end
+
+  @spec md5_request(<<_::32>>) :: iodata
+  def md5_request(salt) do
+    [<<?R, 12::32, 5::32>>, salt]
   end
 
   @spec exchange_first_message(binary, binary | boolean, pos_integer) :: binary

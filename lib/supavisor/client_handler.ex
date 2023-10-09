@@ -404,8 +404,8 @@ defmodule Supavisor.ClientHandler do
         {user, nil}
 
       matches ->
-        {pos, _} = List.last(matches)
-        {name, "." <> external_id} = String.split_at(user, pos)
+        {pos, 1} = List.last(matches)
+        <<name::size(pos)-binary, ?., external_id::binary>> = user
         {name, external_id}
     end
   end
@@ -456,7 +456,7 @@ defmodule Supavisor.ClientHandler do
   @spec handle_exchange(S.sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
   def handle_exchange({_, socket} = sock, {:auth_query_md5 = method, secrets}) do
     salt = :crypto.strong_rand_bytes(4)
-    :ok = sock_send(sock, Server.auth_request(:md5, salt))
+    :ok = sock_send(sock, Server.md5_request(salt))
 
     with {:ok,
           %{
@@ -472,7 +472,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_exchange({_, socket} = sock, {method, secrets}) do
-    :ok = sock_send(sock, Server.auth_request())
+    :ok = sock_send(sock, Server.scram_request())
 
     with {:ok,
           %{
