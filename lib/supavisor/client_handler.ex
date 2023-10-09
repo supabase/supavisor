@@ -106,7 +106,7 @@ defmodule Supavisor.ClientHandler do
     case decode_startup_packet(bin) do
       {:ok, hello} ->
         Logger.debug("Client startup message: #{inspect(hello)}")
-        {user, external_id} = parse_user_info(hello.payload["user"])
+        {user, external_id} = parse_user_info(hello.payload)
         Logger.metadata(project: external_id, user: user, mode: data.mode)
         {:keep_state, data, {:next_event, :internal, {:hello, {user, external_id}}}}
 
@@ -393,15 +393,19 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  @spec parse_user_info(String.t()) :: {String.t() | nil, String.t()}
-  def parse_user_info(username) do
-    case :binary.matches(username, ".") do
+  @spec parse_user_info(map) :: {String.t() | nil, String.t()}
+  def parse_user_info(%{"user" => user, "options" => %{"reference" => ref}}) do
+    {user, ref}
+  end
+
+  def parse_user_info(%{"user" => user}) do
+    case :binary.matches(user, ".") do
       [] ->
-        {username, nil}
+        {user, nil}
 
       matches ->
-        {pos, _} = List.last(matches)
-        {name, "." <> external_id} = String.split_at(username, pos)
+        {pos, 1} = List.last(matches)
+        <<name::size(pos)-binary, ?., external_id::binary>> = user
         {name, external_id}
     end
   end
@@ -433,7 +437,10 @@ defmodule Supavisor.ClientHandler do
       map =
         fields
         |> Enum.chunk_every(2)
-        |> Enum.map(fn [k, v] -> {k, v} end)
+        |> Enum.map(fn
+          ["options" = k, v] -> {k, URI.decode_query(v)}
+          [k, v] -> {k, v}
+        end)
         |> Map.new()
 
       # We only do light validation on the fields in the payload. The only field we use at the
@@ -447,8 +454,25 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec handle_exchange(S.sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
+  def handle_exchange({_, socket} = sock, {:auth_query_md5 = method, secrets}) do
+    salt = :crypto.strong_rand_bytes(4)
+    :ok = sock_send(sock, Server.md5_request(salt))
+
+    with {:ok,
+          %{
+            tag: :password_message,
+            payload: {:md5, client_md5}
+          }, _} <- receive_next(socket, "Timeout while waiting for the md5 exchange"),
+         {:ok, key} <- authenticate_exchange(method, client_md5, secrets.().secret, salt) do
+      {:ok, key}
+    else
+      {:error, message} -> {:error, message}
+      other -> {:error, "Unexpected message #{inspect(other)}"}
+    end
+  end
+
   def handle_exchange({_, socket} = sock, {method, secrets}) do
-    :ok = sock_send(sock, Server.auth_request())
+    :ok = sock_send(sock, Server.scram_request())
 
     with {:ok,
           %{
@@ -473,8 +497,7 @@ defmodule Supavisor.ClientHandler do
 
   defp receive_next(socket, timeout_message) do
     receive do
-      {_proto, ^socket, bin} ->
-        Server.decode_pkt(bin)
+      {_proto, ^socket, bin} -> Server.decode_pkt(bin)
     after
       15_000 -> {:error, timeout_message}
     end
@@ -499,6 +522,14 @@ defmodule Supavisor.ClientHandler do
 
     if H.hash(client_key) == secrets.().stored_key do
       {:ok, client_key}
+    else
+      {:error, "Wrong password"}
+    end
+  end
+
+  defp authenticate_exchange(:auth_query_md5, client_hash, server_hash, salt) do
+    if "md5" <> H.md5([server_hash, salt]) == client_hash do
+      {:ok, nil}
     else
       {:error, "Wrong password"}
     end
@@ -579,11 +610,8 @@ defmodule Supavisor.ClientHandler do
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
            {:commit, {:cached, get_secrets(info, db_user)}, ttl: 15_000}
          end) do
-      {_, {:cached, value}} ->
-        value
-
-      {_, {:cached, value}, _} ->
-        value
+      {_, {:cached, value}} -> value
+      {_, {:cached, value}, _} -> value
     end
   end
 
@@ -615,7 +643,8 @@ defmodule Supavisor.ClientHandler do
     resp =
       case H.get_user_secret(conn, tenant.auth_query, db_user) do
         {:ok, secret} ->
-          {:ok, {:auth_query, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
+          t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
+          {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
 
         {:error, reason} ->
           {:error, reason}

@@ -12,7 +12,7 @@ defmodule Supavisor.Protocol.Server do
   @authentication_ok <<?R, 8::32, 0::32>>
   @ready_for_query <<?Z, 5::32, ?I>>
   @ssl_request <<8::32, 1234::16, 5679::16>>
-  @auth_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
+  @scram_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -185,6 +185,13 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
+  def decode_payload(:password_message, "md5" <> _ = bin) do
+    case String.split(bin, <<0>>) do
+      [digest, ""] -> {:md5, digest}
+      _ -> :undefined
+    end
+  end
+
   def decode_payload(:password_message, bin) do
     case kv_to_map(bin) do
       {:ok, map} -> {:first_msg_response, map}
@@ -258,12 +265,17 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  @spec auth_request() :: iodata()
-  def auth_request() do
-    @auth_request
+  @spec scram_request() :: iodata
+  def scram_request() do
+    @scram_request
   end
 
-  @spec exchange_first_message(binary(), binary() | boolean(), pos_integer()) :: binary()
+  @spec md5_request(<<_::32>>) :: iodata
+  def md5_request(salt) do
+    [<<?R, 12::32, 5::32>>, salt]
+  end
+
+  @spec exchange_first_message(binary, binary | boolean, pos_integer) :: binary
   def exchange_first_message(nonce, salt \\ false, iterations \\ 4096) do
     secret =
       if salt do

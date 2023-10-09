@@ -179,17 +179,18 @@ defmodule Supavisor.DbHandler do
           acc
 
         %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
-          password = data.auth.password
-          user = data.auth.user
+          Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-          digest = [password.(), user] |> :erlang.md5() |> Base.encode16(case: :lower)
-          digest = [digest, salt] |> :erlang.md5() |> Base.encode16(case: :lower)
-          payload = ["md5", digest, 0]
+          digest =
+            if data.auth.method == :password do
+              H.md5([data.auth.password.(), data.auth.user])
+            else
+              data.auth.secrets.().secret
+            end
 
+          payload = ["md5", H.md5([digest, salt]), 0]
           bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
-
           :ok = sock_send(data.sock, bin)
-
           {ps, :authentication_md5}
 
         %{tag: :error_response, payload: error}, _ ->
