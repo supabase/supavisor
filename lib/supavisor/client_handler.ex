@@ -157,8 +157,15 @@ defmodule Supavisor.ClientHandler do
 
     case handle_exchange(sock, {method, secrets}) do
       {:error, reason} ->
-        Logger.error("Exchange error: #{inspect(reason)}")
-        msg = Server.exchange_message(:final, "e=#{reason}")
+        Logger.error("Exchange error: #{inspect(reason)} when method #{inspect(method)}")
+
+        msg =
+          if method == :auth_query_md5 do
+            Server.error_message("XX000", reason)
+          else
+            Server.exchange_message(:final, "e=#{reason}")
+          end
+
         sock_send(sock, msg)
 
         {:stop, :normal, data}
@@ -518,7 +525,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp authenticate_exchange(:auth_query, secrets, signatures, p) do
-    client_key = :crypto.exor(p |> Base.decode64!(), signatures.client)
+    client_key = :crypto.exor(Base.decode64!(p), signatures.client)
 
     if H.hash(client_key) == secrets.().stored_key do
       {:ok, client_key}
