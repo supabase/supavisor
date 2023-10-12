@@ -225,7 +225,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff} = data) do
     if buff != [] do
-      Logger.warning("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      Logger.info("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
       buff = Enum.reverse(buff)
       :ok = sock_send(data.sock, buff)
     end
@@ -252,7 +252,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, {pid, _} = from}, {:db_call, bin}, state, %{buffer: buff} = data) do
-    Logger.warning(
+    Logger.info(
       "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}"
     )
 
@@ -329,6 +329,7 @@ defmodule Supavisor.DbHandler do
           [
             verify: :verify_peer,
             cacerts: [auth.upstream_tls_ca],
+            server_name_indication: String.to_charlist(auth.host),
             customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
           ]
 
