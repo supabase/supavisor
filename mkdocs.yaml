@@ -1,0 +1,41 @@
+site_name: supavisor
+site_url: https://supabase.github.io/supavisor
+site_description: A cloud native multi-tenant connection pooler for Postgres
+
+repo_name: supabase/supavisor
+repo_url: https://github.com/supabase/supavisor
+
+nav:
+    - Welcome: 'index.md'
+    - Development: 
+      - Installation: 'development/installation.md'
+      - Usage: 'development/usage.md'
+    - Connecting: 'connecting.md'
+    - Metrics: 'metrics.md'
+
+theme:
+    name: 'material'
+    favicon: 'images/favicon.ico'
+    logo: 'images/favicon.ico'
+    homepage: https://supabase.github.io/supavisor
+    features:
+      - navigation.expand  
+    palette:
+        primary: black
+        accent: light green
+
+markdown_extensions:
+    - pymdownx.highlight:
+        linenums: true
+        guess_lang: false
+        use_pygments: true
+        pygments_style: default
+    - pymdownx.superfences
+    - pymdownx.tabbed:
+        alternate_style: true
+    - pymdownx.snippets
+    - pymdownx.tasklist
+    - admonition
+    - pymdownx.emoji:
+        emoji_index: !!python/name:materialx.emoji.twemoji
+        emoji_generator: !!python/name:materialx.emoji.to_svg
