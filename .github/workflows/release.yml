@@ -1,0 +1,98 @@
+name: Release on Dockerhub
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - ".github/workflows/dockerhub-release.yml"
+      - "VERSION"
+
+jobs:
+  settings:
+    runs-on: ubuntu-latest
+    outputs:
+      # TODO: Edit this section
+      docker_version: ${{ steps.settings.outputs.postgres-version }}
+      image_tag: supabase/supavisor:${{ steps.settings.outputs.postgres-version }}
+      build_args: ${{ steps.args.outputs.result }}
+    steps:
+      - uses: actions/checkout@v3
+      - id: settings
+        # Remove spaces and quotes to get the raw version string
+        run: sed -r 's/(\s|\")+//g' VERSION >> $GITHUB_OUTPUT
+
+  build_image:
+    needs: settings
+    strategy:
+      matrix:
+        include:
+          - runner: [self-hosted, X64]
+            arch: amd64
+          - runner: arm-runner
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - run: docker context create builders
+      - uses: docker/setup-buildx-action@v3
+        with:
+          endpoint: builders
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - id: build
+        uses: docker/build-push-action@v5
+        with:
+          push: true
+          build-args: |
+            ${{ needs.settings.outputs.build_args }}
+          target: production
+          tags: ${{ needs.settings.outputs.image_tag }}_${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ github.ref_name }}-latest-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-latest-${{ matrix.arch }}
+      - name: Slack Notification
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_NOTIFICATIONS_WEBHOOK }}
+          SLACK_USERNAME: "gha-failures-notifier"
+          SLACK_COLOR: "danger"
+          SLACK_MESSAGE: "Building Supavisor ${{ matrix.arch }} image failed"
+          SLACK_FOOTER: ""
+
+  merge_manifest:
+    needs: [settings, build_image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Merge multi-arch manifests
+        run: |
+          docker buildx imagetools create -t ${{ needs.settings.outputs.image_tag }} \
+          ${{ needs.settings.outputs.image_tag }}_amd64 \
+          ${{ needs.settings.outputs.image_tag }}_arm64
+      - name: Slack Notification
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_NOTIFICATIONS_WEBHOOK }}
+          SLACK_USERNAME: "gha-failures-notifier"
+          SLACK_COLOR: "danger"
+          SLACK_MESSAGE: "Building Postgres image failed"
+          SLACK_FOOTER: ""
+
+  publish:
+    needs: [settings, merge_manifest]
+    # Call workflow explicitly because events from actions cannot trigger more actions
+    uses: ./.github/workflows/mirror.yml
+    with:
+      version: ${{ needs.settings.outputs.docker_version }}
+    secrets: inherit
