@@ -629,6 +629,7 @@ defmodule Supavisor.ClientHandler do
         [
           {:verify, :verify_peer},
           {:cacerts, [H.upstream_cert(tenant.upstream_tls_ca)]},
+          {:server_name_indication, String.to_charlist(tenant.db_host)},
           {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
         ]
       end
