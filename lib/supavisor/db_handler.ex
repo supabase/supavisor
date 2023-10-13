@@ -225,7 +225,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff} = data) do
     if buff != [] do
-      Logger.info("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      Logger.debug("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
       buff = Enum.reverse(buff)
       :ok = sock_send(data.sock, buff)
     end
