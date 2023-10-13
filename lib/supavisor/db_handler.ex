@@ -252,7 +252,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, {pid, _} = from}, {:db_call, bin}, state, %{buffer: buff} = data) do
-    Logger.info(
+    Logger.debug(
       "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}"
     )
 
