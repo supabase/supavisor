@@ -9,7 +9,9 @@ nav:
     - Welcome: 'index.md'
     - Development: 
       - Installation: 'development/installation.md'
-      - Usage: 'development/usage.md'
+      - Setup: 'development/setup.md'
+    - Deployment:
+      - Deploy with Fly.io: 'deployment/fly.md'
     - Connecting: 'connecting.md'
     - Metrics: 'metrics.md'
 
