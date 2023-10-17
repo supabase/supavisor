@@ -384,4 +384,64 @@ defmodule Supavisor.Protocol.Server do
   def ssl_request() do
     @ssl_request
   end
+
+  # The startup packet payload is a list of key/value pairs, separated by null bytes
+  def decode_startup_packet_payload(payload) do
+    fields = String.split(payload, <<0>>, trim: true)
+
+    # If the number of fields is odd, then the payload is malformed
+    if rem(length(fields), 2) == 1 do
+      {:error, :bad_startup_payload}
+    else
+      map =
+        fields
+        |> Enum.chunk_every(2)
+        |> Enum.map(fn
+          ["options" = k, v] -> {k, URI.decode_query(v)}
+          [k, v] -> {k, v}
+        end)
+        |> Map.new()
+
+      # We only do light validation on the fields in the payload. The only field we use at the
+      # moment is `user`. If that's missing, this is a bad payload.
+      if Map.has_key?(map, "user") do
+        {:ok, map}
+      else
+        {:error, :bad_startup_payload}
+      end
+    end
+  end
+
+  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
+    with {:ok, payload} <- decode_startup_packet_payload(rest) do
+      pkt = %{
+        len: len,
+        payload: payload,
+        tag: :startup
+      }
+
+      {:ok, pkt}
+    end
+  end
+
+  def decode_startup_packet(_) do
+    {:error, :bad_startup_payload}
+  end
+
+  def encode_startup_packet(payload) do
+    bin =
+      Enum.reduce(payload, "", fn
+        # remove options
+        {"options", _}, acc ->
+          acc
+
+        {"application_name" = k, v}, acc ->
+          <<k::binary, 0, v::binary, " via Supavisor", 0>> <> acc
+
+        {k, v}, acc ->
+          <<k::binary, 0, v::binary, 0>> <> acc
+      end)
+
+    <<byte_size(bin) + 9::32, 0, 3, 0, 0, bin::binary, 0>>
+  end
 end

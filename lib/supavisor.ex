@@ -9,7 +9,7 @@ defmodule Supavisor do
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
-  @type mode :: :transaction | :session
+  @type mode :: :transaction | :session | :native
   @type id :: {String.t(), String.t(), mode}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
