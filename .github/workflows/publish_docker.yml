@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # TODO: Edit this section
-      docker_version: ${{ steps.settings.outputs.postgres-version }}
-      image_tag: supabase/supavisor:${{ steps.settings.outputs.postgres-version }}
+      docker_version: ${{ steps.settings.outputs.supavisor-version }}
+      image_tag: supabase/supavisor:${{ steps.settings.outputs.supavisor-version }}
       build_args: ${{ steps.args.outputs.result }}
     steps:
       - uses: actions/checkout@v3
@@ -86,7 +86,7 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_NOTIFICATIONS_WEBHOOK }}
           SLACK_USERNAME: "gha-failures-notifier"
           SLACK_COLOR: "danger"
-          SLACK_MESSAGE: "Building Postgres image failed"
+          SLACK_MESSAGE: "Building Supavisor image failed"
           SLACK_FOOTER: ""
 
   publish:
