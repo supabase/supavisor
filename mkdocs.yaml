@@ -10,10 +10,16 @@ nav:
     - Development: 
       - Installation: 'development/installation.md'
       - Setup: 'development/setup.md'
+      - Docs: 'development/docs.md'
     - Deployment:
       - Deploy with Fly.io: 'deployment/fly.md'
-    - Connecting: 'connecting.md'
-    - Metrics: 'metrics.md'
+    - Connecting:
+      - Overview: 'connecting/overview.md'
+      - Pool Modes: 'connecting/pool_modes.md'
+    - Monitoring: 
+      - Metrics: 'monitoring/metrics.md'
+    - ORMs:
+      - Prisma: 'orms/prisma.md'
 
 theme:
     name: 'material'
