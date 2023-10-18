@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - j0/add_workflow_to_publish_docker_image
     paths:
       - ".github/workflows/publish_docker.yml"
       - "VERSION"
