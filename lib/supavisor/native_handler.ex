@@ -4,6 +4,7 @@ defmodule Supavisor.NativeHandler do
   @behaviour :ranch_protocol
 
   require Logger
+  alias Supavisor, as: S
   alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
   alias Supavisor.{Protocol.Server, Tenants}
