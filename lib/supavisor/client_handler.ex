@@ -279,7 +279,7 @@ defmodule Supavisor.ClientHandler do
         :keep_state_and_data
 
       {:buffering, size} ->
-        Logger.warn("DB call buffering #{size}}")
+        Logger.debug("DB call buffering #{size}")
 
         if size > 1_000_000 do
           msg = "Db buffer size is too big: #{size}"

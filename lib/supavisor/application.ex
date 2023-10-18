@@ -74,11 +74,18 @@ defmodule Supavisor.Application do
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      {Cachex, name: Supavisor.Cache},
       Supavisor.TenantsMetrics,
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]
+
+    # start Cachex only if the node uses names, this is necessary for test setup
+    children =
+      if node() != :nonode@nohost do
+        [{Cachex, name: Supavisor.Cache} | children]
+      else
+        children
+      end
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

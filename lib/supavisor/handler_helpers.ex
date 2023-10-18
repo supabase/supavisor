@@ -38,14 +38,9 @@ defmodule Supavisor.HandlerHelpers do
   @spec ssl_recv(S.tcp_sock()) :: {:ok, S.ssl_sock()} | {:error, term}
   def ssl_recv({:gen_tcp, sock} = s) do
     case :gen_tcp.recv(sock, 1, 15_000) do
-      {:ok, <<?S>>} ->
-        ssl_connect(s)
-
-      {:ok, <<?N>>} ->
-        {:ok, s}
-
-      {:error, _} = error ->
-        error
+      {:ok, <<?S>>} -> ssl_connect(s)
+      {:ok, <<?N>>} -> {:ok, s}
+      {:error, _} = error -> error
     end
   end
 
@@ -55,11 +50,8 @@ defmodule Supavisor.HandlerHelpers do
     opts = [verify: :verify_none]
 
     case :ssl.connect(sock, opts, timeout) do
-      {:ok, ssl_sock} ->
-        {:ok, {:ssl, ssl_sock}}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, ssl_sock} -> {:ok, {:ssl, ssl_sock}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
