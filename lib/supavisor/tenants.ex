@@ -43,6 +43,19 @@ defmodule Supavisor.Tenants do
     Tenant |> Repo.get_by(external_id: external_id) |> Repo.preload(:users)
   end
 
+  @spec get_user_cache(String.t(), String.t() | nil, String.t() | nil) ::
+          {:ok, map()} | {:error, any()}
+  def get_user_cache(user, external_id, sni_hostname) do
+    cache_key = {:user_cache, user, external_id, sni_hostname}
+
+    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+           {:commit, {:cached, get_user(user, external_id, sni_hostname)}, ttl: 5_000}
+         end) do
+      {_, {:cached, value}} -> value
+      {_, {:cached, value}, _} -> value
+    end
+  end
+
   @spec get_user(String.t(), String.t() | nil, String.t() | nil) ::
           {:ok, map()} | {:error, any()}
   def get_user(_, nil, nil) do

@@ -119,7 +119,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, {:hello, {user, external_id}}, :exchange, %{sock: sock} = data) do
     sni_hostname = try_get_sni(sock)
 
-    case Tenants.get_user(user, external_id, sni_hostname) do
+    case Tenants.get_user_cache(user, external_id, sni_hostname) do
       {:ok, info} ->
         id = Supavisor.id(info.tenant.external_id, user, data.mode, info.user.mode_type)
         Registry.register(Supavisor.Registry.TenantClients, id, [])
@@ -629,6 +629,7 @@ defmodule Supavisor.ClientHandler do
         [
           {:verify, :verify_peer},
           {:cacerts, [H.upstream_cert(tenant.upstream_tls_ca)]},
+          {:server_name_indication, String.to_charlist(tenant.db_host)},
           {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
         ]
       end

@@ -29,6 +29,7 @@ defmodule Supavisor.Helpers do
           [
             {:verify, :verify_peer},
             {:cacerts, [upstream_cert(params["upstream_tls_ca"])]},
+            {:server_name_indication, String.to_charlist(params["db_host"])},
             {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
           ]
         end
