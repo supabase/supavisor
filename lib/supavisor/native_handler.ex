@@ -38,8 +38,15 @@ defmodule Supavisor.NativeHandler do
     :gen_server.enter_loop(__MODULE__, [hibernate_after: 5_000], state)
   end
 
-  # ssl request from client
   @impl true
+  # http healthcheck
+  def handle_info({_, sock, <<"GET", _::binary>>}, state) do
+    Logger.debug("Client is trying to request HTTP")
+    HH.sock_send({:gen_tcp, sock}, "HTTP/1.1 204 OK\r\n\r\n")
+    {:stop, :normal, state}
+  end
+
+  # ssl request from client
   def handle_info(
         {:tcp, sock, <<_::64>>} = _msg,
         %{status: :startup, client_sock: {_, sock} = client_sock} = state
