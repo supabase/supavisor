@@ -46,38 +46,19 @@ defmodule Supavisor.ProtocolTest do
   end
 
   test "backend_key_data/0" do
-    result = S.backend_key_data()
-    payload = Enum.at(result, 1)
+    {header, payload} = S.backend_key_data()
     len = byte_size(payload) + 4
 
     assert [
              %S.Pkt{
                tag: :backend_key_data,
                len: 13,
-               payload: %{procid: _, secret: _}
+               payload: %{pid: _, key: _}
              }
-           ] = S.decode(result |> IO.iodata_to_binary())
+           ] = S.decode([header, payload] |> IO.iodata_to_binary())
 
-    assert hd(result) == <<?K, len::32>>
+    assert header == <<?K, len::32>>
     assert byte_size(payload) == 8
-  end
-
-  test "greetings/1" do
-    ps = S.encode_parameter_status(@initial_data)
-
-    dec =
-      S.greetings(ps)
-      |> IO.iodata_to_binary()
-      |> S.decode()
-
-    ready_for_query_pos = Enum.at(dec, -1)
-    backend_key_data_pos = Enum.at(dec, -2)
-    assert %S.Pkt{tag: :ready_for_query} = ready_for_query_pos
-    assert %S.Pkt{tag: :backend_key_data} = backend_key_data_pos
-    tags = Enum.map(dec, & &1.tag)
-    assert Enum.count(tags, &(&1 == :parameter_status)) == 13
-    assert Enum.count(tags, &(&1 == :backend_key_data)) == 1
-    assert Enum.count(tags, &(&1 == :ready_for_query)) == 1
   end
 
   test "decode_payload for error_response" do
@@ -96,5 +77,14 @@ defmodule Supavisor.ProtocolTest do
                ]
              }
            ]
+  end
+
+  test "cancel_message/2" do
+    pid = 123
+    key = 123_456
+    expected = <<0, 0, 0, 16, 4, 210, 22, 46, 0, 0, 0, 123, 0, 1, 226, 64>>
+
+    assert S.cancel_message(pid, key)
+           |> IO.iodata_to_binary() == expected
   end
 end

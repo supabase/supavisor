@@ -13,6 +13,7 @@ defmodule Supavisor.Protocol.Server do
   @ready_for_query <<?Z, 5::32, ?I>>
   @ssl_request <<8::32, 1234::16, 5679::16>>
   @scram_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
+  @msg_cancel_header <<16::32, 1234::16, 5678::16>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -133,8 +134,8 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def decode_payload(:backend_key_data, <<proc_id::integer-32, secret::integer-32>>) do
-    %{procid: proc_id, secret: secret}
+  def decode_payload(:backend_key_data, <<pid::integer-32, key::integer-32>>) do
+    %{pid: pid, key: key}
   end
 
   def decode_payload(:ready_for_query, payload) do
@@ -360,18 +361,13 @@ defmodule Supavisor.Protocol.Server do
     [<<?S, len::integer-32>>, payload]
   end
 
-  @spec backend_key_data() :: iodata()
+  @spec backend_key_data() :: {iodata(), binary}
   def backend_key_data() do
-    procid = System.unique_integer([:positive, :monotonic])
-    secret = Enum.random(0..9_999_999_999)
-    payload = <<procid::integer-32, secret::integer-32>>
+    pid = System.unique_integer([:positive, :monotonic])
+    key = Enum.random(0..9_999_999_999)
+    payload = <<pid::integer-32, key::integer-32>>
     len = IO.iodata_length(payload) + 4
-    [<<?K, len::32>>, payload]
-  end
-
-  @spec greetings(iodata()) :: iodata()
-  def greetings(ps) do
-    [ps, backend_key_data(), @ready_for_query]
+    {<<?K, len::32>>, payload}
   end
 
   @spec ready_for_query() :: binary()
@@ -443,5 +439,10 @@ defmodule Supavisor.Protocol.Server do
       end)
 
     <<byte_size(bin) + 9::32, 0, 3, 0, 0, bin::binary, 0>>
+  end
+
+  @spec cancel_message(non_neg_integer, non_neg_integer) :: iodata
+  def cancel_message(pid, key) do
+    [@msg_cancel_header, <<pid::32, key::32>>]
   end
 end

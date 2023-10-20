@@ -11,7 +11,7 @@ defmodule Supavisor.SynHandlerTest do
 
     secret = %{alias: "postgres"}
     auth_secret = {:password, fn -> secret end}
-    {:ok, pid2} = :erpc.call(node2, Supavisor.FixturesHelpers, :start_pool, [@id, secret])
+    {:ok, pid2} = :erpc.call(node2, Supavisor.FixturesHelpers, :start_pool, [@id, secret, nil])
     Process.sleep(500)
     assert pid2 == Supavisor.get_global_sup(@id)
     assert node(pid2) == node2
@@ -19,7 +19,7 @@ defmodule Supavisor.SynHandlerTest do
     Process.sleep(500)
 
     assert nil == Supavisor.get_global_sup(@id)
-    {:ok, pid1} = Supavisor.start(@id, auth_secret)
+    {:ok, pid1} = Supavisor.start(@id, auth_secret, nil)
     assert pid1 == Supavisor.get_global_sup(@id)
     assert node(pid1) == node()
 

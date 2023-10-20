@@ -57,7 +57,8 @@ defmodule Supavisor.ClientHandler do
       proxy_type: nil,
       mode: opts.mode,
       stats: %{},
-      idle_timeout: 0
+      idle_timeout: 0,
+      db_name: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -68,6 +69,31 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("Client is trying to request HTTP")
     HH.sock_send(data.sock, "HTTP/1.1 204 OK\r\n\r\n")
     {:stop, :normal, data}
+  end
+
+  # cancel request
+  def handle_event(:info, {_, _, <<16::32, 1234::16, 5678::16, pid::32, key::32>>}, _, data) do
+    Logger.debug("Got cancel query for #{inspect({pid, key})}")
+    :ok = HH.send_cancel_query(pid, key)
+    {:stop, :normal, data}
+  end
+
+  # send cancel request to db
+  def handle_event(:info, :cancel_query, :busy, data) do
+    key = {data.tenant, data.db_pid}
+    Logger.debug("Cancel query for #{inspect(key)}")
+
+    db_pid = data.db_pid
+
+    case db_pid_meta(key) do
+      [{^db_pid, meta}] ->
+        :ok = HH.cancel_query(meta.host, meta.port, meta.ip_ver, meta.pid, meta.key)
+
+      error ->
+        Logger.error("Received cancel but no proc was found #{inspect(key)} #{inspect(error)}")
+    end
+
+    :keep_state_and_data
   end
 
   def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, %{sock: sock} = data) do
@@ -109,6 +135,7 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("Client startup message: #{inspect(hello)}")
         {user, external_id} = HH.parse_user_info(hello.payload)
         Logger.metadata(project: external_id, user: user, mode: data.mode)
+        data = %{data | db_name: hello.payload["database"]}
         {:keep_state, data, {:next_event, :internal, {:hello, {user, external_id}}}}
 
       {:error, error} ->
@@ -192,7 +219,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _, data) do
     Logger.debug("Subscribe to tenant #{inspect(data.id)}")
 
-    with {:ok, sup} <- Supavisor.start(data.id, data.auth_secrets),
+    with {:ok, sup} <- Supavisor.start(data.id, data.auth_secrets, data.db_name),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
@@ -221,7 +248,10 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:internal, {:greetings, ps}, _, %{sock: sock} = data) do
-    :ok = HH.sock_send(sock, Server.greetings(ps))
+    {header, <<pid::32, key::32>> = payload} = Server.backend_key_data()
+    msg = [ps, [header, payload], Server.ready_for_query()]
+    :ok = HH.listen_cancel_query(pid, key)
+    :ok = HH.sock_send(sock, msg)
 
     if data.idle_timeout > 0 do
       {:next_state, :idle, data, idle_check(data.idle_timeout)}
@@ -631,5 +661,16 @@ defmodule Supavisor.ClientHandler do
   @spec idle_check(non_neg_integer) :: {:timeout, non_neg_integer, :idle_terminate}
   defp idle_check(timeout) do
     {:timeout, timeout, :idle_terminate}
+  end
+
+  defp db_pid_meta({_, pid} = key) do
+    rkey = Supavisor.Registry.PoolPids
+    fnode = node(pid)
+
+    if fnode == node() do
+      Registry.lookup(rkey, key)
+    else
+      :erpc.call(fnode, Registry, :lookup, [rkey, key], 15_000)
+    end
   end
 end
