@@ -365,7 +365,7 @@ defmodule Supavisor.Protocol.Server do
   def backend_key_data() do
     pid = System.unique_integer([:positive, :monotonic])
     key = :crypto.strong_rand_bytes(4)
-    payload = <<pid::integer-32, key::integer-32>>
+    payload = <<pid::integer-32, key::binary>>
     len = IO.iodata_length(payload) + 4
     {<<?K, len::32>>, payload}
   end
