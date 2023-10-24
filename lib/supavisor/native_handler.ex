@@ -32,7 +32,9 @@ defmodule Supavisor.NativeHandler do
       trans: trans,
       acc: nil,
       status: :startup,
-      ssl: false
+      ssl: false,
+      db_auth: nil,
+      backend_key: nil
     }
 
     :gen_server.enter_loop(__MODULE__, [hibernate_after: 5_000], state)
@@ -43,6 +45,16 @@ defmodule Supavisor.NativeHandler do
   def handle_info({_, sock, <<"GET", _::binary>>}, state) do
     Logger.debug("Client is trying to request HTTP")
     HH.sock_send({:gen_tcp, sock}, "HTTP/1.1 204 OK\r\n\r\n")
+    {:stop, :normal, state}
+  end
+
+  def handle_info(
+        {:tcp, sock, <<16::32, 1234::16, 5678::16, pid::32, key::32>>},
+        %{status: :startup, client_sock: {_, sock} = client_sock} = state
+      ) do
+    Logger.debug("Got cancel query for #{inspect({pid, key})}")
+    :ok = HH.send_cancel_query(pid, key)
+    :ok = HH.sock_close(client_sock)
     {:stop, :normal, state}
   end
 
@@ -85,6 +97,28 @@ defmodule Supavisor.NativeHandler do
   end
 
   # send packets to client from db
+  def handle_info(
+        {_, sock, bin},
+        %{db_sock: {_, sock}, backend_key: nil} = state
+      ) do
+    state =
+      bin
+      |> Server.decode()
+      |> Enum.filter(fn e -> Map.get(e, :tag) == :backend_key_data end)
+      |> case do
+        [%{payload: %{key: key, pid: pid} = k}] ->
+          Logger.debug("Backend key: #{inspect(k)}")
+          :ok = HH.listen_cancel_query(pid, key)
+          %{state | backend_key: k}
+
+        _ ->
+          state
+      end
+
+    :ok = HH.sock_send(state.client_sock, bin)
+    {:noreply, state}
+  end
+
   def handle_info({_, sock, bin}, %{db_sock: {_, sock}} = state) do
     :ok = HH.sock_send(state.client_sock, bin)
     {:noreply, state}
@@ -115,9 +149,13 @@ defmodule Supavisor.NativeHandler do
           end
           |> Server.encode_startup_packet()
 
-        case connect_local(host, port, payload, state.ssl) do
+        ip_ver = H.detect_ip_version(host)
+        host = String.to_charlist(host)
+
+        case connect_local(host, port, payload, ip_ver, state.ssl) do
           {:ok, db_sock} ->
-            {:noreply, %{state | db_sock: db_sock}}
+            auth = %{host: host, port: port, ip_ver: ip_ver}
+            {:noreply, %{state | db_sock: db_sock, db_auth: auth}}
 
           {:error, reason} ->
             Logger.error("Error connecting to tenant db: #{inspect(reason)}")
@@ -141,14 +179,15 @@ defmodule Supavisor.NativeHandler do
     {:noreply, state}
   end
 
-  def handle_info({:tcp_closed, _} = msg, state) do
-    Logger.debug("Terminating #{inspect(msg, pretty: true)}")
+  def handle_info({closed, _} = msg, state) when closed in [:tcp_closed, :ssl_closed] do
+    Logger.debug("Closed socket #{inspect(msg, pretty: true)}")
     {:stop, :normal, state}
   end
 
-  def handle_info({:ssl_closed, _} = msg, state) do
-    Logger.debug("Terminating #{inspect(msg, pretty: true)}")
-    {:stop, :normal, state}
+  def handle_info(:cancel_query, %{backend_key: key, db_auth: auth} = state) do
+    Logger.debug("Cancel query for #{inspect(key)}")
+    :ok = HH.cancel_query(auth.host, auth.port, auth.ip_ver, key.pid, key.key)
+    {:noreply, state}
   end
 
   def handle_info(msg, state) do
@@ -156,19 +195,24 @@ defmodule Supavisor.NativeHandler do
     {:noreply, state}
   end
 
+  @impl true
+  def terminate(_reason, state) do
+    Logger.debug("Terminate #{inspect(self())}")
+    :ok = HH.sock_close(state.db_sock)
+    :ok = HH.sock_close(state.client_sock)
+  end
+
   ### Internal functions
 
-  @spec connect_local(String.t(), non_neg_integer, binary, boolean) ::
+  @spec connect_local(keyword, non_neg_integer, binary, atom, boolean) ::
           {:ok, S.sock()} | {:error, term()}
-  defp connect_local(host, port, payload, ssl?) do
+  defp connect_local(host, port, payload, ip_ver, ssl?) do
     sock_opts = [
       :binary,
       {:packet, :raw},
       {:active, false},
-      H.detect_ip_version(host)
+      ip_ver
     ]
-
-    host = String.to_charlist(host)
 
     with {:ok, sock} <- :gen_tcp.connect(host, port, sock_opts),
          {:ok, sock} <- HH.try_ssl_handshake({:gen_tcp, sock}, ssl?),

@@ -61,6 +61,7 @@ defmodule Supavisor.Application do
       PromEx,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
+      {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantClients},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},

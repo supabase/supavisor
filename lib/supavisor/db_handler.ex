@@ -110,6 +110,13 @@ defmodule Supavisor.DbHandler do
         %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
           {ps, db_state}
 
+        %{tag: :backend_key_data, payload: payload}, acc ->
+          key = {data.tenant, self()}
+          conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
+          Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
+          Logger.debug("Backend #{inspect(key)} data: #{inspect(payload)}")
+          acc
+
         %{payload: {:authentication_sasl_password, methods_b}}, {ps, _} ->
           nonce =
             case Server.decode_string(methods_b) do
