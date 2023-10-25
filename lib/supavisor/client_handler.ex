@@ -26,8 +26,8 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def callback_mode, do: [:handle_event_function]
 
-  def client_call(pid, bin, ready?) do
-    :gen_statem.call(pid, {:client_call, bin, ready?}, 5000)
+  def client_cast(pid, bin, ready?) do
+    :gen_statem.cast(pid, {:client_cast, bin, ready?})
   end
 
   @impl true
@@ -303,7 +303,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
-    case Db.call(data.db_pid, bin) do
+    case Db.call(data.db_pid, self(), bin) do
       :ok ->
         Logger.debug("DB call success")
         :keep_state_and_data
@@ -366,11 +366,11 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  # emulate handle_call
-  def handle_event({:call, from}, {:client_call, bin, ready?}, _, data) do
+  # emulate handle_cast
+  def handle_event(:cast, {:client_cast, bin, ready?}, _, data) do
     Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
 
-    reply = {:reply, from, HH.sock_send(data.sock, bin)}
+    :ok = HH.sock_send(data.sock, bin)
 
     if ready? do
       Logger.debug("Client is ready")
@@ -382,15 +382,15 @@ defmodule Supavisor.ClientHandler do
 
       actions =
         if data.idle_timeout > 0 do
-          [reply, idle_check(data.idle_timeout)]
+          idle_check(data.idle_timeout)
         else
-          reply
+          []
         end
 
       {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, actions}
     else
       Logger.debug("Client is not ready")
-      {:keep_state_and_data, reply}
+      :keep_state_and_data
     end
   end
 

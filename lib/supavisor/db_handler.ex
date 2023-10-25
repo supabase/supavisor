@@ -19,9 +19,9 @@ defmodule Supavisor.DbHandler do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
-  @spec call(pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, msg) do
-    :gen_statem.call(pid, {:db_call, msg})
+  @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
+  def call(pid, caller, msg) do
+    :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
   end
 
   @impl true
@@ -240,32 +240,33 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | buffer: []}}
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, data) do
+  def handle_event(:info, {_proto, _, bin}, _, %{caller: caller} = data) when is_pid(caller) do
     # check if the response ends with "ready for query"
     ready = String.ends_with?(bin, Server.ready_for_query())
-    :ok = Client.client_call(data.caller, bin, ready)
+    Logger.debug("Db ready #{inspect(ready)}")
+    :ok = Client.client_cast(caller, bin, ready)
 
     if ready do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats}}
+      {:keep_state, %{data | stats: stats, caller: nil}}
     else
       :keep_state_and_data
     end
   end
 
-  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{sock: sock} = data) do
+  def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
     reply = {:reply, from, sock_send(sock, bin)}
-    {:keep_state, %{data | caller: pid}, reply}
+    {:keep_state, %{data | caller: caller}, reply}
   end
 
-  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, state, %{buffer: buff} = data) do
+  def handle_event({:call, from}, {:db_call, caller, bin}, state, %{buffer: buff} = data) do
     Logger.debug(
-      "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}"
+      "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(caller)}"
     )
 
     new_buff = [bin | buff]
     reply = {:reply, from, {:buffering, IO.iodata_length(new_buff)}}
-    {:keep_state, %{data | caller: pid, buffer: new_buff}, reply}
+    {:keep_state, %{data | caller: caller, buffer: new_buff}, reply}
   end
 
   def handle_event(:info, {:tcp_closed, sock}, state, %{sock: sock} = data) do
