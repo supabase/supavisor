@@ -303,7 +303,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in [:tcp, :ssl] do
-    case Db.call(data.db_pid, bin, self()) do
+    case Db.call(data.db_pid, self(), bin) do
       :ok ->
         Logger.debug("DB call success")
         :keep_state_and_data

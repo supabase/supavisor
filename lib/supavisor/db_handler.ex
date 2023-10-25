@@ -19,9 +19,9 @@ defmodule Supavisor.DbHandler do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
-  @spec call(pid(), binary(), pid()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, msg, caller) do
-    :gen_statem.call(pid, {:db_call, msg, caller}, 15_000)
+  @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
+  def call(pid, caller, msg) do
+    :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
   end
 
   @impl true
@@ -254,12 +254,12 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event({:call, from}, {:db_call, bin, caller}, :idle, %{sock: sock} = data) do
+  def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
     reply = {:reply, from, sock_send(sock, bin)}
     {:keep_state, %{data | caller: caller}, reply}
   end
 
-  def handle_event({:call, from}, {:db_call, bin, caller}, state, %{buffer: buff} = data) do
+  def handle_event({:call, from}, {:db_call, caller, bin}, state, %{buffer: buff} = data) do
     Logger.debug(
       "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(caller)}"
     )
