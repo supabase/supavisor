@@ -21,7 +21,7 @@ defmodule Supavisor.DbHandler do
 
   @spec call(pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, msg) do
-    :gen_statem.call(pid, {:db_call, msg})
+    :gen_statem.call(pid, {:db_call, msg}, 15_000)
   end
 
   @impl true
@@ -243,7 +243,7 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {_proto, _, bin}, _, data) do
     # check if the response ends with "ready for query"
     ready = String.ends_with?(bin, Server.ready_for_query())
-    :ok = Client.client_call(data.caller, bin, ready)
+    :ok = Client.client_cast(data.caller, bin, ready)
 
     if ready do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
