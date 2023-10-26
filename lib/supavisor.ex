@@ -9,17 +9,17 @@ defmodule Supavisor do
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
-  @type mode :: :transaction | :session
+  @type mode :: :transaction | :session | :native
   @type id :: {String.t(), String.t(), mode}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
 
-  @spec start(id, secrets) :: {:ok, pid} | {:error, any}
-  def start(id, secrets) do
+  @spec start(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
+  def start(id, secrets, db_name) do
     case get_global_sup(id) do
       nil ->
-        start_local_pool(id, secrets)
+        start_local_pool(id, secrets, db_name)
 
       pid ->
         {:ok, pid}
@@ -156,8 +156,8 @@ defmodule Supavisor do
 
   ## Internal functions
 
-  @spec start_local_pool(id, secrets) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({tenant, user, mode} = id, {method, secrets}) do
+  @spec start_local_pool(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
+  defp start_local_pool({tenant, user, mode} = id, {method, secrets}, db_name) do
     Logger.debug("Starting pool for #{inspect(id)}")
 
     case Tenants.get_pool_config(tenant, secrets.().alias) do
@@ -194,7 +194,7 @@ defmodule Supavisor do
           host: String.to_charlist(db_host),
           port: db_port,
           user: db_user,
-          database: db_database,
+          database: if(db_name != nil, do: db_name, else: db_database),
           password: fn -> db_pass end,
           application_name: "supavisor",
           ip_version: H.ip_version(ip_ver, db_host),
@@ -235,7 +235,8 @@ defmodule Supavisor do
     end
   end
 
-  @spec set_parameter_status(id, [{binary, binary}]) :: :ok | {:error, :not_found}
+  @spec set_parameter_status(id, [{binary, binary}]) ::
+          :ok | {:error, :not_found}
   def set_parameter_status(id, ps) do
     case get_local_manager(id) do
       nil -> {:error, :not_found}
