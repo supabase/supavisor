@@ -6,11 +6,19 @@ Credential verificiation is done either via `user` records or an `auth_query`.
 
 If no `auth_query` exists on the `tenant` record credentials will be looked up from a `user` and verified against the client connection string credentials.
 
+There must be one or more `user` records for a `tenant` where `is_manager` is `false`.
+
 ## Authentication Query
 
-If an `auth_query` exists on the `tenant` this query is used to query the tenant database and return results with credentials.
+If the `user` in the client connection is not found for a `tenant` it will use the `user` where `is_manager` is `true` and the `auth_query` on the `tenant` to return matching credentials from the tenant database.
 
-Create a function to return a username and password for a user:
+A simple `auth_query` can be:
+
+```sql
+SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1
+```
+
+Alternatively, create a function to return a username and password for a user:
 
 ```sql
 CREATE USER supavisor;

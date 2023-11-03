@@ -18,7 +18,7 @@ All `tenant` fields and their types are defined in the `Supavisor.Tenants.Tenant
 
 `ip_version` - the ip address type of the connection to the database server
 
-`upstream_ssl` - the ssl certificate to use when connecting to the database server
+`upstream_ssl` - enforce an SSL connection on the tenant database
 
 `upstream_verify` - how to verify the ssl certificate
 
@@ -26,13 +26,13 @@ All `tenant` fields and their types are defined in the `Supavisor.Tenants.Tenant
 
 `enforce_ssl` - enforce an SSL connection on client connections
 
-`require_user` - require at least one `user` is created for a tenant
+`require_user` - require client connection credentials to match `user` credentials in the metadata database
 
 `auth_query` - the query to use when matching credential agains a client connection
 
 `default_pool_size` - the default size of the database pool
 
-`sni_hostname` - the hostname expected on an SSL client connection
+`sni_hostname` - can be used to match a connection to a specific `tenant` record
 
 `default_max_clients` - the default limit of client connections
 
