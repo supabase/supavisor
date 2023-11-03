@@ -14,15 +14,15 @@ All `tenant` fields and their types are defined in the `Supavisor.Tenants.Tenant
 
 `external_id` - an id used in an external system used to lookup a tenant
 
-`default_parameter_status` -
+`default_parameter_status` - the default initial connection parameters to use
 
 `ip_version` - the ip address type of the connection to the database server
 
-`upstream_ssl` -
+`upstream_ssl` - the ssl certificate to use when connecting to the database server
 
-`upstream_verify` -
+`upstream_verify` - how to verify the ssl certificate
 
-`upstream_tls_ca` -
+`upstream_tls_ca` - the ca certificate to use when connecting to the database server
 
 `enforce_ssl` - enforce an SSL connection on client connections
 
