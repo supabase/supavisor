@@ -15,7 +15,11 @@ nav:
       - Deploy with Fly.io: 'deployment/fly.md'
     - Connecting:
       - Overview: 'connecting/overview.md'
-      - Pool Modes: 'connecting/pool_modes.md'
+      - Authentication: 'connecting/authentication.md'
+    - Configuration:
+      - Tenants: 'configuration/tenants.md'
+      - Users: 'configuration/users.md'
+      - Pool Modes: 'configuration/pool_modes.md'
     - Monitoring: 
       - Metrics: 'monitoring/metrics.md'
     - ORMs:
