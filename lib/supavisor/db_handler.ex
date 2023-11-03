@@ -269,12 +269,7 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | caller: caller, buffer: new_buff}, reply}
   end
 
-  def handle_event(:info, {:tcp_closed, sock}, state, %{sock: sock} = data) do
-    Logger.error("Connection closed when state was #{state}")
-    {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
-  end
-
-  def handle_event(:info, {:ssl_closed, sock}, state, %{sock: sock} = data) do
+  def handle_event(_, {closed, _}, state, data) when closed in [:tcp_closed, :ssl_closed] do
     Logger.error("Connection closed when state was #{state}")
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
   end
