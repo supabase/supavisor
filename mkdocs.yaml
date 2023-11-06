@@ -13,6 +13,8 @@ nav:
       - Docs: 'development/docs.md'
     - Deployment:
       - Deploy with Fly.io: 'deployment/fly.md'
+    - Benchmarking:
+      - Overview: 'benchmarking/overview.md'
     - Connecting:
       - Overview: 'connecting/overview.md'
       - Authentication: 'connecting/authentication.md'
