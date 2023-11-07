@@ -19,17 +19,18 @@ curl -X PUT \
     "db_host": "localhost",
     "db_port": 6432,
     "db_database": "postgres",
-    "ip_version": "auto", // "auto" | v4 | v6
+    "ip_version": "auto", // "auto" | "v4" | "v6"
     "require_user": true, // true | false
     "upstream_ssl": true, // true | false,
     "enforce_ssl": false, // true | false,
     "upstream_verify": "peer", // "none" | "peer"
-    "upstream_tls_ca": "-----BEGIN CERTIFICATE-----\nblalblalblablalblalblaba\n-----END CERTIFICATE-----\n", // ""
+    "upstream_tls_ca": "-----BEGIN CERTIFICATE-----\nblalblalblablalblalblaba\n-----END CERTIFICATE-----\n", // "",
+    "default_max_clients": 200,
+    "default_pool_size: 15,
     "users": [
       {
         "db_user": "postgres",
         "db_password": "postgres",
-        "pool_size": 20,
         "mode_type": "transaction",
         "pool_checkout_timeout": 100
       }
