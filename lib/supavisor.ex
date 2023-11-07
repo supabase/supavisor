@@ -196,7 +196,7 @@ defmodule Supavisor do
           user: db_user,
           database: if(db_name != nil, do: db_name, else: db_database),
           password: fn -> db_pass end,
-          application_name: "supavisor",
+          application_name: "Supavisor",
           ip_version: H.ip_version(ip_ver, db_host),
           upstream_ssl: tenant_record.upstream_ssl,
           upstream_verify: tenant_record.upstream_verify,
