@@ -68,14 +68,14 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("Client is trying to request HTTP")
     HH.sock_send(data.sock, "HTTP/1.1 204 OK\r\n\r\n")
-    {:stop, :normal, data}
+    {:stop, :normal}
   end
 
   # cancel request
-  def handle_event(:info, {_, _, <<16::32, 1234::16, 5678::16, pid::32, key::32>>}, _, data) do
+  def handle_event(:info, {_, _, <<16::32, 1234::16, 5678::16, pid::32, key::32>>}, _, _) do
     Logger.debug("Got cancel query for #{inspect({pid, key})}")
     :ok = HH.send_cancel_query(pid, key)
-    {:stop, :normal, data}
+    {:stop, :normal}
   end
 
   # send cancel request to db
@@ -120,7 +120,8 @@ defmodule Supavisor.ClientHandler do
 
         error ->
           Logger.error("SSL handshake error: #{inspect(error)}")
-          {:stop, :normal, data}
+          Telem.client_join(:fail, data.id)
+          {:stop, :normal}
       end
     else
       Logger.error("User requested SSL connection but no downstream cert/key found")
@@ -140,7 +141,8 @@ defmodule Supavisor.ClientHandler do
 
       {:error, error} ->
         Logger.error("Client startup message error: #{inspect(error)}")
-        {:stop, :normal, data}
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
     end
   end
 
@@ -155,7 +157,8 @@ defmodule Supavisor.ClientHandler do
         if info.tenant.enforce_ssl and !data.ssl do
           Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
           :ok = HH.send_error(sock, "XX000", "SSL connection is required")
-          {:stop, :normal, data}
+          Telem.client_join(:fail, data.id)
+          {:stop, :normal}
         else
           new_data = update_user_data(data, info, user, id)
 
@@ -168,7 +171,8 @@ defmodule Supavisor.ClientHandler do
               Logger.error("Authentication auth_secrets error: #{inspect(reason)}")
 
               :ok = HH.send_error(sock, "XX000", "Authentication error")
-              {:stop, :normal, data}
+              Telem.client_join(:fail, data.id)
+              {:stop, :normal}
           end
         end
 
@@ -176,7 +180,8 @@ defmodule Supavisor.ClientHandler do
         Logger.error("User not found: #{inspect(reason)} #{inspect({user, external_id})}")
 
         :ok = HH.send_error(sock, "XX000", "Tenant or user not found")
-        {:stop, :normal, data}
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
     end
   end
 
@@ -195,8 +200,8 @@ defmodule Supavisor.ClientHandler do
           end
 
         HH.sock_send(sock, msg)
-
-        {:stop, :normal, data}
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
 
       {:ok, client_key} ->
         secrets =
@@ -210,6 +215,7 @@ defmodule Supavisor.ClientHandler do
 
         Logger.debug("Exchange success")
         :ok = HH.sock_send(sock, Server.authentication_ok())
+        Telem.client_join(:ok, data.id)
 
         {:keep_state, %{data | auth_secrets: {method, secrets}},
          {:next_event, :internal, :subscribe}}
@@ -239,7 +245,8 @@ defmodule Supavisor.ClientHandler do
         msg = "Max client connections reached"
         Logger.error(msg)
         :ok = HH.send_error(data.sock, "XX000", msg)
-        {:stop, :normal, data}
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
 
       error ->
         Logger.error("Subscribe error: #{inspect(error)}")
@@ -277,9 +284,9 @@ defmodule Supavisor.ClientHandler do
   end
 
   # handle Terminate message
-  def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, data) when proto in [:tcp, :ssl] do
+  def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, _) when proto in [:tcp, :ssl] do
     Logger.debug("Receive termination")
-    {:stop, :normal, data}
+    {:stop, :normal}
   end
 
   # handle Sync message
@@ -315,7 +322,7 @@ defmodule Supavisor.ClientHandler do
           msg = "Db buffer size is too big: #{size}"
           Logger.error(msg)
           HH.sock_send(data.sock, Server.error_message("XX000", msg))
-          {:stop, :normal, data}
+          {:stop, :normal}
         else
           Logger.debug("DB call buffering")
           :keep_state_and_data
@@ -325,13 +332,13 @@ defmodule Supavisor.ClientHandler do
         msg = "DB call error: #{inspect(reason)}"
         Logger.error(msg)
         HH.sock_send(data.sock, Server.error_message("XX000", msg))
-        {:stop, :normal, data}
+        {:stop, :normal}
     end
   end
 
-  def handle_event(:info, {:parameter_status, :updated}, _, data) do
+  def handle_event(:info, {:parameter_status, :updated}, _, _) do
     Logger.warning("Parameter status is updated")
-    {:stop, :normal, data}
+    {:stop, :normal}
   end
 
   def handle_event(:info, {:parameter_status, ps}, :exchange, _) do
@@ -568,11 +575,17 @@ defmodule Supavisor.ClientHandler do
   def auth_secrets(%{tenant: tenant} = info, db_user) do
     cache_key = {:secrets, tenant.external_id, db_user}
 
-    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_secrets(info, db_user)}, ttl: 15_000}
-         end) do
-      {_, {:cached, value}} -> value
-      {_, {:cached, value}, _} -> value
+    fetch = fn _key ->
+      case get_secrets(info, db_user) do
+        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: 30_000}
+        {:error, _} = resp -> {:ignore, resp}
+      end
+    end
+
+    case Cachex.fetch(Supavisor.Cache, cache_key, fetch) do
+      {:ok, {:cached, value}} -> value
+      {:commit, {:cached, value}, _opts} -> value
+      {:ignore, resp} -> resp
     end
   end
 
@@ -595,6 +608,7 @@ defmodule Supavisor.ClientHandler do
         database: tenant.db_database,
         password: user.db_password,
         username: user.db_user,
+        parameters: [application_name: "Supavisor auth_query"],
         ssl: tenant.upstream_ssl,
         socket_options: [
           H.ip_version(tenant.ip_version, tenant.db_host)

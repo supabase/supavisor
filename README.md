@@ -45,8 +45,8 @@ This design enables blue-green or rolling deployments as upgrades require. A sin
 
 ## Docs
 
-- [Installation and usage](https://github.com/supabase/supavisor/wiki/Installation-and-Usage)
-- [Metrics](https://github.com/supabase/supavisor/wiki/Metrics)
+- [Installation and usage](https://supabase.github.io/supavisor/development/installation/)
+- [Metrics](https://supabase.github.io/supavisor/monitoring/metrics/)
 
 ## Features
 
