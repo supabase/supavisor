@@ -71,6 +71,18 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :query, :stop],
           description: "The total number of queries received by clients.",
           tags: @tags
+        ),
+        counter(
+          [:supavisor, :client, :joins, :ok],
+          event_name: [:supavisor, :client, :joins, :ok],
+          description: "The total number of successful joins.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :client, :joins, :fail],
+          event_name: [:supavisor, :client, :joins, :fail],
+          description: "The total number of failed joins.",
+          tags: @tags
         )
       ]
     )

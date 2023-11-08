@@ -47,4 +47,13 @@ defmodule Supavisor.Monitoring.Telem do
       %{tenant: tenant, user: user, mode: mode, type: type}
     )
   end
+
+  @spec client_join(:ok | :fail, S.id()) :: :ok
+  def client_join(status, {tenant, user, mode}) do
+    :telemetry.execute(
+      [:supavisor, :client, :joins, status],
+      %{},
+      %{tenant: tenant, user: user, mode: mode}
+    )
+  end
 end

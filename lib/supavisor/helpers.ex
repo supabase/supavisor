@@ -29,6 +29,7 @@ defmodule Supavisor.Helpers do
           [
             {:verify, :verify_peer},
             {:cacerts, [upstream_cert(params["upstream_tls_ca"])]},
+            {:server_name_indication, String.to_charlist(params["db_host"])},
             {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
           ]
         end
@@ -122,6 +123,10 @@ defmodule Supavisor.Helpers do
       _ ->
         {:error, "Can't parse secret"}
     end
+  end
+
+  def parse_secret("md5" <> secret, user) do
+    {:ok, %{digest: :md5, secret: secret, user: user}}
   end
 
   def parse_postgres_secret(_), do: {:error, "Digest not supported"}
@@ -302,5 +307,12 @@ defmodule Supavisor.Helpers do
   @spec parse_server_first(binary(), binary()) :: map()
   def parse_server_first(message, nonce) do
     :pgo_scram.parse_server_first(message, nonce) |> Map.new()
+  end
+
+  @spec md5([String.t()]) :: String.t()
+  def md5(strings) do
+    strings
+    |> :erlang.md5()
+    |> Base.encode16(case: :lower)
   end
 end

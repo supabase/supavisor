@@ -98,7 +98,7 @@ defmodule Supavisor.DbHandlerTest do
     data = %{sock: {:gen_tcp, sock}, caller: nil, buffer: []}
     from = {self(), :test_ref}
     event = {:call, from}
-    payload = {:db_call, "test_data"}
+    payload = {:db_call, self(), "test_data"}
 
     {:keep_state, new_data, reply} = Db.handle_event(event, payload, :idle, data)
 
@@ -108,10 +108,10 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   test "handle_event/4 with non-idle state" do
-    data = %{sock: nil, caller: nil, buffer: []}
+    data = %{sock: nil, caller: self(), buffer: []}
     from = {self(), :test_ref}
     event = {:call, from}
-    payload = {:db_call, "test_data"}
+    payload = {:db_call, self(), "test_data"}
     state = :non_idle
 
     {:keep_state, new_data, reply} = Db.handle_event(event, payload, state, data)
@@ -140,7 +140,8 @@ defmodule Supavisor.DbHandlerTest do
       data = %{
         auth: %{
           password: fn -> "some_password" end,
-          user: "some_user"
+          user: "some_user",
+          method: :password
         },
         sock: {:gen_tcp, sock_port}
       }

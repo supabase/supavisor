@@ -16,7 +16,8 @@ defmodule Supavisor.PromExTest do
         port: Application.get_env(:supavisor, :proxy_port_transaction),
         database: db_conf[:database],
         password: db_conf[:password],
-        username: db_conf[:username] <> "." <> @tenant
+        username: db_conf[:username] <> "." <> @tenant,
+        socket_dir: nil
       )
 
     %{proxy: proxy, user: db_conf[:username]}

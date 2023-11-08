@@ -10,17 +10,17 @@ defmodule Supavisor do
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
-  @type mode :: :transaction | :session
+  @type mode :: :transaction | :session | :native
   @type id :: {{:single | :cluster, String.t()}, String.t(), mode}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
 
-  @spec start(id, secrets) :: {:ok, pid} | {:error, any}
-  def start(id, secrets) do
+  @spec start(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
+  def start(id, secrets, db_name) do
     case get_global_sup(id) do
       nil ->
-        start_local_pool(id, secrets)
+        start_local_pool(id, secrets, db_name)
 
       pid ->
         {:ok, pid}
@@ -168,9 +168,9 @@ defmodule Supavisor do
 
   ## Internal functions
 
-  @spec start_local_pool(id, secrets) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({{type, tenant}, _user, _mode} = id, secrets) do
-    Logger.warn("Starting pool(s) for #{inspect(id)}")
+  @spec start_local_pool(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
+  defp start_local_pool({{type, tenant}, _user, _mode} = id, secrets, db_name) do
+    Logger.debug("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
 
@@ -189,7 +189,7 @@ defmodule Supavisor do
               %T.Tenant{} = tenant ->
                 Map.put(tenant, :replica_type, :write)
             end
-            |> supervisor_args(id, secrets)
+            |> supervisor_args(id, secrets, db_name)
           end)
 
         DynamicSupervisor.start_child(
@@ -208,7 +208,7 @@ defmodule Supavisor do
     end
   end
 
-  defp supervisor_args(tenant_record, {tenant, user, mode} = id, {method, secrets}) do
+  defp supervisor_args(tenant_record, {tenant, user, mode} = id, {method, secrets}, db_name) do
     %{
       db_host: db_host,
       db_port: db_port,
@@ -219,11 +219,13 @@ defmodule Supavisor do
       default_max_clients: def_max_clients,
       client_idle_timeout: client_idle_timeout,
       replica_type: replica_type,
+      default_pool_strategy: default_pool_strategy,
       users: [
         %{
           db_user: db_user,
           db_password: db_pass,
           pool_size: pool_size,
+          # mode_type: mode_type,
           max_clients: max_clients
         }
       ]
@@ -240,14 +242,15 @@ defmodule Supavisor do
       host: String.to_charlist(db_host),
       port: db_port,
       user: db_user,
-      database: db_database,
+      database: if(db_name != nil, do: db_name, else: db_database),
       password: fn -> db_pass end,
-      application_name: "supavisor",
+      application_name: "Supavisor",
       ip_version: H.ip_version(ip_ver, db_host),
       upstream_ssl: tenant_record.upstream_ssl,
       upstream_verify: tenant_record.upstream_verify,
       upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
       require_user: tenant_record.require_user,
+      method: method,
       secrets: secrets
     }
 
@@ -261,11 +264,13 @@ defmodule Supavisor do
       mode: mode,
       default_parameter_status: ps,
       max_clients: max_clients,
-      client_idle_timeout: client_idle_timeout
+      client_idle_timeout: client_idle_timeout,
+      default_pool_strategy: default_pool_strategy
     }
   end
 
-  @spec set_parameter_status(id, [{binary, binary}]) :: :ok | {:error, :not_found}
+  @spec set_parameter_status(id, [{binary, binary}]) ::
+          :ok | {:error, :not_found}
   def set_parameter_status(id, ps) do
     case get_local_manager(id) do
       nil -> {:error, :not_found}

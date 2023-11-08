@@ -19,9 +19,9 @@ defmodule Supavisor.DbHandler do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
-  @spec call(pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, msg) do
-    :gen_statem.call(pid, {:db_call, msg})
+  @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
+  def call(pid, caller, msg) do
+    :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
   end
 
   @impl true
@@ -111,6 +111,13 @@ defmodule Supavisor.DbHandler do
         %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
           {ps, db_state}
 
+        %{tag: :backend_key_data, payload: payload}, acc ->
+          key = {data.tenant, self()}
+          conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
+          Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
+          Logger.debug("Backend #{inspect(key)} data: #{inspect(payload)}")
+          acc
+
         %{payload: {:authentication_sasl_password, methods_b}}, {ps, _} ->
           nonce =
             case Server.decode_string(methods_b) do
@@ -180,17 +187,18 @@ defmodule Supavisor.DbHandler do
           acc
 
         %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
-          password = data.auth.password
-          user = data.auth.user
+          Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-          digest = [password.(), user] |> :erlang.md5() |> Base.encode16(case: :lower)
-          digest = [digest, salt] |> :erlang.md5() |> Base.encode16(case: :lower)
-          payload = ["md5", digest, 0]
+          digest =
+            if data.auth.method == :password do
+              H.md5([data.auth.password.(), data.auth.user])
+            else
+              data.auth.secrets.().secret
+            end
 
+          payload = ["md5", H.md5([digest, salt]), 0]
           bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
-
           :ok = sock_send(data.sock, bin)
-
           {ps, :authentication_md5}
 
         %{tag: :error_response, payload: error}, _ ->
@@ -225,7 +233,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff} = data) do
     if buff != [] do
-      Logger.warning("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      Logger.debug("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
       buff = Enum.reverse(buff)
       :ok = sock_send(data.sock, buff)
     end
@@ -265,42 +273,36 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, data) do
+  def handle_event(:info, {_proto, _, bin}, _, %{caller: caller} = data) when is_pid(caller) do
     # check if the response ends with "ready for query"
-    {ready, data} =
-      if String.ends_with?(bin, Server.ready_for_query()) do
-        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-        {:ready_for_query, %{data | stats: stats}}
-      else
-        {:continue, data}
-      end
+    ready = String.ends_with?(bin, Server.ready_for_query())
+    Logger.debug("Db ready #{inspect(ready)}")
+    :ok = Client.client_cast(caller, bin, ready)
 
-    :ok = Client.client_call(data.caller, bin, ready)
-
-    {:keep_state, data}
+    if ready do
+      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+      {:keep_state, %{data | stats: stats, caller: nil}}
+    else
+      :keep_state_and_data
+    end
   end
 
-  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, :idle, %{sock: sock} = data) do
+  def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
     reply = {:reply, from, sock_send(sock, bin)}
-    {:keep_state, %{data | caller: pid}, reply}
+    {:keep_state, %{data | caller: caller}, reply}
   end
 
-  def handle_event({:call, {pid, _} = from}, {:db_call, bin}, state, %{buffer: buff} = data) do
-    Logger.warning(
-      "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}"
+  def handle_event({:call, from}, {:db_call, caller, bin}, state, %{buffer: buff} = data) do
+    Logger.debug(
+      "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(caller)}"
     )
 
     new_buff = [bin | buff]
     reply = {:reply, from, {:buffering, IO.iodata_length(new_buff)}}
-    {:keep_state, %{data | caller: pid, buffer: new_buff}, reply}
+    {:keep_state, %{data | caller: caller, buffer: new_buff}, reply}
   end
 
-  def handle_event(:info, {:tcp_closed, sock}, state, %{sock: sock} = data) do
-    Logger.error("Connection closed when state was #{state}")
-    {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
-  end
-
-  def handle_event(:info, {:ssl_closed, sock}, state, %{sock: sock} = data) do
+  def handle_event(_, {closed, _}, state, data) when closed in [:tcp_closed, :ssl_closed] do
     Logger.error("Connection closed when state was #{state}")
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
   end
@@ -363,6 +365,7 @@ defmodule Supavisor.DbHandler do
           [
             verify: :verify_peer,
             cacerts: [auth.upstream_tls_ca],
+            server_name_indication: auth.host,
             customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
           ]
 

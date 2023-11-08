@@ -29,11 +29,12 @@ defmodule Supavisor.Application do
 
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction},
-      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session}
+       :transaction, Supavisor.ClientHandler},
+      {:pg_proxy_native, Application.get_env(:supavisor, :proxy_port_session), :native,
+       Supavisor.NativeHandler}
     ]
 
-    for {key, port, mode} <- proxy_ports do
+    for {key, port, mode, module} <- proxy_ports do
       :ranch.start_listener(
         key,
         :ranch_tcp,
@@ -42,7 +43,7 @@ defmodule Supavisor.Application do
           num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
           socket_opts: [port: port, keepalive: true]
         },
-        Supavisor.ClientHandler,
+        module,
         %{mode: mode}
       )
       |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
@@ -60,6 +61,7 @@ defmodule Supavisor.Application do
       PromEx,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
+      {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantClients},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
@@ -73,11 +75,18 @@ defmodule Supavisor.Application do
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      {Cachex, name: Supavisor.Cache},
       Supavisor.TenantsMetrics,
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]
+
+    # start Cachex only if the node uses names, this is necessary for test setup
+    children =
+      if node() != :nonode@nohost do
+        [{Cachex, name: Supavisor.Cache} | children]
+      else
+        children
+      end
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

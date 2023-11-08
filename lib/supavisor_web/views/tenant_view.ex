@@ -25,8 +25,10 @@ defmodule SupavisorWeb.TenantView do
       require_user: tenant.require_user,
       auth_query: tenant.auth_query,
       sni_hostname: tenant.sni_hostname,
+      default_pool_size: tenant.default_pool_size,
       default_max_clients: tenant.default_max_clients,
       client_idle_timeout: tenant.client_idle_timeout,
+      default_pool_strategy: tenant.default_pool_strategy,
       users: render_many(tenant.users, UserView, "user.json")
     }
   end

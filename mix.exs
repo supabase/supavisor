@@ -36,7 +36,7 @@ defmodule Supavisor.MixProject do
     [
       {:phoenix, "~> 1.7.2"},
       {:phoenix_ecto, "~> 4.4"},
-      {:ecto_sql, "~> 3.6"},
+      {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_html, "~> 3.0"},
       {:phoenix_view, "~> 2.0.2"},
@@ -57,7 +57,7 @@ defmodule Supavisor.MixProject do
       {:open_api_spex, "~> 3.16"},
       {:burrito, github: "burrito-elixir/burrito"},
       {:libcluster, "~> 3.3.1"},
-      {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.1-rc.1"},
+      {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.4"},
       {:distillery, "~> 2.1"},
       {:cachex, "~> 3.6"},
 

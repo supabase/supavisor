@@ -43,7 +43,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         db_password: "postgres",
         pool_size: 10,
         is_manager: false,
-        max_clients: 25000,
+        max_clients: 25_000,
         mode_type: "transaction",
         inserted_at: "2023-03-27T12:00:00Z",
         updated_at: "2023-03-27T12:00:00Z"
@@ -101,7 +101,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
             db_user: "postgres",
             db_password: "postgres",
             pool_size: 10,
-            max_clients: 25000,
+            max_clients: 25_000,
             pool_checkout_timeout: 1000,
             is_manager: false,
             mode_type: "transaction",
@@ -172,7 +172,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
                 db_password: "postgres",
                 pool_size: 10,
                 mode_type: "transaction",
-                max_clients: 25000,
+                max_clients: 25_000,
                 pool_checkout_timeout: 1000
               }
             ]

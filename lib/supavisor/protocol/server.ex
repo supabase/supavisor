@@ -13,6 +13,8 @@ defmodule Supavisor.Protocol.Server do
   @ready_for_query <<?Z, 5::32, ?I>>
   @ssl_request <<8::32, 1234::16, 5679::16>>
   @auth_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
+  @scram_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
+  @msg_cancel_header <<16::32, 1234::16, 5678::16>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -140,8 +142,8 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def decode_payload(:backend_key_data, <<proc_id::integer-32, secret::integer-32>>) do
-    %{procid: proc_id, secret: secret}
+  def decode_payload(:backend_key_data, <<pid::integer-32, key::integer-32>>) do
+    %{pid: pid, key: key}
   end
 
   def decode_payload(:ready_for_query, payload) do
@@ -189,6 +191,13 @@ defmodule Supavisor.Protocol.Server do
 
       {:error, _} ->
         :undefined
+    end
+  end
+
+  def decode_payload(:password_message, "md5" <> _ = bin) do
+    case String.split(bin, <<0>>) do
+      [digest, ""] -> {:md5, digest}
+      _ -> :undefined
     end
   end
 
@@ -265,12 +274,17 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  @spec auth_request() :: iodata()
-  def auth_request() do
-    @auth_request
+  @spec scram_request() :: iodata
+  def scram_request() do
+    @scram_request
   end
 
-  @spec exchange_first_message(binary(), binary() | boolean(), pos_integer()) :: binary()
+  @spec md5_request(<<_::32>>) :: iodata
+  def md5_request(salt) do
+    [<<?R, 12::32, 5::32>>, salt]
+  end
+
+  @spec exchange_first_message(binary, binary | boolean, pos_integer) :: binary
   def exchange_first_message(nonce, salt \\ false, iterations \\ 4096) do
     secret =
       if salt do
@@ -355,18 +369,13 @@ defmodule Supavisor.Protocol.Server do
     [<<?S, len::integer-32>>, payload]
   end
 
-  @spec backend_key_data() :: iodata()
+  @spec backend_key_data() :: {iodata(), binary}
   def backend_key_data() do
-    procid = System.unique_integer([:positive, :monotonic])
-    secret = Enum.random(0..9_999_999_999)
-    payload = <<procid::integer-32, secret::integer-32>>
+    pid = System.unique_integer([:positive, :monotonic])
+    key = :crypto.strong_rand_bytes(4)
+    payload = <<pid::integer-32, key::binary>>
     len = IO.iodata_length(payload) + 4
-    [<<?K, len::32>>, payload]
-  end
-
-  @spec greetings(iodata()) :: iodata()
-  def greetings(ps) do
-    [ps, backend_key_data(), @ready_for_query]
+    {<<?K, len::32>>, payload}
   end
 
   @spec ready_for_query() :: binary()
@@ -378,6 +387,71 @@ defmodule Supavisor.Protocol.Server do
   @spec ssl_request() :: binary()
   def ssl_request() do
     @ssl_request
+  end
+
+  # The startup packet payload is a list of key/value pairs, separated by null bytes
+  def decode_startup_packet_payload(payload) do
+    fields = String.split(payload, <<0>>, trim: true)
+
+    # If the number of fields is odd, then the payload is malformed
+    if rem(length(fields), 2) == 1 do
+      {:error, :bad_startup_payload}
+    else
+      map =
+        fields
+        |> Enum.chunk_every(2)
+        |> Enum.map(fn
+          ["options" = k, v] -> {k, URI.decode_query(v)}
+          [k, v] -> {k, v}
+        end)
+        |> Map.new()
+
+      # We only do light validation on the fields in the payload. The only field we use at the
+      # moment is `user`. If that's missing, this is a bad payload.
+      if Map.has_key?(map, "user") do
+        {:ok, map}
+      else
+        {:error, :bad_startup_payload}
+      end
+    end
+  end
+
+  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
+    with {:ok, payload} <- decode_startup_packet_payload(rest) do
+      pkt = %{
+        len: len,
+        payload: payload,
+        tag: :startup
+      }
+
+      {:ok, pkt}
+    end
+  end
+
+  def decode_startup_packet(_) do
+    {:error, :bad_startup_payload}
+  end
+
+  def encode_startup_packet(payload) do
+    bin =
+      Enum.reduce(payload, "", fn
+        # remove options
+        {"options", _}, acc ->
+          acc
+
+        {"application_name" = k, v}, acc ->
+          <<k::binary, 0, v::binary, " via Supavisor", 0>> <> acc
+
+        {k, v}, acc ->
+          <<k::binary, 0, v::binary, 0>> <> acc
+      end)
+
+    <<byte_size(bin) + 9::32, 0, 3, 0, 0, bin::binary, 0>>
+  end
+
+  @spec cancel_message(non_neg_integer, non_neg_integer) :: iodata
+  def cancel_message(pid, key) do
+    [@msg_cancel_header, <<pid::32, key::32>>]
   end
 
   @spec has_read_only_error?(list) :: boolean
