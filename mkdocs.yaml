@@ -20,6 +20,8 @@ nav:
       - Tenants: 'configuration/tenants.md'
       - Users: 'configuration/users.md'
       - Pool Modes: 'configuration/pool_modes.md'
+    - Migrating:
+      - from PgBouncer: 'migrating/pgbouncer.md'
     - Monitoring: 
       - Metrics: 'monitoring/metrics.md'
     - ORMs:
