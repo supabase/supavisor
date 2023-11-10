@@ -112,7 +112,7 @@ defmodule Supavisor.DbHandler do
           {ps, db_state}
 
         %{tag: :backend_key_data, payload: payload}, acc ->
-          key = {data.tenant, self()}
+          key = self()
           conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
           Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
           Logger.debug("Backend #{inspect(key)} data: #{inspect(payload)}")
@@ -263,7 +263,7 @@ defmodule Supavisor.DbHandler do
           :continue
       end
 
-    :ok = Client.client_call(data.caller, bin, resp)
+    :ok = Client.client_cast(data.caller, bin, resp)
 
     if resp != :continue do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
@@ -275,16 +275,17 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:info, {_proto, _, bin}, _, %{caller: caller} = data) when is_pid(caller) do
     # check if the response ends with "ready for query"
-    ready = String.ends_with?(bin, Server.ready_for_query())
-    Logger.debug("Db ready #{inspect(ready)}")
-    :ok = Client.client_cast(caller, bin, ready)
+    {ready, data} =
+      if String.ends_with?(bin, Server.ready_for_query()) do
+        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+        {:ready_for_query, %{data | stats: stats}}
+      else
+        {:continue, data}
+      end
 
-    if ready do
-      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats, caller: nil}}
-    else
-      :keep_state_and_data
-    end
+    :ok = Client.client_cast(data.caller, bin, ready)
+
+    {:keep_state, data}
   end
 
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do

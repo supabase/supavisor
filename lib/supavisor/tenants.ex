@@ -73,13 +73,13 @@ defmodule Supavisor.Tenants do
 
   def get_tenant(_, _), do: nil
 
-  @spec get_user_cache(String.t(), String.t() | nil, String.t() | nil) ::
+  @spec get_user_cache(:single | :cluster, String.t(), String.t() | nil, String.t() | nil) ::
           {:ok, map()} | {:error, any()}
-  def get_user_cache(user, external_id, sni_hostname) do
-    cache_key = {:user_cache, user, external_id, sni_hostname}
+  def get_user_cache(type, user, external_id, sni_hostname) do
+    cache_key = {:user_cache, type, user, external_id, sni_hostname}
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_user(user, external_id, sni_hostname)}, ttl: 5_000}
+           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)}, ttl: 5_000}
          end) do
       {_, {:cached, value}} -> value
       {_, {:cached, value}, _} -> value

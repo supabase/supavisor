@@ -83,8 +83,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, :cancel_query, :busy, data) do
     key = {data.tenant, data.db_pid}
     Logger.debug("Cancel query for #{inspect(key)}")
-
-    db_pid = data.db_pid
+    {_pool, db_pid} = data.db_pid
 
     case db_pid_meta(key) do
       [{^db_pid, meta}] ->
@@ -135,8 +134,7 @@ defmodule Supavisor.ClientHandler do
     case Server.decode_startup_packet(bin) do
       {:ok, hello} ->
         Logger.debug("Client startup message: #{inspect(hello)}")
-#        parse_user_info()
-        {type, {user, tenant_or_alias}} = HH.parse_user_info(hello.payload["user"])
+        {type, {user, tenant_or_alias}} = HH.parse_user_info(hello.payload)
 
         Logger.metadata(
           project: tenant_or_alias,
@@ -333,8 +331,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   # incoming query with a single pool
-  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
-      when is_pid(pid) do
+  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data) when is_pid(pid) do
     ts = System.monotonic_time()
     db_pid = db_checkout(:both, :on_query, data)
 
@@ -353,11 +350,8 @@ defmodule Supavisor.ClientHandler do
 
         case statements do
           # naive check for read only queries
-          ["SelectStmt"] ->
-            :read
-
-          _ ->
-            :write
+          ["SelectStmt"] -> :read
+          _ -> :write
         end
       else
         other ->
@@ -457,7 +451,7 @@ defmodule Supavisor.ClientHandler do
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
 
         Telem.client_query_time(data.query_start, data.id)
-        reply = {:reply, from, HH.sock_send(data.sock, bin)}
+        :ok = HH.sock_send(data.sock, bin)
 
         actions =
           if data.idle_timeout > 0 do
@@ -470,8 +464,8 @@ defmodule Supavisor.ClientHandler do
 
       :continue ->
         Logger.debug("Client is not ready")
-        reply = {:reply, from, HH.sock_send(data.sock, bin)}
-        {:keep_state_and_data, reply}
+        :ok = HH.sock_send(data.sock, bin)
+        :keep_state_and_data
 
       :read_sql_error ->
         Logger.error("read only sql transaction, reruning the query to write pool")
@@ -483,10 +477,7 @@ defmodule Supavisor.ClientHandler do
         db_pid = db_checkout(:write, :on_query, data)
 
         {:keep_state, %{data | db_pid: db_pid, query_start: ts},
-         [
-           {:next_event, :internal, {:tcp, nil, data.last_query}},
-           {:reply, from, :ok}
-         ]}
+         {:next_event, :internal, {:tcp, nil, data.last_query}}}
     end
   end
 
@@ -527,42 +518,6 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  @spec parse_user_info(String.t()) ::
-          {:single | :cluster, {String.t() | nil, String.t()}}
-  def parse_user_info(username) do
-    case String.split(username, ".") do
-      [username] ->
-        {:single, {username, nil}}
-
-      matches ->
-        {alias_or_tenant, rest} = List.pop_at(matches, -1)
-
-        case List.pop_at(rest, -1) do
-          {"cluster", rest2} ->
-            {:cluster, {list2str(rest2), alias_or_tenant}}
-
-          {a, rest2} ->
-            {:single, {list2str(Enum.reverse([a | rest2])), alias_or_tenant}}
-        end
-    end
-  end
-
-  @spec list2str([String.t()]) :: String.t()
-  defp list2str(list), do: Enum.join(list, ".")
-
-    with {:ok,
-          %{
-            tag: :password_message,
-            payload: {:md5, client_md5}
-          }, _} <- receive_next(socket, "Timeout while waiting for the md5 exchange"),
-         {:ok, key} <- authenticate_exchange(method, client_md5, secrets.().secret, salt) do
-      {:ok, key}
-    else
-      {:error, message} -> {:error, message}
-      other -> {:error, "Unexpected message #{inspect(other)}"}
-    end
-  end
-
   @spec handle_exchange(S.sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
   def handle_exchange({_, socket} = sock, {:auth_query_md5 = method, secrets}) do
     salt = :crypto.strong_rand_bytes(4)
@@ -580,6 +535,7 @@ defmodule Supavisor.ClientHandler do
       other -> {:error, "Unexpected message #{inspect(other)}"}
     end
   end
+
   def handle_exchange({_, socket} = sock, {method, secrets}) do
     :ok = HH.sock_send(sock, Server.scram_request())
 
@@ -654,10 +610,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) ::
-          {pid, pid} | nil
-  defp db_checkout(_, _, %{mode: :session, db_pid: db_pid})
-       when is_pid(db_pid) do
+  @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) :: {pid, pid} | nil
+  defp db_checkout(_, _, %{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
     db_pid
   end
 
@@ -835,14 +789,14 @@ defmodule Supavisor.ClientHandler do
     {:timeout, timeout, :idle_terminate}
   end
 
-  defp db_pid_meta({_, pid} = key) do
+  defp db_pid_meta({_, {_, pid}} = _key) do
     rkey = Supavisor.Registry.PoolPids
     fnode = node(pid)
 
     if fnode == node() do
-      Registry.lookup(rkey, key)
+      Registry.lookup(rkey, pid)
     else
-      :erpc.call(fnode, Registry, :lookup, [rkey, key], 15_000)
+      :erpc.call(fnode, Registry, :lookup, [rkey, pid], 15_000)
     end
   end
 end

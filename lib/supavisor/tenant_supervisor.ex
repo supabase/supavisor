@@ -10,7 +10,7 @@ defmodule Supavisor.TenantSupervisor do
   end
 
   @impl true
-  def init(%{replicas: replicas, pool_size: _pool_size} = args) do
+  def init(%{replicas: replicas} = args) do
     pools =
       replicas
       |> Enum.with_index()
