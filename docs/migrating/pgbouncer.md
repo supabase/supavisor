@@ -40,7 +40,7 @@ select
   usename,
   application_name
 from pg_stat_activity
-where application_name ilike '%supavisor%'
+where application_name ilike '%Supavisor%'
 group by
   usename,
   application_name
