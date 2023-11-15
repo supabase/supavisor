@@ -140,7 +140,7 @@ defmodule Supavisor.Tenants do
     )
   end
 
-  @spec get_cluster_config(String.t(), String.t()) :: [ClusterTenants.t()] | nil
+  @spec get_cluster_config(String.t(), String.t()) :: [ClusterTenants.t()] | {:error, any()}
   def get_cluster_config(external_id, user) do
     case Repo.all(ClusterTenants, cluster_alias: external_id) do
       [%{cluster_alias: cluster_alias, active: true} | _] ->
@@ -161,9 +161,16 @@ defmodule Supavisor.Tenants do
           )
 
         Repo.all(query)
+        |> Enum.reduce_while([], fn cluster, acc ->
+          if cluster.tenant.require_user do
+            {:cont, [cluster | acc]}
+          else
+            {:halt, {:error, {:config, cluster.tenant.external_id}}}
+          end
+        end)
 
       _ ->
-        nil
+        {:error, :not_found}
     end
   end
 

@@ -245,6 +245,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:info, {_proto, _, bin}, _, %{replica_type: :read} = data) do
+    Logger.debug("Got read replica message #{inspect(bin)}")
     pkts = Server.decode(bin)
 
     resp =
@@ -277,6 +278,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:info, {_proto, _, bin}, _, %{caller: caller} = data) when is_pid(caller) do
+    Logger.debug("Got write replica message #{inspect(bin)}")
     # check if the response ends with "ready for query"
     {ready, data} =
       if String.ends_with?(bin, Server.ready_for_query()) do
