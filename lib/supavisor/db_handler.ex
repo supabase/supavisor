@@ -89,7 +89,10 @@ defmodule Supavisor.DbHandler do
         end
 
       other ->
-        Logger.error("Connection failed #{inspect(other)}")
+        Logger.error(
+          "Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
+        )
+
         reconnect_callback
     end
   end
@@ -332,6 +335,13 @@ defmodule Supavisor.DbHandler do
     Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
+  end
+
+  @impl true
+  def terminate(:shutdown, _state, _data), do: :ok
+
+  def terminate(reason, state, _data) do
+    Logger.error("Terminating with reason #{inspect(reason)} when state was #{inspect(state)}")
   end
 
   @spec try_ssl_handshake(S.tcp_sock(), map) :: {:ok, S.sock()} | {:error, term()}

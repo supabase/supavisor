@@ -156,7 +156,7 @@ defmodule Supavisor.Tenants do
 
         query =
           from(ct in ClusterTenants,
-            where: ct.cluster_alias == ^cluster_alias,
+            where: ct.cluster_alias == ^cluster_alias and ct.active == true,
             preload: [tenant: ^tenant]
           )
 
@@ -353,7 +353,7 @@ defmodule Supavisor.Tenants do
       on: u.tenant_external_id == t.external_id,
       where:
         (u.db_user_alias == ^user and t.require_user == true) or
-          t.require_user == false,
+          (t.require_user == false and u.is_manager == true),
       select: {u, t}
     )
     |> where(^with_tenant(external_id, sni_hostname))
