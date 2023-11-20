@@ -3,13 +3,14 @@ name: Publish upgrade artifacts to staging
 on:
   push:
     branches:
-      - main
+      - test_arm
 env:
   INCLUDE_ERTS: false
   MIX_ENV: prod
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: arm-runner  
+    # runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
@@ -23,6 +24,10 @@ jobs:
           otp-version: 25.3.2 # Define the OTP version [required]
           elixir-version: 1.14.5 # Define the elixir version [required]
           version-type: strict
+      - name: Set up Rust
+        uses: ATiltedTree/setup-rust@v1
+        with:
+          rust-version: stable          
       - name: Cache Mix
         uses: actions/cache@v3
         with:
@@ -35,7 +40,8 @@ jobs:
       - name: Make release
         run: mix release supavisor
       - name: Create tarball
-        run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_STAGE }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
+        run: cd _build/prod/rel/ && tar -czvf test_arm1.tar.gz supavisor
+        # run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_STAGE }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
       - name: configure aws credentials - staging
         uses: aws-actions/configure-aws-credentials@v4
         with:
