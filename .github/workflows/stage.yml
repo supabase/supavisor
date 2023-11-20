@@ -19,6 +19,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup elixir
         id: beam
+        env:
+          ImageOS: ubuntu22        
         uses: erlef/setup-beam@v1
         with:
           otp-version: 25.3.2 # Define the OTP version [required]
