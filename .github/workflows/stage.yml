@@ -9,7 +9,7 @@ env:
   MIX_ENV: prod
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: arm-runner
     permissions:
       contents: write
       packages: write
