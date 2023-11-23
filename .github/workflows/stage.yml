@@ -9,12 +9,7 @@ env:
   MIX_ENV: prod
 jobs:
   publish:
-    strategy:
-      matrix:
-        include:
-          - runner: arm-runner
-            arch: arm64  
-    runs-on: ${{ matrix.runner }}
+    runs-on: arm-runner
     permissions:
       contents: write
       packages: write
@@ -34,7 +29,7 @@ jobs:
       - name: Set up Rust
         uses: ATiltedTree/setup-rust@v1
         with:
-          rust-version: stable             
+          rust-version: stable               
       - name: Cache Mix
         uses: actions/cache@v3
         with:
