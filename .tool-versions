@@ -1,3 +1,2 @@
-erlang 25.3.2
-elixir 1.14.5-otp-25
-rust 1.64.0
+otp-version: 25.3.2
+elixir-version: 1.14.5
