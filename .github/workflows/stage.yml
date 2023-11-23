@@ -9,7 +9,12 @@ env:
   MIX_ENV: prod
 jobs:
   publish:
-    runs-on: arm-runner
+    strategy:
+      matrix:
+        include:
+          - runner: arm-runner
+            arch: arm64  
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
       packages: write
