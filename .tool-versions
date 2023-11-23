@@ -1,2 +1,2 @@
-erlang: 25.3.2
-elixir-version: 1.14.5-otp-25
+otp-version: 25.3.2
+elixir-version: 1.14.5
