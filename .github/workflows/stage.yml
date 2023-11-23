@@ -9,7 +9,8 @@ env:
   MIX_ENV: prod
 jobs:
   publish:
-    runs-on: arm-runner
+    # runs-on: arm-runner
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
@@ -22,11 +23,14 @@ jobs:
         id: beam
         uses: erlef/setup-beam@v1
         with:
-          otp-version: 25.3.2 # Define the OTP version [required]
-          gleam-version: 0.32.4 # Define the gleam version [required]
-          elixir-version: 1.14.5 # Define the elixir version [required]
-          hexpm-mirrors: https://cdn.jsdelivr.net/hex
-          version-type: strict
+          version-file: .tool-versions
+          version-type: strict        
+        # with:
+          # otp-version: 25.3.2 # Define the OTP version [required]
+          # gleam-version: 0.32.4 # Define the gleam version [required]
+          # elixir-version: 1.14.5 # Define the elixir version [required]
+          # hexpm-mirrors: https://cdn.jsdelivr.net/hex
+          # version-type: strict
       - name: Set up Rust
         uses: ATiltedTree/setup-rust@v1
         with:
