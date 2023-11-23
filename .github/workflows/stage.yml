@@ -22,7 +22,7 @@ jobs:
       - name: Setup elixir
         id: beam
         uses: erlef/setup-beam@v1
-        with:
+        # with:
           # version-file: .tool-versions
           # version-type: strict        
         with:
