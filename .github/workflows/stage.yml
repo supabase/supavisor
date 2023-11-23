@@ -25,6 +25,7 @@ jobs:
           otp-version: 25.3.2 # Define the OTP version [required]
           gleam-version: 0.32.4 # Define the gleam version [required]
           elixir-version: 1.14.5 # Define the elixir version [required]
+          hexpm-mirrors: https://cdn.jsdelivr.net/hex
           version-type: strict
       - name: Set up Rust
         uses: ATiltedTree/setup-rust@v1
