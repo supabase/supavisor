@@ -335,6 +335,24 @@ defmodule Supavisor.ClientHandler do
     ts = System.monotonic_time()
     db_pid = db_checkout(:both, :on_query, data)
 
+    with {:ok, payload} <- Client.get_payload(bin),
+         {:ok, ["PrepareStmt"]} <- Supavisor.PgParser.statements(payload) do
+      Logger.info("Add prepared statement #{inspect(payload)}")
+      {_, pid} = db_pid
+
+      GenServer.call(data.pool, :get_all_workers)
+      |> Enum.each(fn
+        {_, ^pid, _, [Supavisor.DbHandler]} ->
+          Logger.debug("Linked db_handler #{inspect(pid)}")
+          nil
+
+        {_, pool_proc, _, [Supavisor.DbHandler]} ->
+          Logger.debug("Sending prepared statement #{inspect(payload)} to #{inspect(pool_proc)}")
+
+          send(pool_proc, {:add_ps, payload, bin})
+      end)
+    end
+
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {proto, nil, bin}}}
   end
@@ -636,8 +654,10 @@ defmodule Supavisor.ClientHandler do
     {data.pool, db_pid}
   end
 
-  # @spec handle_db_pid(:transaction, pid(), pid()) :: nil
-  # @spec handle_db_pid(:session, pid(), pid()) :: pid()
+  @spec handle_db_pid(:transaction, pid(), pid() | nil) :: nil
+  @spec handle_db_pid(:session, pid(), pid()) :: pid()
+  defp handle_db_pid(:transaction, _pool, nil), do: nil
+
   defp handle_db_pid(:transaction, _pool, {pool, db_pid}) do
     Process.unlink(db_pid)
     :poolboy.checkin(pool, db_pid)

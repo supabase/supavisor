@@ -244,7 +244,8 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | buffer: []}}
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, %{replica_type: :read} = data) do
+  def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
+      when proto in [:tcp, :ssl] do
     Logger.debug("Got read replica message #{inspect(bin)}")
     pkts = Server.decode(bin)
 
@@ -277,7 +278,8 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, %{caller: caller} = data) when is_pid(caller) do
+  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
+      when is_pid(caller) and proto in [:tcp, :ssl] do
     Logger.debug("Got write replica message #{inspect(bin)}")
     # check if the response ends with "ready for query"
     {ready, data} =
@@ -291,6 +293,16 @@ defmodule Supavisor.DbHandler do
     :ok = Client.client_cast(data.caller, bin, ready)
 
     {:keep_state, data}
+  end
+
+  def handle_event(:info, {:add_ps, payload, bin}, state, data) do
+    Logger.notice("Apply prepare statement #{inspect(payload)} when state was #{inspect(state)}")
+    {:keep_state, %{data | buffer: [bin | data.buffer]}, {:next_event, :internal, :check_buffer}}
+  end
+
+  def handle_event(:info, {_proto, _, bin}, _, %{caller: nil}) do
+    Logger.warning("Got db response #{inspect(bin)} when caller was nil")
+    :keep_state_and_data
   end
 
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
