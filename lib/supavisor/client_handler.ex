@@ -336,8 +336,9 @@ defmodule Supavisor.ClientHandler do
     db_pid = db_checkout(:both, :on_query, data)
 
     with {:ok, payload} <- Client.get_payload(bin),
-         {:ok, ["PrepareStmt"]} <- Supavisor.PgParser.statements(payload) do
-      Logger.info("Add prepared statement #{inspect(payload)}")
+         {:ok, statamets} <- Supavisor.PgParser.statements(payload),
+         true <- Enum.member?([["PrepareStmt"], ["DeallocateStmt"]], statamets) do
+      Logger.info("Handle prepared statement #{inspect(payload)}")
       {_, pid} = db_pid
 
       GenServer.call(data.pool, :get_all_workers)
@@ -347,9 +348,11 @@ defmodule Supavisor.ClientHandler do
           nil
 
         {_, pool_proc, _, [Supavisor.DbHandler]} ->
-          Logger.debug("Sending prepared statement #{inspect(payload)} to #{inspect(pool_proc)}")
+          Logger.debug(
+            "Sending prepared statement change #{inspect(payload)} to #{inspect(pool_proc)}"
+          )
 
-          send(pool_proc, {:add_ps, payload, bin})
+          send(pool_proc, {:handle_ps, payload, bin})
       end)
     end
 

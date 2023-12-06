@@ -244,6 +244,11 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | buffer: []}}
   end
 
+  def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in [:tcp, :ssl] do
+    Logger.warning("Got db response #{inspect(bin)} when caller was nil")
+    :keep_state_and_data
+  end
+
   def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
       when proto in [:tcp, :ssl] do
     Logger.debug("Got read replica message #{inspect(bin)}")
@@ -272,7 +277,7 @@ defmodule Supavisor.DbHandler do
 
     if resp != :continue do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats}}
+      {:keep_state, %{data | stats: stats, caller: nil}}
     else
       :keep_state_and_data
     end
@@ -282,27 +287,31 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in [:tcp, :ssl] do
     Logger.debug("Got write replica message #{inspect(bin)}")
     # check if the response ends with "ready for query"
-    {ready, data} =
+    ready =
       if String.ends_with?(bin, Server.ready_for_query()) do
-        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-        {:ready_for_query, %{data | stats: stats}}
+        :ready_for_query
       else
-        {:continue, data}
+        :continue
       end
 
     :ok = Client.client_cast(data.caller, bin, ready)
 
-    {:keep_state, data}
+    case ready do
+      :ready_for_query ->
+        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+        {:keep_state, %{data | stats: stats, caller: nil}}
+
+      :continue ->
+        :keep_state_and_data
+    end
   end
 
-  def handle_event(:info, {:add_ps, payload, bin}, state, data) do
-    Logger.notice("Apply prepare statement #{inspect(payload)} when state was #{inspect(state)}")
+  def handle_event(:info, {:handle_ps, payload, bin}, state, data) do
+    Logger.notice(
+      "Apply prepare statement change #{inspect(payload)} when state was #{inspect(state)}"
+    )
+
     {:keep_state, %{data | buffer: [bin | data.buffer]}, {:next_event, :internal, :check_buffer}}
-  end
-
-  def handle_event(:info, {_proto, _, bin}, _, %{caller: nil}) do
-    Logger.warning("Got db response #{inspect(bin)} when caller was nil")
-    :keep_state_and_data
   end
 
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
