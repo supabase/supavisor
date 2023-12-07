@@ -38,6 +38,7 @@ defmodule Supavisor.DbHandler do
       user: args.user,
       tenant: args.tenant,
       buffer: [],
+      anon_buffer: [],
       db_state: nil,
       parameter_status: %{},
       nonce: nil,
@@ -244,6 +245,18 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | buffer: []}}
   end
 
+  # check if it needs to apply queries from the anon buffer
+  def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
+    if buff != [] do
+      Logger.debug("Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      buff = Enum.reverse(buff)
+      :ok = sock_send(data.sock, buff)
+    end
+
+    {:keep_state, %{data | anon_buffer: []}}
+  end
+
+  # the process received message from db without linked caller
   def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in [:tcp, :ssl] do
     Logger.warning("Got db response #{inspect(bin)} when caller was nil")
     :keep_state_and_data
@@ -299,19 +312,20 @@ defmodule Supavisor.DbHandler do
     case ready do
       :ready_for_query ->
         {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-        {:keep_state, %{data | stats: stats, caller: nil}}
+
+        {:keep_state, %{data | stats: stats, caller: nil},
+         {:next_event, :internal, :check_anon_buffer}}
 
       :continue ->
         :keep_state_and_data
     end
   end
 
-  def handle_event(:info, {:handle_ps, payload, bin}, state, data) do
-    Logger.notice(
-      "Apply prepare statement change #{inspect(payload)} when state was #{inspect(state)}"
-    )
+  def handle_event(:info, {:handle_ps, payload, bin}, _state, data) do
+    Logger.notice("Apply prepare statement change #{inspect(payload)}")
 
-    {:keep_state, %{data | buffer: [bin | data.buffer]}, {:next_event, :internal, :check_buffer}}
+    {:keep_state, %{data | anon_buffer: [bin | data.anon_buffer]},
+     {:next_event, :internal, :check_anon_buffer}}
   end
 
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do

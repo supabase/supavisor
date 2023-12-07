@@ -367,6 +367,7 @@ defmodule Supavisor.ClientHandler do
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
+  # forward query to db
   def handle_event(_, {proto, _, bin}, :busy, data)
       when proto in [:tcp, :ssl] do
     {_, db_pid} = data.db_pid
