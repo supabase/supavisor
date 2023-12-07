@@ -334,27 +334,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data) when is_pid(pid) do
     ts = System.monotonic_time()
     db_pid = db_checkout(:both, :on_query, data)
-
-    with {:ok, payload} <- Client.get_payload(bin),
-         {:ok, statamets} <- Supavisor.PgParser.statements(payload),
-         true <- Enum.member?([["PrepareStmt"], ["DeallocateStmt"]], statamets) do
-      Logger.info("Handle prepared statement #{inspect(payload)}")
-      {_, pid} = db_pid
-
-      GenServer.call(data.pool, :get_all_workers)
-      |> Enum.each(fn
-        {_, ^pid, _, [Supavisor.DbHandler]} ->
-          Logger.debug("Linked db_handler #{inspect(pid)}")
-          nil
-
-        {_, pool_proc, _, [Supavisor.DbHandler]} ->
-          Logger.debug(
-            "Sending prepared statement change #{inspect(payload)} to #{inspect(pool_proc)}"
-          )
-
-          send(pool_proc, {:handle_ps, payload, bin})
-      end)
-    end
+    handle_prepared_statements(db_pid, bin, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {proto, nil, bin}}}
@@ -822,4 +802,29 @@ defmodule Supavisor.ClientHandler do
       :erpc.call(fnode, Registry, :lookup, [rkey, pid], 15_000)
     end
   end
+
+  @spec handle_prepared_statements({pid, pid}, binary, map) :: :ok | nil
+  defp handle_prepared_statements({_, pid}, bin, %{mode: :transaction} = data) do
+    with {:ok, payload} <- Client.get_payload(bin),
+         {:ok, statamets} <- Supavisor.PgParser.statements(payload),
+         true <- Enum.member?([["PrepareStmt"], ["DeallocateStmt"]], statamets) do
+      Logger.info("Handle prepared statement #{inspect(payload)}")
+
+      GenServer.call(data.pool, :get_all_workers)
+      |> Enum.each(fn
+        {_, ^pid, _, [Supavisor.DbHandler]} ->
+          Logger.debug("Linked db_handler #{inspect(pid)}")
+          nil
+
+        {_, pool_proc, _, [Supavisor.DbHandler]} ->
+          Logger.debug(
+            "Sending prepared statement change #{inspect(payload)} to #{inspect(pool_proc)}"
+          )
+
+          send(pool_proc, {:handle_ps, payload, bin})
+      end)
+    end
+  end
+
+  defp handle_prepared_statements(_, _, _), do: nil
 end
