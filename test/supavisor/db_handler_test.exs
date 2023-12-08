@@ -11,7 +11,8 @@ defmodule Supavisor.DbHandlerTest do
         tenant: "test_tenant",
         user_alias: "test_user_alias",
         user: "user",
-        mode: :transaction
+        mode: :transaction,
+        replica_type: :single
       }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)

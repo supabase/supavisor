@@ -3,7 +3,7 @@ name: Publish upgrade artifacts to staging
 on:
   push:
     branches:
-      - main
+      - main_v0.9
 env:
   INCLUDE_ERTS: false
   MIX_ENV: prod

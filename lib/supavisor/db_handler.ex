@@ -38,13 +38,15 @@ defmodule Supavisor.DbHandler do
       user: args.user,
       tenant: args.tenant,
       buffer: [],
+      anon_buffer: [],
       db_state: nil,
       parameter_status: %{},
       nonce: nil,
       messages: "",
       server_proof: nil,
       stats: %{},
-      mode: args.mode
+      mode: args.mode,
+      replica_type: args.replica_type
     }
 
     {:ok, :connect, data, {:next_event, :internal, :connect}}
@@ -88,7 +90,10 @@ defmodule Supavisor.DbHandler do
         end
 
       other ->
-        Logger.error("Connection failed #{inspect(other)}")
+        Logger.error(
+          "Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
+        )
+
         reconnect_callback
     end
   end
@@ -111,7 +116,7 @@ defmodule Supavisor.DbHandler do
           {ps, db_state}
 
         %{tag: :backend_key_data, payload: payload}, acc ->
-          key = {data.tenant, self()}
+          key = self()
           conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
           Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
           Logger.debug("Backend #{inspect(key)} data: #{inspect(payload)}")
@@ -240,18 +245,87 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | buffer: []}}
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, %{caller: caller} = data) when is_pid(caller) do
-    # check if the response ends with "ready for query"
-    ready = String.ends_with?(bin, Server.ready_for_query())
-    Logger.debug("Db ready #{inspect(ready)}")
-    :ok = Client.client_cast(caller, bin, ready)
+  # check if it needs to apply queries from the anon buffer
+  def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
+    if buff != [] do
+      Logger.debug("Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      buff = Enum.reverse(buff)
+      :ok = sock_send(data.sock, buff)
+    end
 
-    if ready do
+    {:keep_state, %{data | anon_buffer: []}}
+  end
+
+  # the process received message from db without linked caller
+  def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in [:tcp, :ssl] do
+    Logger.warning("Got db response #{inspect(bin)} when caller was nil")
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
+      when proto in [:tcp, :ssl] do
+    Logger.debug("Got read replica message #{inspect(bin)}")
+    pkts = Server.decode(bin)
+
+    resp =
+      cond do
+        Server.has_read_only_error?(pkts) ->
+          Logger.error("read only error")
+
+          with [_] <- pkts do
+            # need to flush ready_for_query if it's not in same packet
+            :ok = receive_ready_for_query()
+          end
+
+          :read_sql_error
+
+        List.last(pkts).tag == :ready_for_query ->
+          :ready_for_query
+
+        true ->
+          :continue
+      end
+
+    :ok = Client.client_cast(data.caller, bin, resp)
+
+    if resp != :continue do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats, caller: nil}}
     else
       :keep_state_and_data
     end
+  end
+
+  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
+      when is_pid(caller) and proto in [:tcp, :ssl] do
+    Logger.debug("Got write replica message #{inspect(bin)}")
+    # check if the response ends with "ready for query"
+    ready =
+      if String.ends_with?(bin, Server.ready_for_query()) do
+        :ready_for_query
+      else
+        :continue
+      end
+
+    :ok = Client.client_cast(data.caller, bin, ready)
+
+    case ready do
+      :ready_for_query ->
+        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+
+        {:keep_state, %{data | stats: stats, caller: nil},
+         {:next_event, :internal, :check_anon_buffer}}
+
+      :continue ->
+        :keep_state_and_data
+    end
+  end
+
+  def handle_event(:info, {:handle_ps, payload, bin}, _state, data) do
+    Logger.notice("Apply prepare statement change #{inspect(payload)}")
+
+    {:keep_state, %{data | anon_buffer: [bin | data.anon_buffer]},
+     {:next_event, :internal, :check_anon_buffer}}
   end
 
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
@@ -298,6 +372,13 @@ defmodule Supavisor.DbHandler do
     Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
+  end
+
+  @impl true
+  def terminate(:shutdown, _state, _data), do: :ok
+
+  def terminate(reason, state, _data) do
+    Logger.error("Terminating with reason #{inspect(reason)} when state was #{inspect(state)}")
   end
 
   @spec try_ssl_handshake(S.tcp_sock(), map) :: {:ok, S.sock()} | {:error, term()}
@@ -382,6 +463,16 @@ defmodule Supavisor.DbHandler do
       auth.secrets.().db_user
     else
       auth.secrets.().user
+    end
+  end
+
+  @spec receive_ready_for_query() :: :ok | :timeout_error
+  defp receive_ready_for_query() do
+    receive do
+      {_proto, _socket, <<?Z, 5::32, ?I>>} ->
+        :ok
+    after
+      15_000 -> :timeout_error
     end
   end
 end

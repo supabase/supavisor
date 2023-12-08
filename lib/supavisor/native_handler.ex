@@ -131,7 +131,7 @@ defmodule Supavisor.NativeHandler do
       ) do
     {:ok, hello} = Server.decode_startup_packet(bin)
     Logger.debug("Startup packet: #{inspect(hello, pretty: true)}")
-    {user, external_id} = HH.parse_user_info(hello.payload)
+    {_, {user, external_id}} = HH.parse_user_info(hello.payload)
     sni_hostname = HH.try_get_sni(sock)
 
     Logger.metadata(project: external_id, user: user, mode: "native")

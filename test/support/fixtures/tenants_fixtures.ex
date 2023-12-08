@@ -30,4 +30,38 @@ defmodule Supavisor.TenantsFixtures do
 
     tenant
   end
+
+  # @doc """
+  # Generate a unique cluster tenant_external_id.
+  # """
+  # def unique_cluster_tenant_external_id,
+  #   do: "some tenant_external_id#{System.unique_integer([:positive])}"
+
+  @doc """
+  Generate a unique cluster type.
+  """
+  def unique_cluster_type, do: "some type#{System.unique_integer([:positive])}"
+
+  @doc """
+  Generate a cluster.
+  """
+  def cluster_fixture(attrs \\ %{}) do
+    {:ok, cluster} =
+      attrs
+      |> Enum.into(%{
+        active: true,
+        alias: "some_alias",
+        cluster_tenants: [
+          %{
+            type: "write",
+            cluster_alias: "some_alias",
+            tenant_external_id: "proxy_tenant",
+            active: true
+          }
+        ]
+      })
+      |> Supavisor.Tenants.create_cluster()
+
+    cluster
+  end
 end

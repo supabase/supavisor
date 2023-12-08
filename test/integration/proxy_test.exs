@@ -28,6 +28,26 @@ defmodule Supavisor.Integration.ProxyTest do
     %{proxy: proxy, origin: origin, user: db_conf[:username]}
   end
 
+  test "prepared statement", %{proxy: proxy} do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url = """
+    postgresql://#{db_conf[:username] <> "." <> @tenant}:#{db_conf[:password]}\
+    @#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres
+    """
+
+    prepare_sql =
+      "PREPARE tenant (text) AS SELECT id, external_id FROM _supavisor.tenants WHERE external_id = $1;"
+
+    {result, _} = System.cmd("psql", [url, "-c", prepare_sql], stderr_to_stdout: true)
+    assert result =~ "PREPARE"
+
+    {result, _} =
+      System.cmd("psql", [url, "-c", "EXECUTE tenant('#{@tenant}');"], stderr_to_stdout: true)
+
+    assert result =~ "#{@tenant}\n(1 row)"
+  end
+
   test "the wrong password" do
     db_conf = Application.get_env(:supavisor, Repo)
 
@@ -157,7 +177,7 @@ defmodule Supavisor.Integration.ProxyTest do
     :timer.sleep(500)
 
     [{_, client_pid, _}] =
-      Supavisor.get_local_manager({"proxy_tenant", "transaction", :transaction})
+      Supavisor.get_local_manager({{:single, "proxy_tenant"}, "transaction", :transaction})
       |> :sys.get_state()
       |> then(& &1[:tid])
       |> :ets.tab2list()

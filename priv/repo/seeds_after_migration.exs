@@ -30,7 +30,7 @@ end
         %{
           "db_user" => db_conf[:username],
           "db_password" => db_conf[:password],
-          "pool_size" => 3,
+          "pool_size" => 9,
           "mode_type" => "transaction"
         },
         %{

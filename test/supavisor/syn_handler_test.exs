@@ -4,7 +4,7 @@ defmodule Supavisor.SynHandlerTest do
   require Logger
   alias Ecto.Adapters.SQL.Sandbox
 
-  @id {"syn_tenant", "postgres", :session}
+  @id {{:single, "syn_tenant"}, "postgres", :session}
 
   test "resolving conflict" do
     node2 = :"secondary@127.0.0.1"
