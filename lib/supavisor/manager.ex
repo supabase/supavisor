@@ -124,6 +124,11 @@ defmodule Supavisor.Manager do
     end
   end
 
+  def handle_info(msg, state) do
+    Logger.warning("Undefined msg: #{inspect(msg, pretty: true)}")
+    {:noreply, state}
+  end
+
   ## Internal functions
 
   defp check_subscribers() do

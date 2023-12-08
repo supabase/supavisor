@@ -82,32 +82,16 @@ defmodule Supavisor.Protocol.Client do
   @spec tag(byte) :: atom | nil
   def tag(char) do
     case char do
-      ?Q ->
-        :simple_query
-
-      ?H ->
-        :flush_message
-
-      ?P ->
-        :parse_message
-
-      ?B ->
-        :bind_message
-
-      ?D ->
-        :describe_message
-
-      ?E ->
-        :execute_message
-
-      ?S ->
-        :sync_message
-
-      ?X ->
-        :termination_message
-
-      _ ->
-        nil
+      ?Q -> :simple_query
+      ?H -> :flush_message
+      ?P -> :parse_message
+      ?B -> :bind_message
+      ?D -> :describe_message
+      ?E -> :execute_message
+      ?S -> :sync_message
+      ?X -> :termination_message
+      ?C -> :close_message
+      _ -> nil
     end
   end
 
@@ -120,34 +104,36 @@ defmodule Supavisor.Protocol.Client do
 
   def decode_payload(:parse_message, payload) do
     case String.split(payload, <<0>>) do
-      [""] -> :undefined
-      other -> other
+      [""] ->
+        :undefined
+
+      other ->
+        case Enum.filter(other, &(&1 != "")) do
+          [sql] -> sql
+          message -> message
+        end
     end
   end
 
   def decode_payload(:describe_message, <<char::binary-size(1), str_name::binary>>) do
+    str_name = String.trim_trailing(str_name, <<0>>)
     %{char: char, str_name: str_name}
   end
 
-  def decode_payload(:flush_message, <<4::32>>) do
-    nil
+  def decode_payload(:close_message, <<char::binary-size(1), str_name::binary>>) do
+    str_name = String.trim_trailing(str_name, <<0>>)
+    %{char: char, str_name: str_name}
   end
 
-  def decode_payload(:termination_message, _payload) do
-    nil
-  end
+  def decode_payload(:flush_message, <<4::32>>), do: nil
 
-  def decode_payload(:bind_message, _payload) do
-    nil
-  end
+  def decode_payload(:termination_message, _payload), do: nil
 
-  def decode_payload(:execute_message, _payload) do
-    nil
-  end
+  def decode_payload(:bind_message, _payload), do: nil
 
-  def decode_payload(_tag, "") do
-    nil
-  end
+  def decode_payload(:execute_message, _payload), do: nil
+
+  def decode_payload(_tag, ""), do: nil
 
   def decode_payload(_tag, payload) do
     Logger.error("undefined payload: #{inspect(payload)}")

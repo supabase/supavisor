@@ -38,6 +38,7 @@ defmodule Supavisor.DbHandler do
       user: args.user,
       tenant: args.tenant,
       buffer: [],
+      anon_buffer: [],
       db_state: nil,
       parameter_status: %{},
       nonce: nil,
@@ -244,7 +245,25 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | buffer: []}}
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, %{replica_type: :read} = data) do
+  # check if it needs to apply queries from the anon buffer
+  def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
+    if buff != [] do
+      Logger.debug("Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      buff = Enum.reverse(buff)
+      :ok = sock_send(data.sock, buff)
+    end
+
+    {:keep_state, %{data | anon_buffer: []}}
+  end
+
+  # the process received message from db without linked caller
+  def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in [:tcp, :ssl] do
+    Logger.warning("Got db response #{inspect(bin)} when caller was nil")
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
+      when proto in [:tcp, :ssl] do
     Logger.debug("Got read replica message #{inspect(bin)}")
     pkts = Server.decode(bin)
 
@@ -271,26 +290,42 @@ defmodule Supavisor.DbHandler do
 
     if resp != :continue do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats}}
+      {:keep_state, %{data | stats: stats, caller: nil}}
     else
       :keep_state_and_data
     end
   end
 
-  def handle_event(:info, {_proto, _, bin}, _, %{caller: caller} = data) when is_pid(caller) do
+  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
+      when is_pid(caller) and proto in [:tcp, :ssl] do
     Logger.debug("Got write replica message #{inspect(bin)}")
     # check if the response ends with "ready for query"
-    {ready, data} =
+    ready =
       if String.ends_with?(bin, Server.ready_for_query()) do
-        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-        {:ready_for_query, %{data | stats: stats}}
+        :ready_for_query
       else
-        {:continue, data}
+        :continue
       end
 
     :ok = Client.client_cast(data.caller, bin, ready)
 
-    {:keep_state, data}
+    case ready do
+      :ready_for_query ->
+        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+
+        {:keep_state, %{data | stats: stats, caller: nil},
+         {:next_event, :internal, :check_anon_buffer}}
+
+      :continue ->
+        :keep_state_and_data
+    end
+  end
+
+  def handle_event(:info, {:handle_ps, payload, bin}, _state, data) do
+    Logger.notice("Apply prepare statement change #{inspect(payload)}")
+
+    {:keep_state, %{data | anon_buffer: [bin | data.anon_buffer]},
+     {:next_event, :internal, :check_anon_buffer}}
   end
 
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
