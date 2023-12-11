@@ -22,10 +22,11 @@ jobs:
             . ~/.asdf/asdf.sh
             echo 'elixir v1.14.5-otp-25' >> ~/.tool-versions
             echo 'erlang 25.3.2.7' >> ~/.tool-versions
+            type -a erlang
             type -a mix
             type -a elixir
             elixir -v
-            asdf reshim elixir
+            asdf reshim erlang elixir
       - name: Set up Rust
         uses: ATiltedTree/setup-rust@v1
         with:
