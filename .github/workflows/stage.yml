@@ -22,14 +22,7 @@ jobs:
             . ~/.asdf/asdf.sh
             echo 'elixir v1.14.5-otp-25' >> ~/.tool-versions
             echo 'erlang 25.3.2.7' >> ~/.tool-versions
-            type -a mix
-            type -a elixir
             elixir -v
-            asdf reshim erlang elixir
-      - name: Set up Rust
-        uses: ATiltedTree/setup-rust@v1
-        with:
-          rust-version: stable
       - name: Cache Mix
         uses: actions/cache@v3
         with:
@@ -38,9 +31,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
       - name: Install dependencies
-        run: /home/runner/.asdf/shims/mix deps.get
+        run: mix deps.get
       - name: Make release
-        run: /home/runner/.asdf/shims/mix release supavisor
+        run: mix release supavisor
       - name: Create tarball
         run: cd _build/prod/rel/ && tar -czvf test_rustler.tar.gz supavisor
         # run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_STAGE }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
