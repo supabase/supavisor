@@ -17,13 +17,17 @@ jobs:
       id-token: write    
     steps:
       - uses: actions/checkout@v4   
-      - name: Setup elixir and rust
+      - name: Setup Elixir
         run: |
             . ~/.asdf/asdf.sh
             echo 'elixir v1.14.5-otp-25' >> ~/.tool-versions
             echo 'erlang 25.3.2' >> ~/.tool-versions
             echo 'rust 1.64.0' >> ~/.tool-versions
-            elixir --version && rustc --version
+            elixir --version
+      - name: Set up Rust
+        uses: ATiltedTree/setup-rust@v1
+        with:
+          rust-version: stable            
       - name: Cache Mix
         uses: actions/cache@v3
         with:
