@@ -23,6 +23,7 @@ jobs:
             echo 'elixir v1.14.5-otp-25' >> ~/.tool-versions
             echo 'erlang 25.3.2' >> ~/.tool-versions
             echo 'rust 1.64.0' >> ~/.tool-versions
+            mix do local.hex, local.rebar
             elixir --version
       - name: Set up Rust
         uses: ATiltedTree/setup-rust@v1
