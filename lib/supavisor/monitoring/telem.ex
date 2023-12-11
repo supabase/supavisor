@@ -48,12 +48,17 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
-  @spec client_join(:ok | :fail, S.id()) :: :ok
+  @spec client_join(:ok | :fail, S.id() | any()) :: :ok
   def client_join(status, {tenant, user, mode}) do
     :telemetry.execute(
       [:supavisor, :client, :joins, status],
       %{},
       %{tenant: tenant, user: user, mode: mode}
     )
+  end
+
+  def client_join(status, _id) when not is_tuple(_id) do
+    Logger.warn("client_join called with non-tuple id: #{inspect(_id)}")
+    :ok
   end
 end
