@@ -26,6 +26,7 @@ jobs:
             type -a mix
             type -a elixir        
             elixir --version
+            asdf reshim mix
       - name: Set up Rust
         uses: ATiltedTree/setup-rust@v1
         with:
