@@ -37,7 +37,7 @@ jobs:
       - name: Install dependencies
         run: |
           export PATH=/home/runner/.asdf/shims:/home/runner/.asdf/bin:$PATH
-          echo $PATH
+          mix local.hex --force
           mix deps.get
       - name: Make release
         run: mix release supavisor
