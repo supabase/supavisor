@@ -122,7 +122,6 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
-
   defp create_tenant(_) do
     tenant = tenant_fixture()
     %{tenant: tenant}
