@@ -57,8 +57,7 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
-  def client_join(status, _id) when not is_tuple(_id) do
-    Logger.warn("client_join called with non-tuple id: #{inspect(_id)}")
-    :ok
+  def client_join(status, id) do
+    Logger.warning("client_join is called with a mismatched id: #{inspect(id)}")
   end
 end
