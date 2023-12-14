@@ -15,6 +15,7 @@ defmodule Supavisor.Protocol.Server do
   @auth_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
   @scram_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
   @msg_cancel_header <<16::32, 1234::16, 5678::16>>
+  @application_name <<?S, 31::32, "application_name", 0, "Supavisor", 0>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -461,4 +462,7 @@ defmodule Supavisor.Protocol.Server do
       _ -> false
     end)
   end
+
+  @spec application_name() :: binary
+  def application_name(), do: @application_name
 end
