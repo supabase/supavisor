@@ -27,7 +27,7 @@ jobs:
         uses: ATiltedTree/setup-rust@v1
         with:
           rust-version: stable
-      - name: Cache Mix1
+      - name: Cache Mix
         uses: actions/cache@v3
         with:
           path: deps
@@ -38,9 +38,10 @@ jobs:
         run: |
           export PATH=/home/runner/.asdf/shims:/home/runner/.asdf/bin:$PATH
           mix local.hex --force
+          mix local.rebar --force
           mix deps.get
       - name: Make release
-        run: mix local.rebar --force && mix release supavisor
+        run:  mix release supavisor
       - name: Create tarball
         run: cd _build/prod/rel/ && tar -czvf test_rustler.tar.gz supavisor
         # run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_STAGE }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
