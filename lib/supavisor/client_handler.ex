@@ -822,17 +822,17 @@ defmodule Supavisor.ClientHandler do
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(data) do
-    Enum.reduce(data, [], fn
-      {:heartbeat_interval, v} = t, acc when v > 0 ->
+    Enum.flat_map(data, fn
+      {:heartbeat_interval, v} = t when v > 0 ->
         Logger.debug("Call timeout #{inspect(t)}")
-        [timeout_check(:heartbeat_check, v) | acc]
+        [timeout_check(:heartbeat_check, v)]
 
-      {:idle_timeout, v} = t, acc when v > 0 ->
+      {:idle_timeout, v} = t when v > 0 ->
         Logger.debug("Call timeout #{inspect(t)}")
-        [timeout_check(:idle_terminate, v) | acc]
+        [timeout_check(:idle_terminate, v)]
 
-      _, acc ->
-        acc
+      _ ->
+        []
     end)
   end
 end
