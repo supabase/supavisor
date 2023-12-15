@@ -49,8 +49,11 @@ defmodule Supavisor.TenantSupervisor do
   defp pool_spec(id, args) do
     {size, overflow} =
       case args.mode do
-        :session -> {1, args.pool_size}
-        :transaction -> {args.pool_size, 0}
+        :session ->
+          {1, args.pool_size}
+
+        :transaction ->
+          if args.pool_size < 10, do: {args.pool_size, 0}, else: {10, args.pool_size - 10}
       end
 
     [
