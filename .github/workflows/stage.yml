@@ -40,7 +40,7 @@ jobs:
           mix local.hex --force
           mix deps.get
       - name: Make release
-        run: mix release supavisor
+        run: mix local.rebar --force && mix release supavisor
       - name: Create tarball
         run: cd _build/prod/rel/ && tar -czvf test_rustler.tar.gz supavisor
         # run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_STAGE }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
