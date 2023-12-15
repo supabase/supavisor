@@ -30,7 +30,7 @@ e.g if you're using 30 connections out of 100 and you set your `default_pool_siz
 
 If you are using 90 connections out of 100 and your `default_pool_size` is set to 20 you will have problems during the deployment of your Supavisor connection string because you will hit your Postgres `max_connections` limit.
 
-## Verfiy Supavisor connections
+## Verify Supavisor connections
 
 Once we've got Supavisor started we can verify it's using the amount of connections we set for `default_pool_size`:
 
