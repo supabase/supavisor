@@ -10,7 +10,7 @@ env:
 jobs:
   publish:
     runs-on: u22-arm-runner
-    timeout-minutes: 4
+    timeout-minutes: 10
     permissions:
       contents: write
       packages: write
