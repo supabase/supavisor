@@ -36,7 +36,6 @@ jobs:
             ${{ runner.os }}-mix-
       - name: Install dependencies
         run: |
-          export PATH=/home/runner/.asdf/shims:/home/runner/.asdf/bin:$PATH
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
