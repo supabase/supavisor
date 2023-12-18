@@ -5,7 +5,7 @@ on:
     branches:
       - test_arm_new
 env:
-  INCLUDE_ERTS: false
+  INCLUDE_ERTS: true
   MIX_ENV: prod
 jobs:
   publish:
