@@ -3,7 +3,7 @@ name: Release on Dockerhub
 on:
   push:
     branches:
-      - main_v0.9
+      - main
     paths:
       - ".github/workflows/publish_docker.yml"
       - "VERSION"
