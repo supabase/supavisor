@@ -307,9 +307,9 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:timeout, :heartbeat_check, _, data) do
-    Logger.warning("Send heartbeat to client")
+    Logger.debug("Send heartbeat to client")
     HH.sock_send(data.sock, Server.application_name())
-    {:keep_state_and_data, {:timeout, 5_000, :heartbeat_check}}
+    {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
   end
 
   # handle Terminate message
