@@ -40,4 +40,8 @@ defmodule SupavisorWeb.TenantView do
   def render("show_terminate.json", %{result: result}) do
     %{result: result}
   end
+
+  def render("not_found.json", _) do
+    %{error: "not found"}
+  end
 end

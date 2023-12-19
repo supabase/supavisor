@@ -350,7 +350,9 @@ defmodule Supavisor.DbHandler do
 
   # linked client_handler went down
   def handle_event(_, {:EXIT, pid, reason}, state, data) do
-    Logger.error("Client handler #{inspect(pid)} went down with reason #{inspect(reason)}")
+    if reason != :normal do
+      Logger.error("Client handler #{inspect(pid)} went down with reason #{inspect(reason)}")
+    end
 
     if state == :idle do
       :ok = sock_send(data.sock, <<?X, 4::32>>)
