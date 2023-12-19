@@ -111,6 +111,17 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "get tenant" do
+    setup [:create_tenant]
+
+    test "returns 404 not found for non-existing tenant", %{conn: conn} do
+      non_existing_tenant_id = "non_existing_tenant_id"
+
+      conn = get(conn, Routes.tenant_path(conn, :show, non_existing_tenant_id))
+      assert json_response(conn, 404)["error"] == "not found"
+    end
+  end
+
   defp create_tenant(_) do
     tenant = tenant_fixture()
     %{tenant: tenant}
