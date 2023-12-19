@@ -59,7 +59,8 @@ defmodule Supavisor.ClientHandler do
       stats: %{},
       idle_timeout: 0,
       db_name: nil,
-      last_query: nil
+      last_query: nil,
+      heartbeat_interval: 0
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -286,12 +287,7 @@ defmodule Supavisor.ClientHandler do
     msg = [ps, [header, payload], Server.ready_for_query()]
     :ok = HH.listen_cancel_query(pid, key)
     :ok = HH.sock_send(sock, msg)
-
-    if data.idle_timeout > 0 do
-      {:next_state, :idle, data, idle_check(data.idle_timeout)}
-    else
-      {:next_state, :idle, data}
-    end
+    {:next_state, :idle, data, handle_actions(data)}
   end
 
   def handle_event(:timeout, :subscribe, _, _) do
@@ -310,6 +306,12 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal, data}
   end
 
+  def handle_event(:timeout, :heartbeat_check, _, data) do
+    Logger.warning("Send heartbeat to client")
+    HH.sock_send(data.sock, Server.application_name())
+    {:keep_state_and_data, {:timeout, 5_000, :heartbeat_check}}
+  end
+
   # handle Terminate message
   def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, _)
       when proto in [:tcp, :ssl] do
@@ -322,12 +324,7 @@ defmodule Supavisor.ClientHandler do
       when proto in [:tcp, :ssl] do
     Logger.debug("Receive sync")
     :ok = HH.sock_send(data.sock, Server.ready_for_query())
-
-    if data.idle_timeout > 0 do
-      {:keep_state_and_data, idle_check(data.idle_timeout)}
-    else
-      :keep_state_and_data
-    end
+    {:keep_state_and_data, handle_actions(data)}
   end
 
   # incoming query with a single pool
@@ -454,14 +451,7 @@ defmodule Supavisor.ClientHandler do
 
         Telem.client_query_time(data.query_start, data.id)
         :ok = HH.sock_send(data.sock, bin)
-
-        actions =
-          if data.idle_timeout > 0 do
-            idle_check(data.idle_timeout)
-          else
-            []
-          end
-
+        actions = handle_actions(data)
         {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, actions}
 
       :continue ->
@@ -665,7 +655,8 @@ defmodule Supavisor.ClientHandler do
         timeout: info.user.pool_checkout_timeout,
         ps: info.tenant.default_parameter_status,
         proxy_type: proxy_type,
-        id: id
+        id: id,
+        heartbeat_interval: info.tenant.client_heartbeat_interval * 1000
     }
   end
 
@@ -788,9 +779,9 @@ defmodule Supavisor.ClientHandler do
 
   def try_get_sni(_), do: nil
 
-  @spec idle_check(non_neg_integer) :: {:timeout, non_neg_integer, :idle_terminate}
-  defp idle_check(timeout) do
-    {:timeout, timeout, :idle_terminate}
+  @spec timeout_check(atom, non_neg_integer) :: {:timeout, non_neg_integer, atom}
+  defp timeout_check(key, timeout) do
+    {:timeout, timeout, key}
   end
 
   defp db_pid_meta({_, {_, pid}} = _key) do
@@ -828,4 +819,20 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp handle_prepared_statements(_, _, _), do: nil
+
+  @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
+  defp handle_actions(data) do
+    Enum.flat_map(data, fn
+      {:heartbeat_interval, v} = t when v > 0 ->
+        Logger.debug("Call timeout #{inspect(t)}")
+        [timeout_check(:heartbeat_check, v)]
+
+      {:idle_timeout, v} = t when v > 0 ->
+        Logger.debug("Call timeout #{inspect(t)}")
+        [timeout_check(:idle_terminate, v)]
+
+      _ ->
+        []
+    end)
+  end
 end
