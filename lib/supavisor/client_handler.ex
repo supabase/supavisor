@@ -815,6 +815,9 @@ defmodule Supavisor.ClientHandler do
 
           send(pool_proc, {:handle_ps, payload, bin})
       end)
+    else
+      error ->
+        Logger.debug("Skip prepared statement #{inspect(error)}")
     end
   end
 
