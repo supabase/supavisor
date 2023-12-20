@@ -72,10 +72,15 @@ defmodule Supavisor.Protocol.Client do
         {:error, {:undefined_tag, <<char>>}}
 
       tag ->
-        payload_len = pkt_len - 4
-        <<bin_payload::binary-size(payload_len), _::binary>> = rest
+        try do
+          payload_len = pkt_len - 4
+          <<bin_payload::binary-size(payload_len), _::binary>> = rest
 
-        {:ok, decode_payload(tag, bin_payload)}
+          {:ok, decode_payload(tag, bin_payload)}
+        rescue
+          reason ->
+            {:error, {:decode_payload_error, reason}}
+        end
     end
   end
 
