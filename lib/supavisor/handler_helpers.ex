@@ -79,20 +79,27 @@ defmodule Supavisor.HandlerHelpers do
 
   def try_get_sni(_), do: nil
 
-  @spec parse_user_info(map) :: {String.t() | nil, String.t()}
+  @spec parse_user_info(map) :: {:cluster | :single, {String.t() | nil, String.t()}}
   def parse_user_info(%{"user" => user, "options" => %{"reference" => ref}}) do
-    {user, ref}
+    # TODO: parse ref for cluster
+    {:single, {user, ref}}
   end
 
   def parse_user_info(%{"user" => user}) do
-    case :binary.matches(user, ".") do
-      [] ->
-        {user, nil}
+    case :binary.split(user, ".cluster.") do
+      [user] ->
+        case :binary.matches(user, ".") do
+          [] ->
+            {:single, {user, nil}}
 
-      matches ->
-        {pos, 1} = List.last(matches)
-        <<name::size(pos)-binary, ?., external_id::binary>> = user
-        {name, external_id}
+          matches ->
+            {pos, 1} = List.last(matches)
+            <<name::size(pos)-binary, ?., external_id::binary>> = user
+            {:single, {name, external_id}}
+        end
+
+      [user, tenant] ->
+        {:cluster, {user, tenant}}
     end
   end
 

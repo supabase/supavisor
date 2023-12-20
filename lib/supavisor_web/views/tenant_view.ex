@@ -28,6 +28,7 @@ defmodule SupavisorWeb.TenantView do
       default_pool_size: tenant.default_pool_size,
       default_max_clients: tenant.default_max_clients,
       client_idle_timeout: tenant.client_idle_timeout,
+      client_heartbeat_interval: tenant.client_heartbeat_interval,
       default_pool_strategy: tenant.default_pool_strategy,
       users: render_many(tenant.users, UserView, "user.json")
     }
@@ -39,5 +40,9 @@ defmodule SupavisorWeb.TenantView do
 
   def render("show_terminate.json", %{result: result}) do
     %{result: result}
+  end
+
+  def render("not_found.json", _) do
+    %{error: "not found"}
   end
 end

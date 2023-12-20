@@ -1,4 +1,5 @@
 defmodule Supavisor.Integration.ProxyTest do
+  require Logger
   use Supavisor.DataCase, async: true
   alias Postgrex, as: P
 
@@ -28,14 +29,40 @@ defmodule Supavisor.Integration.ProxyTest do
     %{proxy: proxy, origin: origin, user: db_conf[:username]}
   end
 
+  test "prepared statement", %{proxy: proxy} do
+    prepare_sql =
+      "PREPARE tenant (text) AS SELECT id, external_id FROM _supavisor.tenants WHERE external_id = $1;"
+
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    {:ok, pid} =
+      Keyword.merge(db_conf, username: db_conf[:username] <> "." <> @tenant)
+      |> single_connection(Application.get_env(:supavisor, :proxy_port_transaction))
+
+    assert [%Postgrex.Result{command: :prepare}] =
+             P.SimpleConnection.call(pid, {:query, prepare_sql})
+
+    :timer.sleep(500)
+
+    assert {_, %Postgrex.Result{command: :select}} =
+             Postgrex.query(proxy, "EXECUTE tenant('#{@tenant}');", [])
+
+    :gen_statem.stop(pid)
+  end
+
   test "the wrong password" do
+    Process.flag(:trap_exit, true)
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
       "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
-    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
-    assert result =~ "error received from server in SCRAM exchange: Wrong password"
+    assert {:error,
+            {_,
+             {:stop,
+              %Postgrex.Error{
+                message: "error received in SCRAM server final message: \"Wrong password\""
+              }, _}}} = parse_uri(url) |> single_connection()
   end
 
   test "insert", %{proxy: proxy, origin: origin} do
@@ -152,12 +179,12 @@ defmodule Supavisor.Integration.ProxyTest do
     url =
       "postgresql://transaction.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
-    psql_pid = spawn(fn -> System.cmd("psql", [url]) end)
+    {:ok, pid} = parse_uri(url) |> single_connection()
 
     :timer.sleep(500)
 
     [{_, client_pid, _}] =
-      Supavisor.get_local_manager({"proxy_tenant", "transaction", :transaction})
+      Supavisor.get_local_manager({{:single, "proxy_tenant"}, "transaction", :transaction})
       |> :sys.get_state()
       |> then(& &1[:tid])
       |> :ets.tab2list()
@@ -165,16 +192,56 @@ defmodule Supavisor.Integration.ProxyTest do
     {state, %{db_pid: db_pid}} = :sys.get_state(client_pid)
 
     assert {:idle, nil} = {state, db_pid}
-    Process.exit(psql_pid, :kill)
+    :gen_statem.stop(pid)
   end
 
   test "limit client connections" do
+    Process.flag(:trap_exit, true)
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
       "postgresql://max_clients.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
 
-    {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
-    assert result =~ "FATAL:  Max client connections reached"
+    assert =
+      {:error,
+       {_,
+        {:stop,
+         %Postgrex.Error{
+           postgres: %{
+             code: :internal_error,
+             message: "Max client connections reached",
+             pg_code: "XX000",
+             severity: "FATAL",
+             unknown: "FATAL"
+           }
+         }, _}}} = parse_uri(url) |> single_connection()
+  end
+
+  defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
+    port = c_port || db_conf[:port]
+
+    [
+      hostname: db_conf[:hostname],
+      port: port,
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username],
+      pool_size: 1
+    ]
+    |> SingleConnection.connect()
+  end
+
+  defp parse_uri(uri) do
+    %URI{
+      userinfo: userinfo,
+      host: host,
+      port: port,
+      path: path
+    } = URI.parse(uri)
+
+    [username, pass] = String.split(userinfo, ":")
+    database = String.replace(path, "/", "")
+
+    [hostname: host, port: port, database: database, password: pass, username: username]
   end
 end

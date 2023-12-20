@@ -12,14 +12,23 @@ defmodule Supavisor.Protocol.Server do
   @authentication_ok <<?R, 8::32, 0::32>>
   @ready_for_query <<?Z, 5::32, ?I>>
   @ssl_request <<8::32, 1234::16, 5679::16>>
+  @auth_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
   @scram_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
   @msg_cancel_header <<16::32, 1234::16, 5678::16>>
+  @application_name <<?S, 31::32, "application_name", 0, "Supavisor", 0>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
     defstruct([:tag, :len, :payload])
+
+    @type t :: %Pkt{
+            tag: atom,
+            len: integer,
+            payload: any
+          }
   end
 
+  @spec decode(iodata()) :: [Pkt.t()] | []
   def decode(data) do
     decode(data, [])
   end
@@ -445,4 +454,15 @@ defmodule Supavisor.Protocol.Server do
   def cancel_message(pid, key) do
     [@msg_cancel_header, <<pid::32, key::32>>]
   end
+
+  @spec has_read_only_error?(list) :: boolean
+  def has_read_only_error?(pkts) do
+    Enum.any?(pkts, fn
+      %{payload: ["SERROR", "VERROR", "C25006" | _]} -> true
+      _ -> false
+    end)
+  end
+
+  @spec application_name() :: binary
+  def application_name(), do: @application_name
 end

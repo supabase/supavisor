@@ -35,6 +35,8 @@ defmodule Supavisor.Manager do
   def init(args) do
     tid = :ets.new(__MODULE__, [:public])
 
+    [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
+
     state = %{
       id: args.id,
       check_ref: check_subscribers(),
@@ -47,8 +49,8 @@ defmodule Supavisor.Manager do
       idle_timeout: args.client_idle_timeout
     }
 
-    {tenant, user, _mode} = args.id
-    Logger.metadata(project: tenant, user: user)
+    {{type, tenant}, user, _mode} = args.id
+    Logger.metadata(project: tenant, user: user, type: type)
     Registry.register(Supavisor.Registry.ManagerTables, args.id, tid)
 
     {:ok, state}
@@ -120,6 +122,11 @@ defmodule Supavisor.Manager do
     else
       {:noreply, %{state | check_ref: check_subscribers()}}
     end
+  end
+
+  def handle_info(msg, state) do
+    Logger.warning("Undefined msg: #{inspect(msg, pretty: true)}")
+    {:noreply, state}
   end
 
   ## Internal functions

@@ -2,7 +2,8 @@ defmodule Supavisor do
   @moduledoc false
   require Logger
   alias Supavisor.Helpers, as: H
-  alias Supavisor.{Tenants, Tenants.Tenant, Manager}
+  alias Supavisor.Tenants, as: T
+  alias Supavisor.Manager
 
   @type sock :: tcp_sock() | ssl_sock()
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
@@ -10,7 +11,7 @@ defmodule Supavisor do
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
   @type mode :: :transaction | :session | :native
-  @type id :: {String.t(), String.t(), mode}
+  @type id :: {{:single | :cluster, String.t()}, String.t(), mode}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
@@ -125,11 +126,22 @@ defmodule Supavisor do
     }
   end
 
-  @spec get_local_pool(id) :: pid | nil
+  @spec get_local_pool(id) :: map | pid | nil
   def get_local_pool(id) do
-    case Registry.lookup(@registry, {:pool, id}) do
-      [{pid, _}] -> pid
-      _ -> nil
+    match = {{:pool, :_, :_, id}, :"$2", :"$3"}
+    body = [{{:"$2", :"$3"}}]
+
+    case Registry.select(@registry, [{match, [], body}]) do
+      [{pool, _}] ->
+        pool
+
+      [_ | _] = pools ->
+        # transform [{pid1, :read}, {pid2, :read}, {pid3, :write}]
+        # to %{read: [pid1, pid2], write: [pid3]}
+        Enum.group_by(pools, &elem(&1, 1), &elem(&1, 0))
+
+      _ ->
+        nil
     end
   end
 
@@ -141,7 +153,7 @@ defmodule Supavisor do
     end
   end
 
-  @spec id(String.t(), String.t(), mode, mode) :: id
+  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode) :: id
   def id(tenant, user, port_mode, user_mode) do
     # temporary hack
     mode =
@@ -157,82 +169,104 @@ defmodule Supavisor do
   ## Internal functions
 
   @spec start_local_pool(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({tenant, user, mode} = id, {method, secrets}, db_name) do
-    Logger.debug("Starting pool for #{inspect(id)}")
+  defp start_local_pool({{type, tenant}, _user, _mode} = id, secrets, db_name) do
+    Logger.debug("Starting pool(s) for #{inspect(id)}")
 
-    case Tenants.get_pool_config(tenant, secrets.().alias) do
-      %Tenant{} = tenant_record ->
-        %{
-          db_host: db_host,
-          db_port: db_port,
-          db_database: db_database,
-          default_parameter_status: ps,
-          ip_version: ip_ver,
-          default_pool_size: def_pool_size,
-          default_max_clients: def_max_clients,
-          client_idle_timeout: client_idle_timeout,
-          default_pool_strategy: default_pool_strategy,
-          users: [
-            %{
-              db_user: db_user,
-              db_password: db_pass,
-              pool_size: pool_size,
-              # mode_type: mode_type,
-              max_clients: max_clients
-            }
-          ]
-        } = tenant_record
+    user = elem(secrets, 1).().alias
 
-        {pool_size, max_clients} =
-          if method == :auth_query do
-            {def_pool_size, def_max_clients}
-          else
-            {pool_size, max_clients}
-          end
+    case type do
+      :single -> T.get_pool_config(tenant, user)
+      :cluster -> T.get_cluster_config(tenant, user)
+    end
+    |> case do
+      [_ | _] = replicas ->
+        opts =
+          Enum.map(replicas, fn replica ->
+            case replica do
+              %T.ClusterTenants{tenant: tenant, type: type} ->
+                Map.put(tenant, :replica_type, type)
 
-        auth = %{
-          host: String.to_charlist(db_host),
-          port: db_port,
-          user: db_user,
-          database: if(db_name != nil, do: db_name, else: db_database),
-          password: fn -> db_pass end,
-          application_name: "Supavisor",
-          ip_version: H.ip_version(ip_ver, db_host),
-          upstream_ssl: tenant_record.upstream_ssl,
-          upstream_verify: tenant_record.upstream_verify,
-          upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
-          require_user: tenant_record.require_user,
-          method: method,
-          secrets: secrets
-        }
-
-        args = %{
-          id: id,
-          tenant: tenant,
-          user: user,
-          auth: auth,
-          pool_size: pool_size,
-          mode: mode,
-          default_parameter_status: ps,
-          max_clients: max_clients,
-          client_idle_timeout: client_idle_timeout,
-          default_pool_strategy: default_pool_strategy
-        }
+              %T.Tenant{} = tenant ->
+                Map.put(tenant, :replica_type, :write)
+            end
+            |> supervisor_args(id, secrets, db_name)
+          end)
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
-          {Supavisor.TenantSupervisor, args}
+          {Supavisor.TenantSupervisor, %{id: id, replicas: opts}}
         )
         |> case do
           {:error, {:already_started, pid}} -> {:ok, pid}
           resp -> resp
         end
 
-      _ ->
-        Logger.error("Can't find tenant with external_id #{inspect(id)}")
+      error ->
+        Logger.error("Can't find tenant with external_id #{inspect(id)} #{inspect(error)}")
 
         {:error, :tenant_not_found}
     end
+  end
+
+  defp supervisor_args(tenant_record, {tenant, user, mode} = id, {method, secrets}, db_name) do
+    %{
+      db_host: db_host,
+      db_port: db_port,
+      db_database: db_database,
+      default_parameter_status: ps,
+      ip_version: ip_ver,
+      default_pool_size: def_pool_size,
+      default_max_clients: def_max_clients,
+      client_idle_timeout: client_idle_timeout,
+      replica_type: replica_type,
+      default_pool_strategy: default_pool_strategy,
+      users: [
+        %{
+          db_user: db_user,
+          db_password: db_pass,
+          pool_size: pool_size,
+          # mode_type: mode_type,
+          max_clients: max_clients
+        }
+      ]
+    } = tenant_record
+
+    {pool_size, max_clients} =
+      if method == :auth_query do
+        {def_pool_size, def_max_clients}
+      else
+        {pool_size, max_clients}
+      end
+
+    auth = %{
+      host: String.to_charlist(db_host),
+      port: db_port,
+      user: db_user,
+      database: if(db_name != nil, do: db_name, else: db_database),
+      password: fn -> db_pass end,
+      application_name: "Supavisor",
+      ip_version: H.ip_version(ip_ver, db_host),
+      upstream_ssl: tenant_record.upstream_ssl,
+      upstream_verify: tenant_record.upstream_verify,
+      upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
+      require_user: tenant_record.require_user,
+      method: method,
+      secrets: secrets
+    }
+
+    %{
+      id: id,
+      tenant: tenant,
+      replica_type: replica_type,
+      user: user,
+      auth: auth,
+      pool_size: pool_size,
+      mode: mode,
+      default_parameter_status: ps,
+      max_clients: max_clients,
+      client_idle_timeout: client_idle_timeout,
+      default_pool_strategy: default_pool_strategy
+    }
   end
 
   @spec set_parameter_status(id, [{binary, binary}]) ::

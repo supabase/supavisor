@@ -30,8 +30,8 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec remove_metrics(S.id()) :: non_neg_integer
-  def remove_metrics({tenant, user, mode}) do
-    meta = %{tenant: tenant, user: user, mode: mode}
+  def remove_metrics({{type, tenant}, user, mode}) do
+    meta = %{tenant: tenant, user: user, mode: mode, type: type}
 
     Supavisor.Monitoring.PromEx.Metrics
     |> :ets.select_delete([{{{:_, meta}, :_}, [], [true]}])
@@ -92,7 +92,7 @@ defmodule Supavisor.Monitoring.PromEx do
       |> Enum.uniq()
 
     _ =
-      Enum.reduce(pools, metrics, fn {tenant, _, _}, acc ->
+      Enum.reduce(pools, metrics, fn {{_type, tenant}, _, _}, acc ->
         {matched, rest} = Enum.split_with(acc, &String.contains?(&1, "tenant=\"#{tenant}\""))
 
         if matched != [] do
