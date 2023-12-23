@@ -150,6 +150,7 @@ defmodule Supavisor.NativeHandler do
           |> Server.encode_startup_packet()
 
         ip_ver = H.detect_ip_version(host)
+        # TODO: Probably check if ip is in allowlist here?
         host = String.to_charlist(host)
 
         case connect_local(host, port, payload, ip_ver, state.ssl) do
