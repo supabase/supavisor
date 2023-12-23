@@ -21,34 +21,36 @@ ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
 
 FROM ${BUILDER_IMAGE} as builder
 
-# install build dependencies
-RUN apt-get update -y && apt-get install -y build-essential git \
+# Install build dependencies
+RUN apt-get update -y && apt-get install -y build-essential git curl cmake libclang-dev\
   && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
-# prepare build dir
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Prepare build dir
 WORKDIR /app
 
-# install hex + rebar
+# Install hex + rebar
 RUN mix local.hex --force && \
   mix local.rebar --force
 
-# set build ENV
+# Set build ENV
 ENV MIX_ENV="prod"
 
-# install mix dependencies
+# Install mix dependencies
 COPY mix.exs mix.lock VERSION ./
 RUN mix deps.get --only $MIX_ENV
 RUN mkdir config
 
-# copy compile-time config files before we compile dependencies
-# to ensure any relevant config change will trigger the dependencies
-# to be re-compiled.
+# Copy compile-time config files
 COPY config/config.exs config/${MIX_ENV}.exs config/
 RUN mix deps.compile
 
 COPY priv priv
-
 COPY lib lib
+COPY native native
 
 # Compile the release
 RUN mix compile
@@ -59,11 +61,10 @@ COPY config/runtime.exs config/
 COPY rel rel
 RUN mix release supavisor
 
-# start a new build stage so that the final image will only contain
-# the compiled release and other runtime necessities
+# Start a new build stage for the final image
 FROM ${RUNNER_IMAGE}
 
-RUN apt-get update -y && apt-get install -y libstdc++6 openssl libncurses5 locales vim curl htop postgresql-contrib sudo tini \
+RUN apt-get update -y && apt-get install -y libstdc++6 openssl libncurses5 locales vim curl htop postgresql-contrib sudo tini cmake libclang-dev \
   && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
 # Set the locale
@@ -76,7 +77,7 @@ ENV LC_ALL en_US.UTF-8
 WORKDIR "/app"
 RUN chown nobody /app
 
-# set runner ENV
+# Set runner ENV
 ENV MIX_ENV="prod"
 
 # Only copy the final release from the build stage
@@ -90,3 +91,4 @@ CMD ["/app/bin/server"]
 # Appended by flyctl
 ENV ECTO_IPV6 true
 ENV ERL_AFLAGS "-proto_dist inet6_tcp"
+
