@@ -126,4 +126,50 @@ defmodule Supavisor.HandlerHelpers do
     :ok = sock_send(sock, msg)
     :ok = sock_close(sock)
   end
+
+  @doc """
+  Takes an allow list of CIDR ranges and filtres them for ranges which contain the IP address
+  of the socket to test.
+
+  If the IP address of the socket is not found an empty list is returned.
+
+  ## Examples
+
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0"], :erlang.list_to_port('#Port<0.43>'))
+    ["0.0.0.0/0"]
+
+    iex> Supavisor.HandlerHelpers.filter_cidrs("0.0.0.0/0", :erlang.list_to_port('#Port<0.43>'))
+    ["0.0.0.0/0"]
+
+  """
+
+  @spec filter_cidrs(binary() | list(), any()) :: list()
+  def filter_cidrs(allow_list, addr) when is_list(allow_list) do
+    unless addr == :error do
+      for range <- allow_list do
+        contains = InetCidr.parse(range) |> InetCidr.contains?(addr)
+        {range, contains}
+      end
+      |> Enum.map(fn {range, true} -> range end)
+    else
+      []
+    end
+  end
+
+  def filter_cidrs(allow_list, addr) when is_binary(allow_list) do
+    String.split(allow_list, ",", trim: true)
+    |> Enum.map(&String.trim_leading/1)
+    |> Enum.map(&String.trim_trailing/1)
+    |> filter_cidrs(addr)
+  end
+
+  def addr_from_port(port) do
+    case :inet.peername(port) do
+      {:ok, {addr, _internal_port}} ->
+        {:ok, addr}
+
+      {:error, _} = error ->
+        error
+    end
+  end
 end
