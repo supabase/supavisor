@@ -153,6 +153,7 @@ defmodule Supavisor.HandlerHelpers do
           list(),
           {byte(), byte(), byte(), byte()}
           | {char(), char(), char(), char(), char(), char(), char(), char()}
+          | any()
         ) :: list()
   def filter_cidrs(allow_list, addr) when is_list(allow_list) and is_tuple(addr) do
     for range <- allow_list,
