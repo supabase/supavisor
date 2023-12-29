@@ -73,9 +73,60 @@ defmodule Supavisor.Tenants.Tenant do
       :db_host,
       :db_port,
       :db_database,
-      :require_user
+      :require_user,
+      :allow_list
     ])
+    |> validate_allow_list()
     |> unique_constraint([:external_id])
     |> cast_assoc(:users, with: &User.changeset/2)
+  end
+
+  @doc """
+  Validates CIDRs passed in allow_list field parse correctly.
+
+  ## Examples
+
+    iex> changeset =
+    iex> Ecto.Changeset.change(%Supavisor.Tenants.Tenant{}, %{allow_list: ["0.0.0.0"]})
+    iex> |> Supavisor.Tenants.Tenant.validate_allow_list()
+    iex> changeset.errors
+    [allow_list: {"Invalid CIDR range: 0.0.0.0", []}]
+
+    iex> changeset =
+    iex> Ecto.Changeset.change(%Supavisor.Tenants.Tenant{}, %{allow_list: ["0.0.0.0/0", "::/0"]})
+    iex> |> Supavisor.Tenants.Tenant.validate_allow_list()
+    iex> changeset.errors
+    []
+
+    iex> changeset =
+    iex> Ecto.Changeset.change(%Supavisor.Tenants.Tenant{}, %{allow_list: ["0.0.0.0/0", "foo", "bar"]})
+    iex> |> Supavisor.Tenants.Tenant.validate_allow_list()
+    iex> changeset.errors
+    [{:allow_list, {"Invalid CIDR range: foo", []}}, {:allow_list, {"Invalid CIDR range: bar", []}}]
+
+    iex> changeset =
+    iex> Ecto.Changeset.change(%Supavisor.Tenants.Tenant{}, %{allow_list: ["0.0.0.0/0   "]})
+    iex> |> Supavisor.Tenants.Tenant.validate_allow_list()
+    iex> changeset.errors
+    []
+  """
+
+  @spec validate_allow_list(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  def validate_allow_list(changeset) do
+    validate_change(changeset, :allow_list, fn :allow_list, value when is_list(value) ->
+      for range <- value, !valid_range?(range) do
+        {:allow_list, "Invalid CIDR range: #{range}"}
+      end
+    end)
+  end
+
+  defp valid_range?(range) do
+    try do
+      InetCidr.parse(range)
+      true
+    rescue
+      _e ->
+        false
+    end
   end
 end
