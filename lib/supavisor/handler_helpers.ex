@@ -147,7 +147,7 @@ defmodule Supavisor.HandlerHelpers do
   def filter_cidrs(allow_list, addr) when is_list(allow_list) do
     unless addr == :error do
       for range <- allow_list do
-        contains = InetCidr.parse(range) |> InetCidr.contains?(addr)
+        contains = range |> InetCidr.parse() |> InetCidr.contains?(addr)
         {range, contains}
       end
       |> Enum.map(fn {range, true} -> range end)
