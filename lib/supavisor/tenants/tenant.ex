@@ -10,6 +10,28 @@ defmodule Supavisor.Tenants.Tenant do
   @primary_key {:id, :binary_id, autogenerate: true}
   @schema_prefix "_supavisor"
 
+  @derive {Jason.Encoder,
+           only: [
+             :db_host,
+             :db_port,
+             :db_database,
+             :external_id,
+             :default_parameter_status,
+             :ip_version,
+             :upstream_ssl,
+             :upstream_verify,
+             :enforce_ssl,
+             :require_user,
+             :auth_query,
+             :default_pool_size,
+             :sni_hostname,
+             :default_max_clients,
+             :client_idle_timeout,
+             :client_heartbeat_interval,
+             :default_pool_strategy,
+             :allow_list
+           ]}
+
   schema "tenants" do
     field(:db_host, :string)
     field(:db_port, :integer)
