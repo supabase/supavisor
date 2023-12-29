@@ -163,13 +163,27 @@ defmodule Supavisor.HandlerHelpers do
     |> filter_cidrs(addr)
   end
 
+  @spec addr_from_port(port()) ::
+          {:ok,
+           {byte(), byte(), byte(), byte()}
+           | {char(), char(), char(), char(), char(), char(), char(), char()}}
+          | :error
   def addr_from_port(port) do
     case :inet.peername(port) do
-      {:ok, {addr, _internal_port}} ->
+      {:ok, {:local, _}} ->
+        :error
+
+      {:ok, {:undefined, _}} ->
+        :error
+
+      {:ok, {:unspec, _}} ->
+        :error
+
+      {:ok, {addr, _port}} ->
         {:ok, addr}
 
-      {:error, _} = error ->
-        error
+      {:error, _} ->
+        :error
     end
   end
 end
