@@ -21,6 +21,6 @@ defmodule SupavisorWeb.ErrorHelpers do
   Translates an error message using gettext.
   """
   def translate_error({msg, opts}) do
-    "translate_error #{msg} #{inspect(opts)}"
+    "#{msg} #{inspect(opts)}"
   end
 end
