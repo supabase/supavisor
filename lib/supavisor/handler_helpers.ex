@@ -144,6 +144,9 @@ defmodule Supavisor.HandlerHelpers do
     iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0", "::/0"], {8193, 3512, 34211, 0, 0, 35374, 880, 29492})
     ["::/0"]
 
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0", "::/0"], :error)
+    []
+
   """
 
   @spec filter_cidrs(
@@ -151,11 +154,15 @@ defmodule Supavisor.HandlerHelpers do
           {byte(), byte(), byte(), byte()}
           | {char(), char(), char(), char(), char(), char(), char(), char()}
         ) :: list()
-  def filter_cidrs(allow_list, addr) when is_list(allow_list) do
+  def filter_cidrs(allow_list, addr) when is_list(allow_list) and is_tuple(addr) do
     for range <- allow_list,
         range |> InetCidr.parse() |> InetCidr.contains?(addr) do
       range
     end
+  end
+
+  def filter_cidrs(allow_list, _addr) when is_list(allow_list) do
+    []
   end
 
   @spec addr_from_port(port()) ::
