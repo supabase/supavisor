@@ -135,32 +135,23 @@ defmodule Supavisor.HandlerHelpers do
 
   ## Examples
 
-    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0"], :erlang.list_to_port('#Port<0.43>'))
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0", "::/0"], {127, 0, 0, 1})
     ["0.0.0.0/0"]
 
-    iex> Supavisor.HandlerHelpers.filter_cidrs("0.0.0.0/0", :erlang.list_to_port('#Port<0.43>'))
-    ["0.0.0.0/0"]
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["71.209.249.38/32"], {71, 209, 249, 39})
+    []
 
   """
 
-  @spec filter_cidrs(binary() | list(), any()) :: list()
+  @spec filter_cidrs(
+          list(),
+          {byte(), byte(), byte(), byte()}
+          | {char(), char(), char(), char(), char(), char(), char(), char()}
+        ) :: list()
   def filter_cidrs(allow_list, addr) when is_list(allow_list) do
-    unless addr == :error do
-      for range <- allow_list do
-        contains = range |> InetCidr.parse() |> InetCidr.contains?(addr)
-        {range, contains}
-      end
-      |> Enum.map(fn {range, true} -> range end)
-    else
-      []
+    for range <- allow_list, range |> InetCidr.parse() |> InetCidr.contains?(addr) do
+      range
     end
-  end
-
-  def filter_cidrs(allow_list, addr) when is_binary(allow_list) do
-    String.split(allow_list, ",", trim: true)
-    |> Enum.map(&String.trim_leading/1)
-    |> Enum.map(&String.trim_trailing/1)
-    |> filter_cidrs(addr)
   end
 
   @spec addr_from_port(port()) ::
