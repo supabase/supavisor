@@ -141,6 +141,9 @@ defmodule Supavisor.HandlerHelpers do
     iex> Supavisor.HandlerHelpers.filter_cidrs(["71.209.249.38/32"], {71, 209, 249, 39})
     []
 
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0", "::/0"], {8193, 3512, 34211, 0, 0, 35374, 880, 29492})
+    ["::/0"]
+
   """
 
   @spec filter_cidrs(
@@ -149,7 +152,8 @@ defmodule Supavisor.HandlerHelpers do
           | {char(), char(), char(), char(), char(), char(), char(), char()}
         ) :: list()
   def filter_cidrs(allow_list, addr) when is_list(allow_list) do
-    for range <- allow_list, range |> InetCidr.parse() |> InetCidr.contains?(addr) do
+    for range <- allow_list,
+        range |> InetCidr.parse() |> InetCidr.contains?(addr) do
       range
     end
   end
