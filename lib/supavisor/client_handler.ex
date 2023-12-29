@@ -184,8 +184,7 @@ defmodule Supavisor.ClientHandler do
             Telem.client_join(:fail, data.id)
             {:stop, :normal}
 
-          # Pull allow list range from tenant here
-          HH.filter_cidrs(["0.0.0.0/0", "::/0"], addr) == [] ->
+          HH.filter_cidrs(info.allow_list, addr) == [] ->
             Logger.error("Address not in allow_list: " <> inspect(addr))
 
             :ok = HH.send_error(sock, "XX000", "Connecting address not allowed")
