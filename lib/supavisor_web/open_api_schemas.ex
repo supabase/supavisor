@@ -150,7 +150,12 @@ defmodule SupavisorWeb.OpenApiSchemas do
             },
             users: %Schema{type: :array, items: User},
             inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
-            updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
+            updated_at: %Schema{type: :string, format: :date_time, readOnly: true},
+            allow_list: %Schema{
+              type: {:array, :string},
+              description: "List of CIDR addresses",
+              default: ["0.0.0.0/0", "::/0"]
+            }
           },
           required: [
             :db_host,
