@@ -128,8 +128,8 @@ defmodule Supavisor.HandlerHelpers do
   end
 
   @doc """
-  Takes an allow list of CIDR ranges and filtres them for ranges which contain the IP address
-  of the socket to test.
+  Takes an allow list of CIDR ranges and filtres them for ranges which contain the address
+  to test.
 
   If the IP address of the socket is not found an empty list is returned.
 
