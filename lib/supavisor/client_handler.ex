@@ -181,14 +181,15 @@ defmodule Supavisor.ClientHandler do
             Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
 
             :ok = HH.send_error(sock, "XX000", "SSL connection is required")
-            Telem.client_join(:fail, data.id)
+            Telem.client_join(:fail, id)
             {:stop, :normal}
 
           HH.filter_cidrs(info.tenant.allow_list, addr) == [] ->
             message = "Address not in tenant allow_list: " <> inspect(addr)
             Logger.error(message)
             :ok = HH.send_error(sock, "XX000", message)
-            Telem.client_join(:fail, data.id)
+
+            Telem.client_join(:fail, id)
             {:stop, :normal}
 
           true ->
@@ -204,7 +205,7 @@ defmodule Supavisor.ClientHandler do
                 Logger.error("Authentication auth_secrets error: #{inspect(reason)}")
 
                 :ok = HH.send_error(sock, "XX000", "Authentication error")
-                Telem.client_join(:fail, data.id)
+                Telem.client_join(:fail, id)
                 {:stop, :normal}
             end
         end
