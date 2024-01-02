@@ -46,7 +46,8 @@ defmodule SupavisorWeb.OpenApiSchemas do
         max_clients: 25_000,
         mode_type: "transaction",
         inserted_at: "2023-03-27T12:00:00Z",
-        updated_at: "2023-03-27T12:00:00Z"
+        updated_at: "2023-03-27T12:00:00Z",
+        allow_list: ["0.0.0.0/0", "::/0"]
       }
     })
 
@@ -93,6 +94,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         db_database: "postgres",
         inserted_at: "2023-03-27T12:00:00Z",
         updated_at: "2023-03-27T12:00:00Z",
+        allow_list: ["0.0.0.0/0", "::/0"],
         users: [
           %{
             id: "b1024a4c-4eb4-4c64-8f49-c8a46c2b2e16",
@@ -152,7 +154,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
             inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
             updated_at: %Schema{type: :string, format: :date_time, readOnly: true},
             allow_list: %Schema{
-              type: {:array, :string},
+              type: :array,
               description: "List of CIDR addresses",
               default: ["0.0.0.0/0", "::/0"]
             }
@@ -171,6 +173,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
             ip_version: "auto",
             enforce_ssl: false,
             require_user: true,
+            allow_list: ["0.0.0.0/0", "::/0"],
             users: [
               %{
                 db_user: "postgres",
