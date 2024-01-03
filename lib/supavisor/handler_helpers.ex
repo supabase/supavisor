@@ -161,11 +161,7 @@ defmodule Supavisor.HandlerHelpers do
     []
   end
 
-  @spec addr_from_sock(S.sock()) ::
-          {:ok,
-           {byte(), byte(), byte(), byte()}
-           | {char(), char(), char(), char(), char(), char(), char(), char()}}
-          | :error
+  @spec addr_from_sock(S.sock()) :: {:ok, :inet.ip_address()} | :error
   def addr_from_sock({:gen_tcp, port}) do
     case :inet.peername(port) do
       {:ok, {:local, _}} ->
