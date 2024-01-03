@@ -149,12 +149,7 @@ defmodule Supavisor.HandlerHelpers do
 
   """
 
-  @spec filter_cidrs(
-          list(),
-          {byte(), byte(), byte(), byte()}
-          | {char(), char(), char(), char(), char(), char(), char(), char()}
-          | any()
-        ) :: list()
+  @spec filter_cidrs(list(), :inet.ip_address() | any()) :: list()
   def filter_cidrs(allow_list, addr) when is_list(allow_list) and is_tuple(addr) do
     for range <- allow_list,
         range |> InetCidr.parse() |> InetCidr.contains?(addr) do
