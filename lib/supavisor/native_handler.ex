@@ -152,8 +152,7 @@ defmodule Supavisor.NativeHandler do
         ip_ver = H.detect_ip_version(host)
         host = String.to_charlist(host)
 
-        {_type, erl_port} = sock
-        {:ok, addr} = HH.addr_from_port(erl_port)
+        {:ok, addr} = HH.addr_from_sock(sock)
 
         unless HH.filter_cidrs(tenant.allow_list, addr) == [] do
           case connect_local(host, port, payload, ip_ver, state.ssl) do

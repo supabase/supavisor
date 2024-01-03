@@ -173,8 +173,7 @@ defmodule Supavisor.ClientHandler do
 
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
-        {_type, port} = sock
-        {:ok, addr} = HH.addr_from_port(port)
+        {:ok, addr} = HH.addr_from_sock(sock)
 
         cond do
           info.tenant.enforce_ssl and !data.ssl ->
