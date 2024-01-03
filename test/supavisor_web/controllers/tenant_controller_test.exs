@@ -30,6 +30,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     db_port: 43,
     external_id: "dev_tenant",
     require_user: true,
+    allow_list: ["71.209.249.38/32"],
     users: [@user_valid_attrs]
   }
   @invalid_attrs %{
@@ -81,7 +82,8 @@ defmodule SupavisorWeb.TenantControllerTest do
                "external_id" => ^external_id,
                "db_database" => "some updated db_database",
                "db_host" => "some updated db_host",
-               "db_port" => 43
+               "db_port" => 43,
+               "allow_list" => ["71.209.249.38/32"]
              } = json_response(conn, 200)["data"]
     end
 
