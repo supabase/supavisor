@@ -12,26 +12,7 @@ defmodule SupavisorWeb.TenantView do
   end
 
   def render("tenant.json", %{tenant: tenant}) do
-    %{
-      id: tenant.id,
-      external_id: tenant.external_id,
-      db_host: tenant.db_host,
-      db_port: tenant.db_port,
-      db_database: tenant.db_database,
-      ip_version: tenant.ip_version,
-      upstream_ssl: tenant.upstream_ssl,
-      upstream_verify: tenant.upstream_verify,
-      enforce_ssl: tenant.enforce_ssl,
-      require_user: tenant.require_user,
-      auth_query: tenant.auth_query,
-      sni_hostname: tenant.sni_hostname,
-      default_pool_size: tenant.default_pool_size,
-      default_max_clients: tenant.default_max_clients,
-      client_idle_timeout: tenant.client_idle_timeout,
-      client_heartbeat_interval: tenant.client_heartbeat_interval,
-      default_pool_strategy: tenant.default_pool_strategy,
-      users: render_many(tenant.users, UserView, "user.json")
-    }
+    %{tenant | users: render_many(tenant.users, UserView, "user.json")}
   end
 
   def render("error.json", %{error: reason}) do

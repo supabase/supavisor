@@ -137,7 +137,7 @@ defmodule Supavisor.NativeHandler do
     Logger.metadata(project: external_id, user: user, mode: "native")
 
     case Tenants.get_tenant_cache(external_id, sni_hostname) do
-      %{db_host: host, db_port: port, external_id: ext_id} ->
+      %{db_host: host, db_port: port, external_id: ext_id} = tenant ->
         id = Supavisor.id(ext_id, user, :native, :native)
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
@@ -152,14 +152,23 @@ defmodule Supavisor.NativeHandler do
         ip_ver = H.detect_ip_version(host)
         host = String.to_charlist(host)
 
-        case connect_local(host, port, payload, ip_ver, state.ssl) do
-          {:ok, db_sock} ->
-            auth = %{host: host, port: port, ip_ver: ip_ver}
-            {:noreply, %{state | db_sock: db_sock, db_auth: auth}}
+        {:ok, addr} = HH.addr_from_sock(sock)
 
-          {:error, reason} ->
-            Logger.error("Error connecting to tenant db: #{inspect(reason)}")
-            {:stop, :normal, state}
+        unless HH.filter_cidrs(tenant.allow_list, addr) == [] do
+          case connect_local(host, port, payload, ip_ver, state.ssl) do
+            {:ok, db_sock} ->
+              auth = %{host: host, port: port, ip_ver: ip_ver}
+              {:noreply, %{state | db_sock: db_sock, db_auth: auth}}
+
+            {:error, reason} ->
+              Logger.error("Error connecting to tenant db: #{inspect(reason)}")
+              {:stop, :normal, state}
+          end
+        else
+          message = "Address not in tenant allow_list: " <> inspect(addr)
+          Logger.error(message)
+          :ok = HH.send_error(sock, "XX000", message)
+          {:stop, :normal, state}
         end
 
       _ ->
