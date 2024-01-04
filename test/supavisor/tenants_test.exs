@@ -12,7 +12,8 @@ defmodule Supavisor.TenantsTest do
       db_database: nil,
       db_host: nil,
       external_id: nil,
-      default_parameter_status: nil
+      default_parameter_status: nil,
+      allow_list: ["foo", "bar"]
     }
 
     test "get_tenant!/1 returns the tenant with given id" do
@@ -36,7 +37,8 @@ defmodule Supavisor.TenantsTest do
         external_id: "dev_tenant",
         default_parameter_status: %{"server_version" => "15.0"},
         require_user: true,
-        users: [user_valid_attrs]
+        users: [user_valid_attrs],
+        allow_list: ["71.209.249.38/32"]
       }
 
       assert {:ok, %Tenant{users: [%User{} = user]} = tenant} = Tenants.create_tenant(valid_attrs)
@@ -44,6 +46,7 @@ defmodule Supavisor.TenantsTest do
       assert tenant.db_host == "some db_host"
       assert tenant.db_port == 42
       assert tenant.external_id == "dev_tenant"
+      assert tenant.allow_list == ["71.209.249.38/32"]
       assert user.db_password == "some db_password"
       assert user.db_user == "some db_user"
       assert user.pool_size == 3
