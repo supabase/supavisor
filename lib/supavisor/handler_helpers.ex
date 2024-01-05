@@ -126,4 +126,68 @@ defmodule Supavisor.HandlerHelpers do
     :ok = sock_send(sock, msg)
     :ok = sock_close(sock)
   end
+
+  @doc """
+  Takes an allow list of CIDR ranges and filtres them for ranges which contain the address
+  to test.
+
+  If the IP address of the socket is not found an empty list is returned.
+
+  ## Examples
+
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0", "::/0"], {127, 0, 0, 1})
+    ["0.0.0.0/0"]
+
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["71.209.249.38/32"], {71, 209, 249, 39})
+    []
+
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0", "::/0"], {8193, 3512, 34211, 0, 0, 35374, 880, 29492})
+    ["::/0"]
+
+    iex> Supavisor.HandlerHelpers.filter_cidrs(["0.0.0.0/0", "::/0"], :error)
+    []
+
+  """
+
+  @spec filter_cidrs(list(), :inet.ip_address() | any()) :: list()
+  def filter_cidrs(allow_list, addr) when is_list(allow_list) and is_tuple(addr) do
+    for range <- allow_list,
+        range |> InetCidr.parse() |> InetCidr.contains?(addr) do
+      range
+    end
+  end
+
+  def filter_cidrs(allow_list, _addr) when is_list(allow_list) do
+    []
+  end
+
+  @spec addr_from_sock(S.sock()) :: {:ok, :inet.ip_address()} | :error
+  def addr_from_sock({:gen_tcp, port}) do
+    case :inet.peername(port) do
+      {:ok, {:local, _}} ->
+        :error
+
+      {:ok, {:undefined, _}} ->
+        :error
+
+      {:ok, {:unspec, _}} ->
+        :error
+
+      {:ok, {addr, _port}} ->
+        {:ok, addr}
+
+      {:error, _} ->
+        :error
+    end
+  end
+
+  def addr_from_sock({:ssl, port}) do
+    case :ssl.peername(port) do
+      {:ok, {addr, _port}} ->
+        {:ok, addr}
+
+      {:error, _} ->
+        :error
+    end
+  end
 end

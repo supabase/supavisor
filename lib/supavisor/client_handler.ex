@@ -173,28 +173,40 @@ defmodule Supavisor.ClientHandler do
 
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
-        if info.tenant.enforce_ssl and !data.ssl do
-          Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
+        {:ok, addr} = HH.addr_from_sock(sock)
 
-          :ok = HH.send_error(sock, "XX000", "SSL connection is required")
-          Telem.client_join(:fail, data.id)
-          {:stop, :normal}
-        else
-          new_data = update_user_data(data, info, user, id)
+        cond do
+          info.tenant.enforce_ssl and !data.ssl ->
+            Logger.error("Tenant is not allowed to connect without SSL, user #{user}")
 
-          case auth_secrets(info, user) do
-            {:ok, auth_secrets} ->
-              Logger.debug("Authentication method: #{inspect(auth_secrets)}")
+            :ok = HH.send_error(sock, "XX000", "SSL connection is required")
+            Telem.client_join(:fail, id)
+            {:stop, :normal}
 
-              {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets}}}
+          HH.filter_cidrs(info.tenant.allow_list, addr) == [] ->
+            message = "Address not in tenant allow_list: " <> inspect(addr)
+            Logger.error(message)
+            :ok = HH.send_error(sock, "XX000", message)
 
-            {:error, reason} ->
-              Logger.error("Authentication auth_secrets error: #{inspect(reason)}")
+            Telem.client_join(:fail, id)
+            {:stop, :normal}
 
-              :ok = HH.send_error(sock, "XX000", "Authentication error")
-              Telem.client_join(:fail, data.id)
-              {:stop, :normal}
-          end
+          true ->
+            new_data = update_user_data(data, info, user, id)
+
+            case auth_secrets(info, user) do
+              {:ok, auth_secrets} ->
+                Logger.debug("Authentication method: #{inspect(auth_secrets)}")
+
+                {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets}}}
+
+              {:error, reason} ->
+                Logger.error("Authentication auth_secrets error: #{inspect(reason)}")
+
+                :ok = HH.send_error(sock, "XX000", "Authentication error")
+                Telem.client_join(:fail, id)
+                {:stop, :normal}
+            end
         end
 
       {:error, reason} ->
