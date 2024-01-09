@@ -128,9 +128,13 @@ defmodule SupavisorWeb.TenantController do
 
         {:ok, pg_version} ->
           params =
-            Map.put(params, "default_parameter_status", %{
-              "server_version" => pg_version
-            })
+            if pg_version do
+              Map.put(params, "default_parameter_status", %{
+                "server_version" => pg_version
+              })
+            else
+              params
+            end
 
           case Tenants.get_tenant_by_external_id(id) do
             nil ->

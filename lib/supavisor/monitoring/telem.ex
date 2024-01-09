@@ -48,12 +48,16 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
-  @spec client_join(:ok | :fail, S.id()) :: :ok
-  def client_join(status, {tenant, user, mode}) do
+  @spec client_join(:ok | :fail, S.id() | any()) :: :ok
+  def client_join(status, {{_, tenant}, user, mode}) do
     :telemetry.execute(
       [:supavisor, :client, :joins, status],
       %{},
       %{tenant: tenant, user: user, mode: mode}
     )
+  end
+
+  def client_join(_status, id) do
+    Logger.warning("client_join is called with a mismatched id: #{inspect(id)}")
   end
 end

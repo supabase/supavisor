@@ -8,7 +8,7 @@ defmodule Supavisor.DbHandlerTest do
       args = %{
         id: {"a", "b"},
         auth: %{},
-        tenant: "test_tenant",
+        tenant: {:single, "test_tenant"},
         user_alias: "test_user_alias",
         user: "user",
         mode: :transaction,
