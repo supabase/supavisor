@@ -1,6 +1,7 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: false
   alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Protocol.Server
   # import Mock
 
   describe "init/1" do
@@ -158,6 +159,63 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, ^data} = Db.handle_event(:info, content, :authentication, data)
 
       :meck.unload(:gen_tcp)
+    end
+  end
+
+  describe "handle_event/4 with write replica message" do
+    test "updates caller in data for session mode" do
+      proto = :tcp
+      bin = "response_data" <> Server.ready_for_query()
+      caller_pid = self()
+
+      data = %{
+        id: {{:single, "tenant"}, "user", :session},
+        caller: caller_pid,
+        sock: {:gen_tcp, nil},
+        stats: %{},
+        mode: :session
+      }
+
+      state = :some_state
+      event = {proto, :dummy_value, bin}
+
+      :meck.new(:prim_inet, [:unstick, :passthrough])
+
+      :meck.expect(:prim_inet, :getstat, fn _, _ ->
+        {:ok, %{}}
+      end)
+
+      {:keep_state, new_data, _} = Db.handle_event(:info, event, state, data)
+
+      assert new_data.caller == caller_pid
+      :meck.unload(:prim_inet)
+    end
+
+    test "does not update caller in data for non-session mode" do
+      proto = :tcp
+      bin = "response_data" <> Server.ready_for_query()
+      caller_pid = self()
+
+      data = %{
+        id: {{:single, "tenant"}, "user", :session},
+        caller: caller_pid,
+        sock: {:gen_tcp, nil},
+        stats: %{},
+        mode: :transaction
+      }
+
+      state = :some_state
+      event = {proto, :dummy_value, bin}
+      :meck.new(:prim_inet, [:unstick, :passthrough])
+
+      :meck.expect(:prim_inet, :getstat, fn _, _ ->
+        {:ok, %{}}
+      end)
+
+      {:keep_state, new_data, _} = Db.handle_event(:info, event, state, data)
+
+      assert new_data.caller == nil
+      :meck.unload(:prim_inet)
     end
   end
 end

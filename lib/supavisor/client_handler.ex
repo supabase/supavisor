@@ -615,8 +615,9 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) :: {pid, pid} | nil
-  defp db_checkout(_, _, %{mode: :session, db_pid: db_pid}) when is_pid(db_pid) do
-    db_pid
+  defp db_checkout(_, _, %{mode: :session, db_pid: {pool, db_pid}})
+       when is_pid(pool) and is_pid(db_pid) do
+    {pool, db_pid}
   end
 
   defp db_checkout(_, :on_connect, %{mode: :transaction}), do: nil

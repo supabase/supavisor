@@ -291,7 +291,7 @@ defmodule Supavisor.DbHandler do
 
     if resp != :continue do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats, caller: nil}}
+      {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
     else
       :keep_state_and_data
     end
@@ -314,7 +314,7 @@ defmodule Supavisor.DbHandler do
       :ready_for_query ->
         {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
-        {:keep_state, %{data | stats: stats, caller: nil},
+        {:keep_state, %{data | stats: stats, caller: handler_caller(data)},
          {:next_event, :internal, :check_anon_buffer}}
 
       :continue ->
@@ -478,4 +478,8 @@ defmodule Supavisor.DbHandler do
       15_000 -> :timeout_error
     end
   end
+
+  @spec handler_caller(map()) :: pid() | nil
+  defp handler_caller(%{mode: :session} = data), do: data.caller
+  defp handler_caller(_), do: nil
 end
