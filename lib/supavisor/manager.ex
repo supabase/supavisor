@@ -49,8 +49,8 @@ defmodule Supavisor.Manager do
       idle_timeout: args.client_idle_timeout
     }
 
-    {{type, tenant}, user, _mode} = args.id
-    Logger.metadata(project: tenant, user: user, type: type)
+    {{type, tenant}, user, _mode, db_database} = args.id
+    Logger.metadata(project: tenant, user: user, type: type, db_database: db_database)
     Registry.register(Supavisor.Registry.ManagerTables, args.id, tid)
 
     {:ok, state}

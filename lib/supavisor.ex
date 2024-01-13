@@ -11,16 +11,16 @@ defmodule Supavisor do
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
   @type mode :: :transaction | :session | :native
-  @type id :: {{:single | :cluster, String.t()}, String.t(), mode}
+  @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t()}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
 
-  @spec start(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
-  def start(id, secrets, db_name) do
+  @spec start(id, secrets) :: {:ok, pid} | {:error, any}
+  def start(id, secrets) do
     case get_global_sup(id) do
       nil ->
-        start_local_pool(id, secrets, db_name)
+        start_local_pool(id, secrets)
 
       pid ->
         {:ok, pid}
@@ -153,8 +153,8 @@ defmodule Supavisor do
     end
   end
 
-  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode) :: id
-  def id(tenant, user, port_mode, user_mode) do
+  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t()) :: id
+  def id(tenant, user, port_mode, user_mode, db_database) do
     # temporary hack
     mode =
       if port_mode == :transaction do
@@ -163,13 +163,13 @@ defmodule Supavisor do
         port_mode
       end
 
-    {tenant, user, mode}
+    {tenant, user, mode, db_database}
   end
 
   ## Internal functions
 
-  @spec start_local_pool(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({{type, tenant}, _user, _mode} = id, secrets, db_name) do
+  @spec start_local_pool(id, secrets) :: {:ok, pid} | {:error, any}
+  defp start_local_pool({{type, tenant}, _user, _mode, _db_database} = id, secrets) do
     Logger.debug("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
@@ -189,7 +189,7 @@ defmodule Supavisor do
               %T.Tenant{} = tenant ->
                 Map.put(tenant, :replica_type, :write)
             end
-            |> supervisor_args(id, secrets, db_name)
+            |> supervisor_args(id, secrets)
           end)
 
         DynamicSupervisor.start_child(
@@ -208,11 +208,15 @@ defmodule Supavisor do
     end
   end
 
-  defp supervisor_args(tenant_record, {tenant, user, mode} = id, {method, secrets}, db_name) do
+  defp supervisor_args(
+         tenant_record,
+         {tenant, user, mode, db_database} = id,
+         {method, secrets}
+       ) do
     %{
       db_host: db_host,
       db_port: db_port,
-      db_database: db_database,
+      db_database: default_db_database,
       default_parameter_status: ps,
       ip_version: ip_ver,
       default_pool_size: def_pool_size,
@@ -242,7 +246,7 @@ defmodule Supavisor do
       host: String.to_charlist(db_host),
       port: db_port,
       user: db_user,
-      database: if(db_name != nil, do: db_name, else: db_database),
+      database: if(db_database != nil, do: db_database, else: default_db_database),
       password: fn -> db_pass end,
       application_name: "Supavisor",
       ip_version: H.ip_version(ip_ver, db_host),

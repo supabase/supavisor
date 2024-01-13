@@ -7,7 +7,7 @@ defmodule Supavisor.SynHandler do
 
   def on_process_unregistered(
         :tenants,
-        {{_type, tenant}, user, _mode} = id,
+        {{_type, tenant}, user, _mode, _db_database} = id,
         _pid,
         _meta,
         reason
@@ -45,12 +45,12 @@ defmodule Supavisor.SynHandler do
             :not_alive
           end
 
-        Logger.warn(
+        Logger.warning(
           "Resolving #{inspect(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
         )
       end)
     else
-      Logger.warn("Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}")
+      Logger.warning("Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}")
     end
 
     keep
