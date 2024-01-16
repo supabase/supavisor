@@ -581,7 +581,7 @@ defmodule Supavisor.ClientHandler do
         Server.decode_pkt(bin)
 
       other ->
-        {:error, "Unexpected messagein receive_next/2 #{inspect(other)}"}
+        {:error, "Unexpected message in receive_next/2 #{inspect(other)}"}
     after
       15_000 -> {:error, timeout_message}
     end
