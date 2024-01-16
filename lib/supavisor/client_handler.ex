@@ -340,7 +340,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   # incoming query with a single pool
-  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data) when is_pid(pid) do
+  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
+      when is_binary(bin) and is_pid(pid) do
     ts = System.monotonic_time()
     db_pid = db_checkout(:both, :on_query, data)
     handle_prepared_statements(db_pid, bin, data)
@@ -383,24 +384,24 @@ defmodule Supavisor.ClientHandler do
 
     case Db.call(db_pid, self(), bin) do
       :ok ->
-        Logger.debug("DB call success")
+        Logger.debug("db_handler call success")
         :keep_state_and_data
 
       {:buffering, size} ->
-        Logger.debug("DB call buffering #{size}")
+        Logger.debug("db_handler call buffering #{size}")
 
         if size > 1_000_000 do
-          msg = "Db buffer size is too big: #{size}"
+          msg = "db_handler buffer size is too big: #{size}"
           Logger.error(msg)
           HH.sock_send(data.sock, Server.error_message("XX000", msg))
           {:stop, :normal}
         else
-          Logger.debug("DB call buffering")
+          Logger.debug("db_handler call buffering")
           :keep_state_and_data
         end
 
       {:error, reason} ->
-        msg = "DB call error: #{inspect(reason)}"
+        msg = "db_handler error: #{inspect(reason)}"
         Logger.error(msg)
         HH.sock_send(data.sock, Server.error_message("XX000", msg))
         {:stop, :normal}
@@ -576,7 +577,11 @@ defmodule Supavisor.ClientHandler do
 
   defp receive_next(socket, timeout_message) do
     receive do
-      {_proto, ^socket, bin} -> Server.decode_pkt(bin)
+      {_proto, ^socket, bin} ->
+        Server.decode_pkt(bin)
+
+      other ->
+        {:error, "Unexpected messagein receive_next/2 #{inspect(other)}"}
     after
       15_000 -> {:error, timeout_message}
     end
@@ -687,7 +692,7 @@ defmodule Supavisor.ClientHandler do
 
     fetch = fn _key ->
       case get_secrets(info, db_user) do
-        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: 30_000}
+        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: 600_000}
         {:error, _} = resp -> {:ignore, resp}
       end
     end

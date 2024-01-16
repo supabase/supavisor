@@ -21,7 +21,11 @@ defmodule Supavisor.DbHandler do
 
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, caller, msg) do
-    :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
+    if Process.alive?(pid) do
+      :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
+    else
+      {:error, :not_alive}
+    end
   end
 
   @impl true
