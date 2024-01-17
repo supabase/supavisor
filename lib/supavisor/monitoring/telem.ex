@@ -48,6 +48,15 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
+  @spec client_connection_time(integer(), S.id()) :: :ok
+  def client_connection_time(start, {{type, tenant}, user, mode}) do
+    :telemetry.execute(
+      [:supavisor, :client, :connection, :stop],
+      %{duration: System.monotonic_time() - start},
+      %{tenant: tenant, user: user, mode: mode, type: type}
+    )
+  end
+
   @spec client_join(:ok | :fail, S.id() | any()) :: :ok
   def client_join(status, {{_, tenant}, user, mode}) do
     :telemetry.execute(

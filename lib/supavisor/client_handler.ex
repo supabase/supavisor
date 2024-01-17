@@ -60,7 +60,8 @@ defmodule Supavisor.ClientHandler do
       idle_timeout: 0,
       db_name: nil,
       last_query: nil,
-      heartbeat_interval: 0
+      heartbeat_interval: 0,
+      connection_start: System.monotonic_time()
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -299,6 +300,7 @@ defmodule Supavisor.ClientHandler do
     msg = [ps, [header, payload], Server.ready_for_query()]
     :ok = HH.listen_cancel_query(pid, key)
     :ok = HH.sock_send(sock, msg)
+    Telem.client_connection_time(data.connection_start, data.id)
     {:next_state, :idle, data, handle_actions(data)}
   end
 
