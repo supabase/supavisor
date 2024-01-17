@@ -52,6 +52,17 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
             buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000]
           ]
         ),
+        distribution(
+          [:supavisor, :client, :connection, :duration],
+          event_name: [:supavisor, :client, :connection, :stop],
+          measurement: :duration,
+          description: "Duration from the TCP connection to sending greetings to clients.",
+          tags: @tags,
+          unit: {:native, :millisecond},
+          reporter_options: [
+            buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000]
+          ]
+        ),
         sum(
           [:supavisor, :client, :network, :recv],
           event_name: [:supavisor, :client, :network, :stat],

@@ -17,14 +17,12 @@ defmodule SingleConnection do
   end
 
   def handle_result(results, state) when is_list(results) do
-    IO.inspect({213, results})
     P.SimpleConnection.reply(state.from, results)
     {:noreply, state}
   end
 
   @impl true
   def handle_result(%Postgrex.Error{} = error, state) do
-    IO.inspect({213, error})
     P.SimpleConnection.reply(state.from, error)
     {:noreply, state}
   end
