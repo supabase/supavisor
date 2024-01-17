@@ -519,6 +519,11 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
+  def terminate(_reason, _state, %{db_pid: {_, pid}}) do
+    if Db.get_state(pid) == :busy, do: Db.stop(pid)
+    :ok
+  end
+
   def terminate(_reason, _state, _data), do: :ok
 
   ## Internal functions

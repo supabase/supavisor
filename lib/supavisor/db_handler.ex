@@ -14,19 +14,20 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.{Monitoring.Telem, Protocol.Server}
 
   @reconnect_timeout 2_500
+  @sock_closed [:tcp_closed, :ssl_closed]
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, caller, msg) do
-    if Process.alive?(pid) do
-      :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
-    else
-      {:error, :not_alive}
-    end
-  end
+  def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
+
+  @spec get_state(pid()) :: any()
+  def get_state(pid), do: :gen_statem.call(pid, :get_state, 5_000)
+
+  @spec stop(pid()) :: :ok
+  def stop(pid), do: :gen_statem.stop(pid, :client_termination, 5_000)
 
   @impl true
   def init(args) do
@@ -240,14 +241,15 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:internal, :check_buffer, :idle, %{buffer: buff} = data) do
+  def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
+      when is_pid(caller) do
     if buff != [] do
       Logger.debug("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
       buff = Enum.reverse(buff)
       :ok = sock_send(data.sock, buff)
     end
 
-    {:keep_state, %{data | buffer: []}}
+    {:next_state, :busy, %{data | buffer: []}}
   end
 
   # check if it needs to apply queries from the anon buffer
@@ -318,7 +320,7 @@ defmodule Supavisor.DbHandler do
       :ready_for_query ->
         {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
-        {:keep_state, %{data | stats: stats, caller: handler_caller(data)},
+        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data)},
          {:next_event, :internal, :check_anon_buffer}}
 
       :continue ->
@@ -335,6 +337,11 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
     reply = {:reply, from, sock_send(sock, bin)}
+    {:next_state, :busy, %{data | caller: caller}, reply}
+  end
+
+  def handle_event({:call, from}, {:db_call, caller, bin}, :busy, %{sock: sock} = data) do
+    reply = {:reply, from, sock_send(sock, bin)}
     {:keep_state, %{data | caller: caller}, reply}
   end
 
@@ -348,9 +355,17 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | caller: caller, buffer: new_buff}, reply}
   end
 
-  def handle_event(_, {closed, _}, state, data) when closed in [:tcp_closed, :ssl_closed] do
+  def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
+    {:stop, :db_termination, data}
+  end
+
+  def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     Logger.error("Connection closed when state was #{state}")
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
+  end
+
+  def handle_event({:call, from}, :get_state, state, _) do
+    {:keep_state_and_data, {:reply, from, state}}
   end
 
   # linked client_handler went down
@@ -359,7 +374,7 @@ defmodule Supavisor.DbHandler do
       Logger.error("Client handler #{inspect(pid)} went down with reason #{inspect(reason)}")
     end
 
-    if state == :idle do
+    if state == :busy do
       :ok = sock_send(data.sock, <<?X, 4::32>>)
       :ok = :gen_tcp.close(elem(data.sock, 1))
       {:stop, :normal, data}
