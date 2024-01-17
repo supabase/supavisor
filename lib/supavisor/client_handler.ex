@@ -384,24 +384,24 @@ defmodule Supavisor.ClientHandler do
 
     case Db.call(db_pid, self(), bin) do
       :ok ->
-        Logger.debug("db_handler call success")
+        Logger.debug("DbHandler call success")
         :keep_state_and_data
 
       {:buffering, size} ->
-        Logger.debug("db_handler call buffering #{size}")
+        Logger.debug("DbHandler call buffering #{size}")
 
         if size > 1_000_000 do
-          msg = "db_handler buffer size is too big: #{size}"
+          msg = "DbHandler buffer size is too big: #{size}"
           Logger.error(msg)
           HH.sock_send(data.sock, Server.error_message("XX000", msg))
           {:stop, :normal}
         else
-          Logger.debug("db_handler call buffering")
+          Logger.debug("DbHandler call buffering")
           :keep_state_and_data
         end
 
       {:error, reason} ->
-        msg = "db_handler error: #{inspect(reason)}"
+        msg = "DbHandler error: #{inspect(reason)}"
         Logger.error(msg)
         HH.sock_send(data.sock, Server.error_message("XX000", msg))
         {:stop, :normal}
@@ -429,7 +429,7 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  # linked db_handler went down
+  # linked DbHandler went down
   def handle_event(:info, {:EXIT, db_pid, reason}, _, _) do
     Logger.error("DB handler #{inspect(db_pid)} exited #{inspect(reason)}")
     {:stop, :normal}
@@ -828,7 +828,7 @@ defmodule Supavisor.ClientHandler do
       GenServer.call(data.pool, :get_all_workers)
       |> Enum.each(fn
         {_, ^pid, _, [Supavisor.DbHandler]} ->
-          Logger.debug("Linked db_handler #{inspect(pid)}")
+          Logger.debug("Linked DbHandler #{inspect(pid)}")
           nil
 
         {_, pool_proc, _, [Supavisor.DbHandler]} ->
