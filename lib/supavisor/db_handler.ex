@@ -13,6 +13,8 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.Helpers, as: H
   alias Supavisor.{Monitoring.Telem, Protocol.Server}
 
+  @type state :: :connect | :authentication | :idle | :busy
+
   @reconnect_timeout 2_500
   @sock_closed [:tcp_closed, :ssl_closed]
 
@@ -23,7 +25,7 @@ defmodule Supavisor.DbHandler do
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
 
-  @spec get_state(pid()) :: any()
+  @spec get_state(pid()) :: state
   def get_state(pid), do: :gen_statem.call(pid, :get_state, 5_000)
 
   @spec stop(pid()) :: :ok
