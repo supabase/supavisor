@@ -18,9 +18,9 @@ defmodule SupavisorWeb.MetricsController do
   end
 
   def tenant(conn, %{"external_id" => ext_id}) do
-    cluster_metrics = fetch_cluster_metrics(ext_id)
+    cluster_metrics = fetch_cluster_metrics(ext_id) <> "\n"
 
-    code = if cluster_metrics == "", do: 404, else: 200
+    code = if cluster_metrics == "\n", do: 404, else: 200
 
     conn
     |> put_resp_content_type("text/plain")
