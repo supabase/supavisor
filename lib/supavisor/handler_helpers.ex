@@ -87,22 +87,22 @@ defmodule Supavisor.HandlerHelpers do
   end
 
   def parse_user_info(%{"user" => user} = payload) do
-    db_database = payload["database"]
+    db_name = payload["database"]
 
     case :binary.split(user, ".cluster.") do
       [user] ->
         case :binary.matches(user, ".") do
           [] ->
-            {:single, {user, nil, db_database}}
+            {:single, {user, nil, db_name}}
 
           matches ->
             {pos, 1} = List.last(matches)
             <<name::size(pos)-binary, ?., external_id::binary>> = user
-            {:single, {name, external_id, db_database}}
+            {:single, {name, external_id, db_name}}
         end
 
       [user, tenant] ->
-        {:cluster, {user, tenant, db_database}}
+        {:cluster, {user, tenant, db_name}}
     end
   end
 

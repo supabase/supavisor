@@ -30,8 +30,8 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec remove_metrics(S.id()) :: non_neg_integer
-  def remove_metrics({{type, tenant}, user, mode, db_database}) do
-    meta = %{tenant: tenant, user: user, mode: mode, type: type, db_database: db_database}
+  def remove_metrics({{type, tenant}, user, mode, db_name}) do
+    meta = %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
 
     Supavisor.Monitoring.PromEx.Metrics
     |> :ets.select_delete([{{{:_, meta}, :_}, [], [true]}])

@@ -58,7 +58,7 @@ defmodule Supavisor.ClientHandler do
       mode: opts.mode,
       stats: %{},
       idle_timeout: 0,
-      db_database: nil,
+      db_name: nil,
       last_query: nil,
       heartbeat_interval: 0,
       connection_start: System.monotonic_time()
@@ -136,18 +136,18 @@ defmodule Supavisor.ClientHandler do
     case Server.decode_startup_packet(bin) do
       {:ok, hello} ->
         Logger.debug("Client startup message: #{inspect(hello)}")
-        {type, {user, tenant_or_alias, db_database}} = HH.parse_user_info(hello.payload)
+        {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
 
         Logger.metadata(
           project: tenant_or_alias,
           user: user,
           mode: data.mode,
           type: type,
-          db_database: db_database
+          db_name: db_name
         )
 
         {:keep_state, data,
-         {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_database}}}}}
+         {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
 
       {:error, error} ->
         Logger.error("Client startup message error: #{inspect(error)}")
@@ -158,7 +158,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_database}}},
+        {:hello, {type, {user, tenant_or_alias, db_name}}},
         :exchange,
         %{sock: sock} = data
       ) do
@@ -166,13 +166,15 @@ defmodule Supavisor.ClientHandler do
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
+        db_name = if(db_name != nil, do: db_name, else: info.tenant.db_database)
+
         id =
           Supavisor.id(
             {type, tenant_or_alias},
             user,
             data.mode,
             info.user.mode_type,
-            db_database || info.tenant.db_database
+            db_name
           )
 
         Registry.register(Supavisor.Registry.TenantClients, id, [])
@@ -196,7 +198,7 @@ defmodule Supavisor.ClientHandler do
             {:stop, :normal}
 
           true ->
-            new_data = update_user_data(data, info, user, id, db_database)
+            new_data = update_user_data(data, info, user, id, db_name)
 
             case auth_secrets(info, user) do
               {:ok, auth_secrets} ->
@@ -668,7 +670,7 @@ defmodule Supavisor.ClientHandler do
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
-  defp update_user_data(data, info, user, id, db_database) do
+  defp update_user_data(data, info, user, id, db_name) do
     proxy_type =
       if info.tenant.require_user do
         :password
@@ -685,7 +687,7 @@ defmodule Supavisor.ClientHandler do
         proxy_type: proxy_type,
         id: id,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
-        db_database: db_database
+        db_name: db_name
     }
   end
 

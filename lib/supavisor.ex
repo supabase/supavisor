@@ -154,7 +154,7 @@ defmodule Supavisor do
   end
 
   @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t()) :: id
-  def id(tenant, user, port_mode, user_mode, db_database) do
+  def id(tenant, user, port_mode, user_mode, db_name) do
     # temporary hack
     mode =
       if port_mode == :transaction do
@@ -163,13 +163,13 @@ defmodule Supavisor do
         port_mode
       end
 
-    {tenant, user, mode, db_database}
+    {tenant, user, mode, db_name}
   end
 
   ## Internal functions
 
   @spec start_local_pool(id, secrets) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({{type, tenant}, _user, _mode, _db_database} = id, secrets) do
+  defp start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets) do
     Logger.debug("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
@@ -210,13 +210,13 @@ defmodule Supavisor do
 
   defp supervisor_args(
          tenant_record,
-         {tenant, user, mode, db_database} = id,
+         {tenant, user, mode, db_name} = id,
          {method, secrets}
        ) do
     %{
       db_host: db_host,
       db_port: db_port,
-      db_database: default_db_database,
+      db_database: db_database,
       default_parameter_status: ps,
       ip_version: ip_ver,
       default_pool_size: def_pool_size,
@@ -246,7 +246,7 @@ defmodule Supavisor do
       host: String.to_charlist(db_host),
       port: db_port,
       user: db_user,
-      database: if(db_database != nil, do: db_database, else: default_db_database),
+      database: if(db_name != nil, do: db_name, else: db_database),
       password: fn -> db_pass end,
       application_name: "Supavisor",
       ip_version: H.ip_version(ip_ver, db_host),

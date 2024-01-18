@@ -7,7 +7,7 @@ defmodule Supavisor.SynHandler do
 
   def on_process_unregistered(
         :tenants,
-        {{_type, tenant}, user, _mode, _db_database} = id,
+        {{_type, tenant}, user, _mode, _db_name} = id,
         _pid,
         _meta,
         reason

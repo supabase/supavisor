@@ -40,11 +40,11 @@ defmodule Supavisor.ClientHandlerTest do
       assert external_id == "external_id"
     end
 
-    test "extracts db_database" do
+    test "extracts db_name" do
       payload = %{"user" => "user", "database" => "postgres_test"}
-      {:single, {name, nil, db_database}} = HH.parse_user_info(payload)
+      {:single, {name, nil, db_name}} = HH.parse_user_info(payload)
       assert name == "user"
-      assert db_database == "postgres_test"
+      assert db_name == "postgres_test"
     end
   end
 end
