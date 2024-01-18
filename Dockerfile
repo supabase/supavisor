@@ -52,6 +52,12 @@ COPY priv priv
 COPY lib lib
 COPY native native
 
+# As pgparser is less likely to change, we compile it first
+WORKDIR "/app/supavisor/native/pgparser"
+RUN cargo build --release
+WORKDIR "/app"
+
+
 # Compile the release
 RUN mix compile
 
