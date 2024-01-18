@@ -60,7 +60,8 @@ defmodule Supavisor.ClientHandler do
       idle_timeout: 0,
       db_name: nil,
       last_query: nil,
-      heartbeat_interval: 0
+      heartbeat_interval: 0,
+      connection_start: System.monotonic_time()
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -299,6 +300,7 @@ defmodule Supavisor.ClientHandler do
     msg = [ps, [header, payload], Server.ready_for_query()]
     :ok = HH.listen_cancel_query(pid, key)
     :ok = HH.sock_send(sock, msg)
+    Telem.client_connection_time(data.connection_start, data.id)
     {:next_state, :idle, data, handle_actions(data)}
   end
 
@@ -340,7 +342,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   # incoming query with a single pool
-  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data) when is_pid(pid) do
+  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
+      when is_binary(bin) and is_pid(pid) do
     ts = System.monotonic_time()
     db_pid = db_checkout(:both, :on_query, data)
     handle_prepared_statements(db_pid, bin, data)
@@ -383,24 +386,24 @@ defmodule Supavisor.ClientHandler do
 
     case Db.call(db_pid, self(), bin) do
       :ok ->
-        Logger.debug("DB call success")
+        Logger.debug("DbHandler call success")
         :keep_state_and_data
 
       {:buffering, size} ->
-        Logger.debug("DB call buffering #{size}")
+        Logger.debug("DbHandler call buffering #{size}")
 
         if size > 1_000_000 do
-          msg = "Db buffer size is too big: #{size}"
+          msg = "DbHandler buffer size is too big: #{size}"
           Logger.error(msg)
           HH.sock_send(data.sock, Server.error_message("XX000", msg))
           {:stop, :normal}
         else
-          Logger.debug("DB call buffering")
+          Logger.debug("DbHandler call buffering")
           :keep_state_and_data
         end
 
       {:error, reason} ->
-        msg = "DB call error: #{inspect(reason)}"
+        msg = "DbHandler error: #{inspect(reason)}"
         Logger.error(msg)
         HH.sock_send(data.sock, Server.error_message("XX000", msg))
         {:stop, :normal}
@@ -428,7 +431,7 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  # linked db_handler went down
+  # linked DbHandler went down
   def handle_event(:info, {:EXIT, db_pid, reason}, _, _) do
     Logger.error("DB handler #{inspect(db_pid)} exited #{inspect(reason)}")
     {:stop, :normal}
@@ -518,6 +521,11 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
+  def terminate(_reason, _state, %{db_pid: {_, pid}}) do
+    if Db.get_state(pid) == :busy, do: Db.stop(pid)
+    :ok
+  end
+
   def terminate(_reason, _state, _data), do: :ok
 
   ## Internal functions
@@ -576,7 +584,11 @@ defmodule Supavisor.ClientHandler do
 
   defp receive_next(socket, timeout_message) do
     receive do
-      {_proto, ^socket, bin} -> Server.decode_pkt(bin)
+      {_proto, ^socket, bin} ->
+        Server.decode_pkt(bin)
+
+      other ->
+        {:error, "Unexpected message in receive_next/2 #{inspect(other)}"}
     after
       15_000 -> {:error, timeout_message}
     end
@@ -687,7 +699,7 @@ defmodule Supavisor.ClientHandler do
 
     fetch = fn _key ->
       case get_secrets(info, db_user) do
-        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: 30_000}
+        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: 600_000}
         {:error, _} = resp -> {:ignore, resp}
       end
     end
@@ -818,7 +830,7 @@ defmodule Supavisor.ClientHandler do
       GenServer.call(data.pool, :get_all_workers)
       |> Enum.each(fn
         {_, ^pid, _, [Supavisor.DbHandler]} ->
-          Logger.debug("Linked db_handler #{inspect(pid)}")
+          Logger.debug("Linked DbHandler #{inspect(pid)}")
           nil
 
         {_, pool_proc, _, [Supavisor.DbHandler]} ->

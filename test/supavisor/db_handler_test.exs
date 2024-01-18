@@ -101,7 +101,7 @@ defmodule Supavisor.DbHandlerTest do
     event = {:call, from}
     payload = {:db_call, self(), "test_data"}
 
-    {:keep_state, new_data, reply} = Db.handle_event(event, payload, :idle, data)
+    {:next_state, :busy, new_data, reply} = Db.handle_event(event, payload, :idle, data)
 
     # check if the message arrived in gen_tcp.send
     assert {:reply, ^from, {:error, :enotconn}} = reply
@@ -185,7 +185,7 @@ defmodule Supavisor.DbHandlerTest do
         {:ok, %{}}
       end)
 
-      {:keep_state, new_data, _} = Db.handle_event(:info, event, state, data)
+      {:next_state, :idle, new_data, _} = Db.handle_event(:info, event, state, data)
 
       assert new_data.caller == caller_pid
       :meck.unload(:prim_inet)
@@ -212,7 +212,7 @@ defmodule Supavisor.DbHandlerTest do
         {:ok, %{}}
       end)
 
-      {:keep_state, new_data, _} = Db.handle_event(:info, event, state, data)
+      {:next_state, :idle, new_data, _} = Db.handle_event(:info, event, state, data)
 
       assert new_data.caller == nil
       :meck.unload(:prim_inet)
