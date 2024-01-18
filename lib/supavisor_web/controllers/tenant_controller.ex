@@ -120,35 +120,35 @@ defmodule SupavisorWeb.TenantController do
         error: "Invalid 'upstream_verify' value, 'peer' is not allowed without certificate"
       )
     else
-      case H.check_creds_get_ver(params) do
-        {:error, reason} ->
-          conn
-          |> put_status(400)
-          |> render("error.json", error: reason)
+      case Tenants.get_tenant_by_external_id(id) do
+        nil ->
+          case H.check_creds_get_ver(params) do
+            {:error, reason} ->
+              conn
+              |> put_status(400)
+              |> render("error.json", error: reason)
 
-        {:ok, pg_version} ->
-          params =
-            if pg_version do
-              Map.put(params, "default_parameter_status", %{
-                "server_version" => pg_version
-              })
-            else
-              params
-            end
+            {:ok, pg_version} ->
+              params =
+                if pg_version do
+                  Map.put(params, "default_parameter_status", %{
+                    "server_version" => pg_version
+                  })
+                else
+                  params
+                end
 
-          case Tenants.get_tenant_by_external_id(id) do
-            nil ->
               create(conn, %{"tenant" => Map.put(params, "external_id", id)})
+          end
 
-            tenant ->
-              tenant = Repo.preload(tenant, :users)
+        tenant ->
+          tenant = Repo.preload(tenant, :users)
 
-              with {:ok, %TenantModel{} = tenant} <-
-                     Tenants.update_tenant(tenant, params) do
-                result = Supavisor.terminate_global(tenant.external_id)
-                Logger.warning("Stop #{tenant.external_id}: #{inspect(result)}")
-                render(conn, "show.json", tenant: tenant)
-              end
+          with {:ok, %TenantModel{} = tenant} <-
+                 Tenants.update_tenant(tenant, params) do
+            result = Supavisor.terminate_global(tenant.external_id)
+            Logger.warning("Stop #{tenant.external_id}: #{inspect(result)}")
+            render(conn, "show.json", tenant: tenant)
           end
       end
     end
