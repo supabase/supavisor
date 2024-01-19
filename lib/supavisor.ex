@@ -16,6 +16,25 @@ defmodule Supavisor do
 
   @registry Supavisor.Registry.Tenants
 
+  @spec start_dist(id, secrets, String.t() | nil) :: {:ok, pid()} | {:error, any()}
+  def start_dist(id, secrets, db_name) do
+    case get_global_sup(id) do
+      nil ->
+        node = determine_node(id)
+
+        if node == node() do
+          Logger.debug("Starting local pool for #{inspect(id)}")
+          start_local_pool(id, secrets, db_name)
+        else
+          Logger.debug("Starting remote pool for #{inspect(id)}")
+          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets, db_name], 15_000)
+        end
+
+      pid ->
+        {:ok, pid}
+    end
+  end
+
   @spec start(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
   def start(id, secrets, db_name) do
     case get_global_sup(id) do
@@ -164,6 +183,17 @@ defmodule Supavisor do
       end
 
     {tenant, user, mode}
+  end
+
+  @spec tenant(id) :: String.t()
+  def tenant({{_, tenant}, _, _}), do: tenant
+
+  @spec determine_node(id) :: Node.t()
+  def determine_node(id) do
+    tenant_id = tenant(id)
+    nodes = [node() | Node.list()] |> Enum.sort()
+    index = :erlang.phash2(tenant_id, length(nodes))
+    Enum.at(nodes, index)
   end
 
   ## Internal functions
