@@ -17,6 +17,7 @@ defmodule Supavisor.DbHandler do
 
   @reconnect_timeout 2_500
   @sock_closed [:tcp_closed, :ssl_closed]
+  @proto [:tcp, :ssl]
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -111,7 +112,7 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:next_event, :internal, :connect}}
   end
 
-  def handle_event(:info, {_proto, _, bin}, :authentication, data) do
+  def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
     dec_pkt = Server.decode(bin)
     Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
@@ -121,7 +122,7 @@ defmodule Supavisor.DbHandler do
           {Map.put(ps, k, v), db_state}
 
         %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
-          {ps, db_state}
+          {:ready_for_query, ps, db_state}
 
         %{tag: :backend_key_data, payload: payload}, acc ->
           key = self()
@@ -234,12 +235,16 @@ defmodule Supavisor.DbHandler do
         Logger.error("Error auth response #{inspect(error)}")
         {:keep_state, data}
 
-      {ps, db_state} ->
+      {:ready_for_query, ps, db_state} ->
         Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")
         Supavisor.set_parameter_status(data.id, ps)
 
         {:next_state, :idle, %{data | parameter_status: ps},
          {:next_event, :internal, :check_buffer}}
+
+      other ->
+        Logger.error("Undefined auth response #{inspect(other)}")
+        {:stop, :auth_error, data}
     end
   end
 
@@ -266,13 +271,13 @@ defmodule Supavisor.DbHandler do
   end
 
   # the process received message from db without linked caller
-  def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in [:tcp, :ssl] do
+  def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in @proto do
     Logger.warning("Got db response #{inspect(bin)} when caller was nil")
     :keep_state_and_data
   end
 
   def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
-      when proto in [:tcp, :ssl] do
+      when proto in @proto do
     Logger.debug("Got read replica message #{inspect(bin)}")
     pkts = Server.decode(bin)
 
@@ -306,7 +311,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
-      when is_pid(caller) and proto in [:tcp, :ssl] do
+      when is_pid(caller) and proto in @proto do
     Logger.debug("Got write replica message #{inspect(bin)}")
     # check if the response ends with "ready for query"
     ready =
