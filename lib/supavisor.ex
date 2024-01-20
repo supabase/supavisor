@@ -16,18 +16,19 @@ defmodule Supavisor do
 
   @registry Supavisor.Registry.Tenants
 
-  @spec start_dist(id, secrets, String.t() | nil) :: {:ok, pid()} | {:error, any()}
-  def start_dist(id, secrets, db_name) do
+  @spec start_dist(id, secrets, String.t() | nil, Node.t() | boolean()) ::
+          {:ok, pid()} | {:error, any()}
+  def start_dist(id, secrets, db_name, force_node \\ false) do
     case get_global_sup(id) do
       nil ->
-        node = determine_node(id)
+        node = if force_node, do: force_node, else: determine_node(id)
 
         if node == node() do
           Logger.debug("Starting local pool for #{inspect(id)}")
           start_local_pool(id, secrets, db_name)
         else
           Logger.debug("Starting remote pool for #{inspect(id)}")
-          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets, db_name], 15_000)
+          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets, db_name])
         end
 
       pid ->
@@ -196,10 +197,8 @@ defmodule Supavisor do
     Enum.at(nodes, index)
   end
 
-  ## Internal functions
-
   @spec start_local_pool(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({{type, tenant}, _user, _mode} = id, secrets, db_name) do
+  def start_local_pool({{type, tenant}, _user, _mode} = id, secrets, db_name) do
     Logger.debug("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
@@ -237,6 +236,8 @@ defmodule Supavisor do
         {:error, :tenant_not_found}
     end
   end
+
+  ## Internal functions
 
   defp supervisor_args(tenant_record, {tenant, user, mode} = id, {method, secrets}, db_name) do
     %{
