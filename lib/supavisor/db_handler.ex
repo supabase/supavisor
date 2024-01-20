@@ -58,6 +58,7 @@ defmodule Supavisor.DbHandler do
       replica_type: args.replica_type
     }
 
+    Telem.db_handler_started(args.id)
     {:ok, :connect, data, {:next_event, :internal, :connect}}
   end
 
