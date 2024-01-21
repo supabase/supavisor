@@ -16,7 +16,7 @@ defmodule Supavisor.SignalHandler do
 
   @impl true
   def handle_event(signal, state) do
-    Logger.warn("#{__MODULE__}: #{inspect(signal)} received")
+    Logger.warning("#{__MODULE__}: #{inspect(signal)} received")
 
     :erl_signal_handler.handle_event(signal, state)
   end

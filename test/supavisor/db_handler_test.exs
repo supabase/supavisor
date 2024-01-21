@@ -169,7 +169,7 @@ defmodule Supavisor.DbHandlerTest do
       caller_pid = self()
 
       data = %{
-        id: {{:single, "tenant"}, "user", :session},
+        id: {{:single, "tenant"}, "user", :session, "postgres"},
         caller: caller_pid,
         sock: {:gen_tcp, nil},
         stats: %{},
@@ -197,7 +197,7 @@ defmodule Supavisor.DbHandlerTest do
       caller_pid = self()
 
       data = %{
-        id: {{:single, "tenant"}, "user", :session},
+        id: {{:single, "tenant"}, "user", :session, "postgres"},
         caller: caller_pid,
         sock: {:gen_tcp, nil},
         stats: %{},

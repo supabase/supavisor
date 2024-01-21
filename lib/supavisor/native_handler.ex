@@ -131,14 +131,21 @@ defmodule Supavisor.NativeHandler do
       ) do
     {:ok, hello} = Server.decode_startup_packet(bin)
     Logger.debug("Startup packet: #{inspect(hello, pretty: true)}")
-    {_, {user, external_id}} = HH.parse_user_info(hello.payload)
+    {_, {user, external_id, db_name}} = HH.parse_user_info(hello.payload)
     sni_hostname = HH.try_get_sni(sock)
 
-    Logger.metadata(project: external_id, user: user, mode: "native")
-
     case Tenants.get_tenant_cache(external_id, sni_hostname) do
-      %{db_host: host, db_port: port, external_id: ext_id} = tenant ->
-        id = Supavisor.id(ext_id, user, :native, :native)
+      %{db_host: host, db_port: port, external_id: ext_id, db_database: db_database} = tenant ->
+        db_name = if(db_name != nil, do: db_name, else: db_database)
+
+        Logger.metadata(
+          project: external_id,
+          user: user,
+          mode: "native",
+          db_name: db_name
+        )
+
+        id = Supavisor.id(ext_id, user, :native, :native, db_name)
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         payload =
