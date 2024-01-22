@@ -173,7 +173,7 @@ defmodule Supavisor.Integration.ProxyTest do
              {:ok, {{'HTTP/1.1', 204, 'OK'}, [], []}}
   end
 
-  test "checks that client_hanlder is idle and db_pid is nil for transaction mode" do
+  test "checks that client_handler is idle and db_pid is nil for transaction mode" do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
@@ -184,7 +184,9 @@ defmodule Supavisor.Integration.ProxyTest do
     :timer.sleep(500)
 
     [{_, client_pid, _}] =
-      Supavisor.get_local_manager({{:single, "proxy_tenant"}, "transaction", :transaction})
+      Supavisor.get_local_manager(
+        {{:single, "proxy_tenant"}, "transaction", :transaction, "postgres"}
+      )
       |> :sys.get_state()
       |> then(& &1[:tid])
       |> :ets.tab2list()

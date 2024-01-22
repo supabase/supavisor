@@ -37,11 +37,13 @@ defmodule Supavisor.Manager do
 
     [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
 
+    {{type, tenant}, user, _mode, db_name} = args.id
+
     state = %{
       id: args.id,
       check_ref: check_subscribers(),
       tid: tid,
-      tenant: args.tenant,
+      tenant: tenant,
       parameter_status: [],
       wait_ps: [],
       default_parameter_status: args.default_parameter_status,
@@ -49,8 +51,7 @@ defmodule Supavisor.Manager do
       idle_timeout: args.client_idle_timeout
     }
 
-    {{type, tenant}, user, _mode} = args.id
-    Logger.metadata(project: tenant, user: user, type: type)
+    Logger.metadata(project: tenant, user: user, type: type, db_name: db_name)
     Registry.register(Supavisor.Registry.ManagerTables, args.id, tid)
 
     {:ok, state}
