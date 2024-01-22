@@ -58,11 +58,11 @@ defmodule Supavisor.Monitoring.Telem do
   end
 
   @spec client_join(:ok | :fail, S.id() | any()) :: :ok
-  def client_join(status, {{type, tenant}, user, mode}) do
+  def client_join(status, {{type, tenant}, user, mode, db_name}) do
     :telemetry.execute(
       [:supavisor, :client, :joins, status],
       %{},
-      %{tenant: tenant, user: user, mode: mode, type: type}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
     )
   end
 
@@ -70,16 +70,22 @@ defmodule Supavisor.Monitoring.Telem do
     Logger.warning("client_join is called with a mismatched id: #{inspect(id)}")
   end
 
-  @spec db_handler_started(S.id()) :: :ok
-  def db_handler_started({{type, tenant}, user, mode}) do
+  @spec handler_action(
+          :client_handler | :db_handler,
+          :started | :stopped | :db_connection,
+          S.id()
+        ) :: :ok
+  def handler_action(handler, action, {:started, {type, tenant}, user, mode, db_name}) do
     :telemetry.execute(
-      [:supavisor, :db_handler, :started, :all],
+      [:supavisor, handler, action, :all],
       %{},
-      %{tenant: tenant, user: user, mode: mode, type: type}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
     )
   end
 
-  def db_handler_started(id) do
-    Logger.warning("db_handler_started is called with a mismatched id: #{inspect(id)}")
+  def handler_action(handler, action, id) do
+    Logger.warning(
+      "handler_action is called with a mismatched #{inspect(handler)} #{inspect(action)} #{inspect(id)}"
+    )
   end
 end

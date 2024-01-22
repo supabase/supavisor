@@ -96,9 +96,33 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags
         ),
         counter(
+          [:supavisor, :client_handler, :started, :count],
+          event_name: [:supavisor, :client_handler, :started, :all],
+          description: "The total number of created client_handler.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :client_handler, :stopped, :count],
+          event_name: [:supavisor, :client_handler, :stopped, :all],
+          description: "The total number of stopped client_handler.",
+          tags: @tags
+        ),
+        counter(
           [:supavisor, :db_handler, :started, :count],
           event_name: [:supavisor, :db_handler, :started, :all],
           description: "The total number of created db_handler.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :db_handler, :stopped, :count],
+          event_name: [:supavisor, :db_handler, :stopped, :all],
+          description: "The total number of stopped db_handler.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :db_handler, :db_connection, :count],
+          event_name: [:supavisor, :db_handler, :db_connection, :all],
+          description: "The total number of database connections by db_handler.",
           tags: @tags
         )
       ]
