@@ -6,7 +6,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   alias Supavisor, as: S
 
-  @tags [:tenant, :user, :mode, :type]
+  @tags [:tenant, :user, :mode, :type, :db_name]
 
   @impl true
   def polling_metrics(opts) do
@@ -94,6 +94,36 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :joins, :fail],
           description: "The total number of failed joins.",
           tags: @tags
+        ),
+        counter(
+          [:supavisor, :client_handler, :started, :count],
+          event_name: [:supavisor, :client_handler, :started, :all],
+          description: "The total number of created client_handler.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :client_handler, :stopped, :count],
+          event_name: [:supavisor, :client_handler, :stopped, :all],
+          description: "The total number of stopped client_handler.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :db_handler, :started, :count],
+          event_name: [:supavisor, :db_handler, :started, :all],
+          description: "The total number of created db_handler.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :db_handler, :stopped, :count],
+          event_name: [:supavisor, :db_handler, :stopped, :all],
+          description: "The total number of stopped db_handler.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :db_handler, :db_connection, :count],
+          event_name: [:supavisor, :db_handler, :db_connection, :all],
+          description: "The total number of database connections by db_handler.",
+          tags: @tags
         )
       ]
     )
@@ -145,11 +175,11 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   @spec emit_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
-  def emit_telemetry_for_tenant({{{type, tenant}, user, mode}, count}) do
+  def emit_telemetry_for_tenant({{{type, tenant}, user, mode, db_name}, count}) do
     :telemetry.execute(
       [:supavisor, :connections],
       %{active: count},
-      %{tenant: tenant, user: user, mode: mode, type: type}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
     )
   end
 

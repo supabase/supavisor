@@ -317,4 +317,17 @@ defmodule Supavisor.Helpers do
     |> :erlang.md5()
     |> Base.encode16(case: :lower)
   end
+
+  @spec rpc(Node.t(), module(), atom(), [any()], non_neg_integer()) :: {:error, any()} | any()
+  def rpc(node, module, function, args, timeout \\ 15_000) do
+    try do
+      :erpc.call(node, module, function, args, timeout)
+      |> case do
+        {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
+        result -> result
+      end
+    catch
+      kind, reason -> {:error, {:badrpc, {kind, reason}}}
+    end
+  end
 end

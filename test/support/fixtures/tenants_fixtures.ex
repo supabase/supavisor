@@ -55,7 +55,7 @@ defmodule Supavisor.TenantsFixtures do
           %{
             type: "write",
             cluster_alias: "some_alias",
-            tenant_external_id: "proxy_tenant",
+            tenant_external_id: "proxy_tenant1",
             active: true
           }
         ]

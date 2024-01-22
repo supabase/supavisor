@@ -26,7 +26,7 @@ defmodule Supavisor.TenantsMetrics do
     active_pools = PromEx.do_cache_tenants_metrics() |> MapSet.new()
 
     MapSet.difference(state.pools, active_pools)
-    |> Enum.each(fn {{_type, tenant}, _, _} = pool ->
+    |> Enum.each(fn {{_type, tenant}, _, _, _} = pool ->
       Logger.debug("Removing cached metrics for #{inspect(pool)}")
       Cachex.del(Supavisor.Cache, {:metrics, tenant})
     end)

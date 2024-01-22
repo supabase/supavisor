@@ -11,16 +11,36 @@ defmodule Supavisor do
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
   @type mode :: :transaction | :session | :native
-  @type id :: {{:single | :cluster, String.t()}, String.t(), mode}
+  @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t()}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
 
-  @spec start(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
-  def start(id, secrets, db_name) do
+  @spec start_dist(id, secrets, Node.t() | boolean()) ::
+          {:ok, pid()} | {:error, any()}
+  def start_dist(id, secrets, force_node \\ false) do
     case get_global_sup(id) do
       nil ->
-        start_local_pool(id, secrets, db_name)
+        node = if force_node, do: force_node, else: determine_node(id)
+
+        if node == node() do
+          Logger.debug("Starting local pool for #{inspect(id)}")
+          start_local_pool(id, secrets)
+        else
+          Logger.debug("Starting remote pool for #{inspect(id)}")
+          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets])
+        end
+
+      pid ->
+        {:ok, pid}
+    end
+  end
+
+  @spec start(id, secrets) :: {:ok, pid} | {:error, any}
+  def start(id, secrets) do
+    case get_global_sup(id) do
+      nil ->
+        start_local_pool(id, secrets)
 
       pid ->
         {:ok, pid}
@@ -153,8 +173,8 @@ defmodule Supavisor do
     end
   end
 
-  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode) :: id
-  def id(tenant, user, port_mode, user_mode) do
+  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t()) :: id
+  def id(tenant, user, port_mode, user_mode, db_name) do
     # temporary hack
     mode =
       if port_mode == :transaction do
@@ -163,13 +183,22 @@ defmodule Supavisor do
         port_mode
       end
 
-    {tenant, user, mode}
+    {tenant, user, mode, db_name}
   end
 
-  ## Internal functions
+  @spec tenant(id) :: String.t()
+  def tenant({{_, tenant}, _, _, _}), do: tenant
 
-  @spec start_local_pool(id, secrets, String.t() | nil) :: {:ok, pid} | {:error, any}
-  defp start_local_pool({{type, tenant}, _user, _mode} = id, secrets, db_name) do
+  @spec determine_node(id) :: Node.t()
+  def determine_node(id) do
+    tenant_id = tenant(id)
+    nodes = [node() | Node.list()] |> Enum.sort()
+    index = :erlang.phash2(tenant_id, length(nodes))
+    Enum.at(nodes, index)
+  end
+
+  @spec start_local_pool(id, secrets) :: {:ok, pid} | {:error, any}
+  def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets) do
     Logger.debug("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
@@ -189,7 +218,7 @@ defmodule Supavisor do
               %T.Tenant{} = tenant ->
                 Map.put(tenant, :replica_type, :write)
             end
-            |> supervisor_args(id, secrets, db_name)
+            |> supervisor_args(id, secrets)
           end)
 
         DynamicSupervisor.start_child(
@@ -208,7 +237,13 @@ defmodule Supavisor do
     end
   end
 
-  defp supervisor_args(tenant_record, {tenant, user, mode} = id, {method, secrets}, db_name) do
+  ## Internal functions
+
+  defp supervisor_args(
+         tenant_record,
+         {tenant, user, mode, db_name} = id,
+         {method, secrets}
+       ) do
     %{
       db_host: db_host,
       db_port: db_port,
