@@ -75,7 +75,7 @@ defmodule Supavisor.Monitoring.Telem do
           :started | :stopped | :db_connection,
           S.id()
         ) :: :ok
-  def handler_action(handler, action, {:started, {type, tenant}, user, mode, db_name}) do
+  def handler_action(handler, action, {{type, tenant}, user, mode, db_name}) do
     :telemetry.execute(
       [:supavisor, handler, action, :all],
       %{},
