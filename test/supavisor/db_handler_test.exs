@@ -52,7 +52,12 @@ defmodule Supavisor.DbHandlerTest do
         secrets: secrets
       }
 
-      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: {:gen_tcp, nil}})
+      state =
+        Db.handle_event(:internal, nil, :connect, %{
+          auth: auth,
+          sock: {:gen_tcp, nil},
+          id: {"a", "b"}
+        })
 
       assert state ==
                {:next_state, :authentication,
@@ -67,7 +72,8 @@ defmodule Supavisor.DbHandlerTest do
                     ip_version: :inet,
                     secrets: secrets
                   },
-                  sock: {:gen_tcp, :sock}
+                  sock: {:gen_tcp, :sock},
+                  id: {"a", "b"}
                 }}
 
       :meck.unload(:gen_tcp)
@@ -79,6 +85,7 @@ defmodule Supavisor.DbHandlerTest do
       :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:error, "some error"} end)
 
       auth = %{
+        id: {"a", "b"},
         host: "host",
         port: 0,
         user: "some user",
@@ -87,7 +94,7 @@ defmodule Supavisor.DbHandlerTest do
         ip_version: :inet
       }
 
-      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: nil})
+      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: nil, id: {"a", "b"}})
 
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
       :meck.unload(:gen_tcp)
