@@ -187,7 +187,7 @@ defmodule Supavisor do
   end
 
   @spec tenant(id) :: String.t()
-  def tenant({{_, tenant}, _, _}), do: tenant
+  def tenant({{_, tenant}, _, _, _}), do: tenant
 
   @spec determine_node(id) :: Node.t()
   def determine_node(id) do
