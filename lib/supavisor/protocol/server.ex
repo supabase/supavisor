@@ -12,7 +12,6 @@ defmodule Supavisor.Protocol.Server do
   @authentication_ok <<?R, 8::32, 0::32>>
   @ready_for_query <<?Z, 5::32, ?I>>
   @ssl_request <<8::32, 1234::16, 5679::16>>
-  @auth_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
   @scram_request <<?R, 23::32, 10::32, "SCRAM-SHA-256", 0, 0>>
   @msg_cancel_header <<16::32, 1234::16, 5678::16>>
   @application_name <<?S, 31::32, "application_name", 0, "Supavisor", 0>>

@@ -26,13 +26,14 @@ curl -X PUT \
     "upstream_verify": "peer", // "none" | "peer"
     "upstream_tls_ca": "-----BEGIN CERTIFICATE-----\nblalblalblablalblalblaba\n-----END CERTIFICATE-----\n", // "",
     "default_max_clients": 200,
-    "default_pool_size: 15,
+    "default_pool_size": 15,
     "users": [
       {
         "db_user": "postgres",
         "db_password": "postgres",
         "mode_type": "transaction",
-        "pool_checkout_timeout": 100
+        "pool_checkout_timeout": 100,
+        "pool_size": 10
       }
     ]
   }
