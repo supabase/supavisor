@@ -3,7 +3,7 @@ defmodule Supavisor.Integration.ProxyTest do
   use Supavisor.DataCase, async: true
   alias Postgrex, as: P
 
-  @tenant "proxy_tenant"
+  @tenant "proxy_tenant1"
 
   setup_all do
     db_conf = Application.get_env(:supavisor, Repo)
@@ -156,7 +156,7 @@ defmodule Supavisor.Integration.ProxyTest do
   #   db_conf = Application.get_env(:supavisor, Repo)
 
   #   url =
-  #     "postgresql://session.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+  #     "postgresql://session.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
 
   #   spawn(fn -> System.cmd("psql", [url], stderr_to_stdout: true) end)
 
@@ -177,16 +177,12 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://transaction.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+      "postgresql://transaction.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
     {:ok, pid} = parse_uri(url) |> single_connection()
 
-    :timer.sleep(500)
-
     [{_, client_pid, _}] =
-      Supavisor.get_local_manager(
-        {{:single, "proxy_tenant"}, "transaction", :transaction, "postgres"}
-      )
+      Supavisor.get_local_manager({{:single, @tenant}, "transaction", :transaction, "postgres"})
       |> :sys.get_state()
       |> then(& &1[:tid])
       |> :ets.tab2list()
@@ -202,7 +198,7 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://max_clients.proxy_tenant:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+      "postgresql://max_clients.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
 
     assert =
       {:error,
