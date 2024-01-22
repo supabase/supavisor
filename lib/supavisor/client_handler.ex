@@ -271,7 +271,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _, data) do
     Logger.debug("Subscribe to tenant #{inspect(data.id)}")
 
-    with {:ok, sup} <- Supavisor.start(data.id, data.auth_secrets),
+    with {:ok, sup} <- Supavisor.start_dist(data.id, data.auth_secrets),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
