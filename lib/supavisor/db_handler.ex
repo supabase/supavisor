@@ -384,7 +384,7 @@ defmodule Supavisor.DbHandler do
       Logger.error("Client handler #{inspect(pid)} went down with reason #{inspect(reason)}")
     end
 
-    if state == :busy do
+    if state == :busy || data.mode == :session do
       :ok = sock_send(data.sock, <<?X, 4::32>>)
       :ok = :gen_tcp.close(elem(data.sock, 1))
       {:stop, :normal, data}
