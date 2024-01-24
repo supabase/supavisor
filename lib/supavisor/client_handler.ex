@@ -35,6 +35,7 @@ defmodule Supavisor.ClientHandler do
 
   def init(ref, trans, opts) do
     Process.flag(:trap_exit, true)
+    H.set_max_heap_size(150)
 
     {:ok, sock} = :ranch.handshake(ref)
     :ok = trans.setopts(sock, active: true)
@@ -526,12 +527,21 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
-  def terminate(_reason, _state, %{db_pid: {_, pid}}) do
-    if Db.get_state(pid) == :busy, do: Db.stop(pid)
+  def terminate(reason, _state, %{db_pid: {_, pid}}) do
+    if Db.get_state(pid) == :busy do
+      Logger.warning("Kill DbHandler #{inspect(pid)}, reason #{inspect(reason)}")
+      Db.stop(pid)
+    else
+      Logger.warning("ClientHanlder termination with reason #{inspect(reason)}")
+    end
+
     :ok
   end
 
-  def terminate(_reason, _state, _data), do: :ok
+  def terminate(reason, _state, _data) do
+    Logger.warning("ClientHanlder termination with reason #{inspect(reason)}")
+    :ok
+  end
 
   ## Internal functions
 
