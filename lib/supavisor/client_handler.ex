@@ -35,6 +35,7 @@ defmodule Supavisor.ClientHandler do
 
   def init(ref, trans, opts) do
     Process.flag(:trap_exit, true)
+    H.set_max_heap_size(150)
 
     {:ok, sock} = :ranch.handshake(ref)
     :ok = trans.setopts(sock, active: true)
