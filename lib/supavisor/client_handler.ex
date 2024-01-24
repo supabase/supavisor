@@ -161,8 +161,7 @@ defmodule Supavisor.ClientHandler do
       {:ok, info} ->
         db_name = if(db_name != nil, do: db_name, else: info.tenant.db_database)
 
-        {_, _, mode, _} =
-          id =
+        id =
           Supavisor.id(
             {type, tenant_or_alias},
             user,
@@ -170,6 +169,8 @@ defmodule Supavisor.ClientHandler do
             info.user.mode_type,
             db_name
           )
+
+        mode = S.mode(id)
 
         Logger.metadata(
           project: tenant_or_alias,
