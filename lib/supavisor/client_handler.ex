@@ -139,14 +139,6 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
 
-        Logger.metadata(
-          project: tenant_or_alias,
-          user: user,
-          mode: data.mode,
-          type: type,
-          db_name: db_name
-        )
-
         {:keep_state, data,
          {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
 
@@ -169,7 +161,8 @@ defmodule Supavisor.ClientHandler do
       {:ok, info} ->
         db_name = if(db_name != nil, do: db_name, else: info.tenant.db_database)
 
-        id =
+        {_, _, mode, _} =
+          id =
           Supavisor.id(
             {type, tenant_or_alias},
             user,
@@ -177,6 +170,14 @@ defmodule Supavisor.ClientHandler do
             info.user.mode_type,
             db_name
           )
+
+        Logger.metadata(
+          project: tenant_or_alias,
+          user: user,
+          mode: mode,
+          type: type,
+          db_name: db_name
+        )
 
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
@@ -199,7 +200,7 @@ defmodule Supavisor.ClientHandler do
             {:stop, :normal}
 
           true ->
-            new_data = update_user_data(data, info, user, id, db_name)
+            new_data = update_user_data(data, info, user, id, db_name, mode)
 
             case auth_secrets(info, user) do
               {:ok, auth_secrets} ->
@@ -680,7 +681,7 @@ defmodule Supavisor.ClientHandler do
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
-  defp update_user_data(data, info, user, id, db_name) do
+  defp update_user_data(data, info, user, id, db_name, mode) do
     proxy_type =
       if info.tenant.require_user do
         :password
@@ -697,7 +698,8 @@ defmodule Supavisor.ClientHandler do
         proxy_type: proxy_type,
         id: id,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
-        db_name: db_name
+        db_name: db_name,
+        mode: mode
     }
   end
 
