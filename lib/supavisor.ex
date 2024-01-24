@@ -189,6 +189,9 @@ defmodule Supavisor do
   @spec tenant(id) :: String.t()
   def tenant({{_, tenant}, _, _, _}), do: tenant
 
+  @spec mode(id) :: atom()
+  def mode({_, _, mode, _}), do: mode
+
   @spec determine_node(id) :: Node.t()
   def determine_node(id) do
     tenant_id = tenant(id)
