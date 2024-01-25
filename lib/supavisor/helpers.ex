@@ -1,5 +1,6 @@
 defmodule Supavisor.Helpers do
   @moduledoc false
+  require Logger
 
   @spec check_creds_get_ver(map) :: {:ok, String.t() | nil} | {:error, String.t()}
 
@@ -342,5 +343,13 @@ defmodule Supavisor.Helpers do
   def set_max_heap_size(max_heap_size) do
     max_heap_words = div(max_heap_size * 1024 * 1024, :erlang.system_info(:wordsize))
     Process.flag(:max_heap_size, %{size: max_heap_words})
+  end
+
+  @spec set_log_level(atom()) :: :ok
+  def set_log_level(nil), do: :ok
+
+  def set_log_level(level) when is_atom(level) do
+    Logger.notice("Setting log level to #{inspect(level)}")
+    Logger.put_process_level(self(), level)
   end
 end
