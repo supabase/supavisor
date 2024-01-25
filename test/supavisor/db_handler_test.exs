@@ -13,7 +13,8 @@ defmodule Supavisor.DbHandlerTest do
         user_alias: "test_user_alias",
         user: "user",
         mode: :transaction,
-        replica_type: :single
+        replica_type: :single,
+        log_level: nil
       }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
