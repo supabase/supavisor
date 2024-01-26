@@ -16,9 +16,12 @@ defmodule Supavisor do
 
   @registry Supavisor.Registry.Tenants
 
-  @spec start_dist(id, secrets, atom(), Node.t() | boolean()) ::
-          {:ok, pid()} | {:error, any()}
-  def start_dist(id, secrets, log_level \\ nil, force_node \\ false) do
+  @spec start_dist(id, secrets, keyword()) :: {:ok, pid()} | {:error, any()}
+  def start_dist(id, secrets, options \\ []) do
+    options = Keyword.validate!(options, log_level: nil, force_node: false)
+    log_level = Keyword.fetch!(options, :log_level)
+    force_node = Keyword.fetch!(options, :force_node)
+
     case get_global_sup(id) do
       nil ->
         node = if force_node, do: force_node, else: determine_node(id)
@@ -203,8 +206,6 @@ defmodule Supavisor do
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
   def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets, log_level \\ nil) do
     Logger.debug("Starting pool(s) for #{inspect(id)}")
-
-    IO.inspect({'---------', log_level})
 
     user = elem(secrets, 1).().alias
 
