@@ -62,7 +62,8 @@ defmodule Supavisor.ClientHandler do
       db_name: nil,
       last_query: nil,
       heartbeat_interval: 0,
-      connection_start: System.monotonic_time()
+      connection_start: System.monotonic_time(),
+      log_level: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -139,15 +140,15 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
 
-        Logger.metadata(
-          project: tenant_or_alias,
-          user: user,
-          mode: data.mode,
-          type: type,
-          db_name: db_name
-        )
+        log_level =
+          case hello.payload["options"]["log_level"] do
+            nil -> nil
+            level -> String.to_existing_atom(level)
+          end
 
-        {:keep_state, data,
+        H.set_log_level(log_level)
+
+        {:keep_state, %{data | log_level: log_level},
          {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
 
       {:error, error} ->
@@ -178,6 +179,16 @@ defmodule Supavisor.ClientHandler do
             db_name
           )
 
+        mode = S.mode(id)
+
+        Logger.metadata(
+          project: tenant_or_alias,
+          user: user,
+          mode: mode,
+          type: type,
+          db_name: db_name
+        )
+
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         {:ok, addr} = HH.addr_from_sock(sock)
@@ -199,7 +210,7 @@ defmodule Supavisor.ClientHandler do
             {:stop, :normal}
 
           true ->
-            new_data = update_user_data(data, info, user, id, db_name)
+            new_data = update_user_data(data, info, user, id, db_name, mode)
 
             case auth_secrets(info, user) do
               {:ok, auth_secrets} ->
@@ -272,7 +283,8 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _, data) do
     Logger.debug("Subscribe to tenant #{inspect(data.id)}")
 
-    with {:ok, sup} <- Supavisor.start_dist(data.id, data.auth_secrets),
+    with {:ok, sup} <-
+           Supavisor.start_dist(data.id, data.auth_secrets, log_level: data.log_level),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
@@ -680,7 +692,7 @@ defmodule Supavisor.ClientHandler do
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
 
-  defp update_user_data(data, info, user, id, db_name) do
+  defp update_user_data(data, info, user, id, db_name, mode) do
     proxy_type =
       if info.tenant.require_user do
         :password
@@ -697,7 +709,8 @@ defmodule Supavisor.ClientHandler do
         proxy_type: proxy_type,
         id: id,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
-        db_name: db_name
+        db_name: db_name,
+        mode: mode
     }
   end
 

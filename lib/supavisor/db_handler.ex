@@ -35,6 +35,7 @@ defmodule Supavisor.DbHandler do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
+    H.set_log_level(args.log_level)
     H.set_max_heap_size(150)
 
     {_, tenant} = args.tenant

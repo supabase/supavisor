@@ -5,6 +5,7 @@ defmodule Supavisor.Manager do
 
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
+  alias Supavisor.Helpers, as: H
 
   @check_timeout 120_000
 
@@ -33,6 +34,7 @@ defmodule Supavisor.Manager do
 
   @impl true
   def init(args) do
+    H.set_log_level(args.log_level)
     tid = :ets.new(__MODULE__, [:public])
 
     [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
