@@ -61,7 +61,8 @@ defmodule Supavisor.TenantSupervisor do
       worker_module: Supavisor.DbHandler,
       size: size,
       max_overflow: overflow,
-      strategy: :fifo
+      strategy: :fifo,
+      idle_timeout: :timer.minutes(5)
     ]
   end
 end
