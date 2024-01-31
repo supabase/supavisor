@@ -435,7 +435,7 @@ defmodule Supavisor.ClientHandler do
 
       {:error, reason} ->
         msg = "DbHandler error: #{inspect(reason)}"
-        Logger.error("ClientHandler: " <> msg)
+        Logger.error("ClientHandler: #{msg}")
         HH.sock_send(data.sock, Server.error_message("XX000", msg))
         {:stop, {:shutdown, :db_handler_error}}
     end
