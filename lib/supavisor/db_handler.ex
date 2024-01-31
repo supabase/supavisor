@@ -26,8 +26,14 @@ defmodule Supavisor.DbHandler do
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
 
-  @spec get_state(pid()) :: state
-  def get_state(pid), do: :gen_statem.call(pid, :get_state, 5_000)
+  @spec get_state(pid()) :: {:ok, state} | {:error, term()}
+  def get_state(pid) do
+    try do
+      {:ok, :gen_statem.call(pid, :get_state, 5_000)}
+    catch
+      error, reason -> {:error, {error, reason}}
+    end
+  end
 
   @spec stop(pid()) :: :ok
   def stop(pid), do: :gen_statem.stop(pid, :client_termination, 5_000)
@@ -70,7 +76,7 @@ defmodule Supavisor.DbHandler do
 
   @impl true
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
-    Logger.debug("Try to connect to DB")
+    Logger.debug("DbHandler: Try to connect to DB")
 
     sock_opts = [
       :binary,
@@ -85,7 +91,7 @@ defmodule Supavisor.DbHandler do
 
     case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
       {:ok, sock} ->
-        Logger.debug("auth #{inspect(auth, pretty: true)}")
+        Logger.debug("DbHandler: auth #{inspect(auth, pretty: true)}")
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
@@ -95,18 +101,18 @@ defmodule Supavisor.DbHandler do
                 {:next_state, :authentication, %{data | sock: sock}}
 
               {:error, reason} ->
-                Logger.error("Send startup error #{inspect(reason)}")
+                Logger.error("DbHandler: Send startup error #{inspect(reason)}")
                 reconnect_callback
             end
 
           {:error, error} ->
-            Logger.error("Handshake error #{inspect(error)}")
+            Logger.error("DbHandler: Handshake error #{inspect(error)}")
             reconnect_callback
         end
 
       other ->
         Logger.error(
-          "Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
+          "DbHandler: Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
         )
 
         reconnect_callback
@@ -114,13 +120,13 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:state_timeout, :connect, _state, _) do
-    Logger.warning("Reconnect")
+    Logger.warning("DbHandler: Reconnect")
     {:keep_state_and_data, {:next_event, :internal, :connect}}
   end
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
     dec_pkt = Server.decode(bin)
-    Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+    Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     resp =
       Enum.reduce(dec_pkt, {%{}, nil}, fn
@@ -134,14 +140,14 @@ defmodule Supavisor.DbHandler do
           key = self()
           conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
           Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
-          Logger.debug("Backend #{inspect(key)} data: #{inspect(payload)}")
+          Logger.debug("DbHandler: Backend #{inspect(key)} data: #{inspect(payload)}")
           acc
 
         %{payload: {:authentication_sasl_password, methods_b}}, {ps, _} ->
           nonce =
             case Server.decode_string(methods_b) do
               {:ok, req_method, _} ->
-                Logger.debug("SASL method #{inspect(req_method)}")
+                Logger.debug("DbHandler: SASL method #{inspect(req_method)}")
                 nonce = :pgo_scram.get_nonce(16)
                 user = get_user(data.auth)
                 client_first = :pgo_scram.get_client_first(user, nonce)
@@ -159,7 +165,7 @@ defmodule Supavisor.DbHandler do
                 nonce
 
               other ->
-                Logger.error("Undefined sasl method #{inspect(other)}")
+                Logger.error("DbHandler: Undefined sasl method #{inspect(other)}")
                 nil
             end
 
@@ -206,7 +212,7 @@ defmodule Supavisor.DbHandler do
           acc
 
         %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
-          Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+          Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
           digest =
             if data.auth.method == :password do
@@ -238,18 +244,21 @@ defmodule Supavisor.DbHandler do
         {:keep_state, data}
 
       {:error_response, error} ->
-        Logger.error("Error auth response #{inspect(error)}")
+        Logger.error("DbHandler: Error auth response #{inspect(error)}")
         {:keep_state, data}
 
       {:ready_for_query, ps, db_state} ->
-        Logger.debug("DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}")
+        Logger.debug(
+          "DbHandler: DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}"
+        )
+
         Supavisor.set_parameter_status(data.id, ps)
 
         {:next_state, :idle, %{data | parameter_status: ps},
          {:next_event, :internal, :check_buffer}}
 
       other ->
-        Logger.error("Undefined auth response #{inspect(other)}")
+        Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
         {:stop, :auth_error, data}
     end
   end
@@ -257,7 +266,7 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
       when is_pid(caller) do
     if buff != [] do
-      Logger.debug("Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      Logger.debug("DbHandler: Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
       buff = Enum.reverse(buff)
       :ok = sock_send(data.sock, buff)
     end
@@ -268,7 +277,10 @@ defmodule Supavisor.DbHandler do
   # check if it needs to apply queries from the anon buffer
   def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
     if buff != [] do
-      Logger.debug("Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+      Logger.debug(
+        "DbHandler: Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes"
+      )
+
       buff = Enum.reverse(buff)
       :ok = sock_send(data.sock, buff)
     end
@@ -278,19 +290,19 @@ defmodule Supavisor.DbHandler do
 
   # the process received message from db without linked caller
   def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in @proto do
-    Logger.warning("Got db response #{inspect(bin)} when caller was nil")
+    Logger.warning("DbHandler: Got db response #{inspect(bin)} when caller was nil")
     :keep_state_and_data
   end
 
   def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
       when proto in @proto do
-    Logger.debug("Got read replica message #{inspect(bin)}")
+    Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
     pkts = Server.decode(bin)
 
     resp =
       cond do
         Server.has_read_only_error?(pkts) ->
-          Logger.error("read only error")
+          Logger.error("DbHandler: read only error")
 
           with [_] <- pkts do
             # need to flush ready_for_query if it's not in same packet
@@ -318,7 +330,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
-    Logger.debug("Got write replica message #{inspect(bin)}")
+    Logger.debug("DbHandler: Got write replica message #{inspect(bin)}")
     # check if the response ends with "ready for query"
     ready =
       if String.ends_with?(bin, Server.ready_for_query()) do
@@ -342,7 +354,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:info, {:handle_ps, payload, bin}, _state, data) do
-    Logger.notice("Apply prepare statement change #{inspect(payload)}")
+    Logger.notice("DbHandler: Apply prepare statement change #{inspect(payload)}")
 
     {:keep_state, %{data | anon_buffer: [bin | data.anon_buffer]},
      {:next_event, :internal, :check_anon_buffer}}
@@ -360,7 +372,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:db_call, caller, bin}, state, %{buffer: buff} = data) do
     Logger.debug(
-      "state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(caller)}"
+      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(caller)}"
     )
 
     new_buff = [bin | buff]
@@ -373,7 +385,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
-    Logger.error("Connection closed when state was #{state}")
+    Logger.error("DbHandler: Connection closed when state was #{state}")
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
   end
 
@@ -384,13 +396,15 @@ defmodule Supavisor.DbHandler do
   # linked client_handler went down
   def handle_event(_, {:EXIT, pid, reason}, state, data) do
     if reason != :normal do
-      Logger.error("Client handler #{inspect(pid)} went down with reason #{inspect(reason)}")
+      Logger.error(
+        "DbHandler: ClientHandler #{inspect(pid)} went down with reason #{inspect(reason)}"
+      )
     end
 
     if state == :busy || data.mode == :session do
       :ok = sock_send(data.sock, <<?X, 4::32>>)
-      :ok = :gen_tcp.close(elem(data.sock, 1))
-      {:stop, :normal, data}
+      :gen_tcp.close(elem(data.sock, 1))
+      {:stop, {:client_handler_down, data.mode}}
     else
       {:keep_state, %{data | caller: nil, buffer: []}}
     end
@@ -404,7 +418,7 @@ defmodule Supavisor.DbHandler do
       {"data", data}
     ]
 
-    Logger.debug("Undefined msg: #{inspect(msg, pretty: true)}")
+    Logger.debug("DbHandler: Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
   end
@@ -417,7 +431,10 @@ defmodule Supavisor.DbHandler do
 
   def terminate(reason, state, data) do
     Telem.handler_action(:db_handler, :stopped, data.id)
-    Logger.error("Terminating with reason #{inspect(reason)} when state was #{inspect(state)}")
+
+    Logger.error(
+      "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
+    )
   end
 
   @spec try_ssl_handshake(S.tcp_sock(), map) :: {:ok, S.sock()} | {:error, term()}
