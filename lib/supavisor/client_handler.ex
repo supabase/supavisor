@@ -425,7 +425,7 @@ defmodule Supavisor.ClientHandler do
 
         if size > 1_000_000 do
           msg = "DbHandler buffer size is too big: #{size}"
-          Logger.error("ClientHandler: " <> msg)
+          Logger.error("ClientHandler: #{msg}")
           HH.sock_send(data.sock, Server.error_message("XX000", msg))
           {:stop, {:shutdown, :buffer_size}}
         else
