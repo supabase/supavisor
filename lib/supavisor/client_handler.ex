@@ -361,7 +361,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, _)
       when proto in [:tcp, :ssl] do
     Logger.debug("ClientHandler: Terminate received from client")
-    {:stop, {:shutdown, :receive_termination}}
+    {:stop, {:shutdown, :terminate_received}}
   end
 
   # handle Sync message
