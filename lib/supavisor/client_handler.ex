@@ -360,7 +360,7 @@ defmodule Supavisor.ClientHandler do
   # handle Terminate message
   def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, _)
       when proto in [:tcp, :ssl] do
-    Logger.debug("ClientHandler: Receive termination")
+    Logger.debug("ClientHandler: Terminate received from client")
     {:stop, {:shutdown, :receive_termination}}
   end
 
@@ -551,20 +551,20 @@ defmodule Supavisor.ClientHandler do
     case Db.get_state(pid) do
       {:ok, :busy} ->
         Logger.warning(
-          "ClientHandler: Kill DbHandler #{inspect(pid)} and termination, reason #{inspect(reason)}"
+          "ClientHandler: socket closed and kill DbHandler #{inspect(pid)}, reason #{inspect(reason)}"
         )
 
         Db.stop(pid)
 
       _ ->
-        Logger.warning("ClientHandler: termination with reason #{inspect(reason)}")
+        Logger.warning("ClientHandler: socket closed with reason #{inspect(reason)}")
     end
 
     :ok
   end
 
   def terminate(reason, _state, _data) do
-    Logger.warning("ClientHandler: termination with reason #{inspect(reason)}")
+    Logger.warning("ClientHandler: socket closed with reason #{inspect(reason)}")
     :ok
   end
 
