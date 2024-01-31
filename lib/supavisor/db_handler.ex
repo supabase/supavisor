@@ -397,7 +397,7 @@ defmodule Supavisor.DbHandler do
   def handle_event(_, {:EXIT, pid, reason}, state, data) do
     if reason != :normal do
       Logger.error(
-        "DbHandler: Client handler #{inspect(pid)} went down with reason #{inspect(reason)}"
+        "DbHandler: Clienthandler #{inspect(pid)} went down with reason #{inspect(reason)}"
       )
     end
 
