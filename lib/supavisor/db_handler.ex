@@ -11,6 +11,7 @@ defmodule Supavisor.DbHandler do
   alias Supavisor, as: S
   alias Supavisor.ClientHandler, as: Client
   alias Supavisor.Helpers, as: H
+  alias Supavisor.HandlerHelpers, as: HH
   alias Supavisor.{Monitoring.Telem, Protocol.Server}
 
   @type state :: :connect | :authentication | :idle | :busy
@@ -331,6 +332,7 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got write replica message #{inspect(bin)}")
+    HH.setopts(data.sock, active: :once)
     # check if the response ends with "ready for query"
     ready =
       if String.ends_with?(bin, Server.ready_for_query()) do
@@ -344,6 +346,8 @@ defmodule Supavisor.DbHandler do
     case ready do
       :ready_for_query ->
         {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+
+        HH.setopts(data.sock, active: true)
 
         {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data)},
          {:next_event, :internal, :check_anon_buffer}}
