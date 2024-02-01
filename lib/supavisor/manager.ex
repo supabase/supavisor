@@ -35,7 +35,7 @@ defmodule Supavisor.Manager do
   @impl true
   def init(args) do
     H.set_log_level(args.log_level)
-    tid = :ets.new(__MODULE__, [:public])
+    tid = :ets.new(__MODULE__, [:protected])
 
     [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
 
