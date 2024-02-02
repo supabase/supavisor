@@ -27,17 +27,14 @@ defmodule Supavisor.DbHandler do
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
 
-  @spec get_state(pid()) :: {:ok, state} | {:error, term()}
-  def get_state(pid) do
+  @spec client_termination(pid()) :: {:ok, :ignore | :stopping} | {:error, any()}
+  def client_termination(pid) do
     try do
-      {:ok, :gen_statem.call(pid, :get_state, 5_000)}
+      {:ok, :gen_statem.call(pid, :client_termination, 5_000)}
     catch
       error, reason -> {:error, {error, reason}}
     end
   end
-
-  @spec stop(pid()) :: :ok
-  def stop(pid), do: :gen_statem.stop(pid, :client_termination, 5_000)
 
   @impl true
   def init(args) do
@@ -393,10 +390,6 @@ defmodule Supavisor.DbHandler do
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
   end
 
-  def handle_event({:call, from}, :get_state, state, _) do
-    {:keep_state_and_data, {:reply, from, state}}
-  end
-
   # linked client_handler went down
   def handle_event(_, {:EXIT, pid, reason}, state, data) do
     if reason != :normal do
@@ -411,6 +404,16 @@ defmodule Supavisor.DbHandler do
       {:stop, {:client_handler_down, data.mode}}
     else
       {:keep_state, %{data | caller: nil, buffer: []}}
+    end
+  end
+
+  def handle_event({:call, from}, :client_termination, state, data) do
+    if state == :busy || data.mode == :session do
+      sock_send(data.sock, <<?X, 4::32>>)
+      :gen_tcp.close(elem(data.sock, 1))
+      {:stop_and_reply, {:client_termination, data.mode}, [{:reply, from, :stopping}]}
+    else
+      {:keep_state_and_data, {:reply, from, :ignore}}
     end
   end
 
