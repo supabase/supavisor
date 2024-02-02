@@ -84,6 +84,8 @@ defmodule Supavisor.Protocol.Client do
     end
   end
 
+  def get_payload(msg), do: {:error, {:invalid_msg, msg}}
+
   @spec tag(byte) :: atom | nil
   def tag(char) do
     case char do

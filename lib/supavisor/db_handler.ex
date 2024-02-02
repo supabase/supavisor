@@ -27,10 +27,10 @@ defmodule Supavisor.DbHandler do
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
 
-  @spec get_state(pid()) :: {:ok, state} | {:error, term()}
-  def get_state(pid) do
+  @spec get_state_and_mode(pid()) :: {:ok, {state, S.mode()}} | {:error, term()}
+  def get_state_and_mode(pid) do
     try do
-      {:ok, :gen_statem.call(pid, :get_state, 5_000)}
+      {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
     catch
       error, reason -> {:error, {error, reason}}
     end
@@ -393,8 +393,8 @@ defmodule Supavisor.DbHandler do
     {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
   end
 
-  def handle_event({:call, from}, :get_state, state, _) do
-    {:keep_state_and_data, {:reply, from, state}}
+  def handle_event({:call, from}, :get_state_and_mode, state, data) do
+    {:keep_state_and_data, {:reply, from, {state, data.mode}}}
   end
 
   # linked client_handler went down
@@ -429,11 +429,13 @@ defmodule Supavisor.DbHandler do
 
   @impl true
   def terminate(:shutdown, _state, data) do
+    sock_send(data.sock, <<?X, 4::32>>)
     Telem.handler_action(:db_handler, :stopped, data.id)
     :ok
   end
 
   def terminate(reason, state, data) do
+    sock_send(data.sock, <<?X, 4::32>>)
     Telem.handler_action(:db_handler, :stopped, data.id)
 
     Logger.error(
@@ -504,9 +506,13 @@ defmodule Supavisor.DbHandler do
     sock_send(sock, msg)
   end
 
-  @spec sock_send(S.sock(), iodata) :: :ok | {:error, term}
+  @spec sock_send(S.sock() | any(), iodata) :: :ok | {:error, term}
   defp sock_send({mod, sock}, data) do
     mod.send(sock, data)
+  end
+
+  defp sock_send(sock, _) do
+    {:error, {:undefined_sock, sock}}
   end
 
   @spec activate(S.sock()) :: :ok | {:error, term}

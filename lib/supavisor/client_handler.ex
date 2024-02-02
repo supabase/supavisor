@@ -548,13 +548,17 @@ defmodule Supavisor.ClientHandler do
   end
 
   def terminate(reason, _state, %{db_pid: {_, pid}}) do
-    case Db.get_state(pid) do
-      {:ok, :busy} ->
-        Logger.warning(
-          "ClientHandler: socket closed and kill DbHandler #{inspect(pid)}, reason #{inspect(reason)}"
-        )
+    case Db.get_state_and_mode(pid) do
+      {:ok, {state, mode}} ->
+        if state == :busy || mode == :session do
+          Logger.warning(
+            "ClientHandler: socket closed and kill DbHandler #{inspect({state, mode})} #{inspect(pid)}, reason #{inspect(reason)}"
+          )
 
-        Db.stop(pid)
+          Db.stop(pid)
+        else
+          Logger.warning("ClientHandler: socket closed, reason #{inspect(reason)}")
+        end
 
       _ ->
         Logger.warning("ClientHandler: socket closed with reason #{inspect(reason)}")
