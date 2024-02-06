@@ -16,19 +16,22 @@ defmodule Supavisor do
 
   @registry Supavisor.Registry.Tenants
 
-  @spec start_dist(id, secrets, Node.t() | boolean()) ::
-          {:ok, pid()} | {:error, any()}
-  def start_dist(id, secrets, force_node \\ false) do
+  @spec start_dist(id, secrets, keyword()) :: {:ok, pid()} | {:error, any()}
+  def start_dist(id, secrets, options \\ []) do
+    options = Keyword.validate!(options, log_level: nil, force_node: false)
+    log_level = Keyword.fetch!(options, :log_level)
+    force_node = Keyword.fetch!(options, :force_node)
+
     case get_global_sup(id) do
       nil ->
         node = if force_node, do: force_node, else: determine_node(id)
 
         if node == node() do
           Logger.debug("Starting local pool for #{inspect(id)}")
-          start_local_pool(id, secrets)
+          start_local_pool(id, secrets, log_level)
         else
           Logger.debug("Starting remote pool for #{inspect(id)}")
-          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets])
+          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets, log_level])
         end
 
       pid ->
@@ -200,8 +203,8 @@ defmodule Supavisor do
     Enum.at(nodes, index)
   end
 
-  @spec start_local_pool(id, secrets) :: {:ok, pid} | {:error, any}
-  def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets) do
+  @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
+  def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets, log_level \\ nil) do
     Logger.debug("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
@@ -221,12 +224,12 @@ defmodule Supavisor do
               %T.Tenant{} = tenant ->
                 Map.put(tenant, :replica_type, :write)
             end
-            |> supervisor_args(id, secrets)
+            |> supervisor_args(id, secrets, log_level)
           end)
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
-          {Supavisor.TenantSupervisor, %{id: id, replicas: opts}}
+          {Supavisor.TenantSupervisor, %{id: id, replicas: opts, log_level: log_level}}
         )
         |> case do
           {:error, {:already_started, pid}} -> {:ok, pid}
@@ -245,7 +248,8 @@ defmodule Supavisor do
   defp supervisor_args(
          tenant_record,
          {tenant, user, mode, db_name} = id,
-         {method, secrets}
+         {method, secrets},
+         log_level
        ) do
     %{
       db_host: db_host,
@@ -303,7 +307,8 @@ defmodule Supavisor do
       default_parameter_status: ps,
       max_clients: max_clients,
       client_idle_timeout: client_idle_timeout,
-      default_pool_strategy: default_pool_strategy
+      default_pool_strategy: default_pool_strategy,
+      log_level: log_level
     }
   end
 

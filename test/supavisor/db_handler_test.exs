@@ -13,7 +13,8 @@ defmodule Supavisor.DbHandlerTest do
         user_alias: "test_user_alias",
         user: "user",
         mode: :transaction,
-        replica_type: :single
+        replica_type: :single,
+        log_level: nil
       }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
@@ -187,15 +188,19 @@ defmodule Supavisor.DbHandlerTest do
       event = {proto, :dummy_value, bin}
 
       :meck.new(:prim_inet, [:unstick, :passthrough])
+      :meck.new(:inet, [:unstick, :passthrough])
 
       :meck.expect(:prim_inet, :getstat, fn _, _ ->
         {:ok, %{}}
       end)
 
+      :meck.expect(:inet, :setopts, fn _, _ -> :ok end)
+
       {:next_state, :idle, new_data, _} = Db.handle_event(:info, event, state, data)
 
       assert new_data.caller == caller_pid
       :meck.unload(:prim_inet)
+      :meck.unload(:inet)
     end
 
     test "does not update caller in data for non-session mode" do
@@ -214,15 +219,19 @@ defmodule Supavisor.DbHandlerTest do
       state = :some_state
       event = {proto, :dummy_value, bin}
       :meck.new(:prim_inet, [:unstick, :passthrough])
+      :meck.new(:inet, [:unstick, :passthrough])
 
       :meck.expect(:prim_inet, :getstat, fn _, _ ->
         {:ok, %{}}
       end)
 
+      :meck.expect(:inet, :setopts, fn _, _ -> :ok end)
+
       {:next_state, :idle, new_data, _} = Db.handle_event(:info, event, state, data)
 
       assert new_data.caller == nil
       :meck.unload(:prim_inet)
+      :meck.unload(:inet)
     end
   end
 end
