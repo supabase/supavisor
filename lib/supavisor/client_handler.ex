@@ -683,15 +683,16 @@ defmodule Supavisor.ClientHandler do
 
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [pool, true, data.timeout])
     Process.link(db_pid)
-    Telem.pool_checkout_time(time, data.id)
+    same_box = if node(db_pid) == node(), do: :local, else: :remote
+    Telem.pool_checkout_time(time, data.id, same_box)
     {pool, db_pid}
   end
 
   defp db_checkout(_, _, data) do
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
-
     Process.link(db_pid)
-    Telem.pool_checkout_time(time, data.id)
+    same_box = if node(db_pid) == node(), do: :local, else: :remote
+    Telem.pool_checkout_time(time, data.id, same_box)
     {data.pool, db_pid}
   end
 
