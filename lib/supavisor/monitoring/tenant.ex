@@ -31,14 +31,25 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       :supavisor_tenant_client_event_metrics,
       [
         distribution(
-          [:supavisor, :pool, :checkout, :duration],
-          event_name: [:supavisor, :pool, :checkout, :stop],
+          [:supavisor, :pool, :checkout, :duration, :local],
+          event_name: [:supavisor, :pool, :checkout, :stop, :local],
           measurement: :duration,
-          description: "Duration of the checkout process in the tenant db pool.",
+          description: "Duration of the checkout local process in the tenant db pool.",
           tags: @tags,
           unit: {:microsecond, :millisecond},
           reporter_options: [
-            buckets: [1, 2, 5, 10, 100, 1_000, 5_000, 10_000, 30_000, 60_000]
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+          ]
+        ),
+        distribution(
+          [:supavisor, :pool, :checkout, :duration, :remote],
+          event_name: [:supavisor, :pool, :checkout, :stop, :remote],
+          measurement: :duration,
+          description: "Duration of the checkout remote process in the tenant db pool.",
+          tags: @tags,
+          unit: {:microsecond, :millisecond},
+          reporter_options: [
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
           ]
         ),
         distribution(
@@ -49,7 +60,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000]
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
           ]
         ),
         distribution(
@@ -60,7 +71,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000]
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
           ]
         ),
         sum(
