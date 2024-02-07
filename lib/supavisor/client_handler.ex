@@ -63,7 +63,9 @@ defmodule Supavisor.ClientHandler do
       last_query: nil,
       heartbeat_interval: 0,
       connection_start: System.monotonic_time(),
-      log_level: nil
+      log_level: nil,
+      tid: nil,
+      pr: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -300,7 +302,10 @@ defmodule Supavisor.ClientHandler do
       Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
       db_pid = db_checkout(:both, :on_connect, data)
-      data = %{data | db_pid: db_pid, idle_timeout: opts.idle_timeout}
+      {tid, pr} = opts.tid
+      data = %{data | db_pid: db_pid, idle_timeout: opts.idle_timeout, tid: tid, pr: pr}
+
+      {:keep_state, data, {:next_event, :internal, :wait_ps}}
 
       next =
         if opts.ps == [] do
@@ -533,6 +538,8 @@ defmodule Supavisor.ClientHandler do
         _,
         data
       ) do
+    :ets.take(data.tid, data.pr) |> IO.inspect()
+
     msg =
       case data.mode do
         :session ->
@@ -547,7 +554,9 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
-  def terminate(reason, _state, %{db_pid: {_, pid}}) do
+  def terminate(reason, _state, %{db_pid: {_, pid}} = data) do
+    :ets.take(data.tid, data.pr) |> IO.inspect()
+
     db_info =
       case Db.get_state_and_mode(pid) do
         {:ok, {state, mode} = resp} ->
@@ -565,7 +574,8 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
-  def terminate(reason, _state, _data) do
+  def terminate(reason, _state, data) do
+    :ets.take(data.tid, data.pr) |> IO.inspect()
     Logger.warning("ClientHandler: socket closed with reason #{inspect(reason)}")
     :ok
   end

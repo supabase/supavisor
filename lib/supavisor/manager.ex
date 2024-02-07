@@ -15,7 +15,7 @@ defmodule Supavisor.Manager do
     GenServer.start_link(__MODULE__, args, name: name)
   end
 
-  @spec subscribe(pid, pid) :: {:ok, iodata() | [], integer} | {:error, :max_clients_reached}
+  # @spec subscribe(pid, pid) :: {:ok, iodata() | [], integer} | {:error, :max_clients_reached}
   def subscribe(manager, pid) do
     GenServer.call(manager, {:subscribe, pid})
   end
@@ -35,7 +35,7 @@ defmodule Supavisor.Manager do
   @impl true
   def init(args) do
     H.set_log_level(args.log_level)
-    tid = :ets.new(__MODULE__, [:protected])
+    tid = :ets.new(__MODULE__, [:public])
 
     [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
 
@@ -66,14 +66,16 @@ defmodule Supavisor.Manager do
     # don't limit if max_clients is null
     {reply, new_state} =
       if :ets.info(state.tid, :size) < state.max_clients do
-        :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
+        pr = Process.monitor(pid) |> IO.inspect()
+        :ets.insert(state.tid, {pr, pid, now()})
 
         case state.parameter_status do
           [] ->
-            {{:ok, [], state.idle_timeout}, update_in(state.wait_ps, &[pid | &1])}
+            {{:ok, [], state.idle_timeout, {state.tid, pr}},
+             update_in(state.wait_ps, &[pid | &1])}
 
           ps ->
-            {{:ok, ps, state.idle_timeout}, state}
+            {{:ok, ps, state.idle_timeout, {state.tid, pr}}, state}
         end
       else
         {{:error, :max_clients_reached}, state}
