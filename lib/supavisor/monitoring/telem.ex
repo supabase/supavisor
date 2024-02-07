@@ -30,10 +30,10 @@ defmodule Supavisor.Monitoring.Telem do
     end
   end
 
-  @spec pool_checkout_time(integer(), S.id()) :: :ok
-  def pool_checkout_time(time, {{type, tenant}, user, mode, db_name}) do
+  @spec pool_checkout_time(integer(), S.id(), :local | :remote) :: :ok
+  def pool_checkout_time(time, {{type, tenant}, user, mode, db_name}, same_box) do
     :telemetry.execute(
-      [:supavisor, :pool, :checkout, :stop],
+      [:supavisor, :pool, :checkout, :stop, same_box],
       %{duration: time},
       %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
     )
