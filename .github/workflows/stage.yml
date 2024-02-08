@@ -3,7 +3,7 @@ name: Publish upgrade artifacts to staging
 on:
   push:
     branches:
-      - main
+      - feat/idle_timeout
 env:
   INCLUDE_ERTS: true
   MIX_ENV: prod
