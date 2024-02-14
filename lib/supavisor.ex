@@ -141,7 +141,7 @@ defmodule Supavisor do
     |> :erpc.multicall(Supavisor, :dirty_terminate, [tenant], 60_000)
   end
 
-  @spec del_all_cache(String.t(), String.t()) :: map()
+  @spec del_all_cache(String.t(), String.t()) :: [map()]
   def del_all_cache(tenant, user) do
     Logger.info("Deleting all cache for tenant #{tenant} and user #{user}")
     {:ok, keys} = Cachex.keys(Supavisor.Cache)
