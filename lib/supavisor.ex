@@ -143,10 +143,21 @@ defmodule Supavisor do
 
   @spec del_all_cache(String.t(), String.t()) :: map()
   def del_all_cache(tenant, user) do
-    %{
-      secrets: Cachex.del(Supavisor.Cache, {:secrets, tenant, user}),
-      metrics: Cachex.del(Supavisor.Cache, {:metrics, tenant})
-    }
+    Logger.info("Deleting all cache for tenant #{tenant} and user #{user}")
+    {:ok, keys} = Cachex.keys(Supavisor.Cache)
+
+    del = fn key, acc ->
+      result = Cachex.del(Supavisor.Cache, key)
+      [%{inspect(key) => inspect(result)} | acc]
+    end
+
+    Enum.reduce(keys, [], fn
+      {:metrics, ^tenant} = key, acc -> del.(key, acc)
+      {:secrets, ^tenant, ^user} = key, acc -> del.(key, acc)
+      {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
+      {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
+      _, acc -> acc
+    end)
   end
 
   @spec get_local_pool(id) :: map | pid | nil
