@@ -274,7 +274,8 @@ defmodule Supavisor.ClientHandler do
 
         key = {:secrets_check, data.tenant, data.user}
 
-        if reason == "Wrong password" and Cachex.get(Supavisor.Cache, key) == {:ok, nil} do
+        if method != :password and reason == "Wrong password" and
+             Cachex.get(Supavisor.Cache, key) == {:ok, nil} do
           case auth_secrets(info, data.user, key, 15_000) do
             {:ok, {method2, secrets2}} = value ->
               if method != method2 || Map.delete(secrets.(), :client_key) != secrets2.() do
