@@ -278,7 +278,7 @@ defmodule Supavisor.ClientHandler do
           case auth_secrets(info, data.user, key, 15_000) do
             {:ok, {method2, secrets2}} = value ->
               if method != method2 || Map.delete(secrets.(), :client_key) != secrets2.() do
-                Logger.warning("ClientHandler: Update cache with new secrets")
+                Logger.warning("ClientHandler: Update secrets and terminate pool")
 
                 Cachex.update(
                   Supavisor.Cache,
@@ -763,9 +763,10 @@ defmodule Supavisor.ClientHandler do
     }
   end
 
-  @spec auth_secrets(map, String.t()) :: {:ok, S.secrets()} | {:error, term()}
+  @spec auth_secrets(map, String.t(), term(), non_neg_integer()) ::
+          {:ok, S.secrets()} | {:error, term()}
   ## password secrets
-  def auth_secrets(%{user: user, tenant: %{require_user: true}}, _) do
+  def auth_secrets(%{user: user, tenant: %{require_user: true}}, _, _, _) do
     secrets = %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
 
     {:ok, {:password, fn -> secrets end}}
