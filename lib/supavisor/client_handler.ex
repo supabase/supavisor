@@ -219,18 +219,22 @@ defmodule Supavisor.ClientHandler do
           true ->
             new_data = update_user_data(data, info, user, id, db_name, mode)
 
-            case auth_secrets(info, user) do
+            key = {:secrets, tenant_or_alias, user}
+
+            case auth_secrets(info, user, key, :timer.hours(24)) do
               {:ok, auth_secrets} ->
                 Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
 
-                {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets}}}
+                {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
 
               {:error, reason} ->
                 Logger.error(
                   "ClientHandler: Authentication auth_secrets error: #{inspect(reason)}"
                 )
 
-                :ok = HH.send_error(sock, "XX000", "Authentication error")
+                :ok =
+                  HH.send_error(sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
+
                 Telem.client_join(:fail, id)
                 {:stop, {:shutdown, :auth_secrets_error}}
             end
@@ -249,7 +253,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:handle, {method, secrets}},
+        {:handle, {method, secrets}, info},
         _,
         %{sock: sock} = data
       ) do
@@ -267,6 +271,32 @@ defmodule Supavisor.ClientHandler do
           else
             Server.exchange_message(:final, "e=#{reason}")
           end
+
+        key = {:secrets_check, data.tenant, data.user}
+
+        if reason == "Wrong password" and Cachex.get(Supavisor.Cache, key) == {:ok, nil} do
+          case auth_secrets(info, data.user, key, 15_000) do
+            {:ok, {method2, secrets2}} = value ->
+              if method != method2 || Map.delete(secrets.(), :client_key) != secrets2.() do
+                Logger.warning("ClientHandler: Update cache with new secrets")
+
+                Cachex.update(
+                  Supavisor.Cache,
+                  {:secrets, data.tenant, data.user},
+                  {:cached, value}
+                )
+
+                Supavisor.stop(data.id)
+              else
+                Logger.debug("ClientHandler: Cache the same #{inspect(key)}")
+              end
+
+            other ->
+              Logger.error("ClientHandler: Auth secrets check error: #{inspect(other)}")
+          end
+        else
+          Logger.debug("ClientHandler: Cache hit for #{inspect(key)}")
+        end
 
         HH.sock_send(sock, msg)
         Telem.client_join(:fail, data.id)
@@ -469,11 +499,14 @@ defmodule Supavisor.ClientHandler do
       "ClientHandler: Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}"
     )
 
-    case state do
-      :idle ->
+    case {state, reason} do
+      {_, :shutdown} ->
+        {:stop, {:shutdown, :manager_shutdown}}
+
+      {:idle, _} ->
         {:keep_state_and_data, {:next_event, :internal, :subscribe}}
 
-      :busy ->
+      {:busy, _} ->
         {:stop, {:shutdown, :manager_down}}
     end
   end
@@ -739,17 +772,15 @@ defmodule Supavisor.ClientHandler do
   end
 
   ## auth_query secrets
-  def auth_secrets(%{tenant: tenant} = info, db_user) do
-    cache_key = {:secrets, tenant.external_id, db_user}
-
+  def auth_secrets(info, db_user, key, ttl) do
     fetch = fn _key ->
       case get_secrets(info, db_user) do
-        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: 600_000}
+        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: ttl}
         {:error, _} = resp -> {:ignore, resp}
       end
     end
 
-    case Cachex.fetch(Supavisor.Cache, cache_key, fetch) do
+    case Cachex.fetch(Supavisor.Cache, key, fetch) do
       {:ok, {:cached, value}} -> value
       {:commit, {:cached, value}, _opts} -> value
       {:ignore, resp} -> resp
