@@ -38,6 +38,4 @@ All `tenant` fields and their types are defined in the `Supavisor.Tenants.Tenant
 
 `client_idle_timeout` - the maximum duration of an idle client connection
 
-`default_pool_strategy` - the default strategy when pulling available connections from the pool queue
-
 `allow_list` - a list of CIDR ranges which are allowed to connect
