@@ -57,6 +57,7 @@ defmodule Supavisor.Application do
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
+      Supavisor.ErlSysMon,
       PromEx,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
