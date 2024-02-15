@@ -272,7 +272,6 @@ defmodule Supavisor do
       default_max_clients: def_max_clients,
       client_idle_timeout: client_idle_timeout,
       replica_type: replica_type,
-      default_pool_strategy: default_pool_strategy,
       users: [
         %{
           db_user: db_user,
@@ -318,7 +317,6 @@ defmodule Supavisor do
       default_parameter_status: ps,
       max_clients: max_clients,
       client_idle_timeout: client_idle_timeout,
-      default_pool_strategy: default_pool_strategy,
       log_level: log_level
     }
   end
