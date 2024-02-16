@@ -48,6 +48,8 @@ defmodule Supavisor.Helpers do
           socket_options: [
             ip_version(params["ip_version"], params["db_host"])
           ],
+          queue_target: 1_000,
+          queue_interval: 5_000,
           ssl_opts: ssl_opts || []
         )
 

@@ -813,6 +813,8 @@ defmodule Supavisor.ClientHandler do
         socket_options: [
           H.ip_version(tenant.ip_version, tenant.db_host)
         ],
+        queue_target: 1_000,
+        queue_interval: 5_000,
         ssl_opts: ssl_opts || []
       )
 
