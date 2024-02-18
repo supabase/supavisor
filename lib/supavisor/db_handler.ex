@@ -291,7 +291,7 @@ defmodule Supavisor.DbHandler do
 
   # the process received message from db without linked caller
   def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in @proto do
-    Logger.warning("DbHandler: Got db response #{inspect(bin)} when caller was nil")
+    Logger.debug("DbHandler: Got db response #{inspect(bin)} when caller was nil")
     :keep_state_and_data
   end
 

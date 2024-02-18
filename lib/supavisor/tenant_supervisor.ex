@@ -47,21 +47,24 @@ defmodule Supavisor.TenantSupervisor do
 
   @spec pool_spec(tuple, map) :: Keyword.t()
   defp pool_spec(id, args) do
-    {size, overflow} =
-      case args.mode do
-        :session ->
-          {1, args.pool_size}
+    # {size, overflow} =
+    #   case args.mode do
+    #     :session ->
+    #       {1, args.pool_size}
 
-        :transaction ->
-          if args.pool_size < 10, do: {args.pool_size, 0}, else: {10, args.pool_size - 10}
-      end
+    #     :transaction ->
+    #       if args.pool_size < 10, do: {args.pool_size, 0}, else: {10, args.pool_size - 10}
+    #   end
+
+    {size, overflow} = {1, args.pool_size}
 
     [
       name: {:via, Registry, {Supavisor.Registry.Tenants, id, args.replica_type}},
       worker_module: Supavisor.DbHandler,
       size: size,
       max_overflow: overflow,
-      strategy: :fifo
+      strategy: :lifo,
+      idle_timeout: :timer.minutes(5)
     ]
   end
 end

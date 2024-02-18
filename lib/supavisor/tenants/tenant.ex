@@ -30,7 +30,6 @@ defmodule Supavisor.Tenants.Tenant do
     field(:default_max_clients, :integer, default: 1000)
     field(:client_idle_timeout, :integer, default: 0)
     field(:client_heartbeat_interval, :integer, default: 60)
-    field(:default_pool_strategy, Ecto.Enum, values: [:fifo, :lifo], default: :fifo)
     field(:allow_list, {:array, :string}, default: ["0.0.0.0/0", "::/0"])
 
     has_many(:users, User,
@@ -64,7 +63,6 @@ defmodule Supavisor.Tenants.Tenant do
       :default_max_clients,
       :client_idle_timeout,
       :client_heartbeat_interval,
-      :default_pool_strategy,
       :allow_list
     ])
     |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")

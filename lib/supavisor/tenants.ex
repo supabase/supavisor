@@ -55,7 +55,7 @@ defmodule Supavisor.Tenants do
     cache_key = {:tenant_cache, external_id, sni_hostname}
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_tenant(external_id, sni_hostname)}, ttl: 5_000}
+           {:commit, {:cached, get_tenant(external_id, sni_hostname)}, ttl: :timer.hours(24)}
          end) do
       {_, {:cached, value}} -> value
       {_, {:cached, value}, _} -> value
@@ -79,7 +79,8 @@ defmodule Supavisor.Tenants do
     cache_key = {:user_cache, type, user, external_id, sni_hostname}
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)}, ttl: 5_000}
+           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
+            ttl: :timer.hours(24)}
          end) do
       {_, {:cached, value}} -> value
       {_, {:cached, value}, _} -> value

@@ -141,12 +141,23 @@ defmodule Supavisor do
     |> :erpc.multicall(Supavisor, :dirty_terminate, [tenant], 60_000)
   end
 
-  @spec del_all_cache(String.t(), String.t()) :: map()
+  @spec del_all_cache(String.t(), String.t()) :: [map()]
   def del_all_cache(tenant, user) do
-    %{
-      secrets: Cachex.del(Supavisor.Cache, {:secrets, tenant, user}),
-      metrics: Cachex.del(Supavisor.Cache, {:metrics, tenant})
-    }
+    Logger.info("Deleting all cache for tenant #{tenant} and user #{user}")
+    {:ok, keys} = Cachex.keys(Supavisor.Cache)
+
+    del = fn key, acc ->
+      result = Cachex.del(Supavisor.Cache, key)
+      [%{inspect(key) => inspect(result)} | acc]
+    end
+
+    Enum.reduce(keys, [], fn
+      {:metrics, ^tenant} = key, acc -> del.(key, acc)
+      {:secrets, ^tenant, ^user} = key, acc -> del.(key, acc)
+      {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
+      {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
+      _, acc -> acc
+    end)
   end
 
   @spec get_local_pool(id) :: map | pid | nil
@@ -261,7 +272,6 @@ defmodule Supavisor do
       default_max_clients: def_max_clients,
       client_idle_timeout: client_idle_timeout,
       replica_type: replica_type,
-      default_pool_strategy: default_pool_strategy,
       users: [
         %{
           db_user: db_user,
@@ -307,7 +317,6 @@ defmodule Supavisor do
       default_parameter_status: ps,
       max_clients: max_clients,
       client_idle_timeout: client_idle_timeout,
-      default_pool_strategy: default_pool_strategy,
       log_level: log_level
     }
   end
