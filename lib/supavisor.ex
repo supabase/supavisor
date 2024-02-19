@@ -160,6 +160,34 @@ defmodule Supavisor do
     end)
   end
 
+  @spec del_all_cache(String.t()) :: [map()]
+  def del_all_cache(tenant) do
+    Logger.info("Deleting all cache for tenant #{tenant}")
+    {:ok, keys} = Cachex.keys(Supavisor.Cache)
+
+    del = fn key, acc ->
+      result = Cachex.del(Supavisor.Cache, key)
+      [%{inspect(key) => inspect(result)} | acc]
+    end
+
+    Enum.reduce(keys, [], fn
+      {:metrics, ^tenant} = key, acc -> del.(key, acc)
+      {:secrets, ^tenant, _} = key, acc -> del.(key, acc)
+      {:user_cache, _, _, ^tenant, _} = key, acc -> del.(key, acc)
+      {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
+      _, acc -> acc
+    end)
+  end
+
+  @spec del_all_cache_dist(String.t(), pos_integer()) :: [map()]
+  def del_all_cache_dist(tenant, timeout \\ 15_000) do
+    Logger.info("Deleting all dist cache for tenant #{tenant}")
+
+    for node <- [node() | Node.list()] do
+      %{inspect(node) => :erpc.call(node, Supavisor, :del_all_cache, [tenant], timeout)}
+    end
+  end
+
   @spec get_local_pool(id) :: map | pid | nil
   def get_local_pool(id) do
     match = {{:pool, :_, :_, id}, :"$2", :"$3"}
