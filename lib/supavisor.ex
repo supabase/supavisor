@@ -1,6 +1,7 @@
 defmodule Supavisor do
   @moduledoc false
   require Logger
+  import Cachex.Spec
   alias Supavisor.Helpers, as: H
   alias Supavisor.Tenants, as: T
   alias Supavisor.Manager
@@ -163,19 +164,22 @@ defmodule Supavisor do
   @spec del_all_cache(String.t()) :: [map()]
   def del_all_cache(tenant) do
     Logger.info("Deleting all cache for tenant #{tenant}")
-    {:ok, keys} = Cachex.keys(Supavisor.Cache)
 
     del = fn key, acc ->
       result = Cachex.del(Supavisor.Cache, key)
       [%{inspect(key) => inspect(result)} | acc]
     end
 
-    Enum.reduce(keys, [], fn
-      {:metrics, ^tenant} = key, acc -> del.(key, acc)
-      {:secrets, ^tenant, _} = key, acc -> del.(key, acc)
-      {:user_cache, _, _, ^tenant, _} = key, acc -> del.(key, acc)
-      {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
-      _, acc -> acc
+    Supavisor.Cache
+    |> Cachex.stream!()
+    |> Enum.reduce([], fn entry(key: key), acc ->
+      case key do
+        {:metrics, ^tenant} -> del.(key, acc)
+        {:secrets, ^tenant, _} -> del.(key, acc)
+        {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
+        {:tenant_cache, ^tenant, _} -> del.(key, acc)
+        _ -> acc
+      end
     end)
   end
 
