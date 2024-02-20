@@ -7,7 +7,7 @@ defmodule Supavisor.SynHandler do
 
   def on_process_unregistered(
         :tenants,
-        {{_type, tenant}, user, _mode, _db_name} = id,
+        {{_type, _tenant}, _user, _mode, _db_name} = id,
         _pid,
         _meta,
         reason
@@ -16,7 +16,6 @@ defmodule Supavisor.SynHandler do
 
     # remove all Prometheus metrics for the specified tenant
     PromEx.remove_metrics(id)
-    Supavisor.del_all_cache(tenant, user)
   end
 
   def resolve_registry_conflict(

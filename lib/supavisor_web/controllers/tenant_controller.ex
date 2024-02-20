@@ -111,6 +111,7 @@ defmodule SupavisorWeb.TenantController do
   end
 
   def update(conn, %{"external_id" => id, "tenant" => params}) do
+    Logger.info("Delete cache dist #{id}: #{inspect(Supavisor.del_all_cache_dist(id))}")
     cert = H.upstream_cert(params["upstream_tls_ca"])
 
     if params["upstream_ssl"] && params["upstream_verify"] == "peer" && !cert do
@@ -169,6 +170,8 @@ defmodule SupavisorWeb.TenantController do
   def delete(conn, %{"external_id" => id}) do
     code = if Tenants.delete_tenant_by_external_id(id), do: 204, else: 404
 
+    Logger.info("Delete cache dist #{id}: #{inspect(Supavisor.del_all_cache_dist(id))}")
+
     send_resp(conn, code, "")
   end
 
@@ -188,6 +191,11 @@ defmodule SupavisorWeb.TenantController do
     Logger.metadata(project: external_id)
     result = Supavisor.terminate_global(external_id) |> inspect()
     Logger.warning("Terminate #{external_id}: #{result}")
+
+    Logger.info(
+      "Delete cache dist #{external_id}: #{inspect(Supavisor.del_all_cache_dist(external_id))}"
+    )
+
     render(conn, "show_terminate.json", result: result)
   end
 
