@@ -16,7 +16,6 @@ defmodule Supavisor.SynHandler do
 
     # remove all Prometheus metrics for the specified tenant
     PromEx.remove_metrics(id)
-    # Supavisor.del_all_cache(tenant, user)
   end
 
   def resolve_registry_conflict(

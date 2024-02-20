@@ -188,7 +188,7 @@ defmodule Supavisor do
     Logger.info("Deleting all dist cache for tenant #{tenant}")
 
     for node <- [node() | Node.list()] do
-      %{inspect(node) => :erpc.call(node, Supavisor, :del_all_cache, [tenant], timeout)}
+      %{to_string(node) => :erpc.call(node, Supavisor, :del_all_cache, [tenant], timeout)}
     end
   end
 
