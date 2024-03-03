@@ -544,10 +544,8 @@ defmodule Supavisor.DbHandler do
 
   @spec check_ready(binary()) :: :ready_for_query | :continue
   def check_ready(bin) do
-    if String.ends_with?(bin, Server.ready_for_query()) do
-      :ready_for_query
-    else
-      :continue
-    end
+    if String.ends_with?(bin, Server.ready_for_query()),
+      do: :ready_for_query,
+      else: :continue
   end
 end
