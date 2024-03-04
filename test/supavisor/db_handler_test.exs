@@ -181,7 +181,8 @@ defmodule Supavisor.DbHandlerTest do
         caller: caller_pid,
         sock: {:gen_tcp, nil},
         stats: %{},
-        mode: :session
+        mode: :session,
+        sent: false
       }
 
       state = :some_state
@@ -213,7 +214,8 @@ defmodule Supavisor.DbHandlerTest do
         caller: caller_pid,
         sock: {:gen_tcp, nil},
         stats: %{},
-        mode: :transaction
+        mode: :transaction,
+        sent: false
       }
 
       state = :some_state

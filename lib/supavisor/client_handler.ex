@@ -30,6 +30,10 @@ defmodule Supavisor.ClientHandler do
     :gen_statem.cast(pid, {:client_cast, bin, status})
   end
 
+  @spec client_call(pid, iodata(), atom()) :: :ok | {:error, term()}
+  def client_call(pid, bin, status),
+    do: :gen_statem.call(pid, {:client_call, bin, status}, 30_000)
+
   @impl true
   def init(_), do: :ignore
 
@@ -546,6 +550,12 @@ defmodule Supavisor.ClientHandler do
         {:keep_state, %{data | db_pid: db_pid, query_start: ts},
          {:next_event, :internal, {:tcp, nil, data.last_query}}}
     end
+  end
+
+  # emulate handle_call
+  def handle_event({:call, from}, {:client_call, bin, _}, _, data) do
+    Logger.debug("ClientHandler: --> --> bin call #{inspect(byte_size(bin))} bytes")
+    {:keep_state_and_data, {:reply, from, HH.sock_send(data.sock, bin)}}
   end
 
   def handle_event(type, content, state, data) do
