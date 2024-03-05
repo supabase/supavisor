@@ -76,7 +76,12 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("ClientHandler: Client is trying to request HTTP")
-    HH.sock_send(data.sock, "HTTP/1.1 204 OK\r\n\r\n")
+
+    HH.sock_send(
+      data.sock,
+      "HTTP/1.1 204 OK\r\nx-app-version: #{Application.spec(:supavisor, :vsn)}\r\n\r\n"
+    )
+
     {:stop, {:shutdown, :http_request}}
   end
 
