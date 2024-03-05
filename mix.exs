@@ -118,7 +118,7 @@ defmodule Supavisor.MixProject do
   defp upgrade(release) do
     from = System.get_env("UPGRADE_FROM")
 
-    if from do
+    if from and from != "" do
       vsn = release.version
       path = Path.join([release.path, "releases", "supavisor-#{vsn}.rel"])
       rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))
