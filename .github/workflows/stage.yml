@@ -69,6 +69,7 @@ jobs:
       - name: Clean up old release
         run: |
           rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
+          rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
           rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
       - name: Make upgrade release
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
