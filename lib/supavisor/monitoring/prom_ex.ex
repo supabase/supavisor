@@ -37,7 +37,7 @@ defmodule Supavisor.Monitoring.PromEx do
     |> :ets.select_delete([{{{:_, meta}, :_}, [], [true]}])
   end
 
-  @spec set_metrics_tags() :: :ok
+  @spec set_metrics_tags() :: map()
   def set_metrics_tags() do
     [_, host] = node() |> Atom.to_string() |> String.split("@")
 
@@ -53,6 +53,7 @@ defmodule Supavisor.Monitoring.PromEx do
       end
 
     Application.put_env(:supavisor, :metrics_tags, metrics_tags)
+    metrics_tags
   end
 
   @spec short_node_id() :: String.t() | nil
@@ -68,9 +69,13 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec get_metrics() :: String.t()
   def get_metrics() do
-    def_tags =
-      Application.fetch_env!(:supavisor, :metrics_tags)
-      |> Enum.map_join(",", fn {k, v} -> "#{k}=\"#{v}\"" end)
+    metrics_tags =
+      case Application.fetch_env(:supavisor, :metrics_tags) do
+        :error -> set_metrics_tags()
+        {:ok, tags} -> tags
+      end
+
+    def_tags = Enum.map_join(metrics_tags, ",", fn {k, v} -> "#{k}=\"#{v}\"" end)
 
     metrics =
       PromEx.get_metrics(__MODULE__)

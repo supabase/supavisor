@@ -77,7 +77,8 @@ defmodule Supavisor.MixProject do
     [
       supavisor: [
         steps: [:assemble, &upgrade/1, :tar],
-        include_erts: System.get_env("INCLUDE_ERTS", "true") == "true"
+        include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
+        cookie: System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30)))
       ],
       supavisor_bin: [
         steps: [:assemble, &Burrito.wrap/1],
@@ -118,7 +119,7 @@ defmodule Supavisor.MixProject do
   defp upgrade(release) do
     from = System.get_env("UPGRADE_FROM")
 
-    if from do
+    if from && from != "" do
       vsn = release.version
       path = Path.join([release.path, "releases", "supavisor-#{vsn}.rel"])
       rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))
