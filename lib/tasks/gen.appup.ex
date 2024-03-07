@@ -32,7 +32,9 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
     path_to = Path.join(lib_path, "supavisor-#{to_vsn}")
     appup_path = Path.join([path_to, "ebin", "supavisor.appup"])
 
-    case Appup.make(:supavisor, from_vsn, to_vsn, path_from, path_to) do
+    transforms = [{Supavisor.HotUpgrade, []}]
+
+    case Appup.make(:supavisor, from_vsn, to_vsn, path_from, path_to, transforms) do
       {:ok, appup} ->
         IO.puts("Writing appup to #{appup_path}")
 
