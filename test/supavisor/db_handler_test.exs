@@ -239,12 +239,21 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "check_ready/1" do
     test "ready_for_query valid" do
-      assert :transaction_block == Db.check_ready(<<90, 0, 0, 0, 5, ?T>>)
-      assert :transaction_block == Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?T>>)
-      assert :failed_transaction_block == Db.check_ready(<<90, 0, 0, 0, 5, ?E>>)
-      assert :failed_transaction_block == Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?E>>)
-      assert :ready_for_query == Db.check_ready(<<90, 0, 0, 0, 5, ?I>>)
-      assert :ready_for_query == Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?I>>)
+      assert {:ready_for_query, :transaction_block} == Db.check_ready(<<90, 0, 0, 0, 5, ?T>>)
+
+      assert {:ready_for_query, :transaction_block} ==
+               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?T>>)
+
+      assert {:ready_for_query, :failed_transaction_block} ==
+               Db.check_ready(<<90, 0, 0, 0, 5, ?E>>)
+
+      assert {:ready_for_query, :failed_transaction_block} ==
+               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?E>>)
+
+      assert {:ready_for_query, :idle} == Db.check_ready(<<90, 0, 0, 0, 5, ?I>>)
+
+      assert {:ready_for_query, :idle} ==
+               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?I>>)
     end
 
     test "ready_for_query not valid" do
