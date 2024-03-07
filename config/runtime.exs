@@ -170,6 +170,19 @@ if config_env() != :test do
         tag: "AES.GCM.V1", key: System.get_env("VAULT_ENC_KEY")
       }
     ]
+
+  config :partisan,
+    # Which overlay to use
+    peer_service_manager: :partisan_pluggable_peer_service_manager,
+    # The listening port for Partisan TCP/IP connections
+    peer_port: System.get_env("PARTISAN_PEER_PORT", "10200") |> String.to_integer(),
+    channels: [
+      data: %{parallelism: System.get_env("PARTISAN_PARALLELISM", "5") |> String.to_integer()}
+    ],
+    # Encoding for pid(), reference() and names
+    pid_encoding: false,
+    ref_encoding: false,
+    remote_ref_format: :improper_list
 end
 
 if System.get_env("LOGS_ENGINE") == "logflare" do

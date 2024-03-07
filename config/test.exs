@@ -21,6 +21,17 @@ config :supavisor, Supavisor.Repo,
   pool_size: 10,
   port: 6432
 
+config :partisan,
+  # Which overlay to use
+  peer_service_manager: :partisan_pluggable_peer_service_manager,
+  # The listening port for Partisan TCP/IP connections
+  peer_port: 10200,
+  channels: [data: %{parallelism: 1}],
+  # Encoding for pid(), reference() and names
+  pid_encoding: false,
+  ref_encoding: false,
+  remote_ref_format: :improper_list
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :supavisor, SupavisorWeb.Endpoint,
