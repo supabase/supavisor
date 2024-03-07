@@ -29,8 +29,8 @@ defmodule Supavisor.HotUpgrade do
     do: [{:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [to_vsn]}} | appup]
 
   @spec down(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
-  def down(_app, _from_vsn, to_vsn, appup, _transform),
-    do: [{:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [to_vsn]}} | appup]
+  def down(_app, from_vsn, _to_vsn, appup, _transform),
+    do: [{:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}} | appup]
 
   @spec apply_runtime_config(version_str()) :: any()
   def apply_runtime_config(vsn) do
