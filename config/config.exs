@@ -9,7 +9,8 @@ import Config
 
 config :supavisor,
   ecto_repos: [Supavisor.Repo],
-  version: Mix.Project.config()[:version]
+  version: Mix.Project.config()[:version],
+  env: Mix.env()
 
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,

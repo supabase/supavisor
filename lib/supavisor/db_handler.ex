@@ -19,6 +19,7 @@ defmodule Supavisor.DbHandler do
   @reconnect_timeout 2_500
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
+  @async_send_limit 1_000
 
   def start_link(config) do
     :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -334,14 +335,15 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: Got write replica message #{inspect(bin)}")
     HH.setopts(data.sock, active: :once)
     # check if the response ends with "ready for query"
-    ready =
-      if String.ends_with?(bin, Server.ready_for_query()) do
-        :ready_for_query
-      else
-        :continue
-      end
+    ready = check_ready(bin)
+    sent = data.sent || 0
 
-    :ok = Client.client_cast(data.caller, bin, ready)
+    send_via =
+      if ready == :ready_for_query || sent < @async_send_limit,
+        do: :client_cast,
+        else: :client_call
+
+    :ok = apply(Client, send_via, [data.caller, bin, ready])
 
     case ready do
       :ready_for_query ->
@@ -349,11 +351,11 @@ defmodule Supavisor.DbHandler do
 
         HH.setopts(data.sock, active: true)
 
-        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data)},
+        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data), sent: false},
          {:next_event, :internal, :check_anon_buffer}}
 
       :continue ->
-        :keep_state_and_data
+        {:keep_state, %{data | sent: sent + 1}}
     end
   end
 
@@ -539,4 +541,11 @@ defmodule Supavisor.DbHandler do
   @spec handler_caller(map()) :: pid() | nil
   defp handler_caller(%{mode: :session} = data), do: data.caller
   defp handler_caller(_), do: nil
+
+  @spec check_ready(binary()) :: :ready_for_query | :continue
+  def check_ready(bin) do
+    if String.ends_with?(bin, Server.ready_for_query()),
+      do: :ready_for_query,
+      else: :continue
+  end
 end

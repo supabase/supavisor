@@ -170,7 +170,9 @@ defmodule Supavisor.Integration.ProxyTest do
     assert :httpc.request(
              "http://localhost:#{Application.get_env(:supavisor, :proxy_port_transaction)}"
            ) ==
-             {:ok, {{'HTTP/1.1', 204, 'OK'}, [], []}}
+             {:ok,
+              {{'HTTP/1.1', 204, 'OK'}, [{'x-app-version', Application.spec(:supavisor, :vsn)}],
+               []}}
   end
 
   test "checks that client_handler is idle and db_pid is nil for transaction mode" do
