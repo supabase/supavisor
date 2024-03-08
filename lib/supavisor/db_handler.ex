@@ -338,17 +338,19 @@ defmodule Supavisor.DbHandler do
     ready = check_ready(bin)
     sent = data.sent || 0
 
-    send_via =
-      if ready == :ready_for_query || sent < @async_send_limit,
-        do: :client_cast,
-        else: :client_call
+    {send_via, progress} =
+      case ready do
+        {:ready_for_query, :idle} -> {:client_cast, :ready_for_query}
+        {:ready_for_query, _} -> {:client_cast, :continue}
+        _ when sent < @async_send_limit -> {:client_cast, :continue}
+        _ -> {:client_call, :continue}
+      end
 
-    :ok = apply(Client, send_via, [data.caller, bin, ready])
+    :ok = apply(Client, send_via, [data.caller, bin, progress])
 
-    case ready do
+    case progress do
       :ready_for_query ->
         {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-
         HH.setopts(data.sock, active: true)
 
         {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data), sent: false},
@@ -542,10 +544,25 @@ defmodule Supavisor.DbHandler do
   defp handler_caller(%{mode: :session} = data), do: data.caller
   defp handler_caller(_), do: nil
 
-  @spec check_ready(binary()) :: :ready_for_query | :continue
+  @spec check_ready(binary()) ::
+          {:ready_for_query, :idle | :transaction_block | :failed_transaction_block} | :continue
   def check_ready(bin) do
-    if String.ends_with?(bin, Server.ready_for_query()),
-      do: :ready_for_query,
-      else: :continue
+    bin_size = byte_size(bin)
+
+    case bin do
+      <<_::binary-size(bin_size - 6), 90, 0, 0, 0, 5, status_indicator::binary>> ->
+        indicator =
+          case status_indicator do
+            <<?I>> -> :idle
+            <<?T>> -> :transaction_block
+            <<?E>> -> :failed_transaction_block
+            _ -> :continue
+          end
+
+        {:ready_for_query, indicator}
+
+      _ ->
+        :continue
+    end
   end
 end
