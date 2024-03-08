@@ -547,26 +547,22 @@ defmodule Supavisor.DbHandler do
   @spec check_ready(binary()) ::
           {:ready_for_query, :idle | :transaction_block | :failed_transaction_block} | :continue
   def check_ready(bin) do
-    string_size = byte_size(bin)
+    bin_size = byte_size(bin)
 
-    if 6 <= string_size do
-      case bin do
-        <<_::binary-size(string_size - 6), 90, 0, 0, 0, 5, status_indicator::binary>> ->
-          indicator =
-            case status_indicator do
-              <<?I>> -> :idle
-              <<?T>> -> :transaction_block
-              <<?E>> -> :failed_transaction_block
-              _ -> :continue
-            end
+    case bin do
+      <<_::binary-size(bin_size - 6), 90, 0, 0, 0, 5, status_indicator::binary>> ->
+        indicator =
+          case status_indicator do
+            <<?I>> -> :idle
+            <<?T>> -> :transaction_block
+            <<?E>> -> :failed_transaction_block
+            _ -> :continue
+          end
 
-          {:ready_for_query, indicator}
+        {:ready_for_query, indicator}
 
-        _ ->
-          :continue
-      end
-    else
-      :continue
+      _ ->
+        :continue
     end
   end
 end
