@@ -498,8 +498,9 @@ defmodule Supavisor.ClientHandler do
   end
 
   # linked DbHandler went down
-  def handle_event(:info, {:EXIT, db_pid, reason}, _, _) do
+  def handle_event(:info, {:EXIT, db_pid, reason}, _, data) do
     Logger.error("ClientHandler: DbHandler #{inspect(db_pid)} exited #{inspect(reason)}")
+    HH.sock_send(data.sock, Server.error_message("XX000", "DbHandler exited"))
     {:stop, {:shutdown, :db_handler_exit}}
   end
 
@@ -519,6 +520,11 @@ defmodule Supavisor.ClientHandler do
       {:busy, _} ->
         {:stop, {:shutdown, :manager_down}}
     end
+  end
+
+  def handle_event(:info, {:disconnect, reason}, _, _data) do
+    Logger.warning("ClientHandler: Disconnected due to #{inspect(reason)}")
+    {:stop, {:shutdown, {:disconnect, reason}}}
   end
 
   # emulate handle_cast

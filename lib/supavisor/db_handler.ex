@@ -245,6 +245,25 @@ defmodule Supavisor.DbHandler do
       {_, :authentication_md5} ->
         {:keep_state, data}
 
+      {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
+        tenant = Supavisor.tenant(data.id)
+
+        for node <- [node() | Node.list()] do
+          :erpc.cast(node, fn ->
+            Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
+            Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
+
+            Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
+              for {client_handler, _meta} <- entries,
+                  do: send(client_handler, {:disconnect, reason})
+            end)
+          end)
+        end
+
+        Supavisor.stop(data.id)
+        Logger.error("DbHandler: Auth error #{inspect(reason)}")
+        {:stop, :invalid_password, data}
+
       {:error_response, error} ->
         Logger.error("DbHandler: Error auth response #{inspect(error)}")
         {:keep_state, data}
@@ -394,7 +413,10 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     Logger.error("DbHandler: Connection closed when state was #{state}")
-    {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
+
+    if Application.get_env(:supavisor, :reconnect_on_db_close),
+      do: {:next_state, :connect, data, {:state_timeout, @reconnect_timeout, :connect}},
+      else: {:stop, :db_termination, data}
   end
 
   # linked client_handler went down
