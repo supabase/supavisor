@@ -37,7 +37,7 @@ defmodule Supavisor.HotUpgrade do
     path =
       if System.get_env("DEBUG_LOAD_RUNTIME_CONFIG"),
         do: "config/runtime.exs",
-        else: "releases/#{vsn}/runtime.exs"
+        else: "#{System.get_env("RELEASE_ROOT")}/releases/#{vsn}/runtime.exs"
 
     if File.exists?(path) do
       IO.write("Loading runtime.exs from releases/#{vsn}")
