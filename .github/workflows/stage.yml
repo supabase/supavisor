@@ -51,30 +51,30 @@ jobs:
           mix local.rebar --force
           mix deps.get
       - name: Make old release
-        run: mix release supavisor    
-      - name: Checkout RELEASE_TO
-        run: git checkout v${{ env.RELEASE_TO }}
-      - name: Cache Mix
-        uses: actions/cache@v3
-        with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-      - name: Install dependencies
-        run: |
-          mix local.hex --force
-          mix local.rebar --force
-          mix deps.get
-      - name: Clean up old release
-        run: |
-          rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
-          rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
-          rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
-      - name: Make upgrade release
-        run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
+        run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} mix release supavisor    
+      # - name: Checkout RELEASE_TO
+      #   run: git checkout v${{ env.RELEASE_TO }}
+      # - name: Cache Mix
+      #   uses: actions/cache@v3
+      #   with:
+      #     path: deps
+      #     key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-mix-
+      # - name: Install dependencies
+      #   run: |
+      #     mix local.hex --force
+      #     mix local.rebar --force
+      #     mix deps.get
+      # - name: Clean up old release
+      #   run: |
+      #     rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
+      #     rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
+      #     rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
+      # - name: Make upgrade release
+      #   run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Create tarball
-        run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
+        run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_FROM }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
       - name: configure aws credentials - staging
         uses: aws-actions/configure-aws-credentials@v4
         with:
