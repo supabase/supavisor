@@ -85,7 +85,8 @@ topologies =
       config: [
         url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
         heartbeat_interval: 5_000,
-        channel_name: "supavisor_#{region}_#{maj}_#{min}"
+        channel_name: "supavisor_#{region}_#{maj}_#{min}",
+        channel_name_partisan: "supavisor_partisan_#{region}_#{maj}_#{min}"
       ]
     ]
 
@@ -174,8 +175,12 @@ if config_env() != :test do
   config :partisan,
     # Which overlay to use
     peer_service_manager: :partisan_pluggable_peer_service_manager,
-    # The listening port for Partisan TCP/IP connections
-    peer_port: System.get_env("PARTISAN_PEER_PORT", "10200") |> String.to_integer(),
+    listen_addrs: [
+      {
+        System.get_env("PARTISAN_PEER_IP", "127.0.0.1"),
+        String.to_integer(System.get_env("PARTISAN_PEER_PORT", "10200"))
+      }
+    ],
     channels: [
       data: %{parallelism: System.get_env("PARTISAN_PARALLELISM", "5") |> String.to_integer()}
     ],
