@@ -1,5 +1,31 @@
 defmodule Supavisor.HotUpgrade do
   @moduledoc false
+  require Logger
+
+  import Cachex.Spec
+  require Record
+
+  Record.defrecord(
+    :state,
+    [
+      :name,
+      :strategy,
+      :children,
+      :dynamics,
+      :intensity,
+      :period,
+      :restarts,
+      :dynamic_restarts,
+      :auto_shutdown,
+      :module,
+      :args
+    ]
+  )
+
+  Record.defrecord(
+    :child,
+    [:pid, :id, :mfargs, :restart_type, :significant, :shutdown, :child_type, :modules]
+  )
 
   @type app :: atom
   @type version_str :: String.t()
@@ -25,19 +51,27 @@ defmodule Supavisor.HotUpgrade do
   @type appup :: {appup_ver, upgrade_instructions, downgrade_instructions}
 
   @spec up(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
-  def up(_app, _from_vsn, to_vsn, appup, _transform),
-    do: [{:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [to_vsn]}} | appup]
+  def up(_app, _from_vsn, to_vsn, appup, _transform) do
+    [
+      {:apply, {__MODULE__, :apply_runtime_config, [to_vsn]}},
+      {:apply, {__MODULE__, :reint_funs, []}}
+    ] ++ appup
+  end
 
   @spec down(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
-  def down(_app, from_vsn, _to_vsn, appup, _transform),
-    do: [{:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}} | appup]
+  def down(_app, from_vsn, _to_vsn, appup, _transform) do
+    [
+      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}},
+      {:apply, {__MODULE__, :reint_funs, []}}
+    ] ++ appup
+  end
 
   @spec apply_runtime_config(version_str()) :: any()
   def apply_runtime_config(vsn) do
     path =
       if System.get_env("DEBUG_LOAD_RUNTIME_CONFIG"),
         do: "config/runtime.exs",
-        else: "releases/#{vsn}/runtime.exs"
+        else: "#{System.get_env("RELEASE_ROOT")}/releases/#{vsn}/runtime.exs"
 
     if File.exists?(path) do
       IO.write("Loading runtime.exs from releases/#{vsn}")
@@ -56,4 +90,61 @@ defmodule Supavisor.HotUpgrade do
       IO.write("No runtime.exs found in releases/#{vsn}")
     end
   end
+
+  def reint_funs() do
+    reinit_pool_args()
+    reinit_auth_query()
+  end
+
+  def reinit_pool_args() do
+    for [_tenant, pid, _meta] <-
+          Registry.select(Supavisor.Registry.TenantSups, [
+            {{:"$1", :"$2", :"$3"}, [], [[:"$1", :"$2", :"$3"]]}
+          ]),
+        {_, child_pid, _, [:poolboy]} <- Supervisor.which_children(pid),
+        linked_pid <- Process.info(child_pid)[:links],
+        state = :sys.get_state(linked_pid),
+        Record.is_record(state, :state),
+        state(state, :module) == :poolboy_sup do
+      :sys.replace_state(linked_pid, fn state ->
+        db_handler = Supavisor.DbHandler
+        {^db_handler, args} = state(state, :args)
+
+        args =
+          Map.update!(args, :auth, fn auth ->
+            Map.put(auth, :password, enc(auth.password.()))
+            |> Map.put(:secrets, enc(auth.secrets.()))
+          end)
+
+        {[^db_handler], %{^db_handler => child}} = state(state, :children)
+
+        children =
+          {[db_handler], %{db_handler => child(child, mfargs: {db_handler, :start_link, [args]})}}
+
+        state(state, args: {db_handler, args}, children: children)
+      end)
+    end
+  end
+
+  def reinit_auth_query() do
+    Supavisor.Cache
+    |> Cachex.stream!()
+    |> Enum.each(fn entry(key: key, value: value) ->
+      case value do
+        {:cached, {:ok, {:auth_query, auth}}} when is_function(auth) ->
+          Logger.debug("Reinitializing secret: #{inspect(key)}")
+          new = {:cached, {:ok, {:auth_query, enc(auth.())}}}
+          Cachex.put(Supavisor.Cache, key, new)
+
+        other ->
+          Logger.debug("Skipping:#{inspect(key)} #{inspect(other)}")
+      end
+    end)
+  end
+
+  @spec enc(term) :: fun
+  def enc(val), do: apply(__MODULE__, :do_enc, [val])
+
+  @spec do_enc(term) :: fun
+  def do_enc(val), do: fn -> val end
 end

@@ -155,7 +155,8 @@ if config_env() != :test do
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
-    global_downstream_key: downstream_key
+    global_downstream_key: downstream_key,
+    reconnect_on_db_close: System.get_env("RECONNECT_ON_DB_CLOSE") == "true"
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
