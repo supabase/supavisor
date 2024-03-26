@@ -54,3 +54,18 @@ config :logger, :console,
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
+
+config :partisan,
+  peer_service_manager: :partisan_pluggable_peer_service_manager,
+  listen_addrs: [
+    {
+      System.get_env("PARTISAN_PEER_IP", "127.0.0.1"),
+      String.to_integer(System.get_env("PARTISAN_PEER_PORT", "10200"))
+    }
+  ],
+  channels: [
+    data: %{parallelism: System.get_env("PARTISAN_PARALLELISM", "5") |> String.to_integer()}
+  ],
+  pid_encoding: false,
+  ref_encoding: false,
+  remote_ref_format: :improper_list
