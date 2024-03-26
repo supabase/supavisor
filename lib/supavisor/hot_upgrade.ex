@@ -103,6 +103,10 @@ defmodule Supavisor.HotUpgrade do
           ]),
         {_, child_pid, _, [:poolboy]} <- Supervisor.which_children(pid),
         linked_pid <- Process.info(child_pid)[:links],
+        match?(
+          {:supervisor, :poolboy_sup, _},
+          Process.info(linked_pid)[:dictionary][:"$initial_call"]
+        ),
         state = :sys.get_state(linked_pid),
         Record.is_record(state, :state),
         state(state, :module) == :poolboy_sup do
