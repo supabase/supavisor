@@ -160,9 +160,15 @@ defmodule Supavisor.ClientHandler do
             level -> String.to_existing_atom(level)
           end
 
+        search_path =
+          case hello.payload["options"]["search_path"] do
+            nil -> nil
+            custom_schema -> String.to_existing_atom(search_path)
+          end
+
         H.set_log_level(log_level)
 
-        {:keep_state, %{data | log_level: log_level},
+        {:keep_state, %{data | log_level: log_level, search_path: search_path},
          {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
 
       {:error, error} ->
