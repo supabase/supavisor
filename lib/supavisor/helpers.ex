@@ -134,6 +134,10 @@ defmodule Supavisor.Helpers do
     {:ok, %{digest: :md5, secret: secret, user: user}}
   end
 
+  def parse_secret(_secret, _user) do
+    {:error, "Unsupported or invalid secret format"}
+  end
+
   def parse_postgres_secret(_), do: {:error, "Digest not supported"}
 
   ## Internal functions
