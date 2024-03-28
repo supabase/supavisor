@@ -61,6 +61,9 @@ jobs:
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
           restore-keys: |
             ${{ runner.os }}-mix-
+      - name: Clean up opentelemetry_api
+        run: |
+          rm -rf ./_build/${{ env.MIX_ENV }}/lib/opentelemetry_api            
       - name: Install dependencies
         run: |
           mix local.hex --force
