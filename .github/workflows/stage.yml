@@ -78,7 +78,7 @@ jobs:
       - name: Make upgrade release
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Create tarball
-        run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_FROM }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
+        run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
       - name: configure aws credentials - staging
         uses: aws-actions/configure-aws-credentials@v4
         with:
