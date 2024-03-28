@@ -49,5 +49,27 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
       {:error, reason} ->
         Mix.raise("Failed to generate appup file: #{inspect(reason)}")
     end
+
+    from_vsn = "1.2.2"
+    to_vsn = "1.2.1"
+    path_from = Path.join(lib_path, "opentelemetry_api-#{from_vsn}")
+    path_to = Path.join(lib_path, "opentelemetry_api-#{to_vsn}")
+    appup_path = Path.join([path_to, "ebin", "opentelemetry_api.appup"])
+
+    case Appup.make(:opentelemetry_api, from_vsn, to_vsn, path_from, path_to) do
+      {:ok, appup} ->
+        IO.puts("Writing appup to #{appup_path}")
+
+        case File.write(appup_path, :io_lib.format("~p.", [appup]), [:utf8]) do
+          :ok ->
+            IO.puts("Appup:\n#{File.read!(appup_path)}")
+
+          {:error, reason} ->
+            Mix.raise("Failed to write appup file: #{reason}")
+        end
+
+      {:error, reason} ->
+        Mix.raise("Failed to generate appup file: #{inspect(reason)}")
+    end
   end
 end
