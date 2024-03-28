@@ -21,7 +21,7 @@ defmodule Supavisor.MixProject do
   def application do
     [
       mod: {Supavisor.Application, []},
-      extra_applications: [:logger, :runtime_tools, :os_mon, :ssl]
+      extra_applications: [:logger, :runtime_tools, :os_mon, :ssl, :partisan]
     ]
   end
 
@@ -66,6 +66,7 @@ defmodule Supavisor.MixProject do
       # pooller
       # {:poolboy, "~> 1.5.2"},
       {:poolboy, git: "https://github.com/abc3/poolboy.git", tag: "v0.0.2"},
+      {:partisan, git: "https://github.com/lasp-lang/partisan.git", tag: "v5.0.0-rc.12"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
       {:rustler, "~> 0.29.1"}
