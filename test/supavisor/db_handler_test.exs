@@ -1,6 +1,7 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: false
   alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Helpers, as: H
   alias Supavisor.Protocol.Server
   # import Mock
 
@@ -40,7 +41,7 @@ defmodule Supavisor.DbHandlerTest do
       :meck.expect(:gen_tcp, :send, fn _sock, _msg -> :ok end)
       :meck.expect(:inet, :setopts, fn _sock, _opts -> :ok end)
 
-      secrets = fn -> %{user: "some user", db_user: "some user"} end
+      secrets = H.encode_secret(%{user: "some user", db_user: "some user"})
 
       auth = %{
         host: "host",
@@ -148,7 +149,7 @@ defmodule Supavisor.DbHandlerTest do
 
       data = %{
         auth: %{
-          password: fn -> "some_password" end,
+          password: H.encode_secret("some_password"),
           user: "some_user",
           method: :password
         },

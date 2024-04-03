@@ -3,6 +3,7 @@ defmodule Supavisor.SynHandlerTest do
   import ExUnit.CaptureLog
   require Logger
   alias Ecto.Adapters.SQL.Sandbox
+  alias Supavisor.Helpers, as: H
 
   @id {{:single, "syn_tenant"}, "postgres", :session, "postgres"}
 
@@ -10,7 +11,7 @@ defmodule Supavisor.SynHandlerTest do
     node2 = :"secondary@127.0.0.1"
 
     secret = %{alias: "postgres"}
-    auth_secret = {:password, fn -> secret end}
+    auth_secret = {:password, H.encode_secret(secret)}
     {:ok, pid2} = :erpc.call(node2, Supavisor.FixturesHelpers, :start_pool, [@id, secret])
     Process.sleep(500)
     assert pid2 == Supavisor.get_global_sup(@id)

@@ -10,7 +10,7 @@ defmodule Supavisor do
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
-  @type secrets :: {:password | :auth_query, fun()}
+  @type secrets :: {:password | :auth_query, binary()}
   @type mode :: :transaction | :session | :native
   @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t()}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
@@ -250,7 +250,7 @@ defmodule Supavisor do
   def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets, log_level \\ nil) do
     Logger.debug("Starting pool(s) for #{inspect(id)}")
 
-    user = elem(secrets, 1).().alias
+    user = H.decode_secret(elem(secrets, 1)).alias
 
     case type do
       :single -> T.get_pool_config(tenant, user)
@@ -327,7 +327,7 @@ defmodule Supavisor do
       port: db_port,
       user: db_user,
       database: if(db_name != nil, do: db_name, else: db_database),
-      password: fn -> db_pass end,
+      password: H.encode_secret(db_pass),
       application_name: "Supavisor",
       ip_version: H.ip_version(ip_ver, db_host),
       upstream_ssl: tenant_record.upstream_ssl,
