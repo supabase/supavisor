@@ -287,7 +287,8 @@ defmodule Supavisor.ClientHandler do
              Cachex.get(Supavisor.Cache, key) == {:ok, nil} do
           case auth_secrets(info, data.user, key, 15_000) do
             {:ok, {method2, secrets2}} = value ->
-              if method != method2 || Map.delete(secrets.(), :client_key) != secrets2.() do
+              if method != method2 ||
+                   Map.delete(H.decode_secret(secrets), :client_key) != H.decode_secret(secrets2) do
                 Logger.warning("ClientHandler: Update secrets and terminate pool")
 
                 Cachex.update(
@@ -315,9 +316,10 @@ defmodule Supavisor.ClientHandler do
       {:ok, client_key} ->
         secrets =
           if client_key do
-            fn ->
-              Map.put(secrets.(), :client_key, client_key)
-            end
+            secrets
+            |> H.decode_secret()
+            |> Map.put(:client_key, client_key)
+            |> H.encode_secret()
           else
             secrets
           end
@@ -637,7 +639,8 @@ defmodule Supavisor.ClientHandler do
             tag: :password_message,
             payload: {:md5, client_md5}
           }, _} <- receive_next(socket, "Timeout while waiting for the md5 exchange"),
-         {:ok, key} <- authenticate_exchange(method, client_md5, secrets.().secret, salt) do
+         {:ok, key} <-
+           authenticate_exchange(method, client_md5, H.decode_secret(secrets).secret, salt) do
       {:ok, key}
     else
       {:error, message} -> {:error, message}
@@ -708,7 +711,7 @@ defmodule Supavisor.ClientHandler do
   defp authenticate_exchange(:auth_query, secrets, signatures, p) do
     client_key = :crypto.exor(Base.decode64!(p), signatures.client)
 
-    if H.hash(client_key) == secrets.().stored_key do
+    if H.hash(client_key) == H.decode_secret(secrets).stored_key do
       {:ok, client_key}
     else
       {:error, "Wrong password"}
@@ -791,7 +794,7 @@ defmodule Supavisor.ClientHandler do
   def auth_secrets(%{user: user, tenant: %{require_user: true}}, _, _, _) do
     secrets = %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
 
-    {:ok, {:password, fn -> secrets end}}
+    {:ok, {:password, H.encode_secret(secrets)}}
   end
 
   ## auth_query secrets
@@ -810,7 +813,7 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
+  @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, binary()}} | {:error, term()}
   def get_secrets(%{user: user, tenant: tenant}, db_user) do
     ssl_opts =
       if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
@@ -843,7 +846,13 @@ defmodule Supavisor.ClientHandler do
       case H.get_user_secret(conn, tenant.auth_query, db_user) do
         {:ok, secret} ->
           t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-          {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
+
+          enc =
+            secret
+            |> Map.put(:alias, user.db_user_alias)
+            |> H.encode_secret()
+
+          {:ok, {t, enc}}
 
         {:error, reason} ->
           {:error, reason}
@@ -862,7 +871,7 @@ defmodule Supavisor.ClientHandler do
     {client_final_message, server_proof} =
       H.get_client_final(
         :password,
-        secret.().password,
+        H.decode_secret(secret).password,
         server_first_parts,
         nonce,
         user,
@@ -878,7 +887,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp exchange_first(:auth_query, secret, nonce, user, channel) do
-    secret = secret.()
+    secret = H.decode_secret(secret)
     message = Server.exchange_first_message(nonce, secret.salt)
     server_first_parts = H.parse_server_first(message, nonce)
 

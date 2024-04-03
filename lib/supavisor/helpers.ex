@@ -354,4 +354,41 @@ defmodule Supavisor.Helpers do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
   end
+
+  @doc """
+  Encodes and Decodes a secret using the Vault encryption.
+
+  ## Examples
+
+      iex> Supavisor.Helpers.encode_secret("!#&%#.!@#DSFVАЯІЇQW") |> Supavisor.Helpers.decode_secret()
+      "!#&%#.!@#DSFVАЯІЇQW"
+      iex> Supavisor.Helpers.encode_secret(%{a: 1, b: 2}) |> Supavisor.Helpers.decode_secret()
+      %{a: 1, b: 2}
+      iex> Supavisor.Helpers.decode_secret(fn -> :secret end)
+      :secret
+  """
+
+  @spec encode_secret(term()) :: binary()
+  def encode_secret(term) do
+    term
+    |> :erlang.term_to_binary()
+    |> Supavisor.Vault.encrypt!()
+  end
+
+  # for backward compatibility, will be removed in the future
+  @spec decode_secret(fun()) :: term()
+  def decode_secret(fun) when is_function(fun) do
+    Logger.warning(
+      "Using deprecated function `decode_secret/1` #{inspect(Process.info(self(), :current_stacktrace), pretty: true)}"
+    )
+
+    fun.()
+  end
+
+  @spec decode_secret(binary()) :: term()
+  def decode_secret(encoded) do
+    encoded
+    |> Supavisor.Vault.decrypt!()
+    |> :erlang.binary_to_term()
+  end
 end

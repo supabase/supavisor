@@ -181,10 +181,10 @@ defmodule Supavisor.DbHandler do
           {client_final_message, server_proof} =
             H.get_client_final(
               :auth_query,
-              data.auth.secrets.(),
+              H.decode_secret(data.auth.secrets),
               server_first_parts,
               nonce,
-              data.auth.secrets.().user,
+              H.decode_secret(data.auth.secrets).user,
               "biws"
             )
 
@@ -202,7 +202,7 @@ defmodule Supavisor.DbHandler do
               server_first_parts,
               nonce,
               data.auth.user,
-              data.auth.password.()
+              H.decode_secret(data.auth.password)
             )
 
           bin = :pgo_protocol.encode_scram_response_message(client_final_message)
@@ -218,9 +218,9 @@ defmodule Supavisor.DbHandler do
 
           digest =
             if data.auth.method == :password do
-              H.md5([data.auth.password.(), data.auth.user])
+              H.md5([H.decode_secret(data.auth.password), data.auth.user])
             else
-              data.auth.secrets.().secret
+              H.decode_secret(data.auth.secrets).secret
             end
 
           payload = ["md5", H.md5([digest, salt]), 0]
@@ -546,9 +546,9 @@ defmodule Supavisor.DbHandler do
 
   defp get_user(auth) do
     if auth.require_user do
-      auth.secrets.().db_user
+      H.decode_secret(auth.secrets).db_user
     else
-      auth.secrets.().user
+      H.decode_secret(auth.secrets).user
     end
   end
 
