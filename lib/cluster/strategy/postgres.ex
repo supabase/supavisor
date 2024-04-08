@@ -77,11 +77,11 @@ defmodule Cluster.Strategy.Postgres do
     Process.cancel_timer(state.meta.heartbeat_ref)
     P.query(state.meta.conn, "NOTIFY #{state.config[:channel_name]}, '#{node()}'", [])
 
-    P.query(
-      state.meta.conn,
-      "NOTIFY #{state.config[:channel_name_partisan]}, '#{partisan_peer_spec_enc()}'",
-      []
-    )
+    # P.query(
+    #   state.meta.conn,
+    #   "NOTIFY #{state.config[:channel_name_partisan]}, '#{partisan_peer_spec_enc()}'",
+    #   []
+    # )
 
     ref = heartbeat(state.config[:heartbeat_interval])
     {:noreply, put_in(state.meta.heartbeat_ref, ref)}

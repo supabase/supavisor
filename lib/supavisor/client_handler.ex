@@ -1,7 +1,7 @@
 defmodule Supavisor.ClientHandler do
   @moduledoc """
   This module is responsible for handling incoming connections to the Supavisor server. It is
-  implemented as a Ranch protocol behavior and a partisan_gen_statem behavior. It handles SSL negotiation,
+  implemented as a Ranch protocol behavior and a gen_statem behavior. It handles SSL negotiation,
   user authentication, tenant subscription, and dispatching of messages to the appropriate tenant
   supervisor. Each client connection is assigned to a specific tenant supervisor.
   """
@@ -9,7 +9,7 @@ defmodule Supavisor.ClientHandler do
   require Logger
 
   @behaviour :ranch_protocol
-  @behaviour :partisan_gen_statem
+  @behaviour :gen_statem
 
   alias Supavisor, as: S
   alias Supavisor.DbHandler, as: Db
@@ -27,12 +27,13 @@ defmodule Supavisor.ClientHandler do
   def callback_mode, do: [:handle_event_function]
 
   def client_cast(pid, bin, status) do
-    :partisan_gen_statem.cast(pid, {:client_cast, bin, status})
+    Supavisor.Server.send({pid, bin, status})
+    # :gen_statem.cast(pid, {:client_cast, bin, status})
   end
 
   @spec client_call(pid, iodata(), atom()) :: :ok | {:error, term()}
   def client_call(pid, bin, status),
-    do: :partisan_gen_statem.call(pid, {:client_call, bin, status}, 30_000)
+    do: :gen_statem.call(pid, {:client_call, bin, status}, 30_000)
 
   @impl true
   def init(_), do: :ignore
@@ -70,7 +71,7 @@ defmodule Supavisor.ClientHandler do
       log_level: nil
     }
 
-    :partisan_gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
+    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
   end
 
   @impl true

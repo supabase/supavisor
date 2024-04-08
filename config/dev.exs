@@ -61,8 +61,8 @@ config :supavisor, SupavisorWeb.Endpoint,
 # Configures Elixir's Logger
 config :logger, :console,
   format: "$time [$level] $message $metadata\n",
-  level: :debug,
-  # level: :error,
+  # level: :debug,
+  level: :error,
   metadata: [:error_code, :file, :line, :pid, :project, :user, :mode, :type]
 
 # Set a higher stacktrace during development. Avoid configuring such

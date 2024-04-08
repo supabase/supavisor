@@ -354,4 +354,20 @@ defmodule Supavisor.Helpers do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
   end
+
+  def pertisan_pid(pid) when is_pid(pid) do
+    [_node, group, serial] =
+      "#{:erlang.pid_to_list(pid)}"
+      |> String.replace(["<", ">"], "")
+      |> String.split(".")
+
+    # Enum.join(["<0", group, "#{serial}>"], ".")
+    # |> String.to_charlist()
+    # |> :erlang.list_to_pid()
+    # |> IO.inspect()
+    # |> :partisan_remote_ref.from_term(node(pid))
+    {0, String.to_integer(group), String.to_integer(serial)}
+    |> :recon_lib.term_to_pid()
+    |> :partisan_remote_ref.from_term(node(pid))
+  end
 end
