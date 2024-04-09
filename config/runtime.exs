@@ -179,7 +179,7 @@ if config_env() != :test do
     listen_addrs: [
       {
         System.get_env("PARTISAN_PEER_IP", "127.0.0.1"),
-        String.to_integer(System.get_env("PARTISAN_PEER_PORT", "10200"))
+        String.to_integer(System.get_env("PARTISAN_PEER_PORT", "20100"))
       }
     ],
     channels: [

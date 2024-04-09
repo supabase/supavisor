@@ -35,7 +35,7 @@ defmodule SupavisorWeb.MetricsController do
 
   @spec fetch_node_metrics(atom()) :: {atom(), term()}
   defp fetch_node_metrics(node) do
-    {node, :rpc.call(node, PromEx, :get_metrics, [], 10_000)}
+    {node, :rpc.call(node, PromEx, :get_metrics, [], 25_000)}
   end
 
   @spec fetch_cluster_metrics(String.t()) :: String.t()
@@ -47,7 +47,7 @@ defmodule SupavisorWeb.MetricsController do
 
   @spec fetch_node_metrics(atom(), String.t()) :: {atom(), term()}
   defp fetch_node_metrics(node, tenant) do
-    {node, :rpc.call(node, PromEx, :get_tenant_metrics, [tenant], 10_000)}
+    {node, :rpc.call(node, PromEx, :get_tenant_metrics, [tenant], 25_000)}
   end
 
   defp merge_node_metrics({_, {node, {:badrpc, reason}}}, acc) do
