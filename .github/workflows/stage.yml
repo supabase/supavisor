@@ -31,9 +31,9 @@ jobs:
             echo 'erlang 25.3.2.7' >> ~/.tool-versions
             elixir -v
       - name: Set up Rust
-        uses: ATiltedTree/setup-rust@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
-          rust-version: stable   
+          toolchain: stable   
       - name: Get git tags
         run: git fetch --tags origin     
       - name: Checkout RELEASE_FROM
