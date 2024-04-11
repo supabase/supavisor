@@ -107,7 +107,8 @@ defmodule Supavisor.HotUpgrade do
           {:supervisor, :poolboy_sup, _},
           Process.info(linked_pid)[:dictionary][:"$initial_call"]
         ),
-        state = :sys.get_state(linked_pid),
+        {status, state} = get_state(linked_pid),
+        match?(:ok, status),
         Record.is_record(state, :state),
         state(state, :module) == :poolboy_sup do
       :sys.replace_state(linked_pid, fn state ->
@@ -136,8 +137,13 @@ defmodule Supavisor.HotUpgrade do
     |> Enum.each(fn entry(key: key, value: value) ->
       case value do
         {:cached, {:ok, {:auth_query, auth}}} when is_function(auth) ->
-          Logger.debug("Reinitializing secret: #{inspect(key)}")
+          Logger.debug("Reinitializing secret auth_query: #{inspect(key)}")
           new = {:cached, {:ok, {:auth_query, enc(auth.())}}}
+          Cachex.put(Supavisor.Cache, key, new)
+
+        {:cached, {:ok, {:auth_query_md5, auth}}} when is_function(auth) ->
+          Logger.debug("Reinitializing secret auth_query_md5: #{inspect(key)}")
+          new = {:cached, {:ok, {:auth_query_md5, enc(auth.())}}}
           Cachex.put(Supavisor.Cache, key, new)
 
         other ->
@@ -151,4 +157,14 @@ defmodule Supavisor.HotUpgrade do
 
   @spec do_enc(term) :: fun
   def do_enc(val), do: fn -> val end
+
+  def get_state(pid) do
+    try do
+      {:ok, :sys.get_state(pid)}
+    catch
+      type, exception ->
+        IO.write("Error getting state: #{inspect(exception)}")
+        {:error, {type, exception}}
+    end
+  end
 end
