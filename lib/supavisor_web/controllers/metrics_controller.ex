@@ -27,35 +27,35 @@ defmodule SupavisorWeb.MetricsController do
   end
 
   @spec fetch_cluster_metrics() :: String.t()
-  defp fetch_cluster_metrics() do
+  def fetch_cluster_metrics() do
     Node.list()
     |> Task.async_stream(&fetch_node_metrics/1, timeout: :infinity)
     |> Enum.reduce(PromEx.get_metrics(), &merge_node_metrics/2)
   end
 
   @spec fetch_node_metrics(atom()) :: {atom(), term()}
-  defp fetch_node_metrics(node) do
+  def fetch_node_metrics(node) do
     {node, :rpc.call(node, PromEx, :get_metrics, [], 25_000)}
   end
 
   @spec fetch_cluster_metrics(String.t()) :: String.t()
-  defp fetch_cluster_metrics(tenant) do
+  def fetch_cluster_metrics(tenant) do
     Node.list()
     |> Task.async_stream(&fetch_node_metrics(&1, tenant), timeout: :infinity)
     |> Enum.reduce(PromEx.get_tenant_metrics(tenant), &merge_node_metrics/2)
   end
 
   @spec fetch_node_metrics(atom(), String.t()) :: {atom(), term()}
-  defp fetch_node_metrics(node, tenant) do
+  def fetch_node_metrics(node, tenant) do
     {node, :rpc.call(node, PromEx, :get_tenant_metrics, [tenant], 25_000)}
   end
 
-  defp merge_node_metrics({_, {node, {:badrpc, reason}}}, acc) do
+  def merge_node_metrics({_, {node, {:badrpc, reason}}}, acc) do
     Logger.error("Cannot fetch metrics from the node #{inspect(node)} because #{inspect(reason)}")
     acc
   end
 
-  defp merge_node_metrics({_, {_node, metrics}}, acc) do
-    [acc <> "\n" | metrics]
+  def merge_node_metrics({_, {_node, metrics}}, acc) do
+    [metrics <> "\n" | acc]
   end
 end

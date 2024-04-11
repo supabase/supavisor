@@ -30,6 +30,21 @@ dev.node2:
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server
 
+dev.node3:
+	PORT=4002 \
+	MIX_ENV=dev \
+	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
+	API_JWT_SECRET=dev \
+	METRICS_JWT_SECRET=dev \
+	REGION=eu \
+	SECRET_KEY_BASE="dev" \
+	CLUSTER_POSTGRES="true" \
+	PROXY_PORT_SESSION="5443" \
+	PROXY_PORT_TRANSACTION="6554" \
+	PARTISAN_PEER_PORT="10202" \
+	ERL_AFLAGS="-kernel shell_history enabled" \
+	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server	
+
 dev_bin:
 	MIX_ENV=dev mix release supavisor_bin && ls -l burrito_out
 
