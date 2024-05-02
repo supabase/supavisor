@@ -4,7 +4,9 @@ defmodule Supavisor.HelpersTest do
 
   describe "parse_secret/2" do
     test "parses SCRAM-SHA-256 secrets correctly" do
-      secret = "SCRAM-SHA-256$4000:salt$storedKey:serverKey"
+      encoded_stored_key = Base.encode64("serverKey")
+      encoded_server_key = Base.encode64("storedKey")
+      secret = "SCRAM-SHA-256$4000:salt$#{encoded_stored_key}:#{encoded_server_key}"
       user = "user@example.com"
 
       expected =
@@ -13,8 +15,8 @@ defmodule Supavisor.HelpersTest do
            digest: "SCRAM-SHA-256",
            iterations: 4000,
            salt: "salt",
-           stored_key: Base.decode64!("storedKey"),
-           server_key: Base.decode64!("serverKey"),
+           stored_key: "storedKey",
+           server_key: "serverKey",
            user: user
          }}
 
@@ -22,10 +24,10 @@ defmodule Supavisor.HelpersTest do
     end
 
     test "parses md5 secrets correctly" do
-      secret = "md5supersecret"
+      secret = "supersecret"
       user = "user@example.com"
-      expected = {:ok, %{digest: :md5, secret: "supersecret", user: user}}
-      assert Helpers.parse_secret("md5" <> secret, user) == expected
+      expected = {:ok, %{digest: :md5, secret: secret, user: user}}
+      assert Helpers.parse_secret("md5supersecret", user) == expected
     end
 
     test "returns error for unsupported or invalid secret formats" do
