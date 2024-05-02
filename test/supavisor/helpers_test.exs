@@ -4,8 +4,8 @@ defmodule Supavisor.HelpersTest do
 
   describe "parse_secret/2" do
     test "parses SCRAM-SHA-256 secrets correctly" do
-      encoded_stored_key = Base.encode64("serverKey")
-      encoded_server_key = Base.encode64("storedKey")
+      encoded_stored_key = Base.encode64("storedKey")
+      encoded_server_key = Base.encode64("serverKey")
       secret = "SCRAM-SHA-256$4000:salt$#{encoded_stored_key}:#{encoded_server_key}"
       user = "user@example.com"
 
