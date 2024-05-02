@@ -1,21 +1,23 @@
 defmodule Supavisor.HelpersTest do
   use ExUnit.Case, async: true
-
   alias Supavisor.Helpers
 
   describe "parse_secret/2" do
     test "parses SCRAM-SHA-256 secrets correctly" do
       secret = "SCRAM-SHA-256$4000:salt$storedKey:serverKey"
       user = "user@example.com"
-      expected = {:ok,
-                  %{
-                    digest: "SCRAM-SHA-256",
-                    iterations: 4000,
-                    salt: "salt",
-                    stored_key: Base.decode64!("storedKey"),
-                    server_key: Base.decode64!("serverKey"),
-                    user: user
-                  }}
+
+      expected =
+        {:ok,
+         %{
+           digest: "SCRAM-SHA-256",
+           iterations: 4000,
+           salt: "salt",
+           stored_key: Base.decode64!("storedKey"),
+           server_key: Base.decode64!("serverKey"),
+           user: user
+         }}
+
       assert Helpers.parse_secret(secret, user) == expected
     end
 
@@ -27,7 +29,8 @@ defmodule Supavisor.HelpersTest do
     end
 
     test "returns error for unsupported or invalid secret formats" do
-      assert Helpers.parse_secret("unsupported_secret", "user@example.com") == {:error, "Unsupported or invalid secret format"}
+      assert Helpers.parse_secret("unsupported_secret", "user@example.com") ==
+               {:error, "Unsupported or invalid secret format"}
     end
   end
 end
