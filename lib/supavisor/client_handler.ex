@@ -154,16 +154,26 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
 
-        log_level =
-          case hello.payload["options"]["log_level"] do
-            nil -> nil
-            level -> String.to_existing_atom(level)
-          end
+        not_allowed = ["\"", "\\"]
 
-        H.set_log_level(log_level)
+        if String.contains?(user, not_allowed) or String.contains?(db_name, not_allowed) do
+          reason = "Invalid characters in user or db_name"
+          Logger.error("ClientHandler: #{inspect(reason)}")
+          Telem.client_join(:fail, data.id)
+          HH.send_error(data.sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
+          {:stop, {:shutdown, :invalid_characters}}
+        else
+          log_level =
+            case hello.payload["options"]["log_level"] do
+              nil -> nil
+              level -> String.to_existing_atom(level)
+            end
 
-        {:keep_state, %{data | log_level: log_level},
-         {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
+          H.set_log_level(log_level)
+
+          {:keep_state, %{data | log_level: log_level},
+           {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
+        end
 
       {:error, error} ->
         Logger.error("ClientHandler: Client startup message error: #{inspect(error)}")
