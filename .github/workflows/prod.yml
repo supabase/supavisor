@@ -1,4 +1,4 @@
-name: Publish upgrade artifacts to production
+name: Publish upgrade artifacts V2 to production
 
 on:
   push:
@@ -16,7 +16,14 @@ jobs:
       packages: write
       id-token: write    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set upgrade variables
+        run: |
+            elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/prod.config        
+            echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
+            echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
+            echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
       - name: Setup Elixir
         run: |
             . ~/.asdf/asdf.sh
@@ -24,9 +31,13 @@ jobs:
             echo 'erlang 25.3.2.7' >> ~/.tool-versions
             elixir -v
       - name: Set up Rust
-        uses: ATiltedTree/setup-rust@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
-          rust-version: stable
+          toolchain: stable   
+      - name: Get git tags
+        run: git fetch --tags origin     
+      - name: Checkout RELEASE_FROM
+        run: git checkout v${{ env.RELEASE_FROM }}
       - name: Cache Mix
         uses: actions/cache@v3
         with:
@@ -39,10 +50,31 @@ jobs:
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
-      - name: Make release
-        run: mix release supavisor
+      - name: Make old release
+        run: mix release supavisor    
+      - name: Checkout RELEASE_TO
+        run: git checkout v${{ env.RELEASE_TO }}
+      - name: Cache Mix
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+      - name: Clean up old release
+        run: |
+          rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
+          rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
+          rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
+      - name: Make upgrade release
+        run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Create tarball
-        run: cd _build/prod/rel/ && tar -czvf ${{ secrets.TARBALL_REGIONS_PROD }}_supavisor_v$(cat ../../../VERSION)_$(date "+%s").tar.gz supavisor
+        run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
       - name: configure aws credentials - production
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -50,4 +82,4 @@ jobs:
           aws-region: "us-east-1"
       - name: Deploy to S3
         shell: bash
-        run: aws s3 sync ./_build/prod/rel/ ${{ secrets.TARBALLS_PATH_PROD }} --exclude '*' --include '*tar.gz'
+        run: aws s3 sync ./_build/${{ env.MIX_ENV }} ${{ secrets.TARBALLS_PATH_PROD }} --exclude '*' --include '*tar.gz'
