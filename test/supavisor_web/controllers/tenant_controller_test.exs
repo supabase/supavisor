@@ -73,8 +73,10 @@ defmodule SupavisorWeb.TenantControllerTest do
       conn: conn,
       tenant: %Tenant{external_id: external_id} = _tenant
     } do
+      set_cache(external_id)
       conn = put(conn, Routes.tenant_path(conn, :update, external_id), tenant: @update_attrs)
       assert %{"external_id" => ^external_id} = json_response(conn, 200)["data"]
+      check_cache(external_id)
 
       conn = get(conn, Routes.tenant_path(conn, :show, external_id))
 
@@ -108,7 +110,9 @@ defmodule SupavisorWeb.TenantControllerTest do
     setup [:create_tenant]
 
     test "deletes chosen tenant", %{conn: conn, tenant: %Tenant{external_id: external_id}} do
+      set_cache(external_id)
       conn = delete(conn, Routes.tenant_path(conn, :delete, external_id))
+      check_cache(external_id)
       assert response(conn, 204)
     end
   end
@@ -127,5 +131,17 @@ defmodule SupavisorWeb.TenantControllerTest do
   defp create_tenant(_) do
     tenant = tenant_fixture()
     %{tenant: tenant}
+  end
+
+  defp set_cache(external_id) do
+    Supavisor.Tenants.get_user_cache(:single, "user", external_id, nil)
+    Supavisor.Tenants.get_tenant_cache(external_id, nil)
+  end
+
+  defp check_cache(external_id) do
+    assert {:ok, nil} =
+             Cachex.get(Supavisor.Cache, {:user_cache, :single, "user", external_id, nil})
+
+    assert {:ok, nil} = Cachex.get(Supavisor.Cache, {:tenant_cache, external_id, nil})
   end
 end

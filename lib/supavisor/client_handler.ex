@@ -1,7 +1,7 @@
 defmodule Supavisor.ClientHandler do
   @moduledoc """
   This module is responsible for handling incoming connections to the Supavisor server. It is
-  implemented as a Ranch protocol behavior and a gen_statem behavior. It handles SSL negotiation,
+  implemented as a Ranch protocol behavior and a partisan_gen_statem behavior. It handles SSL negotiation,
   user authentication, tenant subscription, and dispatching of messages to the appropriate tenant
   supervisor. Each client connection is assigned to a specific tenant supervisor.
   """
@@ -9,7 +9,7 @@ defmodule Supavisor.ClientHandler do
   require Logger
 
   @behaviour :ranch_protocol
-  @behaviour :gen_statem
+  @behaviour :partisan_gen_statem
 
   alias Supavisor, as: S
   alias Supavisor.DbHandler, as: Db
@@ -27,8 +27,12 @@ defmodule Supavisor.ClientHandler do
   def callback_mode, do: [:handle_event_function]
 
   def client_cast(pid, bin, status) do
-    :gen_statem.cast(pid, {:client_cast, bin, status})
+    :partisan_gen_statem.cast(pid, {:client_cast, bin, status})
   end
+
+  @spec client_call(pid, iodata(), atom()) :: :ok | {:error, term()}
+  def client_call(pid, bin, status),
+    do: :partisan_gen_statem.call(pid, {:client_call, bin, status}, 30_000)
 
   @impl true
   def init(_), do: :ignore
@@ -66,13 +70,18 @@ defmodule Supavisor.ClientHandler do
       log_level: nil
     }
 
-    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
+    :partisan_gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
   end
 
   @impl true
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("ClientHandler: Client is trying to request HTTP")
-    HH.sock_send(data.sock, "HTTP/1.1 204 OK\r\n\r\n")
+
+    HH.sock_send(
+      data.sock,
+      "HTTP/1.1 204 OK\r\nx-app-version: #{Application.spec(:supavisor, :vsn)}\r\n\r\n"
+    )
+
     {:stop, {:shutdown, :http_request}}
   end
 
@@ -145,16 +154,26 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
 
-        log_level =
-          case hello.payload["options"]["log_level"] do
-            nil -> nil
-            level -> String.to_existing_atom(level)
-          end
+        not_allowed = ["\"", "\\"]
 
-        H.set_log_level(log_level)
+        if String.contains?(user, not_allowed) or String.contains?(db_name, not_allowed) do
+          reason = "Invalid characters in user or db_name"
+          Logger.error("ClientHandler: #{inspect(reason)}")
+          Telem.client_join(:fail, data.id)
+          HH.send_error(data.sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
+          {:stop, {:shutdown, :invalid_characters}}
+        else
+          log_level =
+            case hello.payload["options"]["log_level"] do
+              nil -> nil
+              level -> String.to_existing_atom(level)
+            end
 
-        {:keep_state, %{data | log_level: log_level},
-         {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
+          H.set_log_level(log_level)
+
+          {:keep_state, %{data | log_level: log_level},
+           {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
+        end
 
       {:error, error} ->
         Logger.error("ClientHandler: Client startup message error: #{inspect(error)}")
@@ -489,8 +508,9 @@ defmodule Supavisor.ClientHandler do
   end
 
   # linked DbHandler went down
-  def handle_event(:info, {:EXIT, db_pid, reason}, _, _) do
+  def handle_event(:info, {:EXIT, db_pid, reason}, _, data) do
     Logger.error("ClientHandler: DbHandler #{inspect(db_pid)} exited #{inspect(reason)}")
+    HH.sock_send(data.sock, Server.error_message("XX000", "DbHandler exited"))
     {:stop, {:shutdown, :db_handler_exit}}
   end
 
@@ -510,6 +530,11 @@ defmodule Supavisor.ClientHandler do
       {:busy, _} ->
         {:stop, {:shutdown, :manager_down}}
     end
+  end
+
+  def handle_event(:info, {:disconnect, reason}, _, _data) do
+    Logger.warning("ClientHandler: Disconnected due to #{inspect(reason)}")
+    {:stop, {:shutdown, {:disconnect, reason}}}
   end
 
   # emulate handle_cast
@@ -546,6 +571,12 @@ defmodule Supavisor.ClientHandler do
         {:keep_state, %{data | db_pid: db_pid, query_start: ts},
          {:next_event, :internal, {:tcp, nil, data.last_query}}}
     end
+  end
+
+  # emulate handle_call
+  def handle_event({:call, from}, {:client_call, bin, _}, _, data) do
+    Logger.debug("ClientHandler: --> --> bin call #{inspect(byte_size(bin))} bytes")
+    {:keep_state_and_data, {:reply, from, HH.sock_send(data.sock, bin)}}
   end
 
   def handle_event(type, content, state, data) do

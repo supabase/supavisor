@@ -21,7 +21,7 @@ defmodule Supavisor.MixProject do
   def application do
     [
       mod: {Supavisor.Application, []},
-      extra_applications: [:logger, :runtime_tools, :os_mon, :ssl]
+      extra_applications: [:logger, :runtime_tools, :os_mon, :ssl, :partisan]
     ]
   end
 
@@ -66,6 +66,7 @@ defmodule Supavisor.MixProject do
       # pooller
       # {:poolboy, "~> 1.5.2"},
       {:poolboy, git: "https://github.com/abc3/poolboy.git", tag: "v0.0.2"},
+      {:partisan, git: "https://github.com/lasp-lang/partisan.git", tag: "v5.0.0-rc.12"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
       {:rustler, "~> 0.29.1"}
@@ -77,7 +78,8 @@ defmodule Supavisor.MixProject do
     [
       supavisor: [
         steps: [:assemble, &upgrade/1, :tar],
-        include_erts: System.get_env("INCLUDE_ERTS", "true") == "true"
+        include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
+        cookie: System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30)))
       ],
       supavisor_bin: [
         steps: [:assemble, &Burrito.wrap/1],
@@ -118,7 +120,7 @@ defmodule Supavisor.MixProject do
   defp upgrade(release) do
     from = System.get_env("UPGRADE_FROM")
 
-    if from do
+    if from && from != "" do
       vsn = release.version
       path = Path.join([release.path, "releases", "supavisor-#{vsn}.rel"])
       rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))

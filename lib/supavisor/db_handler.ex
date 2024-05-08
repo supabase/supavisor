@@ -6,7 +6,7 @@ defmodule Supavisor.DbHandler do
 
   require Logger
 
-  @behaviour :gen_statem
+  @behaviour :partisan_gen_statem
 
   alias Supavisor, as: S
   alias Supavisor.ClientHandler, as: Client
@@ -19,25 +19,26 @@ defmodule Supavisor.DbHandler do
   @reconnect_timeout 2_500
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
+  @async_send_limit 1_000
 
   def start_link(config) do
-    :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
+    :partisan_gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
+  def call(pid, caller, msg), do: :partisan_gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
     try do
-      {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
+      {:ok, :partisan_gen_statem.call(pid, :get_state_and_mode, 5_000)}
     catch
       error, reason -> {:error, {error, reason}}
     end
   end
 
   @spec stop(pid()) :: :ok
-  def stop(pid), do: :gen_statem.stop(pid, :client_termination, 5_000)
+  def stop(pid), do: :partisan_gen_statem.stop(pid, :client_termination, 5_000)
 
   @impl true
   def init(args) do
@@ -244,6 +245,25 @@ defmodule Supavisor.DbHandler do
       {_, :authentication_md5} ->
         {:keep_state, data}
 
+      {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
+        tenant = Supavisor.tenant(data.id)
+
+        for node <- [node() | Node.list()] do
+          :erpc.cast(node, fn ->
+            Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
+            Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
+
+            Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
+              for {client_handler, _meta} <- entries,
+                  do: send(client_handler, {:disconnect, reason})
+            end)
+          end)
+        end
+
+        Supavisor.stop(data.id)
+        Logger.error("DbHandler: Auth error #{inspect(reason)}")
+        {:stop, :invalid_password, data}
+
       {:error_response, error} ->
         Logger.error("DbHandler: Error auth response #{inspect(error)}")
         {:keep_state, data}
@@ -334,26 +354,29 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: Got write replica message #{inspect(bin)}")
     HH.setopts(data.sock, active: :once)
     # check if the response ends with "ready for query"
-    ready =
-      if String.ends_with?(bin, Server.ready_for_query()) do
-        :ready_for_query
-      else
-        :continue
+    ready = check_ready(bin)
+    sent = data.sent || 0
+
+    {send_via, progress} =
+      case ready do
+        {:ready_for_query, :idle} -> {:client_cast, :ready_for_query}
+        {:ready_for_query, _} -> {:client_cast, :continue}
+        _ when sent < @async_send_limit -> {:client_cast, :continue}
+        _ -> {:client_call, :continue}
       end
 
-    :ok = Client.client_cast(data.caller, bin, ready)
+    :ok = apply(Client, send_via, [data.caller, bin, progress])
 
-    case ready do
+    case progress do
       :ready_for_query ->
         {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-
         HH.setopts(data.sock, active: true)
 
-        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data)},
+        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data), sent: false},
          {:next_event, :internal, :check_anon_buffer}}
 
       :continue ->
-        :keep_state_and_data
+        {:keep_state, %{data | sent: sent + 1}}
     end
   end
 
@@ -390,7 +413,10 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     Logger.error("DbHandler: Connection closed when state was #{state}")
-    {:next_state, :connect, data, {:state_timeout, 2_500, :connect}}
+
+    if Application.get_env(:supavisor, :reconnect_on_db_close),
+      do: {:next_state, :connect, data, {:state_timeout, @reconnect_timeout, :connect}},
+      else: {:stop, :db_termination, data}
   end
 
   # linked client_handler went down
@@ -539,4 +565,26 @@ defmodule Supavisor.DbHandler do
   @spec handler_caller(map()) :: pid() | nil
   defp handler_caller(%{mode: :session} = data), do: data.caller
   defp handler_caller(_), do: nil
+
+  @spec check_ready(binary()) ::
+          {:ready_for_query, :idle | :transaction_block | :failed_transaction_block} | :continue
+  def check_ready(bin) do
+    bin_size = byte_size(bin)
+
+    case bin do
+      <<_::binary-size(bin_size - 6), 90, 0, 0, 0, 5, status_indicator::binary>> ->
+        indicator =
+          case status_indicator do
+            <<?I>> -> :idle
+            <<?T>> -> :transaction_block
+            <<?E>> -> :failed_transaction_block
+            _ -> :continue
+          end
+
+        {:ready_for_query, indicator}
+
+      _ ->
+        :continue
+    end
+  end
 end

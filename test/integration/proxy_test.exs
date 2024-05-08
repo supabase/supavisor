@@ -170,7 +170,9 @@ defmodule Supavisor.Integration.ProxyTest do
     assert :httpc.request(
              "http://localhost:#{Application.get_env(:supavisor, :proxy_port_transaction)}"
            ) ==
-             {:ok, {{'HTTP/1.1', 204, 'OK'}, [], []}}
+             {:ok,
+              {{'HTTP/1.1', 204, 'OK'}, [{'x-app-version', Application.spec(:supavisor, :vsn)}],
+               []}}
   end
 
   test "checks that client_handler is idle and db_pid is nil for transaction mode" do
@@ -208,6 +210,59 @@ defmodule Supavisor.Integration.ProxyTest do
            postgres: %{
              code: :internal_error,
              message: "Max client connections reached",
+             pg_code: "XX000",
+             severity: "FATAL",
+             unknown: "FATAL"
+           }
+         }, _}}} = parse_uri(url) |> single_connection()
+  end
+
+  test "change role password", %{origin: origin} do
+    Process.flag(:trap_exit, true)
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    conn = fn pass ->
+      "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+    end
+
+    first_pass = conn.("postgres")
+    new_pass = conn.("postgres_new")
+
+    {:ok, pid} = parse_uri(first_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
+
+    P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+    Supavisor.stop({{:single, "is_manager"}, "dev_postgres", :transaction, "postgres"})
+
+    :timer.sleep(1000)
+
+    assert {:error,
+            {_,
+             {:stop,
+              %Postgrex.Error{
+                message: "error received in SCRAM server final message: \"Wrong password\""
+              }, _}}} = parse_uri(new_pass) |> single_connection()
+
+    {:ok, pid} = parse_uri(new_pass) |> single_connection()
+    assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
+  end
+
+  test "invalid characters in user or db_name" do
+    Process.flag(:trap_exit, true)
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url =
+      "postgresql://user\"user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
+
+    assert =
+      {:error,
+       {_,
+        {:stop,
+         %Postgrex.Error{
+           postgres: %{
+             code: :internal_error,
+             message: "Authentication error, reason: \"Invalid characters in user or db_name\"",
              pg_code: "XX000",
              severity: "FATAL",
              unknown: "FATAL"
