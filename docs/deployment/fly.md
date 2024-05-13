@@ -1,4 +1,4 @@
-The `toml.yaml` file should be in the `deploy/fly` directory of Supavisor.
+The `fly.toml` file should be in the `deploy/fly` directory of Supavisor.
 
 Type the following command in your terminal:
 
