@@ -15,7 +15,7 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
-  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Client, Protocol.Server}
+  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Client, Protocol.Server, SingleConnection}
 
   @impl true
   def start_link(ref, _sock, transport, opts) do
@@ -833,7 +833,7 @@ defmodule Supavisor.ClientHandler do
       end
 
     {:ok, conn} =
-      Postgrex.start_link(
+      SingleConnection.connect(
         hostname: tenant.db_host,
         port: tenant.db_port,
         database: tenant.db_database,
@@ -846,8 +846,13 @@ defmodule Supavisor.ClientHandler do
         ],
         queue_target: 1_000,
         queue_interval: 5_000,
-        ssl_opts: ssl_opts || []
+        ssl_opts: ssl_opts || [],
+        caller: self()
       )
+
+    Logger.debug(
+      "ClientHandler: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
+    )
 
     resp =
       case H.get_user_secret(conn, tenant.auth_query, db_user) do
@@ -859,7 +864,6 @@ defmodule Supavisor.ClientHandler do
           {:error, reason}
       end
 
-    GenServer.stop(conn, :normal)
     resp
   end
 

@@ -88,7 +88,9 @@ defmodule Supavisor.Helpers do
   @spec get_user_secret(pid(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
   def get_user_secret(conn, auth_query, user) do
     try do
-      Postgrex.query!(conn, auth_query, [user])
+      # Postgrex.query!(conn, auth_query, [user])
+      auth_query = String.replace(auth_query, "$1", "'#{user}'")
+      Postgrex.SimpleConnection.call(conn, {:query, auth_query})
     catch
       _error, reason ->
         {:error, "Authentication query failed: #{inspect(reason)}"}
