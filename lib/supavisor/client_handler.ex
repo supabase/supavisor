@@ -822,6 +822,8 @@ defmodule Supavisor.ClientHandler do
 
   @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
   def get_secrets(%{user: user, tenant: tenant}, db_user) do
+    Logger.info("ClientHandler: Get secrets started")
+
     ssl_opts =
       if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
         [
@@ -864,6 +866,7 @@ defmodule Supavisor.ClientHandler do
           {:error, reason}
       end
 
+    Logger.info("ClientHandler: Get secrets finished")
     resp
   end
 
