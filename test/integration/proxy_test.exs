@@ -202,19 +202,18 @@ defmodule Supavisor.Integration.ProxyTest do
     url =
       "postgresql://max_clients.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
 
-    assert =
-      {:error,
-       {_,
-        {:stop,
-         %Postgrex.Error{
-           postgres: %{
-             code: :internal_error,
-             message: "Max client connections reached",
-             pg_code: "XX000",
-             severity: "FATAL",
-             unknown: "FATAL"
-           }
-         }, _}}} = parse_uri(url) |> single_connection()
+    assert {:error,
+            {_,
+             {:stop,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message: "Max client connections reached",
+                  pg_code: "XX000",
+                  severity: "FATAL",
+                  unknown: "FATAL"
+                }
+              }, _}}} = parse_uri(url) |> single_connection()
   end
 
   test "change role password", %{origin: origin} do
@@ -255,19 +254,19 @@ defmodule Supavisor.Integration.ProxyTest do
     url =
       "postgresql://user\"user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
 
-    assert =
-      {:error,
-       {_,
-        {:stop,
-         %Postgrex.Error{
-           postgres: %{
-             code: :internal_error,
-             message: "Authentication error, reason: \"Invalid characters in user or db_name\"",
-             pg_code: "XX000",
-             severity: "FATAL",
-             unknown: "FATAL"
-           }
-         }, _}}} = parse_uri(url) |> single_connection()
+    assert {:error,
+            {_,
+             {:stop,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message:
+                    "Authentication error, reason: \"Invalid characters in user or db_name\"",
+                  pg_code: "XX000",
+                  severity: "FATAL",
+                  unknown: "FATAL"
+                }
+              }, _}}} = parse_uri(url) |> single_connection()
   end
 
   defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
