@@ -119,7 +119,8 @@ defmodule Supavisor.HotUpgrade do
 
         args =
           Map.update!(args, :auth, fn auth ->
-            Map.put(auth, :password, enc(auth.password))
+            auth
+            |> Map.put(:password, enc(auth.password))
             |> Map.put(:secrets, enc(auth.secrets))
           end)
 
