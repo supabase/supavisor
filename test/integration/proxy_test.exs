@@ -1,6 +1,8 @@
 defmodule Supavisor.Integration.ProxyTest do
-  require Logger
   use Supavisor.DataCase, async: true
+
+  require Logger
+
   alias Postgrex, as: P
 
   @tenant "proxy_tenant1"
@@ -227,7 +229,7 @@ defmodule Supavisor.Integration.ProxyTest do
     first_pass = conn.("postgres")
     new_pass = conn.("postgres_new")
 
-    {:ok, pid} = parse_uri(first_pass) |> single_connection()
+    assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
 
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
 
