@@ -1,9 +1,8 @@
 defmodule Supavisor.PromExTest do
   use ExUnit.Case, async: true
-  require Logger
-  alias Supavisor.Monitoring.PromEx
   use Supavisor.DataCase
-  alias Postgrex, as: P
+
+  alias Supavisor.Monitoring.PromEx
 
   @tenant "prom_tenant"
 
@@ -17,21 +16,23 @@ defmodule Supavisor.PromExTest do
         database: db_conf[:database],
         password: db_conf[:password],
         username: db_conf[:username] <> "." <> @tenant,
-        socket_dir: nil
+        socket_dir: nil,
+        show_sensitive_data_on_connection_error: true
       )
+
+    assert :idle == DBConnection.status(proxy)
 
     %{proxy: proxy, user: db_conf[:username], db_name: db_conf[:database]}
   end
 
   test "remove tenant tag upon termination", %{proxy: proxy, user: user, db_name: db_name} do
-    P.query!(proxy, "select 1;", [])
-    Process.sleep(500)
-    metrics = PromEx.get_metrics()
-    assert metrics =~ "tenant=\"#{@tenant}\""
+    assert PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
+
     GenServer.stop(proxy)
-    Process.sleep(500)
     Supavisor.stop({{:single, @tenant}, user, :transaction, db_name})
+
     Process.sleep(500)
+
     refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
   end
 end
