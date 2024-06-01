@@ -15,7 +15,7 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
-  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Client, Protocol.Server}
+  alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Client, Protocol.Server, SingleConnection}
 
   @impl true
   def start_link(ref, _sock, transport, opts) do
@@ -822,6 +822,8 @@ defmodule Supavisor.ClientHandler do
 
   @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
   def get_secrets(%{user: user, tenant: tenant}, db_user) do
+    Logger.info("ClientHandler: Get secrets started")
+
     ssl_opts =
       if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
         [
@@ -833,7 +835,7 @@ defmodule Supavisor.ClientHandler do
       end
 
     {:ok, conn} =
-      Postgrex.start_link(
+      SingleConnection.connect(
         hostname: tenant.db_host,
         port: tenant.db_port,
         database: tenant.db_database,
@@ -846,8 +848,13 @@ defmodule Supavisor.ClientHandler do
         ],
         queue_target: 1_000,
         queue_interval: 5_000,
-        ssl_opts: ssl_opts || []
+        ssl_opts: ssl_opts || [],
+        caller: self()
       )
+
+    Logger.debug(
+      "ClientHandler: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
+    )
 
     resp =
       case H.get_user_secret(conn, tenant.auth_query, db_user) do
@@ -859,7 +866,7 @@ defmodule Supavisor.ClientHandler do
           {:error, reason}
       end
 
-    GenServer.stop(conn, :normal)
+    Logger.info("ClientHandler: Get secrets finished")
     resp
   end
 
