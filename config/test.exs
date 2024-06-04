@@ -10,7 +10,11 @@ config :supavisor,
   proxy_port_transaction: System.get_env("PROXY_PORT_TRANSACTION", "7654") |> String.to_integer(),
   secondary_proxy_port: 7655,
   secondary_http: 4003,
-  prom_poll_rate: 500
+  prom_poll_rate: 500,
+  api_blocklist: [
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJibG9ja2VkIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.y-V3D1N2e8UTXc5PJzmV9cqMteq0ph2wl0yt42akQgA"
+  ],
+  metrics_blocklist: []
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",

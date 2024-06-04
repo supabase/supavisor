@@ -12,11 +12,11 @@ defmodule SupavisorWeb.Router do
 
   pipeline :api do
     plug(:accepts, ["json"])
-    plug(:check_auth, :api_jwt_secret)
+    plug(:check_auth, [:api_jwt_secret, :api_blocklist])
   end
 
   pipeline :metrics do
-    plug(:check_auth, :metrics_jwt_secret)
+    plug(:check_auth, [:metrics_jwt_secret, :metrics_blocklist])
   end
 
   pipeline :openapi do
@@ -84,10 +84,12 @@ defmodule SupavisorWeb.Router do
 
   defp check_auth(%{request_path: "/api/health"} = conn, _), do: conn
 
-  defp check_auth(conn, secret_key) do
+  defp check_auth(conn, [secret_key, blocklist_key]) do
     secret = Application.fetch_env!(:supavisor, secret_key)
+    blocklist = Application.fetch_env!(:supavisor, blocklist_key)
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
+         false <- token in blocklist,
          {:ok, _claims} <- Supavisor.Jwt.authorize(token, secret) do
       conn
     else

@@ -156,7 +156,9 @@ if config_env() != :test do
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,
-    reconnect_on_db_close: System.get_env("RECONNECT_ON_DB_CLOSE") == "true"
+    reconnect_on_db_close: System.get_env("RECONNECT_ON_DB_CLOSE") == "true",
+    api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
+    metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(",")
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
