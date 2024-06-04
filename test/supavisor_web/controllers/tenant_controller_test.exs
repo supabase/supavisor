@@ -8,6 +8,8 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"
 
+  @blocked_jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJibG9ja2VkIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.y-V3D1N2e8UTXc5PJzmV9cqMteq0ph2wl0yt42akQgA"
+
   @user_valid_attrs %{
     db_user_alias: "some_db_user",
     db_user: "some db_user",
@@ -51,7 +53,15 @@ defmodule SupavisorWeb.TenantControllerTest do
         "Bearer " <> @jwt
       )
 
-    {:ok, conn: new_conn}
+    blocked_conn =
+      conn
+      |> put_req_header("accept", "application/json")
+      |> put_req_header(
+        "authorization",
+        "Bearer " <> @blocked_jwt
+      )
+
+    {:ok, conn: new_conn, blocked_conn: blocked_conn}
   end
 
   describe "create tenant" do
@@ -63,6 +73,17 @@ defmodule SupavisorWeb.TenantControllerTest do
     test "renders errors when data is invalid", %{conn: conn} do
       conn = put(conn, Routes.tenant_path(conn, :update, "dev_tenant"), tenant: @invalid_attrs)
       assert json_response(conn, 422)["errors"] != %{}
+    end
+  end
+
+  describe "create tenant with blocked ip" do
+    test "renders tenant when data is valid", %{blocked_conn: blocked_conn} do
+      blocked_conn =
+        put(blocked_conn, Routes.tenant_path(blocked_conn, :update, "dev_tenant"),
+          tenant: @create_attrs
+        )
+
+      assert blocked_conn.status == 403
     end
   end
 
