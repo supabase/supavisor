@@ -89,6 +89,7 @@ defmodule SupavisorWeb.Router do
     blocklist = Application.fetch_env!(:supavisor, blocklist_key)
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
+         token <- Regex.replace(~r/\s|\n/, URI.decode(token), ""),
          false <- token in blocklist,
          {:ok, _claims} <- Supavisor.Jwt.authorize(token, secret) do
       conn
