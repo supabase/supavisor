@@ -125,6 +125,8 @@ defmodule Supavisor.Monitoring.PromEx do
         line
 
       [_, key, tags, value] ->
+        tags = clean_string(tags)
+
         tags =
           if tags == "" do
             def_tags
@@ -134,5 +136,25 @@ defmodule Supavisor.Monitoring.PromEx do
 
         "#{key}{#{tags}} #{value}"
     end
+  end
+
+  @spec clean_string(String.t()) :: String.t()
+  def clean_string(metric_string) do
+    regex = ~r/=\s*"([^"]*?)"/
+
+    String.replace(metric_string, regex, fn match ->
+      [_, value] = Regex.run(regex, match)
+
+      cleaned =
+        value
+        |> String.replace(~r/\n+/, "")
+        |> String.trim()
+
+      if value != cleaned do
+        Logger.error("Tag validation: #{inspect(value)} / #{inspect(cleaned)}")
+      end
+
+      "=\"#{cleaned}\""
+    end)
   end
 end
