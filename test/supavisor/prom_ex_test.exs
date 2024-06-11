@@ -35,4 +35,14 @@ defmodule Supavisor.PromExTest do
 
     refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
   end
+
+  test "clean_string/1 removes extra spaces from metric string" do
+    input =
+      "db_name=\"postgres \",mode=\" transaction\",tenant=\"dev_tenant \n\",type=\"\n  single\",user=\"\npostgres\n\""
+
+    expected_output =
+      "db_name=\"postgres\",mode=\"transaction\",tenant=\"dev_tenant\",type=\"single\",user=\"postgres\""
+
+    assert expected_output == PromEx.clean_string(input)
+  end
 end
