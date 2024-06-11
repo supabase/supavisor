@@ -28,6 +28,9 @@ defmodule Supavisor.DbHandler do
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def call(pid, caller, msg), do: :partisan_gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
 
+  @spec cast(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
+  def cast(pid, caller, msg), do: :partisan_gen_statem.cast(pid, {:db_cast, caller, msg})
+
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
     try do
@@ -406,6 +409,16 @@ defmodule Supavisor.DbHandler do
     new_buff = [bin | buff]
     reply = {:reply, from, {:buffering, IO.iodata_length(new_buff)}}
     {:keep_state, %{data | caller: caller, buffer: new_buff}, reply}
+  end
+
+  # emulate handle_cast
+  def handle_event(:cast, {:db_cast, caller, bin}, state, %{sock: sock}) do
+    Logger.debug(
+      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, cast caller: #{inspect(caller)}"
+    )
+
+    sock_send(sock, bin)
+    :keep_state_and_data
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
