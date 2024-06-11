@@ -422,6 +422,13 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, handle_actions(data)}
   end
 
+  def handle_event(:info, {proto, _, <<?S, 4::32>> = msg}, _, data)
+      when proto in [:tcp, :ssl] do
+    Logger.debug("ClientHandler: Receive sync while not idle")
+    Db.cast(data.db_pid, self(), msg)
+    :keep_state_and_data
+  end
+
   # incoming query with a single pool
   def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
       when is_binary(bin) and is_pid(pid) do
