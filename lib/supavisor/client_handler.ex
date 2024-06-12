@@ -422,10 +422,19 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, handle_actions(data)}
   end
 
-  def handle_event(:info, {proto, _, <<?S, 4::32>> = msg}, _, data)
+  def handle_event(:info, {proto, _, <<?S, 4::32, _::binary>> = msg}, _, data)
       when proto in [:tcp, :ssl] do
     Logger.debug("ClientHandler: Receive sync while not idle")
-    Db.cast(data.db_pid, self(), msg)
+    {_, db_pid} = data.db_pid
+    Db.cast(db_pid, self(), msg)
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, {proto, _, <<?H, 4::32, _::binary>> = msg}, _, data)
+      when proto in [:tcp, :ssl] do
+    Logger.debug("ClientHandler: Receive flush while not idle")
+    {_, db_pid} = data.db_pid
+    Db.cast(db_pid, self(), msg)
     :keep_state_and_data
   end
 
