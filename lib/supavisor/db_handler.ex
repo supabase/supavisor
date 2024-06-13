@@ -412,13 +412,23 @@ defmodule Supavisor.DbHandler do
   end
 
   # emulate handle_cast
-  def handle_event(:cast, {:db_cast, caller, bin}, state, %{sock: sock}) do
+  def handle_event(:cast, {:db_cast, caller, bin}, state, %{sock: sock})
+      when state in [:idle, :busy] do
     Logger.debug(
       "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, cast caller: #{inspect(caller)}"
     )
 
     sock_send(sock, bin)
     :keep_state_and_data
+  end
+
+  def handle_event(:cast, {:db_cast, caller, bin}, state, %{buffer: buff} = data) do
+    Logger.debug(
+      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, cast caller: #{inspect(caller)}"
+    )
+
+    new_buff = [bin | buff]
+    {:keep_state, %{data | caller: caller, buffer: new_buff}}
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
