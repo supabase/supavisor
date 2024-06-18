@@ -125,17 +125,14 @@ defmodule Supavisor.NativeHandler do
   end
 
   # initial db connection and send startup packet
-  def handle_info(
-        {_, sock, bin},
-        %{client_sock: {_, sock}, db_sock: nil} = state
-      ) do
+  def handle_info({_, c_s, bin}, %{client_sock: {_, c_s} = sock, db_sock: nil} = state) do
     {:ok, hello} = Server.decode_startup_packet(bin)
     Logger.debug("Startup packet: #{inspect(hello, pretty: true)}")
     {_, {user, external_id, db_name}} = HH.parse_user_info(hello.payload)
     sni_hostname = HH.try_get_sni(sock)
 
     case Tenants.get_tenant_cache(external_id, sni_hostname) do
-      %{db_host: host, db_port: port, external_id: ext_id, db_database: db_database} = tenant ->
+      %{db_host: host, db_port: port, db_database: db_database} = tenant ->
         db_name = if(db_name != nil, do: db_name, else: db_database)
 
         Logger.metadata(
@@ -145,7 +142,17 @@ defmodule Supavisor.NativeHandler do
           db_name: db_name
         )
 
-        id = Supavisor.id(ext_id, user, :native, :native, db_name)
+        type = :native
+
+        id =
+          Supavisor.id(
+            {:single, external_id},
+            user,
+            type,
+            type,
+            db_name
+          )
+
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         payload =

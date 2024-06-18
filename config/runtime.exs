@@ -19,7 +19,7 @@ config :supavisor, SupavisorWeb.Endpoint,
   http: [
     port: String.to_integer(System.get_env("PORT") || "4000"),
     transport_options: [
-      max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
+      max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "50000"),
       num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
       socket_opts: [
         System.get_env("ADDR_TYPE", "inet")
@@ -152,6 +152,7 @@ if config_env() != :test do
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
+    proxy_port_native: System.get_env("PROXY_PORT_NATIVE", "5433") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,

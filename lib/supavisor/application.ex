@@ -30,19 +30,29 @@ defmodule Supavisor.Application do
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
        :transaction},
-      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session}
+      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session},
+      {:pg_proxy_native, Application.get_env(:supavisor, :proxy_port_native), :native}
     ]
 
+    max_connections = String.to_integer(System.get_env("MAX_CONNECTIONS") || "50000")
+    num_acceptors = String.to_integer(System.get_env("NUM_ACCEPTORS") || "100")
+
     for {key, port, mode} <- proxy_ports do
+      handler =
+        case mode do
+          :native -> Supavisor.NativeHandler
+          _ -> Supavisor.ClientHandler
+        end
+
       :ranch.start_listener(
         key,
         :ranch_tcp,
         %{
-          max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
-          num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+          max_connections: max_connections,
+          num_acceptors: num_acceptors,
           socket_opts: [port: port, keepalive: true]
         },
-        Supavisor.ClientHandler,
+        handler,
         %{mode: mode}
       )
       |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
