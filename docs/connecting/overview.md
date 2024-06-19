@@ -1,6 +1,8 @@
-To connect to a tenant database Supavisor needs to look up the tenant with an `external_id`.
+To connect to a tenant database Supavisor needs to look up the tenant with an
+`external_id`.
 
-You can connect to Supavisor just like you connect to Postgres except we need to include the `external_id` in the connection string.
+You can connect to Supavisor just like you connect to Postgres except we need to
+include the `external_id` in the connection string.
 
 Supavisor parses the `external_id` from a connection in one three ways:
 
@@ -14,7 +16,8 @@ Supavisor parses the `external_id` from a connection in one three ways:
 
 ## Username
 
-Include the `external_id` in the username. The `external_id` is found after the `.` in the username:
+Include the `external_id` in the username. The `external_id` is found after
+the `.` (dot) in the username:
 
 ```
 psql postgresql://postgres.dev_tenant:postgres@localhost:6543/postgres

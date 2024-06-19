@@ -14,6 +14,6 @@ Build and serve the documentation locally with:
 
 `mkdocs serve`
 
-Production documentation is built on merge into `main` with the Github Action:
+Production documentation is built on merge into `main` with the GitHub Action:
 
 `/.github/workflows/docs.yml`
