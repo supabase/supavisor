@@ -1,8 +1,11 @@
-All configuration options for a tenant are stored on the `tenant` record in the metadata database used by Supavisor.
+All configuration options for a tenant are stored on the `tenant` record in the
+metadata database used by Supavisor.
 
-A `tenant` is looked via the `external_id` discovered in the incoming client connection.
+A `tenant` is looked via the `external_id` discovered in the incoming client
+connection.
 
-All `tenant` fields and their types are defined in the `Supavisor.Tenants.Tenant` module.
+All `tenant` fields and their types are defined in the
+`Supavisor.Tenants.Tenant` module.
 
 ## Field Descriptions
 
@@ -22,13 +25,16 @@ All `tenant` fields and their types are defined in the `Supavisor.Tenants.Tenant
 
 `upstream_verify` - how to verify the ssl certificate
 
-`upstream_tls_ca` - the ca certificate to use when connecting to the database server
+`upstream_tls_ca` - the ca certificate to use when connecting to the database
+server
 
 `enforce_ssl` - enforce an SSL connection on client connections
 
-`require_user` - require client connection credentials to match `user` credentials in the metadata database
+`require_user` - require client connection credentials to match `user`
+credentials in the metadata database
 
-`auth_query` - the query to use when matching credential agains a client connection
+`auth_query` - the query to use when matching credential agains a client
+connection
 
 `default_pool_size` - the default size of the database pool
 
