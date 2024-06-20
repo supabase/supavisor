@@ -523,7 +523,7 @@ defmodule Supavisor.DbHandler do
           [
             verify: :verify_peer,
             cacerts: [auth.upstream_tls_ca],
-            server_name_indication: auth.host,
+            server_name_indication: auth.sni_hostname,
             customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
           ]
 
