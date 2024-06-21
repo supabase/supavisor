@@ -155,7 +155,7 @@ defmodule Supavisor.ClientHandler do
         {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
 
         # Validate user and db_name according to PostgreSQL rules.
-        # The rules are: 1-63 characters, alphanumeric and underscore
+        # The rules are: 1-63 characters, alphanumeric, underscore and $
         rule = ~r/^[a-z_][a-z0-9_$]*$/
 
         if !String.match?(user, rule) or !String.match?(db_name, rule) do
