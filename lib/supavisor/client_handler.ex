@@ -158,7 +158,7 @@ defmodule Supavisor.ClientHandler do
         # The rules are: 1-63 characters, alphanumeric, underscore and $
         rule = ~r/^[a-z_][a-z0-9_$]*$/
 
-        if !String.match?(user, rule) or !String.match?(db_name, rule) do
+        if !(user =~ rule && db_name =~ rule) do do
           reason = "Invalid format for user or db_name"
           Logger.error("ClientHandler: #{inspect(reason)}")
           Telem.client_join(:fail, tenant_or_alias)
