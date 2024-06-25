@@ -9,12 +9,17 @@ defmodule Supavisor.Repo.Migrations.CreateClusterTenants do
 
       add(
         :cluster_alias,
-        references(:clusters, on_delete: :delete_all, type: :string, column: :alias)
+        references(:clusters,
+          on_delete: :delete_all,
+          type: :string,
+          column: :alias,
+          prefix: "_supavisor"
+        )
       )
 
       add(
         :tenant_external_id,
-        references(:tenants, type: :string, column: :external_id)
+        references(:tenants, type: :string, column: :external_id, prefix: "_supavisor")
       )
 
       timestamps()
@@ -24,7 +29,8 @@ defmodule Supavisor.Repo.Migrations.CreateClusterTenants do
       constraint(
         :cluster_tenants,
         :type,
-        check: "type IN ('read', 'write')"
+        check: "type IN ('read', 'write')",
+        prefix: "_supavisor"
       )
     )
 

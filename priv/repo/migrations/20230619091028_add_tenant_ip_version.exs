@@ -10,7 +10,8 @@ defmodule Supavisor.Repo.Migrations.AddTenantIpVersion do
       constraint(
         "tenants",
         :ip_version_values,
-        check: "ip_version IN ('auto', 'v4', 'v6')"
+        check: "ip_version IN ('auto', 'v4', 'v6')",
+        prefix: "_supavisor"
       )
     )
   end
