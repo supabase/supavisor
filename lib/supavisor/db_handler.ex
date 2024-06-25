@@ -451,7 +451,7 @@ defmodule Supavisor.DbHandler do
       )
     end
 
-    if state == :busy || data.mode == :session do
+    if state == :busy or data.mode == :session do
       :ok = sock_send(data.sock, <<?X, 4::32>>)
       :gen_tcp.close(elem(data.sock, 1))
       {:stop, {:client_handler_down, data.mode}}
