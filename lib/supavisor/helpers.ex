@@ -329,12 +329,11 @@ defmodule Supavisor.Helpers do
   def rpc(node, module, function, args, timeout \\ 15_000) do
     try do
       :erpc.call(node, module, function, args, timeout)
-      |> case do
-        {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
-        result -> result
-      end
     catch
       kind, reason -> {:error, {:badrpc, {kind, reason}}}
+    else
+      {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
+      result -> result
     end
   end
 

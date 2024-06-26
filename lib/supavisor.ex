@@ -92,16 +92,7 @@ defmodule Supavisor do
     if node() == dest_node do
       subscribe_local(pid, id)
     else
-      try do
-        # TODO: tests for different cases
-        :erpc.call(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
-        |> case do
-          {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
-          result -> result
-        end
-      catch
-        kind, reason -> {:error, {:badrpc, {kind, reason}}}
-      end
+      H.rpc(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
     end
   end
 
