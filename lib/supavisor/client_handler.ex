@@ -563,12 +563,12 @@ defmodule Supavisor.ClientHandler do
 
         db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
-        {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
+        # {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
 
         Telem.client_query_time(data.query_start, data.id)
         :ok = HH.sock_send(data.sock, bin)
         actions = handle_actions(data)
-        {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, actions}
+        {:next_state, :idle, %{data | db_pid: db_pid, stats: nil}, actions}
 
       :continue ->
         Logger.debug("ClientHandler: Client is not ready")

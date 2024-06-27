@@ -187,11 +187,11 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   @spec emit_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
   def emit_telemetry_for_tenant({{{type, tenant}, user, mode, db_name}, count}) do
-    :telemetry.execute(
-      [:supavisor, :connections],
-      %{active: count},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
-    )
+    # :telemetry.execute(
+    #   [:supavisor, :connections],
+    #   %{active: count},
+    #   %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+    # )
   end
 
   def concurrent_tenants(poll_rate) do
@@ -211,14 +211,14 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   def execute_conn_tenants_metrics() do
-    num =
-      Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
-      |> Enum.uniq()
-      |> Enum.count()
+    # num =
+    #   Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    #   |> Enum.uniq()
+    #   |> Enum.count()
 
-    :telemetry.execute(
-      [:supavisor, :tenants],
-      %{active: num}
-    )
+    # :telemetry.execute(
+    #   [:supavisor, :tenants],
+    #   %{active: num}
+    # )
   end
 end

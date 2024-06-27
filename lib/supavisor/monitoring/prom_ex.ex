@@ -90,24 +90,25 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec do_cache_tenants_metrics() :: list
   def do_cache_tenants_metrics() do
-    metrics = get_metrics() |> String.split("\n")
+    # metrics = get_metrics() |> String.split("\n")
 
-    pools =
-      Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
-      |> Enum.uniq()
+    # pools =
+    #   Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    #   |> Enum.uniq()
 
-    _ =
-      Enum.reduce(pools, metrics, fn {{_type, tenant}, _, _, _}, acc ->
-        {matched, rest} = Enum.split_with(acc, &String.contains?(&1, "tenant=\"#{tenant}\""))
+    # _ =
+    #   Enum.reduce(pools, metrics, fn {{_type, tenant}, _, _, _}, acc ->
+    #     {matched, rest} = Enum.split_with(acc, &String.contains?(&1, "tenant=\"#{tenant}\""))
 
-        if matched != [] do
-          Cachex.put(Supavisor.Cache, {:metrics, tenant}, Enum.join(matched, "\n"))
-        end
+    #     if matched != [] do
+    #       Cachex.put(Supavisor.Cache, {:metrics, tenant}, Enum.join(matched, "\n"))
+    #     end
 
-        rest
-      end)
+    #     rest
+    #   end)
 
-    pools
+    # pools
+    []
   end
 
   @spec get_tenant_metrics(String.t()) :: String.t()

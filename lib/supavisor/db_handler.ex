@@ -373,10 +373,10 @@ defmodule Supavisor.DbHandler do
 
     case progress do
       :ready_for_query ->
-        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+        # {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
         HH.setopts(data.sock, active: true)
 
-        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data), sent: false},
+        {:next_state, :idle, %{data | stats: nil, caller: handler_caller(data), sent: false},
          {:next_event, :internal, :check_anon_buffer}}
 
       :continue ->

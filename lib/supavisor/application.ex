@@ -52,13 +52,13 @@ defmodule Supavisor.Application do
     :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants])
 
-    PromEx.set_metrics_tags()
+    # PromEx.set_metrics_tags()
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
       Supavisor.ErlSysMon,
-      PromEx,
+      # PromEx,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},

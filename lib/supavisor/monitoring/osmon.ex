@@ -68,7 +68,7 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   end
 
   def execute_metrics(event, metrics) do
-    :telemetry.execute(event, metrics, %{})
+    # :telemetry.execute(event, metrics, %{})
   end
 
   @spec ram_usage() :: float()
