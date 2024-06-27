@@ -14,28 +14,27 @@ jobs:
     permissions:
       contents: write
       packages: write
-      id-token: write    
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Set upgrade variables
         run: |
-            elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config        
+            elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config
             echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
             echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
             echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
       - name: Setup Elixir
-        run: |
-            . ~/.asdf/asdf.sh
-            echo 'elixir v1.14.5-otp-25' >> ~/.tool-versions
-            echo 'erlang 25.3.2.7' >> ~/.tool-versions
-            elixir -v
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '25.3.2.7'
+          elixir-version: '1.14.5'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable   
+          toolchain: stable
       - name: Get git tags
-        run: git fetch --tags origin     
+        run: git fetch --tags origin
       - name: Checkout RELEASE_FROM
         run: git checkout v${{ env.RELEASE_FROM }}
       - name: Cache Mix
@@ -51,7 +50,7 @@ jobs:
           mix local.rebar --force
           mix deps.get
       - name: Make old release
-        run: mix release supavisor    
+        run: mix release supavisor
       - name: Checkout RELEASE_TO
         run: git checkout v${{ env.RELEASE_TO }}
       - name: Cache Mix

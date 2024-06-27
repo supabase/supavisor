@@ -4,7 +4,7 @@ on:
     branches:
       - main
 env:
-  SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}      
+  SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
 jobs:
   format:
     name: Formatting Checks
@@ -13,15 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Elixir
-        run: |
-            . ~/.asdf/asdf.sh
-            echo 'elixir v1.14.5-otp-25' >> ~/.tool-versions
-            echo 'erlang 25.3.2.7' >> ~/.tool-versions
-            elixir -v
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '25.3.2.7'
+          elixir-version: '1.14.5'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable 
+          toolchain: stable
       - name: Cache Mix
         uses: actions/cache@v3
         with:
@@ -34,14 +33,14 @@ jobs:
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
-      - name: Set up Postgres
-        run: docker-compose -f ./docker-compose.db.yml up -d
-      - name: Run main database migrations
-        run: mix ecto.migrate --prefix _supavisor --log-migrator-sql
       - name: Run format check
         run: mix format --check-formatted
       - name: Credo checks
         run: mix credo --strict --mute-exit-status
+      - name: Set up Postgres
+        run: docker-compose -f ./docker-compose.db.yml up -d
+      - name: Run main database migrations
+        run: mix ecto.migrate --prefix _supavisor --log-migrator-sql
       - name: Retrieve PLT Cache
         uses: actions/cache@v3
         id: plt-cache
