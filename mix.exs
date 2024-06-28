@@ -21,9 +21,13 @@ defmodule Supavisor.MixProject do
   def application do
     [
       mod: {Supavisor.Application, []},
-      extra_applications: [:logger, :runtime_tools, :os_mon, :ssl, :partisan]
+      extra_applications:
+        [:logger, :runtime_tools, :os_mon, :ssl, :partisan] ++ extra_applications(Mix.env())
     ]
   end
+
+  defp extra_applications(:test), do: [:common_test]
+  defp extra_applications(_), do: []
 
   # Specifies which paths to compile per environment.
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -50,8 +54,8 @@ defmodule Supavisor.MixProject do
       {:joken, "~> 2.5.0"},
       {:cloak_ecto, "~> 1.2.0"},
       {:meck, "~> 0.9.2", only: :test},
-      {:credo, "~> 1.6.4", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.1.0", only: [:dev], runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:benchee, "~> 1.1.0", only: :dev},
       {:prom_ex, "~> 1.8.0"},
       {:open_api_spex, "~> 3.16"},
