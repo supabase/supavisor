@@ -18,7 +18,7 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Client, Protocol.Server}
 
   @impl true
-  def start_link(ref, _sock, transport, opts) do
+  def start_link(ref, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
     {:ok, pid}
   end

@@ -13,6 +13,10 @@ defmodule SupavisorWeb.MetricsControllerTest do
   end
 
   test "exporting metrics", %{conn: conn} do
+    {:ok, _pid, node2} = Supavisor.Support.Cluster.start_node()
+
+    Node.connect(node2)
+
     :meck.expect(Supavisor.Jwt, :authorize, fn _token, _secret -> {:ok, %{}} end)
     conn = get(conn, Routes.metrics_path(conn, :index))
     assert conn.status == 200
