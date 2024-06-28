@@ -249,12 +249,12 @@ defmodule Supavisor.Integration.ProxyTest do
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
   end
 
-  test "invalid characters in user or db_name" do
+  test "invalid format for user or db_name" do
     Process.flag(:trap_exit, true)
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://user\"user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
+      "postgresql://user\"user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/post gres\\\\\\\\\"\\"
 
     assert {:error,
             {_,
@@ -262,8 +262,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :internal_error,
-                  message:
-                    "Authentication error, reason: \"Invalid characters in user or db_name\"",
+                  message: "Authentication error, reason: \"Invalid format for user or db_name\"",
                   pg_code: "XX000",
                   severity: "FATAL",
                   unknown: "FATAL"

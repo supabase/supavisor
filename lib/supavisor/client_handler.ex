@@ -154,15 +154,11 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
 
-        not_allowed = ["\"", "\\"]
+        # Validate user and db_name according to PostgreSQL rules.
+        # The rules are: 1-63 characters, alphanumeric, underscore and $
+        rule = ~r/^[a-z_][a-z0-9_$]*$/
 
-        if String.contains?(user, not_allowed) or String.contains?(db_name, not_allowed) do
-          reason = "Invalid characters in user or db_name"
-          Logger.error("ClientHandler: #{inspect(reason)}")
-          Telem.client_join(:fail, data.id)
-          HH.send_error(data.sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
-          {:stop, {:shutdown, :invalid_characters}}
-        else
+        if user =~ rule and db_name =~ rule do
           log_level =
             case hello.payload["options"]["log_level"] do
               nil -> nil
@@ -173,6 +169,12 @@ defmodule Supavisor.ClientHandler do
 
           {:keep_state, %{data | log_level: log_level},
            {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
+        else
+          reason = "Invalid format for user or db_name"
+          Logger.error("ClientHandler: #{inspect(reason)}")
+          Telem.client_join(:fail, tenant_or_alias)
+          HH.send_error(data.sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
+          {:stop, {:shutdown, :invalid_format}}
         end
 
       {:error, error} ->
