@@ -75,6 +75,8 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "query via another node", %{proxy: proxy, user: user} do
+    {:ok, _pid, node2} = Supavisor.Support.Cluster.start_node()
+
     sup =
       Enum.reduce_while(1..30, nil, fn _, acc ->
         case Supavisor.get_global_sup({@tenant, user, :transaction}) do
@@ -89,7 +91,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
     assert sup ==
              :erpc.call(
-               :"secondary@127.0.0.1",
+               node2,
                Supavisor,
                :get_global_sup,
                [{@tenant, user, :transaction}],
@@ -114,7 +116,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
     assert sup ==
              :erpc.call(
-               :"secondary@127.0.0.1",
+               node2,
                Supavisor,
                :get_global_sup,
                [{@tenant, user, :transaction}],
@@ -188,10 +190,11 @@ defmodule Supavisor.Integration.ProxyTest do
     [{_, client_pid, _}] =
       Supavisor.get_local_manager({{:single, @tenant}, "transaction", :transaction, "postgres"})
       |> :sys.get_state()
-      |> then(& &1[:tid])
+      |> Access.get(:tid)
       |> :ets.tab2list()
 
-    {state, %{db_pid: db_pid}} = :sys.get_state(client_pid)
+    assert {state, map} = :sys.get_state(client_pid)
+    assert %{db_pid: db_pid} = map
 
     assert {:idle, nil} = {state, db_pid}
     :gen_statem.stop(pid)
