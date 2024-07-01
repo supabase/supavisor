@@ -8,7 +8,12 @@ defmodule Supavisor.TenantsMetrics do
   @check_timeout 10_000
 
   def start_link(args) do
-    GenServer.start_link(__MODULE__, args, name: __MODULE__)
+    GenServer.start_link(__MODULE__, args,
+      name: __MODULE__,
+      spawn_opt: [
+        priority: :low
+      ]
+    )
   end
 
   ## Callbacks
