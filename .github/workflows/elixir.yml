@@ -171,6 +171,9 @@ jobs:
         with:
           path: _build/${{ env.MIX_ENV }}/*.plt
           key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-plts-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-plts-
+
       - name: Create PLTs
         if: steps.plt-cache.outputs.cache-hit != 'true'
         run: |
