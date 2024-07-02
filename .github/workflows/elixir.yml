@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - main
+      - v2
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -37,49 +38,6 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
-  compile:
-    name: Compile project in test env
-    runs-on: u22-arm-runner
-    needs: [deps]
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Elixir
-        id: beam
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: '25.3.2.7'
-          elixir-version: '1.14.5'
-      - name: Cache Mix
-        uses: actions/cache@v4
-        with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-      - name: Cache Build
-        uses: actions/cache@v4
-        with:
-          path: |
-            _build/${{ env.MIX_ENV }}
-          key: ${{ runner.os }}-build-${{ env.MIX_ENV }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.MIX_ENV }}-
-      - name: Cache native
-        uses: actions/cache@v4
-        id: native-cache
-        with:
-          path: |
-            priv/native
-          key: ${{ runner.os }}-build-native-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles(format('{0}{1}', github.workspace, '/native/**/*')) }}
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@v1
-        if: steps.native-cache.outputs.cache-hit != 'true' || steps.elixir-cache.output.cache-hit != 'true'
-        with:
-          toolchain: stable
-      - name: Compile
-        run: mix compile
-
   format:
     name: Formatting checks
     runs-on: u22-arm-runner
@@ -98,15 +56,13 @@ jobs:
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
       - name: Run format check
         run: mix format --check-formatted
 
   credo:
     name: Code style
     runs-on: u22-arm-runner
-    needs: [compile]
+    needs: [deps]
 
     steps:
       - uses: actions/checkout@v4
@@ -121,23 +77,15 @@ jobs:
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-      - name: Cache Build
-        uses: actions/cache@v4
-        with:
-          path: |
-            _build/${{ env.MIX_ENV }}
-          key: ${{ runner.os }}-build-${{ env.MIX_ENV }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.MIX_ENV }}-
+      - name: Compile deps
+        run: mix deps.compile
       - name: Credo checks
         run: mix credo --strict --mute-exit-status
 
   tests:
     name: Run tests
     runs-on: u22-arm-runner
-    needs: [compile]
+    needs: [deps]
 
     steps:
       - uses: actions/checkout@v4
@@ -149,7 +97,6 @@ jobs:
           elixir-version: '1.14.5'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
-        if: steps.native-cache.outputs.cache-hit != 'true' || steps.elixir-cache.output.cache-hit != 'true'
         with:
           toolchain: stable
       - name: Cache Mix
@@ -157,22 +104,22 @@ jobs:
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-      - name: Cache Build
-        uses: actions/cache@v4
-        with:
-          path: |
-            _build/${{ env.MIX_ENV }}
-          key: ${{ runner.os }}-build-${{ env.MIX_ENV }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.MIX_ENV }}-
       - name: Cache native
         uses: actions/cache@v4
         with:
           path: |
-            priv/native
-          key: ${{ runner.os }}-build-native-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles(format('{0}{1}', github.workspace, '/native/**/*')) }}
+            _build/${{ env.MIX_ENV }}/lib/supavisor/native
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-build-native-${{ hashFiles(format('{0}{1}', github.workspace, '/native/**/Cargo.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-build-native-
+      - name: Compile deps
+        run: mix deps.compile
+      - name: Compile
+        run: mix compile
       - name: Set up Postgres
         run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Start epmd
@@ -183,7 +130,7 @@ jobs:
   dialyzer:
     name: Dialyze
     runs-on: u22-arm-runner
-    needs: [compile]
+    needs: [deps]
 
     steps:
       - uses: actions/checkout@v4
@@ -195,7 +142,6 @@ jobs:
           elixir-version: '1.14.5'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
-        if: steps.native-cache.outputs.cache-hit != 'true' || steps.elixir-cache.output.cache-hit != 'true'
         with:
           toolchain: stable
       - name: Cache Mix
@@ -203,22 +149,22 @@ jobs:
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-      - name: Cache Build
-        uses: actions/cache@v4
-        with:
-          path: |
-            _build/${{ env.MIX_ENV }}
-          key: ${{ runner.os }}-build-${{ env.MIX_ENV }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.MIX_ENV }}-
       - name: Cache native
         uses: actions/cache@v4
         with:
           path: |
-            priv/native
-          key: ${{ runner.os }}-build-native-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles(format('{0}{1}', github.workspace, '/native/**/*')) }}
+            _build/${{ env.MIX_ENV }}/lib/supavisor/native
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-build-native-${{ hashFiles(format('{0}{1}', github.workspace, '/native/**/Cargo.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-build-native-
+      - name: Compile deps
+        run: mix deps.compile
+      - name: Compile
+        run: mix compile
       - name: Retrieve PLT Cache
         uses: actions/cache@v4
         id: plt-cache
