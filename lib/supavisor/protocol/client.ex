@@ -103,22 +103,18 @@ defmodule Supavisor.Protocol.Client do
   end
 
   def decode_payload(:simple_query, payload) do
-    case String.split(payload, <<0>>) do
+    case :binary.split(payload, <<0>>) do
       [query, ""] -> query
       _ -> :undefined
     end
   end
 
-  def decode_payload(:parse_message, payload) do
-    case String.split(payload, <<0>>) do
-      [""] ->
-        :undefined
+  def decode_payload(:parse_message, <<0>>), do: :undefined
 
-      other ->
-        case Enum.filter(other, &(&1 != "")) do
-          [sql] -> sql
-          message -> message
-        end
+  def decode_payload(:parse_message, payload) do
+    case :binary.split(payload, <<0>>, [:global, :trim_all]) do
+      [sql] -> sql
+      message -> message
     end
   end
 

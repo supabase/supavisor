@@ -172,7 +172,7 @@ defmodule Supavisor.Protocol.Server do
 
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
   def decode_payload(:error_response, payload) do
-    String.split(payload, <<0>>, trim: true)
+    :binary.split(payload, <<0>>, [:global, :trim_all])
   end
 
   def decode_payload(
@@ -195,7 +195,7 @@ defmodule Supavisor.Protocol.Server do
   end
 
   def decode_payload(:password_message, "md5" <> _ = bin) do
-    case String.split(bin, <<0>>) do
+    case :binary.split(bin, <<0>>) do
       [digest, ""] -> {:md5, digest}
       _ -> :undefined
     end
