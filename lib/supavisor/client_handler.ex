@@ -931,11 +931,6 @@ defmodule Supavisor.ClientHandler do
 
   def try_get_sni(_), do: nil
 
-  @spec timeout_check(atom, non_neg_integer) :: {:timeout, non_neg_integer, atom}
-  defp timeout_check(key, timeout) do
-    {:timeout, timeout, key}
-  end
-
   defp db_pid_meta({_, {_, pid}} = _key) do
     rkey = Supavisor.Registry.PoolPids
     fnode = node(pid)
@@ -976,18 +971,15 @@ defmodule Supavisor.ClientHandler do
   defp handle_prepared_statements(_, _, _), do: nil
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
-  defp handle_actions(data) do
-    Enum.flat_map(data, fn
-      {:heartbeat_interval, v} = t when v > 0 ->
-        Logger.debug("ClientHandler: Call timeout #{inspect(t)}")
-        [timeout_check(:heartbeat_check, v)]
+  defp handle_actions(%{} = data) do
+    heartbeat =
+      if data.heartbeat_interval > 0,
+        do: [{:timeout, data.heartbeat_interval, :heartbeat_check}],
+        else: []
 
-      {:idle_timeout, v} = t when v > 0 ->
-        Logger.debug("ClientHandler: Call timeout #{inspect(t)}")
-        [timeout_check(:idle_terminate, v)]
+    idle =
+      if data.idle_timeout > 0, do: [{:timeout, data.idle_timeout, :idle_timeout}], else: []
 
-      _ ->
-        []
-    end)
+    idle ++ heartbeat
   end
 end
