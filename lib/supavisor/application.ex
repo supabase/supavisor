@@ -6,6 +6,7 @@ defmodule Supavisor.Application do
   use Application
   require Logger
   alias Supavisor.Monitoring.PromEx
+  alias Supavisor.{ClientHandler, ProxyHandler, Proxy}
 
   @impl true
   def start(_type, _args) do
@@ -42,7 +43,7 @@ defmodule Supavisor.Application do
           num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
           socket_opts: [port: port, keepalive: true]
         },
-        Supavisor.ClientHandler,
+        if(mode == :session, do: Proxy, else: ClientHandler),
         %{mode: mode}
       )
       |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
