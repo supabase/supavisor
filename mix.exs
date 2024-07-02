@@ -53,7 +53,7 @@ defmodule Supavisor.MixProject do
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.5.0"},
       {:cloak_ecto, "~> 1.2.0"},
-      {:meck, "~> 0.9.2", only: :test},
+      {:meck, "~> 0.9.2", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:benchee, "~> 1.1.0", only: :dev},
@@ -66,6 +66,7 @@ defmodule Supavisor.MixProject do
       {:cachex, "~> 3.6"},
       {:inet_cidr, "~> 1.0.0"},
       {:observer_cli, "~> 1.7"},
+      {:eflambe, "~> 0.3.1", only: [:dev]},
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
