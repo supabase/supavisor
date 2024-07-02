@@ -9,10 +9,12 @@ defmodule Supavisor.Monitoring.Telem do
   def network_usage(type, {mod, socket}, id, stats) do
     mod = if mod == :ssl, do: :ssl, else: :inet
 
-    case mod.getstat(socket) do
-      {:ok, values} ->
-        values = Map.new(values)
-        diff = Map.merge(values, stats, fn _, v1, v2 -> v1 - v2 end)
+    case mod.getstat(socket, [:recv_oct, :send_oct]) do
+      {:ok, [{:recv_oct, recv_oct}, {:send_oct, send_oct}]} ->
+        diff = %{
+          send_oct: send_oct - Map.get(stats, :send_oct, 0),
+          recv_oct: recv_oct - Map.get(stats, :recv_oct, 0)
+        }
 
         {{ptype, tenant}, user, mode, db_name} = id
 
@@ -22,7 +24,7 @@ defmodule Supavisor.Monitoring.Telem do
           %{tenant: tenant, user: user, mode: mode, type: ptype, db_name: db_name}
         )
 
-        {:ok, values}
+        {:ok, %{recv_oct: recv_oct, send_oct: send_oct}}
 
       {:error, reason} ->
         Logger.error("Failed to get socket stats: #{inspect(reason)}")

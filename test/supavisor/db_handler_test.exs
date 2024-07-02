@@ -192,7 +192,7 @@ defmodule Supavisor.DbHandlerTest do
       :meck.new(:inet, [:unstick, :passthrough])
 
       :meck.expect(:prim_inet, :getstat, fn _, _ ->
-        {:ok, %{}}
+        {:ok, [{:recv_oct, 21}, {:send_oct, 37}]}
       end)
 
       :meck.expect(:inet, :setopts, fn _, _ -> :ok end)
@@ -224,7 +224,7 @@ defmodule Supavisor.DbHandlerTest do
       :meck.new(:inet, [:unstick, :passthrough])
 
       :meck.expect(:prim_inet, :getstat, fn _, _ ->
-        {:ok, %{}}
+        {:ok, [{:recv_oct, 21}, {:send_oct, 37}]}
       end)
 
       :meck.expect(:inet, :setopts, fn _, _ -> :ok end)
