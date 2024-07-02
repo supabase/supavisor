@@ -439,42 +439,42 @@ defmodule Supavisor.ClientHandler do
   end
 
   # incoming query with a single pool
-  def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
-      when is_binary(bin) and is_pid(pid) do
+  def handle_event(:info, {proto, _, bin}, :idle, %{pool: %{write: pools}} = data)
+      when is_binary(bin) do
     ts = System.monotonic_time()
-    db_pid = db_checkout(:both, :on_query, data)
-    handle_prepared_statements(db_pid, bin, data)
+    db_pid = db_checkout(:write, :on_query, data)
+    # handle_prepared_statements(db_pid, bin, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
   # incoming query with read/write pools
-  def handle_event(:info, {proto, _, bin}, :idle, data) do
-    query_type =
-      with {:ok, payload} <- Client.get_payload(bin),
-           {:ok, statements} <- Supavisor.PgParser.statements(payload) do
-        Logger.debug(
-          "ClientHandler: Receive payload #{inspect(payload, pretty: true)} statements #{inspect(statements)}"
-        )
+  # def handle_event(:info, {proto, _, bin}, :idle, data) do
+  #   query_type =
+  #     with {:ok, payload} <- Client.get_payload(bin),
+  #          {:ok, statements} <- Supavisor.PgParser.statements(payload) do
+  #       Logger.debug(
+  #         "ClientHandler: Receive payload #{inspect(payload, pretty: true)} statements #{inspect(statements)}"
+  #       )
 
-        case statements do
-          # naive check for read only queries
-          ["SelectStmt"] -> :read
-          _ -> :write
-        end
-      else
-        other ->
-          Logger.error("ClientHandler: Receive query error: #{inspect(other)}")
-          :write
-      end
+  #       case statements do
+  #         # naive check for read only queries
+  #         ["SelectStmt"] -> :read
+  #         _ -> :write
+  #       end
+  #     else
+  #       other ->
+  #         Logger.error("ClientHandler: Receive query error: #{inspect(other)}")
+  #         :write
+  #     end
 
-    ts = System.monotonic_time()
-    db_pid = db_checkout(query_type, :on_query, data)
+  #   ts = System.monotonic_time()
+  #   db_pid = db_checkout(query_type, :on_query, data)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts, last_query: bin},
-     {:next_event, :internal, {proto, nil, bin}}}
-  end
+  #   {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts, last_query: bin},
+  #    {:next_event, :internal, {proto, nil, bin}}}
+  # end
 
   # forward query to db
   def handle_event(_, {proto, _, bin}, :busy, data)

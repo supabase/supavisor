@@ -248,7 +248,9 @@ defmodule Supavisor do
       :cluster -> T.get_cluster_config(tenant, user)
     end
     |> case do
-      [_ | _] = replicas ->
+      [_ | _] = [replica] ->
+        replicas = [replica, replica]
+
         opts =
           Enum.map(replicas, fn replica ->
             case replica do
@@ -335,7 +337,7 @@ defmodule Supavisor do
       replica_type: replica_type,
       user: user,
       auth: auth,
-      pool_size: pool_size,
+      pool_size: round(pool_size / 2),
       mode: mode,
       default_parameter_status: ps,
       max_clients: max_clients,
