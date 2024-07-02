@@ -74,8 +74,8 @@ defmodule Supavisor.MixProject do
       {:partisan, git: "https://github.com/lasp-lang/partisan.git", tag: "v5.0.0-rc.12"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:rustler, "~> 0.29.1"}
-      # TODO: add ranch deps
+      {:rustler, "~> 0.29.1"},
+      {:ranch, "~> 2.0", override: true}
     ]
   end
 

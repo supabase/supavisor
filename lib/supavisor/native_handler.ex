@@ -10,7 +10,7 @@ defmodule Supavisor.NativeHandler do
   alias Supavisor.{Protocol.Server, Tenants}
 
   @impl true
-  def start_link(ref, _sock, transport, opts) do
+  def start_link(ref, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
     {:ok, pid}
   end
