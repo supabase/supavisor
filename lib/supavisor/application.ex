@@ -57,7 +57,7 @@ defmodule Supavisor.Application do
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
-      Supavisor.ErlSysMon,
+      # Supavisor.ErlSysMon,
       # PromEx,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
@@ -67,7 +67,7 @@ defmodule Supavisor.Application do
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor
-      SupavisorWeb.Telemetry,
+      # SupavisorWeb.Telemetry,
       # Start the PubSub system
       {Phoenix.PubSub, name: Supavisor.PubSub},
       {
@@ -75,7 +75,7 @@ defmodule Supavisor.Application do
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      Supavisor.TenantsMetrics,
+      # Supavisor.TenantsMetrics,
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]

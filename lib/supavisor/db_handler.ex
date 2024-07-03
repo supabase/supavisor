@@ -6,7 +6,7 @@ defmodule Supavisor.DbHandler do
 
   require Logger
 
-  @behaviour :partisan_gen_statem
+  @behaviour :gen_statem
 
   alias Supavisor, as: S
   alias Supavisor.ClientHandler, as: Client
@@ -22,26 +22,26 @@ defmodule Supavisor.DbHandler do
   @async_send_limit 1_000
 
   def start_link(config) do
-    :partisan_gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
+    :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
   end
 
   @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, caller, msg), do: :partisan_gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
+  def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
 
   @spec cast(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def cast(pid, caller, msg), do: :partisan_gen_statem.cast(pid, {:db_cast, caller, msg})
+  def cast(pid, caller, msg), do: :gen_statem.cast(pid, {:db_cast, caller, msg})
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
     try do
-      {:ok, :partisan_gen_statem.call(pid, :get_state_and_mode, 5_000)}
+      {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
     catch
       error, reason -> {:error, {error, reason}}
     end
   end
 
   @spec stop(pid()) :: :ok
-  def stop(pid), do: :partisan_gen_statem.stop(pid, :client_termination, 5_000)
+  def stop(pid), do: :gen_statem.stop(pid, :client_termination, 5_000)
 
   @impl true
   def init(args) do
@@ -72,7 +72,7 @@ defmodule Supavisor.DbHandler do
       replica_type: args.replica_type
     }
 
-    Telem.handler_action(:db_handler, :started, args.id)
+    # Telem.handler_action(:db_handler, :started, args.id)
     {:ok, :connect, data, {:next_event, :internal, :connect}}
   end
 
@@ -93,7 +93,7 @@ defmodule Supavisor.DbHandler do
 
     reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
 
-    Telem.handler_action(:db_handler, :db_connection, data.id)
+    # Telem.handler_action(:db_handler, :db_connection, data.id)
 
     case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
       {:ok, sock} ->
@@ -346,8 +346,8 @@ defmodule Supavisor.DbHandler do
     :ok = Client.client_cast(data.caller, bin, resp)
 
     if resp != :continue do
-      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
+      # {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+      {:keep_state, %{data | stats: nil, caller: handler_caller(data)}}
     else
       :keep_state_and_data
     end
@@ -479,12 +479,12 @@ defmodule Supavisor.DbHandler do
 
   @impl true
   def terminate(:shutdown, _state, data) do
-    Telem.handler_action(:db_handler, :stopped, data.id)
+    # Telem.handler_action(:db_handler, :stopped, data.id)
     :ok
   end
 
   def terminate(reason, state, data) do
-    Telem.handler_action(:db_handler, :stopped, data.id)
+    # Telem.handler_action(:db_handler, :stopped, data.id)
 
     Logger.error(
       "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
