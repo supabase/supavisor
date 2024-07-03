@@ -87,7 +87,7 @@ defmodule Supavisor.DbHandler do
       :binary,
       {:packet, :raw},
       {:active, false},
-      {:nodelay, true},
+      # {:nodelay, true},
       auth.ip_version
     ]
 
@@ -319,39 +319,39 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
-      when proto in @proto do
-    # Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
-    pkts = Server.decode(bin)
+  # def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
+  #     when proto in @proto do
+  #   # Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
+  #   pkts = Server.decode(bin)
 
-    resp =
-      cond do
-        Server.has_read_only_error?(pkts) ->
-          # Logger.error("DbHandler: read only error")
+  #   resp =
+  #     cond do
+  #       Server.has_read_only_error?(pkts) ->
+  #         # Logger.error("DbHandler: read only error")
 
-          with [_] <- pkts do
-            # need to flush ready_for_query if it's not in same packet
-            :ok = receive_ready_for_query()
-          end
+  #         with [_] <- pkts do
+  #           # need to flush ready_for_query if it's not in same packet
+  #           :ok = receive_ready_for_query()
+  #         end
 
-          :read_sql_error
+  #         :read_sql_error
 
-        List.last(pkts).tag == :ready_for_query ->
-          :ready_for_query
+  #       List.last(pkts).tag == :ready_for_query ->
+  #         :ready_for_query
 
-        true ->
-          :continue
-      end
+  #       true ->
+  #         :continue
+  #     end
 
-    :ok = Client.client_cast(data.caller, bin, resp)
+  #   :ok = Client.client_cast(data.caller, bin, resp)
 
-    if resp != :continue do
-      # {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: nil, caller: handler_caller(data)}}
-    else
-      :keep_state_and_data
-    end
-  end
+  #   if resp != :continue do
+  #     # {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+  #     {:keep_state, %{data | stats: nil, caller: handler_caller(data)}}
+  #   else
+  #     :keep_state_and_data
+  #   end
+  # end
 
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
@@ -366,7 +366,7 @@ defmodule Supavisor.DbHandler do
         {:ready_for_query, :idle} -> {:client_cast, :ready_for_query}
         {:ready_for_query, _} -> {:client_cast, :continue}
         _ when sent < @async_send_limit -> {:client_cast, :continue}
-        _ -> {:client_call, :continue}
+        _ -> {:client_cast, :continue}
       end
 
     :ok = apply(Client, send_via, [data.caller, bin, progress])
@@ -376,8 +376,7 @@ defmodule Supavisor.DbHandler do
         # {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
         HH.setopts(data.sock, active: true)
 
-        {:next_state, :idle, %{data | stats: nil, caller: handler_caller(data), sent: false},
-         {:next_event, :internal, :check_anon_buffer}}
+        {:next_state, :idle, %{data | stats: nil, caller: handler_caller(data), sent: false}}
 
       :continue ->
         {:keep_state, %{data | sent: sent + 1}}
