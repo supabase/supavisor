@@ -483,30 +483,32 @@ defmodule Supavisor.ClientHandler do
       when proto in [:tcp, :ssl] do
     {_, db_pid} = data.db_pid
 
-    case Db.call(db_pid, self(), bin) do
-      :ok ->
-        # Logger.debug("ClientHandler: DbHandler call success")
-        :keep_state_and_data
+    Db.cast(db_pid, self(), bin)
+    :keep_state_and_data
+    # case Db.call(db_pid, self(), bin) do
+    #   :ok ->
+    #     # Logger.debug("ClientHandler: DbHandler call success")
+    #     :keep_state_and_data
 
-      {:buffering, size} ->
-        # Logger.debug("ClientHandler: DbHandler call buffering #{size}")
+    #   {:buffering, size} ->
+    #     # Logger.debug("ClientHandler: DbHandler call buffering #{size}")
 
-        if size > 1_000_000 do
-          msg = "DbHandler buffer size is too big: #{size}"
-          # Logger.error("ClientHandler: #{msg}")
-          HH.sock_send(data.sock, Server.error_message("XX000", msg))
-          {:stop, {:shutdown, :buffer_size}}
-        else
-          # Logger.debug("ClientHandler: DbHandler call buffering")
-          :keep_state_and_data
-        end
+    #     if size > 1_000_000 do
+    #       msg = "DbHandler buffer size is too big: #{size}"
+    #       # Logger.error("ClientHandler: #{msg}")
+    #       HH.sock_send(data.sock, Server.error_message("XX000", msg))
+    #       {:stop, {:shutdown, :buffer_size}}
+    #     else
+    #       # Logger.debug("ClientHandler: DbHandler call buffering")
+    #       :keep_state_and_data
+    #     end
 
-      {:error, reason} ->
-        msg = "DbHandler error: #{inspect(reason)}"
-        # Logger.error("ClientHandler: #{msg}")
-        HH.sock_send(data.sock, Server.error_message("XX000", msg))
-        {:stop, {:shutdown, :db_handler_error}}
-    end
+    #   {:error, reason} ->
+    #     msg = "DbHandler error: #{inspect(reason)}"
+    #     # Logger.error("ClientHandler: #{msg}")
+    #     HH.sock_send(data.sock, Server.error_message("XX000", msg))
+    #     {:stop, {:shutdown, :db_handler_error}}
+    # end
   end
 
   def handle_event(:info, {:parameter_status, :updated}, _, _) do
