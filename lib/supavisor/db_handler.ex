@@ -87,7 +87,7 @@ defmodule Supavisor.DbHandler do
       :binary,
       {:packet, :raw},
       {:active, false},
-      # {:nodelay, true},
+      {:nodelay, true},
       auth.ip_version
     ]
 
