@@ -65,6 +65,10 @@ db_rebuild:
 	docker-compose -f ./docker-compose.db.yml build
 	make db_start
 
+PGBENCH_USER ?= postgres.sys
+PGBENCH_PORT ?= 6543
+PGBENCH_RATE ?= 5000
+
 pgbench_init:
 	PGPASSWORD=postgres pgbench -i -h 127.0.0.1 -p 6432 -U postgres -d postgres
 
@@ -73,6 +77,9 @@ pgbench_short:
 
 pgbench_long:
 	PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 60 -h localhost -p 7654 -U transaction.localhost postgres
+
+pgbench:
+	PGPASSWORD="postgres" pgbench postgres://${PGBENCH_USER}@localhost:${PGBENCH_PORT}/postgres?sslmode=disable -Srn -T 60 -j 8 -c 1000 -P 10 -M extended --rate ${PGBENCH_RATE}
 
 clean:
 	rm -rf _build && rm -rf deps
