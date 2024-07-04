@@ -366,7 +366,7 @@ defmodule Supavisor.DbHandler do
         {:ready_for_query, :idle} -> {:client_cast, :ready_for_query}
         {:ready_for_query, _} -> {:client_cast, :continue}
         _ when sent < @async_send_limit -> {:client_cast, :continue}
-        _ -> {:client_cast, :continue}
+        _ -> {:client_call, :continue}
       end
 
     :ok = apply(Client, send_via, [data.caller, bin, progress])
