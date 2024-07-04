@@ -85,8 +85,7 @@ topologies =
       config: [
         url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
         heartbeat_interval: 5_000,
-        channel_name: "supavisor_#{region}_#{maj}_#{min}",
-        channel_name_partisan: "supavisor_partisan_#{region}_#{maj}_#{min}"
+        channel_name: "supavisor_#{region}_#{maj}_#{min}"
       ]
     ]
 
@@ -174,23 +173,6 @@ if config_env() != :test do
         tag: "AES.GCM.V1", key: System.get_env("VAULT_ENC_KEY")
       }
     ]
-
-  config :partisan,
-    # Which overlay to use
-    peer_service_manager: :partisan_pluggable_peer_service_manager,
-    listen_addrs: [
-      {
-        System.get_env("PARTISAN_PEER_IP", "127.0.0.1"),
-        String.to_integer(System.get_env("PARTISAN_PEER_PORT", "20100"))
-      }
-    ],
-    channels: [
-      data: %{parallelism: System.get_env("PARTISAN_PARALLELISM", "5") |> String.to_integer()}
-    ],
-    # Encoding for pid(), reference() and names
-    pid_encoding: false,
-    ref_encoding: false,
-    remote_ref_format: :improper_list
 end
 
 if System.get_env("LOGS_ENGINE") == "logflare" do
