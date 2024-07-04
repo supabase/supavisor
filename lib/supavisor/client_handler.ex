@@ -446,7 +446,7 @@ defmodule Supavisor.ClientHandler do
       when is_binary(bin) and is_pid(pid) do
     ts = System.monotonic_time()
     db_pid = db_checkout(:both, :on_query, data)
-    # handle_prepared_statements(db_pid, bin, data)
+    handle_prepared_statements(db_pid, bin, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
      {:next_event, :internal, {proto, nil, bin}}}
