@@ -75,7 +75,7 @@ defmodule Supavisor.Application do
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      # Supavisor.TenantsMetrics,
+      Supavisor.TenantsMetrics,
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]

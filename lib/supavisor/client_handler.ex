@@ -137,7 +137,7 @@ defmodule Supavisor.ClientHandler do
 
         error ->
           Logger.error("ClientHandler: SSL handshake error: #{inspect(error)}")
-          # Telem.client_join(:fail, data.id)
+          Telem.client_join(:fail, data.id)
           {:stop, {:shutdown, :ssl_handshake_error}}
       end
     else
@@ -161,7 +161,7 @@ defmodule Supavisor.ClientHandler do
         if String.contains?(user, not_allowed) or String.contains?(db_name, not_allowed) do
           reason = "Invalid characters in user or db_name"
           Logger.error("ClientHandler: #{inspect(reason)}")
-          # Telem.client_join(:fail, data.id)
+          Telem.client_join(:fail, data.id)
           HH.send_error(data.sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
           {:stop, {:shutdown, :invalid_characters}}
         else
@@ -179,7 +179,7 @@ defmodule Supavisor.ClientHandler do
 
       {:error, error} ->
         Logger.error("ClientHandler: Client startup message error: #{inspect(error)}")
-        # Telem.client_join(:fail, data.id)
+        Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :startup_packet_error}}
     end
   end
@@ -226,7 +226,7 @@ defmodule Supavisor.ClientHandler do
             )
 
             :ok = HH.send_error(sock, "XX000", "SSL connection is required")
-            # Telem.client_join(:fail, id)
+            Telem.client_join(:fail, id)
             {:stop, {:shutdown, :ssl_required}}
 
           HH.filter_cidrs(info.tenant.allow_list, addr) == [] ->
@@ -234,7 +234,7 @@ defmodule Supavisor.ClientHandler do
             Logger.error("ClientHandler: #{message}")
             :ok = HH.send_error(sock, "XX000", message)
 
-            # Telem.client_join(:fail, id)
+            Telem.client_join(:fail, id)
             {:stop, {:shutdown, :address_not_allowed}}
 
           true ->
@@ -256,7 +256,7 @@ defmodule Supavisor.ClientHandler do
                 :ok =
                   HH.send_error(sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
 
-                # Telem.client_join(:fail, id)
+                Telem.client_join(:fail, id)
                 {:stop, {:shutdown, :auth_secrets_error}}
             end
         end
@@ -267,7 +267,7 @@ defmodule Supavisor.ClientHandler do
         )
 
         :ok = HH.send_error(sock, "XX000", "Tenant or user not found")
-        # Telem.client_join(:fail, data.id)
+        Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :user_not_found}}
     end
   end
@@ -322,7 +322,7 @@ defmodule Supavisor.ClientHandler do
         end
 
         HH.sock_send(sock, msg)
-        # Telem.client_join(:fail, data.id)
+        Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :exchange_error}}
 
       {:ok, client_key} ->
@@ -337,7 +337,7 @@ defmodule Supavisor.ClientHandler do
 
         Logger.debug("ClientHandler: Exchange success")
         :ok = HH.sock_send(sock, Server.authentication_ok())
-        # Telem.client_join(:ok, data.id)
+        Telem.client_join(:ok, data.id)
 
         {:keep_state, %{data | auth_secrets: {method, secrets}},
          {:next_event, :internal, :subscribe}}
@@ -368,7 +368,7 @@ defmodule Supavisor.ClientHandler do
         msg = "Max client connections reached"
         Logger.error("ClientHandler: #{msg}")
         :ok = HH.send_error(data.sock, "XX000", msg)
-        # Telem.client_join(:fail, data.id)
+        Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :max_clients_reached}}
 
       error ->
@@ -382,7 +382,7 @@ defmodule Supavisor.ClientHandler do
     msg = [ps, [header, payload], Server.ready_for_query()]
     :ok = HH.listen_cancel_query(pid, key)
     :ok = HH.sock_send(sock, msg)
-    # Telem.client_connection_time(data.connection_start, data.id)
+    Telem.client_connection_time(data.connection_start, data.id)
     {:next_state, :idle, data, handle_actions(data)}
   end
 
@@ -570,7 +570,7 @@ defmodule Supavisor.ClientHandler do
 
         # {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
 
-        # Telem.client_query_time(data.query_start, data.id)
+        Telem.client_query_time(data.query_start, data.id)
         :ok = HH.sock_send(data.sock, bin)
         actions = handle_actions(data)
         {:next_state, :idle, %{data | db_pid: db_pid, stats: nil}, actions}
@@ -770,7 +770,7 @@ defmodule Supavisor.ClientHandler do
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [pool, true, data.timeout])
     Process.link(db_pid)
     same_box = if node(db_pid) == node(), do: :local, else: :remote
-    # Telem.pool_checkout_time(time, data.id, same_box)
+    Telem.pool_checkout_time(time, data.id, same_box)
     {pool, db_pid}
   end
 
@@ -778,7 +778,7 @@ defmodule Supavisor.ClientHandler do
     {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
     Process.link(db_pid)
     same_box = if node(db_pid) == node(), do: :local, else: :remote
-    # Telem.pool_checkout_time(time, data.id, same_box)
+    Telem.pool_checkout_time(time, data.id, same_box)
     {data.pool, db_pid}
   end
 

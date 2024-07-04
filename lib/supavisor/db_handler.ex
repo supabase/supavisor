@@ -72,7 +72,7 @@ defmodule Supavisor.DbHandler do
       replica_type: args.replica_type
     }
 
-    # Telem.handler_action(:db_handler, :started, args.id)
+    Telem.handler_action(:db_handler, :started, args.id)
     {:ok, :connect, data, {:next_event, :internal, :connect}}
   end
 
@@ -93,7 +93,7 @@ defmodule Supavisor.DbHandler do
 
     reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
 
-    # Telem.handler_action(:db_handler, :db_connection, data.id)
+    Telem.handler_action(:db_handler, :db_connection, data.id)
 
     case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
       {:ok, sock} ->
@@ -479,12 +479,12 @@ defmodule Supavisor.DbHandler do
 
   @impl true
   def terminate(:shutdown, _state, data) do
-    # Telem.handler_action(:db_handler, :stopped, data.id)
+    Telem.handler_action(:db_handler, :stopped, data.id)
     :ok
   end
 
   def terminate(reason, state, data) do
-    # Telem.handler_action(:db_handler, :stopped, data.id)
+    Telem.handler_action(:db_handler, :stopped, data.id)
 
     Logger.error(
       "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
