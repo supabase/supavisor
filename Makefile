@@ -15,6 +15,21 @@ dev:
 	ERL_AFLAGS="-kernel shell_history enabled +zdbbl 2097151" \
 	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
 
+dev.otel:
+	MIX_ENV=dev \
+	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
+	API_JWT_SECRET=dev \
+	METRICS_JWT_SECRET=dev \
+	REGION=eu \
+	FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000 \
+	SECRET_KEY_BASE="dev" \
+	CLUSTER_POSTGRES="true" \
+	DB_POOL_SIZE="5" \
+	ERL_AFLAGS="-kernel shell_history enabled +zdbbl 2097151" \
+	OTEL_TRACES_EXPORTER="otlp" \
+	OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318" \
+	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
+
 dev.node2:
 	PORT=4001 \
 	MIX_ENV=dev \
@@ -43,7 +58,7 @@ dev.node3:
 	PROXY_PORT_TRANSACTION="6554" \
 	PARTISAN_PEER_PORT="10202" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
-	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server	
+	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server
 
 dev_bin:
 	MIX_ENV=dev mix release supavisor_bin && ls -l burrito_out
