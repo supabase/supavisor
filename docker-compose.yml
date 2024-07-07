@@ -42,9 +42,7 @@ services:
     image: grafana/otel-lgtm:0.6.0
     container_name: grafana-otel
     ports:
-      # OTEL gRPC
-      - 4317:4317
-      # OTEL HTTP
+      # OTel HTTP
       - 4318:4318
       # Web UI
       - 4300:3000
