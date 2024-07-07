@@ -66,6 +66,10 @@ defmodule Supavisor.MixProject do
       {:cachex, "~> 3.6"},
       {:inet_cidr, "~> 1.0.0"},
       {:observer_cli, "~> 1.7"},
+      # Open Telemetry,
+      {:opentelemetry, "~> 1.4"},
+      {:opentelemetry_api, "~> 1.3", override: true},
+      {:opentelemetry_exporter, "~> 1.7"},
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
