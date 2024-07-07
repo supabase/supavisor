@@ -17,6 +17,10 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor.HandlerHelpers, as: HH
   alias Supavisor.{Tenants, Monitoring.Telem, Protocol.Client, Protocol.Server}
 
+  alias OpenTelemetry.Tracer
+
+  require OpenTelemetry.Tracer
+
   @impl true
   def start_link(ref, _sock, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
@@ -67,7 +71,8 @@ defmodule Supavisor.ClientHandler do
       last_query: nil,
       heartbeat_interval: 0,
       connection_start: System.monotonic_time(),
-      log_level: nil
+      log_level: nil,
+      otel_span: nil
     }
 
     :partisan_gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -443,9 +448,10 @@ defmodule Supavisor.ClientHandler do
       when is_binary(bin) and is_pid(pid) do
     ts = System.monotonic_time()
     db_pid = db_checkout(:both, :on_query, data)
+    otel_span = trace_start_span(ts, db_pid, data.id)
     handle_prepared_statements(db_pid, bin, data)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts},
+    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts, otel_span: otel_span},
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
@@ -471,8 +477,10 @@ defmodule Supavisor.ClientHandler do
 
     ts = System.monotonic_time()
     db_pid = db_checkout(query_type, :on_query, data)
+    otel_span = trace_start_span(ts, db_pid, data.id)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: ts, last_query: bin},
+    {:next_state, :busy,
+     %{data | db_pid: db_pid, query_start: ts, last_query: bin, otel_span: otel_span},
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
@@ -556,6 +564,7 @@ defmodule Supavisor.ClientHandler do
   # emulate handle_cast
   def handle_event(:cast, {:client_cast, bin, status}, _, data) do
     Logger.debug("ClientHandler: --> --> bin #{inspect(byte_size(bin))} bytes")
+    Tracer.set_current_span(data.otel_span)
 
     case status do
       :ready_for_query ->
@@ -566,6 +575,9 @@ defmodule Supavisor.ClientHandler do
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
 
         Telem.client_query_time(data.query_start, data.id)
+        Tracer.end_span()
+        OpenTelemetry.Ctx.clear()
+
         :ok = HH.sock_send(data.sock, bin)
         actions = handle_actions(data)
         {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, actions}
@@ -989,5 +1001,21 @@ defmodule Supavisor.ClientHandler do
       _ ->
         []
     end)
+  end
+
+  @spec trace_start_span(integer(), {pid(), pid()}, S.id()) :: OpenTelemetry.span_ctx()
+  defp trace_start_span(ts, {pool_pid, db_pid}, {{type, tenant}, user, mode, db_name}) do
+    Tracer.start_span(:query, %{
+      start_time: ts,
+      attributes: %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        pool_pid: inspect(pool_pid),
+        db_pid: inspect(db_pid)
+      }
+    })
   end
 end
