@@ -204,3 +204,15 @@ if System.get_env("LOGS_ENGINE") == "logflare" do
   config :logger,
     backends: [LogflareLogger.HttpBackend]
 end
+
+# OpenTelemetry Exporter
+if System.get_env("OTEL_TRACES_EXPORTER", "none") != "none" do
+  # Available environment variables: https://opentelemetry.io/docs/specs/otel/protocol/exporter/#configuration-options
+  # Configure the following env vars depending on the OTLP provider
+  # - OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+  # - OTEL_EXPORTER_OTLP_HEADERS="authorization=your-api-key"
+  # To disable the OTEL_EXPORTER: https://opentelemetry.io/docs/languages/sdk-configuration/general/#otel_traces_exporter
+  # - OTEL_TRACES_EXPORTER=none
+  config :opentelemetry_exporter,
+    otlp_protocol: :http_protobuf
+end
