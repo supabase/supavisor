@@ -50,7 +50,7 @@ config :libcluster,
     ]
   ]
 
-# Open Telemetry
+# OpenTelemetry
 config :opentelemetry,
   resource: %{service: %{name: "supavisor"}},
   span_processor: :batch,
