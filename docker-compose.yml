@@ -38,3 +38,11 @@ services:
     command:  sh -c "/app/bin/migrate && /app/bin/server"
     depends_on:
       - db
+  grafana-otel:
+    image: grafana/otel-lgtm:0.6.0
+    container_name: grafana-otel
+    ports:
+      # OTel HTTP
+      - 4318:4318
+      # Web UI
+      - 4300:3000
