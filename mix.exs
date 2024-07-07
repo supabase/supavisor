@@ -87,7 +87,9 @@ defmodule Supavisor.MixProject do
       supavisor: [
         steps: [:assemble, &upgrade/1, :tar],
         include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
-        cookie: System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30)))
+        cookie:
+          System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30))),
+        applications: [opentelemetry: :temporary, supavisor: :permanent]
       ],
       supavisor_bin: [
         steps: [:assemble, &Burrito.wrap/1],
