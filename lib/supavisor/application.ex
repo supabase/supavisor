@@ -34,19 +34,23 @@ defmodule Supavisor.Application do
     ]
 
     for {key, port, mode} <- proxy_ports do
-      :ranch.start_listener(
-        key,
-        :ranch_tcp,
-        %{
-          max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
-          num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-          socket_opts: [port: port, keepalive: true]
-        },
-        Supavisor.ClientHandler,
-        %{mode: mode}
-      )
-      |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
-      |> Logger.warning()
+      case :ranch.start_listener(
+             key,
+             :ranch_tcp,
+             %{
+               max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
+               num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+               socket_opts: [inet_backend: :socket, port: port, keepalive: true]
+             },
+             Supavisor.ClientHandler,
+             %{mode: mode}
+           ) do
+        {:ok, _pid} ->
+          Logger.notice("Proxy started #{mode} on port #{port}")
+
+        error ->
+          Logger.error("Proxy on #{port} not started because of #{inspect(error)}")
+      end
     end
 
     :syn.set_event_handler(Supavisor.SynHandler)
