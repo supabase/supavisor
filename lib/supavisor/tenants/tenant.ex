@@ -121,12 +121,6 @@ defmodule Supavisor.Tenants.Tenant do
   end
 
   defp valid_range?(range) do
-    try do
-      InetCidr.parse(range)
-      true
-    rescue
-      _e ->
-        false
-    end
+    match?({:ok, _}, InetCidr.parse_cidr(range))
   end
 end
