@@ -26,7 +26,6 @@ defmodule Supavisor.MixProject do
     ]
   end
 
-  defp extra_applications(:test), do: [:common_test]
   defp extra_applications(:dev), do: [:wx, :observer]
   defp extra_applications(_), do: []
 
