@@ -58,11 +58,6 @@ config :supavisor, SupavisorWeb.Endpoint,
     ]
   ]
 
-config :logger,
-  compile_time_purge_matching: [
-    [level_lower_than: :info]
-  ]
-
 # Configures Elixir's Logger
 config :logger, :console,
   format: "$time [$level] $message $metadata\n",
