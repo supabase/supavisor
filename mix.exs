@@ -59,7 +59,7 @@ defmodule Supavisor.MixProject do
       {:meck, "~> 0.9.2", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:benchee, "~> 1.1.0", only: :dev},
+      {:benchee, "~> 1.3", only: :dev},
       # TODO: point it to Supabase fork of prom_ex when available
       {:prom_ex, github: "hauleth/prom_ex", branch: "ft/add-peep-storage"},
       {:open_api_spex, "~> 3.16"},
