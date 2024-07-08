@@ -26,7 +26,12 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     ]
   end
 
-  def client_metrics() do
+  defmodule Buckets do
+    use Peep.Buckets.Custom,
+      buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+  end
+
+  defp client_metrics() do
     Event.build(
       :supavisor_tenant_client_event_metrics,
       [
@@ -36,9 +41,10 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           measurement: :duration,
           description: "Duration of the checkout local process in the tenant db pool.",
           tags: @tags,
-          unit: {:microsecond, :millisecond},
+          unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
+            peep_bucket_calculator: Buckets
           ]
         ),
         distribution(
@@ -47,9 +53,10 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           measurement: :duration,
           description: "Duration of the checkout remote process in the tenant db pool.",
           tags: @tags,
-          unit: {:microsecond, :millisecond},
+          unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
+            peep_bucket_calculator: Buckets
           ]
         ),
         distribution(
@@ -60,7 +67,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
+            peep_bucket_calculator: Buckets
           ]
         ),
         distribution(
@@ -71,22 +79,29 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
+            peep_bucket_calculator: Buckets
           ]
         ),
-        sum(
+        last_value(
           [:supavisor, :client, :network, :recv],
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :recv_oct,
           description: "The total number of bytes received by clients.",
-          tags: @tags
+          tags: @tags,
+          reporter_options: [
+            prometheus_type: :sum
+          ]
         ),
-        sum(
+        last_value(
           [:supavisor, :client, :network, :send],
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by clients.",
-          tags: @tags
+          tags: @tags,
+          reporter_options: [
+            prometheus_type: :sum
+          ]
         ),
         counter(
           [:supavisor, :client, :queries, :count],
@@ -117,6 +132,34 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client_handler, :stopped, :all],
           description: "The total number of stopped client_handler.",
           tags: @tags
+        )
+      ]
+    )
+  end
+
+  defp db_metrics() do
+    Event.build(
+      :supavisor_tenant_db_event_metrics,
+      [
+        last_value(
+          [:supavisor, :db, :network, :recv],
+          event_name: [:supavisor, :db, :network, :stat],
+          measurement: :recv_oct,
+          description: "The total number of bytes received by db process",
+          tags: @tags,
+          reporter_options: [
+            prometheus_type: :sum
+          ]
+        ),
+        last_value(
+          [:supavisor, :db, :network, :send],
+          event_name: [:supavisor, :db, :network, :stat],
+          measurement: :send_oct,
+          description: "The total number of bytes sent by db process",
+          tags: @tags,
+          reporter_options: [
+            prometheus_type: :sum
+          ]
         ),
         counter(
           [:supavisor, :db_handler, :started, :count],
@@ -140,29 +183,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  def db_metrics() do
-    Event.build(
-      :supavisor_tenant_db_event_metrics,
-      [
-        sum(
-          [:supavisor, :db, :network, :recv],
-          event_name: [:supavisor, :db, :network, :stat],
-          measurement: :recv_oct,
-          description: "The total number of bytes received by db process",
-          tags: @tags
-        ),
-        sum(
-          [:supavisor, :db, :network, :send],
-          event_name: [:supavisor, :db, :network, :stat],
-          measurement: :send_oct,
-          description: "The total number of bytes sent by db process",
-          tags: @tags
-        )
-      ]
-    )
-  end
-
-  def concurrent_connections(poll_rate) do
+  defp concurrent_connections(poll_rate) do
     Polling.build(
       :supavisor_concurrent_connections,
       poll_rate,
@@ -194,7 +215,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  def concurrent_tenants(poll_rate) do
+  defp concurrent_tenants(poll_rate) do
     Polling.build(
       :supavisor_concurrent_tenants,
       poll_rate,
