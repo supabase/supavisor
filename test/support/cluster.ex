@@ -20,9 +20,6 @@ defmodule Supavisor.Support.Cluster do
             {:supavisor, :region} ->
               "usa"
 
-            {:partisan, :listen_addrs} ->
-              [{"127.0.0.1", 10201}]
-
             _ ->
               val
           end

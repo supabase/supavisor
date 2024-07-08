@@ -22,11 +22,12 @@ defmodule Supavisor.MixProject do
     [
       mod: {Supavisor.Application, []},
       extra_applications:
-        [:logger, :runtime_tools, :os_mon, :ssl, :partisan] ++ extra_applications(Mix.env())
+        [:logger, :runtime_tools, :os_mon, :ssl] ++ extra_applications(Mix.env())
     ]
   end
 
   defp extra_applications(:test), do: [:common_test]
+  defp extra_applications(:dev), do: [:wx, :observer]
   defp extra_applications(_), do: []
 
   # Specifies which paths to compile per environment.
@@ -71,7 +72,6 @@ defmodule Supavisor.MixProject do
       # pooller
       # {:poolboy, "~> 1.5.2"},
       {:poolboy, git: "https://github.com/abc3/poolboy.git", tag: "v0.0.2"},
-      {:partisan, git: "https://github.com/lasp-lang/partisan.git", tag: "v5.0.0-rc.12"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
       {:rustler, "~> 0.29.1"},

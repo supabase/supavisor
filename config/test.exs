@@ -25,17 +25,6 @@ config :supavisor, Supavisor.Repo,
   pool_size: 10,
   port: 6432
 
-config :partisan,
-  # Which overlay to use
-  peer_service_manager: :partisan_pluggable_peer_service_manager,
-  # The listening port for Partisan TCP/IP connections
-  peer_port: 10200,
-  channels: [data: %{parallelism: 1}],
-  # Encoding for pid(), reference() and names
-  pid_encoding: false,
-  ref_encoding: false,
-  remote_ref_format: :improper_list
-
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :supavisor, SupavisorWeb.Endpoint,
@@ -58,18 +47,3 @@ config :logger, :console,
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
-
-config :partisan,
-  peer_service_manager: :partisan_pluggable_peer_service_manager,
-  listen_addrs: [
-    {
-      System.get_env("PARTISAN_PEER_IP", "127.0.0.1"),
-      String.to_integer(System.get_env("PARTISAN_PEER_PORT", "10200"))
-    }
-  ],
-  channels: [
-    data: %{parallelism: System.get_env("PARTISAN_PARALLELISM", "5") |> String.to_integer()}
-  ],
-  pid_encoding: false,
-  ref_encoding: false,
-  remote_ref_format: :improper_list
