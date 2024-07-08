@@ -149,9 +149,13 @@ defmodule Supavisor.Manager do
 
   @spec check_parameter_status(map, map) :: :ok | {:error, String.t()}
   defp check_parameter_status(ps, def_ps) do
-    Enum.find_value(ps, :ok, fn {key, value} ->
-      if def_ps[key] && def_ps[key] != value do
-        {:error, "Parameter #{key} changed from #{def_ps[key]} to #{value}"}
+    Enum.find_value(ps, :ok, fn {key, new_value} ->
+      case def_ps do
+        %{^key => old_value} when old_value != new_value ->
+          {:error, "Parameter #{key} changed from #{old_value} to #{new_value}"}
+
+        _ ->
+          nil
       end
     end)
   end
