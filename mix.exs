@@ -50,6 +50,7 @@ defmodule Supavisor.MixProject do
       {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_metrics, "~> 0.6"},
       {:telemetry_poller, "~> 1.0"},
+      # TODO: point it to Supabase fork of prom_ex when available
       {:peep, github: "hauleth/peep", branch: "ft/custom-prometheus-types", override: true},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
@@ -59,6 +60,7 @@ defmodule Supavisor.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:benchee, "~> 1.1.0", only: :dev},
+      # TODO: point it to Supabase fork of prom_ex when available
       {:prom_ex, github: "hauleth/prom_ex", branch: "ft/add-peep-storage"},
       {:open_api_spex, "~> 3.16"},
       {:burrito, github: "burrito-elixir/burrito"},
