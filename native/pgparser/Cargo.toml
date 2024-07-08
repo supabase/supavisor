@@ -9,5 +9,5 @@ path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-rustler = "0.30.0"
+rustler = "0.33.0"
 pg_query = "5.1.0"
