@@ -5,7 +5,7 @@ defmodule Supavisor.Monitoring.PromEx do
   and provides a function to remove remote metrics associated with a specific tenant.
   """
 
-  use PromEx, otp_app: :supavisor
+  use PromEx, otp_app: :supavisor, store: PromEx.Storage.Peep
   require Logger
 
   alias PromEx.Plugins
@@ -34,7 +34,10 @@ defmodule Supavisor.Monitoring.PromEx do
     meta = %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
 
     Supavisor.Monitoring.PromEx.Metrics
-    |> :ets.select_delete([{{{:_, meta}, :_}, [], [true]}])
+    |> :ets.select_delete([
+      {{{:_, meta}, :_}, [], [true]},
+      {{{:_, meta, :_}, :_}, [], [true]}
+    ])
   end
 
   @spec set_metrics_tags() :: map()
