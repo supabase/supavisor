@@ -46,20 +46,19 @@ defmodule Supavisor.MixProject do
       {:phoenix_html, "~> 3.0"},
       {:phoenix_view, "~> 2.0.2"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
-      {:phoenix_live_view, "~> 0.18.18"},
+      {:phoenix_live_view, "~> 0.20.0"},
       {:phoenix_live_dashboard, "~> 0.7"},
-      {:telemetry_metrics, "~> 0.6"},
       {:telemetry_poller, "~> 1.0"},
       # TODO: point it to Supabase fork of prom_ex when available
       {:peep, github: "hauleth/peep", branch: "ft/custom-prometheus-types", override: true},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
-      {:joken, "~> 2.5.0"},
-      {:cloak_ecto, "~> 1.2.0"},
+      {:joken, "~> 2.6.0"},
+      {:cloak_ecto, "~> 1.3.0"},
       {:meck, "~> 0.9.2", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:benchee, "~> 1.1.0", only: :dev},
+      {:benchee, "~> 1.3", only: :dev},
       # TODO: point it to Supabase fork of prom_ex when available
       {:prom_ex, github: "hauleth/prom_ex", branch: "ft/add-peep-storage"},
       {:open_api_spex, "~> 3.16"},
@@ -77,7 +76,7 @@ defmodule Supavisor.MixProject do
       {:poolboy, git: "https://github.com/abc3/poolboy.git", tag: "v0.0.2"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:rustler, "~> 0.29.1"},
+      {:rustler, "~> 0.33.0"},
       {:ranch, "~> 2.0", override: true}
     ]
   end
