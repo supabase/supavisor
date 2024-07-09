@@ -88,7 +88,11 @@ defmodule Supavisor.Helpers do
   @spec get_user_secret(pid(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
   def get_user_secret(conn, auth_query, user) do
     try do
-      Postgrex.query!(conn, auth_query, [user])
+      # sanitize the user input by removing all characters that are not alphanumeric or underscores
+      user = String.replace(user, ~r/[^a-zA-Z0-9_]/, "")
+      auth_query = String.replace(auth_query, "$1", "'#{user}'")
+
+      Postgrex.SimpleConnection.call(conn, {:query, auth_query})
     catch
       _error, reason ->
         {:error, "Authentication query failed: #{inspect(reason)}"}
@@ -356,5 +360,13 @@ defmodule Supavisor.Helpers do
   def set_log_level(level) when is_atom(level) do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
+  end
+
+  @spec peer_ip(:gen_tcp.socket()) :: String.t()
+  def peer_ip(socket) do
+    case :inet.peername(socket) do
+      {:ok, {ip, _port}} -> "#{:inet.ntoa(ip)}"
+      _error -> "undefined"
+    end
   end
 end
