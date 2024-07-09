@@ -19,7 +19,6 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   alias Supavisor.Handlers.Proxy.Db, as: ProxyDb
 
-  @impl true
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("ClientHandler: Client is trying to request HTTP")
     HH.sock_send(data.sock, "HTTP/1.1 204 OK\r\nx-app-version: #{data.version}\r\n\r\n")
@@ -403,7 +402,6 @@ defmodule Supavisor.Handlers.Proxy.Client do
     :keep_state_and_data
   end
 
-  @impl true
   def terminate(reason, _state, _data) do
     log(:warning, "Socket closed with reason #{inspect(reason)}")
     :ok
@@ -512,7 +510,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     end
   end
 
-  @spec update_user_data(map(), map(), map(), S.id(), String.t(), S.mode()) :: map()
+  @spec update_user_data(map(), map(), String.t(), S.id(), String.t(), S.mode()) :: map()
   def update_user_data(data, info, user, id, db_name, mode) do
     proxy_type = if info.tenant.require_user, do: :password, else: :auth_query
 

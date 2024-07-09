@@ -6,13 +6,12 @@ defmodule Supavisor.Handlers.Proxy.Handler do
   @behaviour :ranch_protocol
   @behaviour :gen_statem
 
-  alias Supavisor, as: S
-  alias Supavisor.DbHandler, as: Db
-  alias Supavisor.Handlers.Proxy.Db, as: ProxyDb
-  alias Supavisor.Handlers.Proxy.Client, as: ProxyClient
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.HandlerHelpers, as: HH
-  alias Supavisor.{Tenants, ProxyHandlerDb, Monitoring.Telem, Protocol.Client, Protocol.Server}
+  alias Supavisor.{
+    Helpers,
+    Protocol.Server,
+    Handlers.Proxy.Db,
+    Handlers.Proxy.Client
+  }
 
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
@@ -31,10 +30,9 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   def init(ref, trans, opts) do
     Process.flag(:trap_exit, true)
-    H.set_max_heap_size(150)
+    Helpers.set_max_heap_size(150)
 
     {:ok, sock} = :ranch.handshake(ref)
-    H.peer_ip(sock) |> IO.inspect()
     :ok = trans.setopts(sock, active: true)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
@@ -68,8 +66,8 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       server_proof: nil,
       parameter_status: %{},
       app_name: nil,
-      peer_ip: H.peer_ip(sock),
-      auth: nil
+      peer_ip: Helpers.peer_ip(sock),
+      auth: %{}
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -83,34 +81,34 @@ defmodule Supavisor.Handlers.Proxy.Handler do
   end
 
   def handle_event(e, {:client, _} = msg, state, data) do
-    ProxyClient.handle_event(e, msg, state, data)
+    Client.handle_event(e, msg, state, data)
   end
 
   def handle_event(:timeout = e, msg, state, data) do
-    ProxyClient.handle_event(e, msg, state, data)
+    Client.handle_event(e, msg, state, data)
   end
 
   def handle_event(:info = e, {:parameter_status, _} = msg, state, data) do
-    ProxyClient.handle_event(e, msg, state, data)
+    Client.handle_event(e, msg, state, data)
   end
 
   def handle_event(event, {proto, sock, _payload} = msg, state, %{sock: {_, sock}} = data)
       when proto in @proto do
-    ProxyClient.handle_event(event, msg, state, data)
+    Client.handle_event(event, msg, state, data)
   end
 
   def handle_event(event, {proto, sock, _payload} = msg, state, %{db_sock: {_, sock}} = data)
       when proto in @proto do
-    ProxyDb.handle_event(event, msg, state, data)
+    Db.handle_event(event, msg, state, data)
   end
 
   def handle_event(event, {closed, sock} = msg, state, %{sock: {_, sock}} = data)
       when closed in @sock_closed do
-    ProxyClient.handle_event(event, msg, state, data)
+    Client.handle_event(event, msg, state, data)
   end
 
   def handle_event(event, {closed, sock} = msg, state, %{db_sock: {_, sock}} = data)
       when closed in @sock_closed do
-    ProxyDb.handle_event(event, msg, state, data)
+    Db.handle_event(event, msg, state, data)
   end
 end

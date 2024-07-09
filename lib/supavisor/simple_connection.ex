@@ -1,4 +1,6 @@
 defmodule Supavisor.SimpleConnection do
+  @moduledoc false
+
   require Logger
   @behaviour Postgrex.SimpleConnection
 
