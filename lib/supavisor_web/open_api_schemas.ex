@@ -203,7 +203,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
-    def response(), do: {"", "text/plain", __MODULE__}
+    def response(), do: {"", "application/json", __MODULE__}
   end
 
   defmodule NotFound do
@@ -211,6 +211,6 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
-    def response(), do: {"Not found", "text/plain", __MODULE__}
+    def response(), do: {"Not found", "application/json", __MODULE__}
   end
 end

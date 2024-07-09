@@ -945,8 +945,8 @@ defmodule Supavisor.ClientHandler do
   @spec handle_prepared_statements({pid, pid}, binary, map) :: :ok | nil
   defp handle_prepared_statements({_, pid}, bin, %{mode: :transaction} = data) do
     with {:ok, payload} <- Client.get_payload(bin),
-         {:ok, statamets} <- Supavisor.PgParser.statements(payload),
-         true <- Enum.member?([["PrepareStmt"], ["DeallocateStmt"]], statamets) do
+         {:ok, statements} <- Supavisor.PgParser.statements(payload),
+         true <- statements in [["PrepareStmt"], ["DeallocateStmt"]] do
       Logger.info("ClientHandler: Handle prepared statement #{inspect(payload)}")
 
       GenServer.call(data.pool, :get_all_workers)
