@@ -75,7 +75,7 @@ defmodule Supavisor do
   end
 
   @spec subscribe_local(pid, id) :: {:ok, subscribe_opts} | {:error, any()}
-  def(subscribe_local(pid, id)) do
+  def subscribe_local(pid, id) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
       {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
