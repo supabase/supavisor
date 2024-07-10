@@ -60,7 +60,6 @@ defmodule Supavisor.MixProject do
       # TODO: point it to Supabase fork of prom_ex when available
       {:prom_ex, github: "hauleth/prom_ex", branch: "ft/add-peep-storage"},
       {:open_api_spex, "~> 3.16"},
-      {:burrito, github: "burrito-elixir/burrito"},
       {:libcluster, "~> 3.3.1"},
       {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.4"},
       {:distillery, "~> 2.1"},
@@ -74,7 +73,7 @@ defmodule Supavisor.MixProject do
       {:poolboy, git: "https://github.com/abc3/poolboy.git", tag: "v0.0.2"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:rustler, "~> 0.33.0"},
+      {:rustler, "~> 0.34.0"},
       {:ranch, "~> 2.0", override: true}
     ]
   end
@@ -85,17 +84,6 @@ defmodule Supavisor.MixProject do
         steps: [:assemble, &upgrade/1, :tar],
         include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
         cookie: System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30)))
-      ],
-      supavisor_bin: [
-        steps: [:assemble, &Burrito.wrap/1],
-        burrito: [
-          targets: [
-            macos_aarch64: [os: :darwin, cpu: :aarch64],
-            macos_x86_64: [os: :darwin, cpu: :x86_64],
-            linux_x86_64: [os: :linux, cpu: :x86_64],
-            linux_aarch64: [os: :linux, cpu: :aarch64]
-          ]
-        ]
       ]
     ]
   end
