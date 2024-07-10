@@ -101,9 +101,9 @@ defmodule Supavisor.Helpers do
         {:error,
          "There is no user '#{user}' in the database. Please create it or change the user in the config"}
 
-      %{columns: colums} ->
+      %{columns: columns} ->
         {:error,
-         "Authentification query returned wrong format. Should be two columns: user and secret, but got: #{inspect(colums)}"}
+         "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
 
       {:error, reason} ->
         {:error, reason}
