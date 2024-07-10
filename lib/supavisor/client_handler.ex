@@ -630,13 +630,9 @@ defmodule Supavisor.ClientHandler do
 
   def terminate(reason, _state, %{db_pid: {_, pid}}) do
     db_info =
-      case Db.get_state_and_mode(pid) do
-        {:ok, {state, mode} = resp} ->
-          if state == :busy or mode == :session, do: Db.stop(pid)
-          resp
-
-        error ->
-          error
+      with {:ok, {state, mode} = resp} <- Db.get_state_and_mode(pid) do
+        if state == :busy or mode == :session, do: Db.stop(pid)
+        resp
       end
 
     Logger.warning(
