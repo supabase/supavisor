@@ -79,9 +79,6 @@ defmodule Supavisor do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
       {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
-    else
-      error ->
-        error
     end
   end
 
