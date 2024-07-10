@@ -88,10 +88,6 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     Client.handle_event(e, msg, state, data)
   end
 
-  def handle_event(:info = e, {:parameter_status, _} = msg, state, data) do
-    Client.handle_event(e, msg, state, data)
-  end
-
   def handle_event(event, {proto, sock, _payload} = msg, state, %{sock: {_, sock}} = data)
       when proto in @proto do
     Client.handle_event(event, msg, state, data)
@@ -110,5 +106,18 @@ defmodule Supavisor.Handlers.Proxy.Handler do
   def handle_event(event, {closed, sock} = msg, state, %{db_sock: {_, sock}} = data)
       when closed in @sock_closed do
     Db.handle_event(event, msg, state, data)
+  end
+
+  def handle_event(type, content, state, data) do
+    msg = [
+      {"type", type},
+      {"content", content},
+      {"state", state},
+      {"data", data}
+    ]
+
+    Logger.error("ProxyHandler: Undefined msg: #{inspect(msg, pretty: true)}")
+
+    :keep_state_and_data
   end
 end

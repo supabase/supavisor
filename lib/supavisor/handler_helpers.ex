@@ -111,7 +111,7 @@ defmodule Supavisor.HandlerHelpers do
     PubSub.broadcast(
       Supavisor.PubSub,
       "cancel_req:#{pid}_#{key}",
-      :cancel_query
+      {:client, :cancel_query}
     )
   end
 
