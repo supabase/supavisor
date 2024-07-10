@@ -43,12 +43,6 @@ dev.node3:
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server	
 
-dev_bin:
-	MIX_ENV=dev mix release supavisor_bin && ls -l burrito_out
-
-bin:
-	MIX_ENV=prod mix release supavisor_bin && ls -l burrito_out
-
 db_migrate:
 	mix ecto.migrate --prefix _supavisor --log-migrator-sql
 
