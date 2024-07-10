@@ -576,7 +576,9 @@ defmodule Supavisor.ClientHandler do
         :keep_state_and_data
 
       :read_sql_error ->
-        Logger.error("ClientHandler: read only sql transaction, reruning the query to write pool")
+        Logger.error(
+          "ClientHandler: read only sql transaction, rerunning the query to write pool"
+        )
 
         # release the read pool
         _ = handle_db_pid(data.mode, data.pool, data.db_pid)

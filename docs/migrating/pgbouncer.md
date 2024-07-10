@@ -29,7 +29,7 @@ select count(*) from pg_stat_activity;
 ## Change Postgres `max_connections`
 
 Based on the responses above configure the `default_pool_size` accordingly or
-increase your `max_connections` limit on Postgres to accomadate two connection
+increase your `max_connections` limit on Postgres to accommodate two connection
 poolers.
 
 e.g if you're using 30 connections out of 100 and you set your

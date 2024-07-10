@@ -33,7 +33,7 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   describe "handle_event/4" do
-    test "db is avaible" do
+    test "db is available" do
       :meck.new(:gen_tcp, [:unstick, :passthrough])
       :meck.new(:inet, [:unstick, :passthrough])
       :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:ok, :sock} end)
@@ -80,7 +80,7 @@ defmodule Supavisor.DbHandlerTest do
       :meck.unload(:gen_tcp)
     end
 
-    test "db is not avaible" do
+    test "db is not available" do
       :meck.new(:gen_tcp, [:unstick, :passthrough])
 
       :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:error, "some error"} end)

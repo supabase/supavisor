@@ -89,7 +89,7 @@ defmodule SupavisorWeb.TenantController do
     }
   )
 
-  # conver cert to pem format
+  # convert cert to pem format
   def update(conn, %{
         "external_id" => id,
         "tenant" => %{"upstream_tls_ca" => "-----BEGIN" <> _ = upstream_tls_ca} = tenant_params

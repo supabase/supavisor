@@ -33,7 +33,7 @@ server
 `require_user` - require client connection credentials to match `user`
 credentials in the metadata database
 
-`auth_query` - the query to use when matching credential agains a client
+`auth_query` - the query to use when matching credential against a client
 connection
 
 `default_pool_size` - the default size of the database pool
