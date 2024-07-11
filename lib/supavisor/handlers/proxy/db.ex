@@ -4,7 +4,6 @@ defmodule Supavisor.Handlers.Proxy.Db do
   require Logger
 
   alias Supavisor, as: S
-  alias Supavisor.ClientHandler, as: Client
   alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
   alias Supavisor.{Monitoring.Telem, Protocol.Server}
@@ -14,7 +13,6 @@ defmodule Supavisor.Handlers.Proxy.Db do
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
 
-  @impl true
   def handle_event(:info, {proto, _, bin}, :db_authentication, data) when proto in @proto do
     dec_pkt = Server.decode(bin)
     Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")

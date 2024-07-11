@@ -104,6 +104,20 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     Db.handle_event(event, msg, state, data)
   end
 
+  def handle_event(type, content, state, data) do
+    msg = [
+      {"type", type},
+      {"content", content},
+      {"state", state},
+      {"data", data}
+    ]
+
+    Logger.error("ProxyHandler: Undefined msg: #{inspect(msg, pretty: true)}")
+
+    :keep_state_and_data
+  end
+
+  @impl true
   def terminate({:shutdown, reason}, state, data) do
     msg = "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
     Logger.info(msg)
@@ -118,18 +132,5 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     HH.sock_close(data.db_sock)
     msg = "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
     Logger.info(msg)
-  end
-
-  def handle_event(type, content, state, data) do
-    msg = [
-      {"type", type},
-      {"content", content},
-      {"state", state},
-      {"data", data}
-    ]
-
-    Logger.error("ProxyHandler: Undefined msg: #{inspect(msg, pretty: true)}")
-
-    :keep_state_and_data
   end
 end
