@@ -34,18 +34,17 @@ defmodule Supavisor.Handlers.Proxy.Client do
     {:stop, {:shutdown, :cancel_query}}
   end
 
-  def handle_event(:info, {:client, :cancel_query}, :busy, data) do
-    key = {data.tenant, data.db_pid}
-    Logger.debug("ProxyClient: Cancel query for #{inspect(key)}")
-    {_pool, db_pid} = data.db_pid
-
-    case db_pid_meta(key) do
-      [{^db_pid, meta}] ->
-        :ok = HH.cancel_query(meta.host, meta.port, meta.ip_ver, meta.pid, meta.key)
+  def handle_event(:info, {:client, :cancel_query}, _, _) do
+    Registry.lookup(Supavisor.Registry.PoolPids, self())
+    |> case do
+      [{_, meta}] ->
+        msg = "ProxyClient: Cancel query for #{inspect(meta)}"
+        Logger.info(msg)
+        :ok = HH.cancel_query(~c"#{meta.host}", meta.port, meta.ip_ver, meta.pid, meta.key)
 
       error ->
         msg =
-          "ProxyClient: Received cancel but no proc was found #{inspect(key)} #{inspect(error)}"
+          "ProxyClient: Received cancel but no proc was found #{inspect(error)}"
 
         Logger.error(msg)
     end

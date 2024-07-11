@@ -28,7 +28,8 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
         %{tag: :backend_key_data, payload: payload}, acc ->
           key = self()
-          conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
+          ip_ver = H.ip_version(data.auth.ip_version, data.auth.host)
+          conn = %{host: data.auth.host, port: data.auth.port, ip_ver: ip_ver}
           Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
           Logger.debug("ProxyDb: Backend #{inspect(key)} data: #{inspect(payload)}")
           acc
