@@ -10,8 +10,9 @@ defmodule Supavisor.HandlerHelpers do
     mod.send(sock, data)
   end
 
-  @spec sock_close(nil | S.sock()) :: :ok | {:error, term()}
+  @spec sock_close(S.sock() | nil | {any(), nil}) :: :ok | {:error, term()}
   def sock_close(nil), do: :ok
+  def sock_close({_, nil}), do: :ok
 
   def sock_close({mod, sock}) do
     mod.close(sock)

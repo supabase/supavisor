@@ -104,6 +104,22 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     Db.handle_event(event, msg, state, data)
   end
 
+  def terminate({:shutdown, reason}, state, data) do
+    msg = "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
+    Logger.info(msg)
+    HH.sock_send(data.sock, Server.error_message("XX000", "#{inspect(reason)}"))
+    HH.sock_close(data.sock)
+    HH.sock_close(data.db_sock)
+    :ok
+  end
+
+  def terminate(reason, state, data) do
+    HH.sock_close(data.sock)
+    HH.sock_close(data.db_sock)
+    msg = "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
+    Logger.info(msg)
+  end
+
   def handle_event(type, content, state, data) do
     msg = [
       {"type", type},

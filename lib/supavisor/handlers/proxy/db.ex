@@ -166,6 +166,8 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     Logger.error("ProxyDb: Connection closed when state was #{state}")
+    HH.sock_send(data.sock, Server.error_message("XX000", "Database connection closed"))
+    HH.sock_close(data.sock)
     {:stop, :db_socket_closed, data}
   end
 
