@@ -30,7 +30,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
   # cancel request
   def handle_event(:info, {_, _, <<16::32, 1234::16, 5678::16, pid::32, key::32>>}, _, _) do
     Logger.debug("ProxyClient: Got cancel query for #{inspect({pid, key})}")
-    :ok = HH.send_cancel_query(pid, key)
+    :ok = HH.send_cancel_query(pid, key, {:client, :cancel_query})
     {:stop, {:shutdown, :cancel_query}}
   end
 
