@@ -23,14 +23,11 @@ defmodule Supavisor.HandlerHelpers do
     mod.setopts(sock, opts)
   end
 
-  @spec activate(S.sock()) :: :ok | {:error, term}
-  def activate({:gen_tcp, sock}) do
-    :inet.setopts(sock, active: true)
-  end
+  @spec active_once(S.sock()) :: :ok | {:error, term}
+  def active_once(sock), do: setopts(sock, active: :once)
 
-  def activate({:ssl, sock}) do
-    :ssl.setopts(sock, active: true)
-  end
+  @spec activate(S.sock()) :: :ok | {:error, term}
+  def activate(sock), do: setopts(sock, active: true)
 
   @spec try_ssl_handshake(S.tcp_sock(), boolean) ::
           {:ok, S.sock()} | {:error, term()}

@@ -13,6 +13,8 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     Handlers.Proxy.Client
   }
 
+  alias Supavisor.HandlerHelpers, as: HH
+
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
 
@@ -30,7 +32,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   def init(ref, trans, opts) do
     Process.flag(:trap_exit, true)
-    Helpers.set_max_heap_size(150)
+    Helpers.set_max_heap_size(90)
 
     {:ok, sock} = :ranch.handshake(ref)
     :ok = trans.setopts(sock, active: true)
@@ -74,12 +76,6 @@ defmodule Supavisor.Handlers.Proxy.Handler do
   end
 
   @impl true
-  def handle_event(:internal, :check_buffer, _, data) do
-    ps = Server.encode_parameter_status(data.parameter_status)
-    # IO.inspect({111, ps})
-    {:keep_state_and_data, {:next_event, :internal, {:client, {:greetings, ps}}}}
-  end
-
   def handle_event(e, {:client, _} = msg, state, data) do
     Client.handle_event(e, msg, state, data)
   end

@@ -13,11 +13,13 @@ defmodule Supavisor.Handlers.Proxy.Client do
     ProxyHandlerDb,
     Monitoring.Telem,
     Protocol.Client,
-    Protocol.Server,
-    SimpleConnection
+    Protocol.Server
   }
 
   alias Supavisor.Handlers.Proxy.Db, as: ProxyDb
+
+  @sock_closed [:tcp_closed, :ssl_closed]
+  @proto [:tcp, :ssl]
 
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("ProxyClient: Client is trying to request HTTP")
@@ -295,7 +297,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     sock_opts = [
       :binary,
       {:packet, :raw},
-      {:active, true},
+      {:active, false},
       {:nodelay, true},
       H.ip_version(auth.ip_version, auth.host)
     ]
@@ -308,7 +310,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
           {:ok, sock} ->
             case ProxyDb.send_startup(sock, auth) do
               :ok ->
-                # :ok = activate(sock)
+                HH.active_once(sock)
                 {:next_state, :db_authentication, %{data | db_sock: sock, auth: auth}}
 
               {:error, reason} ->
@@ -336,6 +338,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     msg = [ps, [header, payload], Server.ready_for_query()]
     :ok = HH.listen_cancel_query(pid, key)
     :ok = HH.sock_send(sock, msg)
+    HH.active_once(sock)
     Telem.client_connection_time(data.connection_start, data.id)
     {:next_state, :idle, data, handle_actions(data)}
   end
@@ -363,9 +366,10 @@ defmodule Supavisor.Handlers.Proxy.Client do
     {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
   end
 
-  # incoming query with a single pool
-  def handle_event(:info, {:tcp, _, bin}, :idle, data) do
+  # forwards the message to the db
+  def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
     HH.sock_send(data.db_sock, bin)
+    HH.active_once(data.sock)
     :keep_state_and_data
   end
 
@@ -539,7 +543,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
       end
 
     {:ok, conn} =
-      SimpleConnection.connect(
+      Postgrex.start_link(
         hostname: tenant.db_host,
         port: tenant.db_port,
         database: tenant.db_database,
@@ -552,9 +556,11 @@ defmodule Supavisor.Handlers.Proxy.Client do
         ],
         queue_target: 1_000,
         queue_interval: 5_000,
-        ssl_opts: ssl_opts || [],
-        caller: self()
+        ssl_opts: ssl_opts || []
       )
+
+    # kill the postgrex connection if the current process exits unexpectedly
+    Process.link(conn)
 
     msg =
       "ProxyClient: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
@@ -571,6 +577,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
           {:error, reason}
       end
 
+    GenServer.stop(conn, :normal, 5_000)
     Logger.info("ProxyClient: Get secrets finished")
     resp
   end

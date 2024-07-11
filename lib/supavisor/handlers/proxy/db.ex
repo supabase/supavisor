@@ -18,6 +18,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
   def handle_event(:info, {proto, _, bin}, :db_authentication, data) when proto in @proto do
     dec_pkt = Server.decode(bin)
     Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+    HH.active_once(data.db_sock)
 
     resp =
       Enum.reduce(dec_pkt, {%{}, nil}, fn
@@ -52,7 +53,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
                 ]
 
                 bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
-                :ok = sock_send(data.db_sock, bin)
+                :ok = HH.sock_send(data.db_sock, bin)
                 nonce
 
               other ->
@@ -78,7 +79,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
             )
 
           bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :ok = sock_send(data.db_sock, bin)
+          :ok = HH.sock_send(data.db_sock, bin)
 
           {ps, :authentication_server_first_message, server_proof}
 
@@ -95,7 +96,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
             )
 
           bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :ok = sock_send(data.db_sock, bin)
+          :ok = HH.sock_send(data.db_sock, bin)
 
           {ps, :authentication_server_first_message, server_proof}
 
@@ -114,7 +115,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
           payload = ["md5", H.md5([digest, salt]), 0]
           bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
-          :ok = sock_send(data.db_sock, bin)
+          :ok = HH.sock_send(data.db_sock, bin)
           {ps, :authentication_md5}
 
         %{tag: :error_response, payload: error}, _ ->
@@ -145,9 +146,10 @@ defmodule Supavisor.Handlers.Proxy.Db do
       {:ready_for_query, ps, db_state} ->
         msg = "ProxyDb: DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}"
         Logger.debug(msg)
+        ps_encoded = Server.encode_parameter_status(ps)
 
         {:next_state, :idle, %{data | parameter_status: ps},
-         {:next_event, :internal, :check_buffer}}
+         {:next_event, :internal, {:client, {:greetings, ps_encoded}}}}
 
       other ->
         Logger.error("ProxyDb: Undefined auth response #{inspect(other)}")
@@ -155,8 +157,10 @@ defmodule Supavisor.Handlers.Proxy.Db do
     end
   end
 
+  # forwards the message to the client
   def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
     HH.sock_send(data.sock, bin)
+    HH.active_once(data.db_sock)
     :keep_state_and_data
   end
 
@@ -167,7 +171,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
   @spec try_ssl_handshake(S.tcp_sock(), map) :: {:ok, S.db_sock()} | {:error, term()}
   def try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
-    case sock_send(sock, Server.ssl_request()) do
+    case HH.sock_send(sock, Server.ssl_request()) do
       :ok -> ssl_recv(sock, auth)
       error -> error
     end
@@ -218,11 +222,8 @@ defmodule Supavisor.Handlers.Proxy.Db do
         {"application_name", auth.application_name}
       ])
 
-    sock_send(sock, msg)
+    HH.sock_send(sock, msg)
   end
-
-  @spec sock_send(S.db_sock(), iodata) :: :ok | {:error, term}
-  def sock_send({mod, sock}, data), do: mod.send(sock, data)
 
   @spec activate(S.db_sock()) :: :ok | {:error, term}
   def activate({:gen_tcp, sock}), do: :inet.setopts(sock, active: true)
