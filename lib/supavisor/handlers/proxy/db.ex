@@ -225,11 +225,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
     HH.sock_send(sock, msg)
   end
 
-  @spec activate(S.db_sock()) :: :ok | {:error, term}
-  def activate({:gen_tcp, sock}), do: :inet.setopts(sock, active: true)
-
-  def activate({:ssl, sock}), do: :ssl.setopts(sock, active: true)
-
+  @spec get_user(map) :: String.t()
   def get_user(auth) do
     if auth.require_user,
       do: auth.secrets.().db_user,
