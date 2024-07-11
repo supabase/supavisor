@@ -568,13 +568,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
     Logger.debug(msg)
 
     resp =
-      case H.get_user_secret(conn, tenant.auth_query, db_user) do
-        {:ok, secret} ->
-          t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-          {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
-
-        {:error, reason} ->
-          {:error, reason}
+      with {:ok, secret} <- H.get_user_secret(conn, tenant.auth_query, db_user) do
+        t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
+        {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
       end
 
     GenServer.stop(conn, :normal, 5_000)
