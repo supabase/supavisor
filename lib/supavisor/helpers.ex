@@ -361,7 +361,7 @@ defmodule Supavisor.Helpers do
   @spec peer_ip(:gen_tcp.socket()) :: String.t()
   def peer_ip(socket) do
     case :inet.peername(socket) do
-      {:ok, {ip, _port}} -> "#{:inet.ntoa(ip)}"
+      {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
       _error -> "undefined"
     end
   end
