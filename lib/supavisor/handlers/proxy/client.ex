@@ -18,6 +18,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   alias Supavisor.Handlers.Proxy.Db, as: ProxyDb
 
+  @cancel_query_msg <<16::32, 1234::16, 5678::16>>
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
 
@@ -28,27 +29,17 @@ defmodule Supavisor.Handlers.Proxy.Client do
   end
 
   # cancel request
-  def handle_event(:info, {_, _, <<16::32, 1234::16, 5678::16, pid::32, key::32>>}, _, _) do
+  def handle_event(:info, {_, _, <<@cancel_query_msg, pid::32, key::32>>}, _, _) do
     Logger.debug("ProxyClient: Got cancel query for #{inspect({pid, key})}")
     :ok = HH.send_cancel_query(pid, key, {:client, :cancel_query})
     {:stop, {:shutdown, :cancel_query}}
   end
 
-  def handle_event(:info, {:client, :cancel_query}, _, _) do
-    Registry.lookup(Supavisor.Registry.PoolPids, self())
-    |> case do
-      [{_, meta}] ->
-        msg = "ProxyClient: Cancel query for #{inspect(meta)}"
-        Logger.info(msg)
-        :ok = HH.cancel_query(~c"#{meta.host}", meta.port, meta.ip_ver, meta.pid, meta.key)
-
-      error ->
-        msg =
-          "ProxyClient: Received cancel but no proc was found #{inspect(error)}"
-
-        Logger.error(msg)
-    end
-
+  def handle_event(:info, {:client, :cancel_query}, _, %{
+        auth: auth,
+        backend_key_data: b
+      }) do
+    :ok = HH.cancel_query(~c"#{auth.host}", auth.port, auth.ip_ver, b.pid, b.key)
     :keep_state_and_data
   end
 
@@ -292,13 +283,14 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   def handle_event(:internal, {:client, :connect_db}, _, %{auth: auth} = data) do
     Logger.debug("Try to connect to DB")
+    ip_ver = H.ip_version(auth.ip_version, auth.host)
 
     sock_opts = [
       :binary,
       {:packet, :raw},
       {:active, false},
       {:nodelay, true},
-      H.ip_version(auth.ip_version, auth.host)
+      ip_ver
     ]
 
     case :gen_tcp.connect(~c"#{auth.host}", auth.port, sock_opts) do
@@ -310,6 +302,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
             case ProxyDb.send_startup(sock, auth) do
               :ok ->
                 HH.active_once(sock)
+                auth = Map.put(auth, :ip_ver, ip_ver)
                 {:next_state, :db_authentication, %{data | db_sock: sock, auth: auth}}
 
               {:error, reason} ->

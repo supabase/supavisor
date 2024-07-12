@@ -18,120 +18,16 @@ defmodule Supavisor.Handlers.Proxy.Db do
     Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
     HH.active_once(data.db_sock)
 
-    resp =
-      Enum.reduce(dec_pkt, {%{}, nil}, fn
-        %{tag: :parameter_status, payload: {k, v}}, {ps, db_state} ->
-          {Map.put(ps, k, v), db_state}
-
-        %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
-          {:ready_for_query, ps, db_state}
-
-        %{tag: :backend_key_data, payload: payload}, acc ->
-          key = self()
-          ip_ver = H.ip_version(data.auth.ip_version, data.auth.host)
-          conn = %{host: data.auth.host, port: data.auth.port, ip_ver: ip_ver}
-          Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
-          Logger.debug("ProxyDb: Backend #{inspect(key)} data: #{inspect(payload)}")
-          acc
-
-        %{payload: {:authentication_sasl_password, methods_b}}, {ps, _} ->
-          nonce =
-            case Server.decode_string(methods_b) do
-              {:ok, req_method, _} ->
-                Logger.debug("ProxyDb: SASL method #{inspect(req_method)}")
-                nonce = :pgo_scram.get_nonce(16)
-                user = get_user(data.auth)
-                client_first = :pgo_scram.get_client_first(user, nonce)
-                client_first_size = IO.iodata_length(client_first)
-
-                sasl_initial_response = [
-                  "SCRAM-SHA-256",
-                  0,
-                  <<client_first_size::32-integer>>,
-                  client_first
-                ]
-
-                bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
-                :ok = HH.sock_send(data.db_sock, bin)
-                nonce
-
-              other ->
-                Logger.error("ProxyDb: Undefined sasl method #{inspect(other)}")
-                nil
-            end
-
-          {ps, :authentication_sasl, nonce}
-
-        %{payload: {:authentication_server_first_message, server_first}}, {ps, _}
-        when data.auth.require_user == false ->
-          nonce = data.nonce
-          server_first_parts = H.parse_server_first(server_first, nonce)
-
-          {client_final_message, server_proof} =
-            H.get_client_final(
-              :auth_query,
-              data.auth.secrets.(),
-              server_first_parts,
-              nonce,
-              data.auth.secrets.().user,
-              "biws"
-            )
-
-          bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :ok = HH.sock_send(data.db_sock, bin)
-
-          {ps, :authentication_server_first_message, server_proof}
-
-        %{payload: {:authentication_server_first_message, server_first}}, {ps, _} ->
-          nonce = data.nonce
-          server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
-
-          {client_final_message, server_proof} =
-            :pgo_scram.get_client_final(
-              server_first_parts,
-              nonce,
-              data.auth.user,
-              data.auth.password.()
-            )
-
-          bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :ok = HH.sock_send(data.db_sock, bin)
-
-          {ps, :authentication_server_first_message, server_proof}
-
-        %{payload: {:authentication_server_final_message, _server_final}}, acc ->
-          acc
-
-        %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
-          Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
-
-          digest =
-            if data.auth.method == :password do
-              H.md5([data.auth.password.(), data.auth.user])
-            else
-              data.auth.secrets.().secret
-            end
-
-          payload = ["md5", H.md5([digest, salt]), 0]
-          bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
-          :ok = HH.sock_send(data.db_sock, bin)
-          {ps, :authentication_md5}
-
-        %{tag: :error_response, payload: error}, _ ->
-          {:error_response, error}
-
-        _e, acc ->
-          acc
-      end)
+    resp = Enum.reduce(dec_pkt, %{}, &handle_auth_pkts(&1, &2, data))
 
     case resp do
-      {_, :authentication_sasl, nonce} ->
+      {:authentication_sasl, nonce} ->
         {:keep_state, %{data | nonce: nonce}}
 
-      {_, :authentication_server_first_message, server_proof} ->
+      {:authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
 
-      {_, :authentication_md5} ->
+      :authentication_md5 ->
         {:keep_state, data}
 
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
@@ -142,12 +38,14 @@ defmodule Supavisor.Handlers.Proxy.Db do
         Logger.error("ProxyDb: Error auth response #{inspect(error)}")
         {:keep_state, data}
 
-      {:ready_for_query, ps, db_state} ->
-        msg = "ProxyDb: DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}"
+      {:ready_for_query, acc} ->
+        ps = acc.ps
+        backend_key_data = acc.backend_key_data
+        msg = "ProxyDb: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
         Logger.debug(msg)
         ps_encoded = Server.encode_parameter_status(ps)
 
-        {:next_state, :idle, %{data | parameter_status: ps},
+        {:next_state, :idle, %{data | parameter_status: ps, backend_key_data: backend_key_data},
          {:next_event, :internal, {:client, {:greetings, ps_encoded}}}}
 
       other ->
@@ -156,7 +54,6 @@ defmodule Supavisor.Handlers.Proxy.Db do
     end
   end
 
-  # forwards the message to the client
   def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
     HH.sock_send(data.sock, bin)
     HH.active_once(data.db_sock)
@@ -169,6 +66,122 @@ defmodule Supavisor.Handlers.Proxy.Db do
     HH.sock_close(data.sock)
     {:stop, :db_socket_closed, data}
   end
+
+  ## Internal functions
+
+  @spec handle_auth_pkts(map(), map(), map()) :: any()
+  defp handle_auth_pkts(%{tag: :parameter_status, payload: {k, v}}, acc, _),
+    do: update_in(acc, [:ps], fn ps -> Map.put(ps || %{}, k, v) end)
+
+  defp handle_auth_pkts(%{tag: :ready_for_query, payload: db_state}, acc, _),
+    do: {:ready_for_query, Map.put(acc, :db_state, db_state)}
+
+  defp handle_auth_pkts(%{tag: :backend_key_data, payload: payload}, acc, _),
+    do: Map.put(acc, :backend_key_data, payload)
+
+  defp handle_auth_pkts(%{payload: {:authentication_sasl_password, methods_b}}, _, data) do
+    nonce =
+      case Server.decode_string(methods_b) do
+        {:ok, req_method, _} ->
+          Logger.debug("ProxyDb: SASL method #{inspect(req_method)}")
+          nonce = :pgo_scram.get_nonce(16)
+          user = get_user(data.auth)
+          client_first = :pgo_scram.get_client_first(user, nonce)
+          client_first_size = IO.iodata_length(client_first)
+
+          sasl_initial_response = [
+            "SCRAM-SHA-256",
+            0,
+            <<client_first_size::32-integer>>,
+            client_first
+          ]
+
+          bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
+          :ok = HH.sock_send(data.db_sock, bin)
+          nonce
+
+        other ->
+          Logger.error("ProxyDb: Undefined sasl method #{inspect(other)}")
+          nil
+      end
+
+    {:authentication_sasl, nonce}
+  end
+
+  defp handle_auth_pkts(
+         %{payload: {:authentication_server_first_message, server_first}},
+         _,
+         data
+       )
+       when data.auth.require_user == false do
+    nonce = data.nonce
+    server_first_parts = H.parse_server_first(server_first, nonce)
+
+    {client_final_message, server_proof} =
+      H.get_client_final(
+        :auth_query,
+        data.auth.secrets.(),
+        server_first_parts,
+        nonce,
+        data.auth.secrets.().user,
+        "biws"
+      )
+
+    bin = :pgo_protocol.encode_scram_response_message(client_final_message)
+    :ok = HH.sock_send(data.db_sock, bin)
+
+    {:authentication_server_first_message, server_proof}
+  end
+
+  defp handle_auth_pkts(
+         %{payload: {:authentication_server_first_message, server_first}},
+         _,
+         data
+       ) do
+    nonce = data.nonce
+    server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
+
+    {client_final_message, server_proof} =
+      :pgo_scram.get_client_final(
+        server_first_parts,
+        nonce,
+        data.auth.user,
+        data.auth.password.()
+      )
+
+    bin = :pgo_protocol.encode_scram_response_message(client_final_message)
+    :ok = HH.sock_send(data.db_sock, bin)
+
+    {:authentication_server_first_message, server_proof}
+  end
+
+  defp handle_auth_pkts(
+         %{payload: {:authentication_server_final_message, _server_final}},
+         acc,
+         _data
+       ),
+       do: acc
+
+  defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
+    Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+
+    digest =
+      if data.auth.method == :password do
+        H.md5([data.auth.password.(), data.auth.user])
+      else
+        data.auth.secrets.().secret
+      end
+
+    payload = ["md5", H.md5([digest, salt]), 0]
+    bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
+    :ok = HH.sock_send(data.db_sock, bin)
+    :authentication_md5
+  end
+
+  defp handle_auth_pkts(%{tag: :error_response, payload: error}, _acc, _data),
+    do: {:error_response, error}
+
+  defp handle_auth_pkts(_e, acc, _data), do: acc
 
   @spec try_ssl_handshake(S.tcp_sock(), map) :: {:ok, S.db_sock()} | {:error, term()}
   def try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do

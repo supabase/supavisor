@@ -69,7 +69,8 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       parameter_status: %{},
       app_name: nil,
       peer_ip: Helpers.peer_ip(sock),
-      auth: %{}
+      auth: %{},
+      backend_key_data: %{}
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
