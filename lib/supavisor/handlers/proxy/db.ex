@@ -183,7 +183,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
   defp handle_auth_pkts(_e, acc, _data), do: acc
 
-  @spec try_ssl_handshake(S.tcp_sock(), map()) :: {:ok, S.db_sock()} | {:error, term()}
+  @spec try_ssl_handshake(S.tcp_sock(), map()) :: {:ok, S.sock()} | {:error, term()}
   def try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
     with :ok <- HH.sock_send(sock, Server.ssl_request()) do
       ssl_recv(sock, auth)
@@ -224,7 +224,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
     end
   end
 
-  @spec send_startup(S.db_sock(), map()) :: :ok | {:error, term}
+  @spec send_startup(S.sock(), map()) :: :ok | {:error, term}
   def send_startup(sock, auth) do
     user = get_user(auth)
 
