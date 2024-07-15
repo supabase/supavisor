@@ -54,14 +54,27 @@ defmodule Supavisor.Handlers.Proxy.Db do
     end
   end
 
+  # forwards the message to the client
   def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
     HH.sock_send(data.sock, bin)
     HH.active_once(data.db_sock)
-    :keep_state_and_data
+
+    data =
+      if String.ends_with?(bin, Server.ready_for_query()) do
+        Logger.debug("ProxyDb: collected network usage")
+        {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
+        {_, db_stats} = Telem.network_usage(:db, data.db_sock, data.id, data.db_stats)
+        %{data | stats: stats, db_stats: db_stats}
+      else
+        data
+      end
+
+    {:keep_state, data}
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     Logger.error("ProxyDb: Connection closed when state was #{state}")
+    Telem.handler_action(:db_handler, :stopped, data.id)
     HH.sock_send(data.sock, Server.error_message("XX000", "Database connection closed"))
     HH.sock_close(data.sock)
     {:stop, :db_socket_closed, data}

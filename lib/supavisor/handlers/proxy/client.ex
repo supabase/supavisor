@@ -91,13 +91,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
         rule = ~r/^[a-z_][a-z0-9_$]*$/
 
         if user =~ rule and db_name =~ rule do
-          log_level =
-            case hello.payload["options"]["log_level"] do
-              nil -> nil
-              level -> String.to_existing_atom(level)
-            end
-
-          H.set_log_level(log_level)
+          log_level = maybe_change_log(hello)
           event = {:hello, {type, {user, tenant_or_alias, db_name}}}
           app_name = app_name(hello.payload["application_name"])
 
@@ -197,10 +191,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
         end
 
       {:error, reason} ->
-        msg =
+        Logger.error(
           "ProxyClient: User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}"
-
-        Logger.error(msg)
+        )
 
         :ok = HH.send_error(sock, "XX000", "Tenant or user not found")
         Telem.client_join(:fail, data.id)
@@ -218,8 +211,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
     case handle_exchange(sock, {method, secrets}) do
       {:error, reason} ->
-        msg = "ProxyClient: Exchange error: #{inspect(reason)} when method #{inspect(method)}"
-        Logger.error(msg)
+        Logger.error(
+          "ProxyClient: Exchange error: #{inspect(reason)} when method #{inspect(method)}"
+        )
 
         msg =
           if method == :auth_query_md5,
@@ -283,6 +277,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   def handle_event(:internal, {:client, :connect_db}, _, %{auth: auth} = data) do
     Logger.debug("Try to connect to DB")
+    Telem.handler_action(:db_handler, :db_connection, data.id)
     ip_ver = H.ip_version(auth.ip_version, auth.host)
 
     sock_opts = [
@@ -316,10 +311,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
         end
 
       other ->
-        msg =
+        Logger.error(
           "ProxyClient: Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
-
-        Logger.error(msg)
+        )
 
         {:stop, {:shutdown, :connection_failed}}
     end
@@ -340,8 +334,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
   end
 
   def handle_event(:timeout, :wait_ps, _, data) do
-    msg = "ProxyClient: Wait parameter status timeout, send default #{inspect(data.ps)}}"
-    Logger.error(msg)
+    Logger.error("ProxyClient: Wait parameter status timeout, send default #{inspect(data.ps)}}")
 
     ps = Server.encode_parameter_status(data.ps)
     {:keep_state_and_data, {:next_event, :internal, {:client, {:greetings, ps}}}}
@@ -554,10 +547,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
     # kill the postgrex connection if the current process exits unexpectedly
     Process.link(conn)
 
-    msg =
+    Logger.debug(
       "ProxyClient: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
-
-    Logger.debug(msg)
+    )
 
     resp =
       with {:ok, secret} <- H.get_user_secret(conn, tenant.auth_query, db_user) do
@@ -658,4 +650,16 @@ defmodule Supavisor.Handlers.Proxy.Client do
     Logger.error("ProxyClient: Invalid application name #{inspect(name)}")
     "via Supavisor"
   end
+
+  @spec maybe_change_log(map()) :: atom() | nil
+  def maybe_change_log(%{"payload" => %{"options" => options}}) do
+    level = options["log_level"] && String.to_existing_atom(options["log_level"])
+
+    if level in [:debug, :info, :notice, :warning, :error] do
+      H.set_log_level(level)
+      level
+    end
+  end
+
+  def maybe_change_log(_), do: :ok
 end

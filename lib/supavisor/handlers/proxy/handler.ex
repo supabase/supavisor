@@ -9,6 +9,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
   alias Supavisor.{
     Helpers,
     Protocol.Server,
+    Monitoring.PromEx,
     Handlers.Proxy.Db,
     Handlers.Proxy.Client
   }
@@ -56,6 +57,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       proxy_type: nil,
       mode: opts.mode,
       stats: %{},
+      db_stats: %{},
       idle_timeout: 0,
       db_name: nil,
       last_query: nil,
@@ -113,25 +115,41 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       {"data", data}
     ]
 
-    Logger.error("ProxyHandler: Undefined msg: #{inspect(msg, pretty: true)}")
+    Logger.debug("ProxyHandler: Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
   end
 
   @impl true
   def terminate({:shutdown, reason}, state, data) do
-    msg = "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
-    Logger.info(msg)
     HH.sock_send(data.sock, Server.error_message("XX000", "#{inspect(reason)}"))
-    HH.sock_close(data.sock)
-    HH.sock_close(data.db_sock)
+    clean_up(data)
+
+    Logger.info(
+      "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
+    )
+
     :ok
   end
 
   def terminate(reason, state, data) do
+    clean_up(data)
+
+    Logger.info(
+      "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
+    )
+  end
+
+  ## Internal functions
+
+  @spec clean_up(map()) :: any()
+  defp clean_up(data) do
     HH.sock_close(data.sock)
     HH.sock_close(data.db_sock)
-    msg = "ProxyHandler: Terminating with reason: #{inspect(reason)} when state was #{state}"
-    Logger.info(msg)
+
+    case Registry.lookup(Supavisor.Registry.TenantClients, data.id) do
+      clients when clients in [[{self(), []}], []] -> PromEx.remove_metrics(data.id)
+      _ -> :ok
+    end
   end
 end
