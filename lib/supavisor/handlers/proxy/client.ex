@@ -265,10 +265,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
         :ok = HH.sock_send(sock, Server.authentication_ok())
         Telem.client_join(:ok, data.id)
 
-        auth =
-          data.auth
-          |> Map.put(:secrets, secrets)
-          |> Map.put(:method, method)
+        auth = Map.merge(data.auth, %{secrets: secrets, method: method})
 
         {:keep_state, %{data | auth_secrets: {method, secrets}, auth: auth},
          {:next_event, :internal, {:client, :connect_db}}}
@@ -636,7 +633,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     suffix = " via Supavisor"
     # https://www.postgresql.org/docs/current/runtime-config-logging.html#GUC-APPLICATION-NAME
     max_len = 64
-    suffix_len = String.length(suffix)
+    suffix_len = 14
 
     if String.length(name) <= max_len - suffix_len do
       name <> suffix
