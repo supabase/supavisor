@@ -10,11 +10,14 @@
   };
 
   outputs = {
+    self,
     flake-parts,
     devenv,
     ...
   } @ inputs:
     flake-parts.lib.mkFlake {inherit inputs;} {
+      flake = {};
+
       systems = [
         "x86_64-linux"
         "x86_64-darwin"
@@ -34,6 +37,14 @@
         apps.up = {
           type = "app";
           program = toString self'.devShells.default.config.procfileScript;
+        };
+
+        packages = {
+          supavisor = let
+            erl = pkgs.beam_nox.packages.erlang_26;
+          in erl.callPackage ./nix/package.nix {};
+
+          default = self'.packages.supavisor;
         };
 
         devShells.default = devenv.lib.mkShell {
