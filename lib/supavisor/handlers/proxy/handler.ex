@@ -65,7 +65,6 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       connection_start: System.monotonic_time(),
       log_level: nil,
       version: Application.spec(:supavisor, :vsn),
-      auth: nil,
       nonce: nil,
       server_proof: nil,
       parameter_status: %{},
