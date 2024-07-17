@@ -147,7 +147,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     HH.sock_close(data.db_sock)
 
     case Registry.lookup(Supavisor.Registry.TenantClients, data.id) do
-      clients when clients in [[{self(), []}], []] -> PromEx.remove_metrics(data.id)
+      clients when clients == [{self(), []}] or clients == [] -> PromEx.remove_metrics(data.id)
       _ -> :ok
     end
   end
