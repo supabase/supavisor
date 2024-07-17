@@ -30,7 +30,8 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec remove_metrics(S.id()) :: non_neg_integer
-  def remove_metrics({{type, tenant}, user, mode, db_name}) do
+  def remove_metrics({{type, tenant}, user, mode, db_name} = id) do
+    Logger.debug("Removing metrics for #{inspect(id)}")
     meta = %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
 
     Supavisor.Monitoring.PromEx.Metrics
