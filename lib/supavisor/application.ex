@@ -6,6 +6,8 @@ defmodule Supavisor.Application do
   use Application
   require Logger
   alias Supavisor.Monitoring.PromEx
+  alias Supavisor.ClientHandler
+  alias Supavisor.Handlers.Proxy.Handler, as: ProxyHandler
 
   @impl true
   def start(_type, _args) do
@@ -29,11 +31,12 @@ defmodule Supavisor.Application do
 
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction},
-      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session}
+       :transaction, ClientHandler},
+      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
+       ProxyHandler}
     ]
 
-    for {key, port, mode} <- proxy_ports do
+    for {key, port, mode, handler} <- proxy_ports do
       case :ranch.start_listener(
              key,
              :ranch_tcp,
@@ -42,7 +45,7 @@ defmodule Supavisor.Application do
                num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
                socket_opts: [inet_backend: :socket, port: port, keepalive: true]
              },
-             Supavisor.ClientHandler,
+             handler,
              %{mode: mode}
            ) do
         {:ok, _pid} ->

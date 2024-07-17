@@ -23,7 +23,17 @@ config :supavisor, SupavisorWeb.Endpoint,
 # Configures Elixir's Logger
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :project, :user, :region, :instance_id, :mode, :type]
+  metadata: [
+    :request_id,
+    :project,
+    :user,
+    :region,
+    :instance_id,
+    :mode,
+    :type,
+    :app_name,
+    :peer_ip
+  ]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

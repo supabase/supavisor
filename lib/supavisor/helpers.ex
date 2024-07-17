@@ -357,4 +357,12 @@ defmodule Supavisor.Helpers do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
   end
+
+  @spec peer_ip(:gen_tcp.socket()) :: String.t()
+  def peer_ip(socket) do
+    case :inet.peername(socket) do
+      {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
+      _error -> "undefined"
+    end
+  end
 end

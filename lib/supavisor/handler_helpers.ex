@@ -10,8 +10,9 @@ defmodule Supavisor.HandlerHelpers do
     mod.send(sock, data)
   end
 
-  @spec sock_close(nil | S.sock()) :: :ok | {:error, term()}
+  @spec sock_close(S.sock() | nil | {any(), nil}) :: :ok | {:error, term()}
   def sock_close(nil), do: :ok
+  def sock_close({_, nil}), do: :ok
 
   def sock_close({mod, sock}) do
     mod.close(sock)
@@ -23,14 +24,11 @@ defmodule Supavisor.HandlerHelpers do
     mod.setopts(sock, opts)
   end
 
-  @spec activate(S.sock()) :: :ok | {:error, term}
-  def activate({:gen_tcp, sock}) do
-    :inet.setopts(sock, active: true)
-  end
+  @spec active_once(S.sock()) :: :ok | {:error, term}
+  def active_once(sock), do: setopts(sock, active: :once)
 
-  def activate({:ssl, sock}) do
-    :ssl.setopts(sock, active: true)
-  end
+  @spec activate(S.sock()) :: :ok | {:error, term}
+  def activate(sock), do: setopts(sock, active: true)
 
   @spec try_ssl_handshake(S.tcp_sock(), boolean) ::
           {:ok, S.sock()} | {:error, term()}
@@ -106,12 +104,12 @@ defmodule Supavisor.HandlerHelpers do
     end
   end
 
-  @spec send_cancel_query(non_neg_integer, non_neg_integer) :: :ok | {:errr, term}
-  def send_cancel_query(pid, key) do
+  @spec send_cancel_query(non_neg_integer, non_neg_integer, term) :: :ok | {:errr, term}
+  def send_cancel_query(pid, key, msg \\ :cancel_query) do
     PubSub.broadcast(
       Supavisor.PubSub,
       "cancel_req:#{pid}_#{key}",
-      :cancel_query
+      msg
     )
   end
 
