@@ -57,6 +57,7 @@ defmodule Supavisor.TenantSupervisor do
     #   end
 
     {size, overflow} = {1, args.pool_size}
+    # {size, overflow} = {args.pool_size, 0}
 
     [
       name: {:via, Registry, {Supavisor.Registry.Tenants, id, args.replica_type}},

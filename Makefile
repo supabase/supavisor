@@ -100,5 +100,5 @@ dev_start_rel:
 	FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000 \
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
-	ERL_AFLAGS="-kernel shell_history enabled" \
-	./_build/dev/rel/supavisor/bin/supavisor start_iex
+	DB_POOL_SIZE="5" \
+	_build/prod/rel/supavisor/bin/supavisor start_iex

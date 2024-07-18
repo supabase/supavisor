@@ -351,12 +351,12 @@ defmodule Supavisor.Helpers do
   end
 
   @spec set_log_level(atom()) :: :ok
-  def set_log_level(nil), do: :ok
-
-  def set_log_level(level) when is_atom(level) do
+  def set_log_level(level) when level in [:debug, :info, :notice, :warning, :error] do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
   end
+
+  def set_log_level(level), do: nil
 
   @spec peer_ip(:gen_tcp.socket()) :: String.t()
   def peer_ip(socket) do

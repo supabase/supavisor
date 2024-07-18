@@ -69,7 +69,8 @@ defmodule Supavisor.DbHandler do
       server_proof: nil,
       stats: %{},
       mode: args.mode,
-      replica_type: args.replica_type
+      replica_type: args.replica_type,
+      reply: nil
     }
 
     Telem.handler_action(:db_handler, :started, args.id)
@@ -288,6 +289,19 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  def handle_event(:internal, :check_buffer, :idle, %{sock: {_, sock} = s} = data) do
+    case data.reply do
+      {from, pid} ->
+        :gen_tcp.controlling_process(sock, pid)
+        reply = {:reply, from, {:ok, s}}
+
+        {:next_state, :busy, data, reply}
+
+      _ ->
+        {:next_state, :busy, data}
+    end
+  end
+
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
       when is_pid(caller) do
     if buff != [] do
@@ -391,6 +405,17 @@ defmodule Supavisor.DbHandler do
      {:next_event, :internal, :check_anon_buffer}}
   end
 
+  def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: {_, sock} = s} = data) do
+    if state in [:idle, :busy] do
+      :gen_tcp.controlling_process(sock, pid)
+      reply = {:reply, from, {:ok, s}}
+      {:keep_state, data, reply}
+    else
+      Logger.debug("DbHandler: TCP owner call when state was #{state}")
+      {:keep_state, %{data | reply: {from, pid}}}
+    end
+  end
+
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
     reply = {:reply, from, sock_send(sock, bin)}
     {:next_state, :busy, %{data | caller: caller}, reply}
@@ -452,7 +477,7 @@ defmodule Supavisor.DbHandler do
     end
 
     if state == :busy or data.mode == :session do
-      :ok = sock_send(data.sock, <<?X, 4::32>>)
+      sock_send(data.sock, <<?X, 4::32>>)
       :gen_tcp.close(elem(data.sock, 1))
       {:stop, {:client_handler_down, data.mode}}
     else

@@ -8,6 +8,7 @@ defmodule Supavisor.Application do
   alias Supavisor.Monitoring.PromEx
   alias Supavisor.ClientHandler
   alias Supavisor.Handlers.Proxy.Handler, as: ProxyHandler
+  alias Supavisor.Handlers.Transaction.Handler, as: TransactionHandler
 
   @impl true
   def start(_type, _args) do
@@ -31,7 +32,7 @@ defmodule Supavisor.Application do
 
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction, ClientHandler},
+       :transaction, TransactionHandler},
       {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
        ProxyHandler}
     ]
