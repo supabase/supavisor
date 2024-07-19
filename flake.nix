@@ -34,15 +34,14 @@
       }: {
         formatter = pkgs.alejandra;
 
-        apps.up = {
-          type = "app";
-          program = toString self'.devShells.default.config.procfileScript;
-        };
-
         packages = {
+          # Expose Devenv supervisor
+          devenv-up = self'.devShells.default.config.procfileScript;
+
           supavisor = let
             erl = pkgs.beam_nox.packages.erlang_26;
-          in erl.callPackage ./nix/package.nix {};
+          in
+            erl.callPackage ./nix/package.nix {};
 
           default = self'.packages.supavisor;
         };
@@ -77,6 +76,8 @@
                 listen_addresses = "127.0.0.1";
                 port = 6432;
               };
+
+              process.implementation = "honcho";
 
               # Force connection through TCP instead of Unix socket
               env.PGHOST = lib.mkForce "";
