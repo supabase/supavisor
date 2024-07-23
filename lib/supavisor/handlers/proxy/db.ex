@@ -68,12 +68,12 @@ defmodule Supavisor.Handlers.Proxy.Db do
     HH.sock_send(data.sock, bin)
     HH.active_once(data.db_sock)
 
-    if String.ends_with?(bin, Server.ready_for_query()) do
-      Logger.debug("ProxyDb: collected network usage")
-      {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
-      {_, db_stats} = Telem.network_usage(:db, data.db_sock, data.id, data.db_stats)
+    data =
+      if String.ends_with?(bin, Server.ready_for_query()) do
+        Logger.debug("ProxyDb: collected network usage")
+        {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
+        {_, db_stats} = Telem.network_usage(:db, data.db_sock, data.id, data.db_stats)
 
-      data =
         case data.mode do
           :transaction ->
             DbHandler.set_idle(data.db_pid)
@@ -85,11 +85,11 @@ defmodule Supavisor.Handlers.Proxy.Db do
           _ ->
             %{data | stats: stats, db_stats: db_stats}
         end
+      else
+        data
+      end
 
-      {:keep_state, data}
-    else
-      {:keep_state, data}
-    end
+    {:keep_state, data}
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
