@@ -32,9 +32,9 @@ defmodule Supavisor.Application do
 
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction, TransactionHandler},
+       :transaction, ProxyHandler},
       {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
-       ProxyHandler}
+       Supavisor.ClientHandler}
     ]
 
     for {key, port, mode, handler} <- proxy_ports do
@@ -44,7 +44,7 @@ defmodule Supavisor.Application do
              %{
                max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
                num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-               socket_opts: [inet_backend: :socket, port: port, keepalive: true]
+               socket_opts: [port: port, keepalive: true]
              },
              handler,
              %{mode: mode}

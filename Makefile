@@ -26,6 +26,7 @@ dev.node2:
 	CLUSTER_POSTGRES="true" \
 	PROXY_PORT_SESSION="5442" \
 	PROXY_PORT_TRANSACTION="6553" \
+	NODE_IP=localhost \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server
 

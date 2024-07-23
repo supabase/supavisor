@@ -6,7 +6,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
   alias Supavisor, as: S
   alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
-  alias Supavisor.{Monitoring.Telem, Protocol.Server}
+  alias Supavisor.{Monitoring.Telem, Protocol.Server, DbHandler}
 
   @type state :: :connect | :authentication | :idle | :busy
 
@@ -26,6 +26,15 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
       {:authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
+
+      {:authentication_server_final_message, _server_final} ->
+        :keep_state_and_data
+
+      :authentication_ok ->
+        :keep_state_and_data
+
+      :authentication ->
+        :keep_state_and_data
 
       :authentication_md5 ->
         {:keep_state, data}
@@ -59,17 +68,28 @@ defmodule Supavisor.Handlers.Proxy.Db do
     HH.sock_send(data.sock, bin)
     HH.active_once(data.db_sock)
 
-    data =
-      if String.ends_with?(bin, Server.ready_for_query()) do
-        Logger.debug("ProxyDb: collected network usage")
-        {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
-        {_, db_stats} = Telem.network_usage(:db, data.db_sock, data.id, data.db_stats)
-        %{data | stats: stats, db_stats: db_stats}
-      else
-        data
-      end
+    if String.ends_with?(bin, Server.ready_for_query()) do
+      Logger.debug("ProxyDb: collected network usage")
+      {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
+      {_, db_stats} = Telem.network_usage(:db, data.db_sock, data.id, data.db_stats)
 
-    {:keep_state, data}
+      data =
+        case data.mode do
+          :transaction ->
+            DbHandler.set_idle(data.db_pid)
+            :gen_tcp.controlling_process(elem(data.db_sock, 1), data.db_pid)
+            Process.unlink(data.db_pid)
+            :poolboy.checkin(data.pool, data.db_pid)
+            %{data | stats: stats, db_stats: db_stats, db_pid: nil, db_sock: nil}
+
+          _ ->
+            %{data | stats: stats, db_stats: db_stats}
+        end
+
+      {:keep_state, data}
+    else
+      {:keep_state, data}
+    end
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
@@ -169,11 +189,18 @@ defmodule Supavisor.Handlers.Proxy.Db do
   end
 
   defp handle_auth_pkts(
-         %{payload: {:authentication_server_final_message, _server_final}},
-         acc,
+         %{payload: {:authentication_server_final_message, server_final}},
+         _acc,
          _data
        ),
-       do: acc
+       do: {:authentication_server_final_message, server_final}
+
+  defp handle_auth_pkts(
+         %{payload: :authentication_ok},
+         _acc,
+         _data
+       ),
+       do: :authentication_ok
 
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
     Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
@@ -237,9 +264,10 @@ defmodule Supavisor.Handlers.Proxy.Db do
     end
   end
 
-  @spec send_startup(S.sock(), map()) :: :ok | {:error, term}
-  def send_startup(sock, auth) do
-    user = get_user(auth)
+  @spec send_startup(S.sock(), map(), String.t() | nil) :: :ok | {:error, term}
+  def send_startup(sock, auth, tenant) do
+    user =
+      if is_nil(tenant), do: get_user(auth), else: "#{get_user(auth)}.#{tenant}"
 
     msg =
       :pgo_protocol.encode_startup_message([

@@ -7,16 +7,16 @@ defmodule Supavisor.Handlers.Proxy.Client do
   alias Supavisor.ProxyDb, as: Db
   alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
+  alias Supavisor.Handlers.Proxy.Db, as: ProxyDb
 
-  alias Supavisor.{
+  alias S.{
     Tenants,
+    DbHandler,
     ProxyHandlerDb,
     Monitoring.Telem,
     Protocol.Client,
     Protocol.Server
   }
-
-  alias Supavisor.Handlers.Proxy.Db, as: ProxyDb
 
   @cancel_query_msg <<16::32, 1234::16, 5678::16>>
   @sock_closed [:tcp_closed, :ssl_closed]
@@ -267,8 +267,63 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
         auth = Map.merge(data.auth, %{secrets: secrets, method: method})
 
+        conn_type =
+          case data.mode do
+            :transaction -> :subscribe
+            :session -> :connect_db
+          end
+
         {:keep_state, %{data | auth_secrets: {method, secrets}, auth: auth},
-         {:next_event, :internal, {:client, :connect_db}}}
+         {:next_event, :internal, {:client, conn_type}}}
+    end
+  end
+
+  def handle_event(:internal, {:client, :subscribe}, _, data) do
+    Logger.warning("ClientHandler: Subscribe to tenant #{inspect(data.id)}")
+
+    with {:ok, sup} <-
+           Supavisor.start_dist(data.id, data.auth_secrets, log_level: data.log_level),
+         true <- if(node(sup) == node(), do: true, else: :proxy),
+         {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
+      Process.monitor(opts.workers.manager)
+      data = Map.merge(data, opts.workers)
+      data = %{data | idle_timeout: opts.idle_timeout}
+
+      next =
+        if opts.ps == [] do
+          {:timeout, 10_000, :wait_ps}
+        else
+          {:next_event, :internal, {:client, {:greetings, opts.ps}}}
+        end
+
+      {:keep_state, data, next}
+    else
+      {:error, :max_clients_reached} ->
+        msg = "Max client connections reached"
+        Logger.error("ClientHandler: #{msg}")
+        :ok = HH.send_error(data.sock, "XX000", msg)
+        Telem.client_join(:fail, data.id)
+        {:stop, {:shutdown, :max_clients_reached}}
+
+      :proxy ->
+        {:ok, %{port: port, host: host}} = S.get_pool_ranch(data.id)
+
+        auth =
+          Map.merge(data.auth, %{
+            port: port,
+            host: host,
+            ip_version: :v4,
+            upstream_ssl: false,
+            upstream_tls_ca: nil,
+            upstream_verify: nil
+          })
+
+        data = Map.merge(data, %{auth: auth, mode: :session, proxy: true})
+        {:keep_state, data, {:next_event, :internal, {:client, :connect_db}}}
+
+      error ->
+        Logger.error("ClientHandler: Subscribe error: #{inspect(error)}")
+        {:keep_state_and_data, {:timeout, 1000, :subscribe}}
     end
   end
 
@@ -287,11 +342,13 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
     case :gen_tcp.connect(~c"#{auth.host}", auth.port, sock_opts) do
       {:ok, sock} ->
-        Logger.debug("ProxyClient: auth #{inspect(auth, pretty: true)}")
+        Logger.debug("ProxyClient: auth #{inspect(data, pretty: true)}")
 
         case ProxyDb.try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            case ProxyDb.send_startup(sock, auth) do
+            tenant = if(data.proxy, do: S.tenant(data.id))
+
+            case ProxyDb.send_startup(sock, auth, tenant) do
               :ok ->
                 HH.active_once(sock)
                 auth = Map.put(auth, :ip_ver, ip_ver)
@@ -348,7 +405,39 @@ defmodule Supavisor.Handlers.Proxy.Client do
     {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
   end
 
+  def handle_event(
+        :info,
+        {proto, _, <<?X, 4::32>>},
+        _,
+        %{mode: :transaction, db_pid: nil} = data
+      )
+      when proto in @proto do
+    {:stop, {:shutdown, :terminate_received}}
+  end
+
   # forwards the message to the db
+  def handle_event(
+        :info,
+        {proto, _, bin},
+        _,
+        %{mode: :transaction, db_pid: nil} = data
+      )
+      when proto in @proto do
+    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
+    Process.link(db_pid)
+
+    {time1, {:ok, db_sock}} =
+      :timer.tc(DbHandler, :change_skt_owner, [db_pid, self()])
+
+    same_box = if node(db_pid) == node(), do: :local, else: :remote
+    Telem.pool_checkout_time(time + time1, data.id, same_box)
+    Logger.debug("ProxyClient: Checkout new db connection #{inspect({db_pid, db_sock})}")
+
+    HH.sock_send(db_sock, bin)
+    HH.active_once(data.sock)
+    {:keep_state, %{data | db_pid: db_pid, db_sock: db_sock}}
+  end
+
   def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
     HH.sock_send(data.db_sock, bin)
     HH.active_once(data.sock)

@@ -31,6 +31,12 @@ defmodule Supavisor.DbHandler do
   @spec cast(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def cast(pid, caller, msg), do: :gen_statem.cast(pid, {:db_cast, caller, msg})
 
+  @spec set_idle(pid()) :: :ok
+  def set_idle(pid), do: :gen_statem.cast(pid, :set_idle)
+
+  @spec change_skt_owner(pid(), pid()) :: {:ok, S.sock()}
+  def change_skt_owner(pid, caller), do: :gen_statem.call(pid, {:tcp_owner, self()}, 15_000)
+
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
     try do
@@ -289,19 +295,6 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:internal, :check_buffer, :idle, %{sock: {_, sock} = s} = data) do
-    case data.reply do
-      {from, pid} ->
-        :gen_tcp.controlling_process(sock, pid)
-        reply = {:reply, from, {:ok, s}}
-
-        {:next_state, :busy, data, reply}
-
-      _ ->
-        {:next_state, :busy, data}
-    end
-  end
-
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
       when is_pid(caller) do
     if buff != [] do
@@ -405,10 +398,10 @@ defmodule Supavisor.DbHandler do
      {:next_event, :internal, :check_anon_buffer}}
   end
 
-  def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: {_, sock} = s} = data) do
+  def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: sock} = data) do
     if state in [:idle, :busy] do
-      :gen_tcp.controlling_process(sock, pid)
-      reply = {:reply, from, {:ok, s}}
+      :ok = :gen_tcp.controlling_process(elem(sock, 1), pid)
+      reply = {:reply, from, {:ok, sock}}
       {:keep_state, data, reply}
     else
       Logger.debug("DbHandler: TCP owner call when state was #{state}")
@@ -454,6 +447,11 @@ defmodule Supavisor.DbHandler do
 
     new_buff = [bin | buff]
     {:keep_state, %{data | caller: caller, buffer: new_buff}}
+  end
+
+  def handle_event(:cast, :set_idle, state, data) do
+    Logger.debug("DbHandler: set_idle")
+    {:next_state, :idle, data}
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do

@@ -2,7 +2,15 @@ defmodule Supavisor.TenantSupervisor do
   @moduledoc false
   use Supervisor
 
+  require Logger
   alias Supavisor.Manager
+
+  def start_link(%{replicas: [%{mode: :transaction} = single]} = args) do
+    {:ok, meta} = Supavisor.start_local_server(single)
+    Logger.info("Starting ranch instance #{inspect(meta)} for #{inspect(args.id)}")
+    name = {:via, :syn, {:tenants, args.id, meta}}
+    Supervisor.start_link(__MODULE__, args, name: name)
+  end
 
   def start_link(args) do
     name = {:via, :syn, {:tenants, args.id}}
