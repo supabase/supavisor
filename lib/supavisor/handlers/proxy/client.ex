@@ -423,14 +423,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
         %{mode: :transaction, db_pid: nil} = data
       )
       when proto in @proto do
-    {time, db_pid} = :timer.tc(:poolboy, :checkout, [data.pool, true, data.timeout])
-    Process.link(db_pid)
-
-    {time1, {:ok, db_sock}} =
-      :timer.tc(DbHandler, :change_skt_owner, [db_pid, self()])
-
+    {time, {db_pid, db_sock}} = :timer.tc(__MODULE__, :checkout, [data.pool, data.timeout])
     same_box = if node(db_pid) == node(), do: :local, else: :remote
-    Telem.pool_checkout_time(time + time1, data.id, same_box)
+    Telem.pool_checkout_time(time, data.id, same_box)
     Logger.debug("ProxyClient: Checkout new db connection #{inspect({db_pid, db_sock})}")
 
     HH.sock_send(db_sock, bin)
@@ -748,4 +743,12 @@ defmodule Supavisor.Handlers.Proxy.Client do
   end
 
   def maybe_change_log(_), do: :ok
+
+  @spec checkout(pid(), non_neg_integer()) :: {pid(), S.sock()}
+  def checkout(pool, timeout) do
+    db_pid = :poolboy.checkout(pool, true, timeout)
+    Process.link(db_pid)
+    {:ok, db_sock} = DbHandler.change_skt_owner(db_pid, self())
+    {db_pid, db_sock}
+  end
 end
