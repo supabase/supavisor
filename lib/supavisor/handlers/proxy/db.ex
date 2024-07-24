@@ -27,10 +27,10 @@ defmodule Supavisor.Handlers.Proxy.Db do
       {:authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
 
-      {:authentication_server_final_message, _server_final} ->
+      %{authentication_server_final_message: server_final} ->
         :keep_state_and_data
 
-      :authentication_ok ->
+      %{authentication_ok: true} ->
         :keep_state_and_data
 
       :authentication ->
@@ -190,17 +190,17 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
   defp handle_auth_pkts(
          %{payload: {:authentication_server_final_message, server_final}},
-         _acc,
+         acc,
          _data
        ),
-       do: {:authentication_server_final_message, server_final}
+       do: Map.put(acc, :authentication_server_final_message, server_final)
 
   defp handle_auth_pkts(
          %{payload: :authentication_ok},
-         _acc,
+         acc,
          _data
        ),
-       do: :authentication_ok
+       do: Map.put(acc, :authentication_ok, true)
 
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
     Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
