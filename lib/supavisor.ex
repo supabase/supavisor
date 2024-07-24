@@ -358,7 +358,7 @@ defmodule Supavisor do
     end
   end
 
-  @spec start_local_server(S.id()) :: {:ok, map()} | {:error, any()}
+  @spec start_local_server(map()) :: {:ok, map()} | {:error, any()}
   def start_local_server(args) do
     acceptors = round(args.max_clients / 100)
 
