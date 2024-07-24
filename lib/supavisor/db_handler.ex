@@ -295,6 +295,12 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  def handle_event(:internal, :check_buffer, :idle, %{reply: {from, pid}} = data) do
+    :ok = :gen_tcp.controlling_process(elem(data.sock, 1), pid)
+    reply = {:reply, from, {:ok, data.sock}}
+    {:next_state, :busy, %{data | reply: nil}, reply}
+  end
+
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
       when is_pid(caller) do
     if buff != [] do
