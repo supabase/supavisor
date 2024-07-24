@@ -353,7 +353,7 @@ defmodule Supavisor do
   @spec get_pool_ranch(id) :: {:ok, map()} | {:error, :not_found}
   def get_pool_ranch(id) do
     case :syn.lookup(:tenants, id) do
-      {_sup_pid, %{port: port, host: host} = meta} -> {:ok, meta}
+      {_sup_pid, %{port: _port, host: _host} = meta} -> {:ok, meta}
       _ -> {:error, :not_found}
     end
   end

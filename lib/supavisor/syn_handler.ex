@@ -18,7 +18,10 @@ defmodule Supavisor.SynHandler do
       %{port: port, listener: listener} ->
         try do
           :ranch.stop_listener(id)
-          Logger.notice("Stopped listener #{inspect(id)} on port #{inspect(port)}")
+
+          Logger.notice(
+            "Stopped listener #{inspect(id)} on port #{inspect(port)} listener #{inspect(listener)}"
+          )
         rescue
           exception ->
             Logger.error("Failed to stop listener #{inspect(id)} #{Exception.message(exception)}")

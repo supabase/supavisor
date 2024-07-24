@@ -27,7 +27,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
       {:authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
 
-      %{authentication_server_final_message: server_final} ->
+      %{authentication_server_final_message: _server_final} ->
         :keep_state_and_data
 
       %{authentication_ok: true} ->

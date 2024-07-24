@@ -42,7 +42,7 @@ dev.node3:
 	PROXY_PORT_SESSION="5443" \
 	PROXY_PORT_TRANSACTION="6554" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
-	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server	
+	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server
 
 db_migrate:
 	mix ecto.migrate --prefix _supavisor --log-migrator-sql
@@ -102,4 +102,37 @@ dev_start_rel:
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
 	DB_POOL_SIZE="5" \
+	_build/prod/rel/supavisor/bin/supavisor start_iex
+
+prod_rel:
+	rm -rf _build/prod && \
+	MIX_ENV=prod mix compile && \
+	MIX_ENV=prod mix release supavisor
+
+prod_start_rel:
+	MIX_ENV=prod \
+	NODE_NAME=node1 \
+	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
+	API_JWT_SECRET=dev \
+	METRICS_JWT_SECRET=dev \
+	REGION=eu \
+	FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000 \
+	SECRET_KEY_BASE="dev" \
+	CLUSTER_POSTGRES="true" \
+	DB_POOL_SIZE="5" \
+	_build/prod/rel/supavisor/bin/supavisor start_iex
+
+prod_start_rel2:
+	MIX_ENV=prod \
+	NODE_NAME=node2 \
+	PORT=4001 \
+	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
+	API_JWT_SECRET=dev \
+	METRICS_JWT_SECRET=dev \
+	REGION=eu \
+	SECRET_KEY_BASE="dev" \
+	CLUSTER_POSTGRES="true" \
+	PROXY_PORT_SESSION="5442" \
+	PROXY_PORT_TRANSACTION="6553" \
+	NODE_IP=localhost \
 	_build/prod/rel/supavisor/bin/supavisor start_iex

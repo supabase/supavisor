@@ -6,9 +6,7 @@ defmodule Supavisor.Application do
   use Application
   require Logger
   alias Supavisor.Monitoring.PromEx
-  alias Supavisor.ClientHandler
   alias Supavisor.Handlers.Proxy.Handler, as: ProxyHandler
-  alias Supavisor.Handlers.Transaction.Handler, as: TransactionHandler
 
   @impl true
   def start(_type, _args) do
@@ -42,7 +40,7 @@ defmodule Supavisor.Application do
              key,
              :ranch_tcp,
              %{
-               max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
+               max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "75000"),
                num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
                socket_opts: [port: port, keepalive: true]
              },

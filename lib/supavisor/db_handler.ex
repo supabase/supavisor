@@ -35,7 +35,7 @@ defmodule Supavisor.DbHandler do
   def set_idle(pid), do: :gen_statem.cast(pid, :set_idle)
 
   @spec change_skt_owner(pid(), pid()) :: {:ok, S.sock()}
-  def change_skt_owner(pid, caller), do: :gen_statem.call(pid, {:tcp_owner, self()}, 15_000)
+  def change_skt_owner(pid, caller), do: :gen_statem.call(pid, {:tcp_owner, caller}, 15_000)
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
@@ -455,7 +455,7 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | caller: caller, buffer: new_buff}}
   end
 
-  def handle_event(:cast, :set_idle, state, data) do
+  def handle_event(:cast, :set_idle, _, data) do
     Logger.debug("DbHandler: set_idle")
     {:next_state, :idle, data}
   end

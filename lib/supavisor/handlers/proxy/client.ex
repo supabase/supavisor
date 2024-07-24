@@ -4,17 +4,13 @@ defmodule Supavisor.Handlers.Proxy.Client do
   require Logger
 
   alias Supavisor, as: S
-  alias Supavisor.ProxyDb, as: Db
   alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
-  alias Supavisor.Handlers.Proxy.Db, as: ProxyDb
 
   alias S.{
     Tenants,
     DbHandler,
-    ProxyHandlerDb,
     Monitoring.Telem,
-    Protocol.Client,
     Protocol.Server
   }
 
@@ -344,11 +340,11 @@ defmodule Supavisor.Handlers.Proxy.Client do
       {:ok, sock} ->
         Logger.debug("ProxyClient: auth #{inspect(data, pretty: true)}")
 
-        case ProxyDb.try_ssl_handshake({:gen_tcp, sock}, auth) do
+        case Db.try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
             tenant = if(data.proxy, do: S.tenant(data.id))
 
-            case ProxyDb.send_startup(sock, auth, tenant) do
+            case Db.send_startup(sock, auth, tenant) do
               :ok ->
                 HH.active_once(sock)
                 auth = Map.put(auth, :ip_ver, ip_ver)
@@ -409,7 +405,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
         :info,
         {proto, _, <<?X, 4::32>>},
         _,
-        %{mode: :transaction, db_pid: nil} = data
+        %{mode: :transaction, db_pid: nil}
       )
       when proto in @proto do
     {:stop, {:shutdown, :terminate_received}}
@@ -444,7 +440,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   # client closed connection
   def handle_event(_, {closed, _}, _, data)
-      when closed in [:tcp_closed, :ssl_closed] do
+      when closed in @sock_closed do
     Logger.debug("ProxyClient: #{closed} socket closed for #{inspect(data.tenant)}")
     {:stop, {:shutdown, :socket_closed}}
   end
@@ -683,15 +679,6 @@ defmodule Supavisor.Handlers.Proxy.Client do
       )
 
     {message, sings}
-  end
-
-  defp db_pid_meta({_, {_, pid}} = _key) do
-    rkey = Supavisor.Registry.PoolPids
-    fnode = node(pid)
-
-    if fnode == node(),
-      do: Registry.lookup(rkey, pid),
-      else: :erpc.call(fnode, Registry, :lookup, [rkey, pid], 15_000)
   end
 
   @spec timeout_check(atom, non_neg_integer) :: {:timeout, non_neg_integer, atom}
