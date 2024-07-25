@@ -10,8 +10,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
   alias S.{
     Tenants,
     DbHandler,
+    Protocol.Server,
     Monitoring.Telem,
-    Protocol.Server
+    Handlers.Proxy.Db
   }
 
   @cancel_query_msg <<16::32, 1234::16, 5678::16>>
