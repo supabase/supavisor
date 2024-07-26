@@ -32,6 +32,23 @@ defmodule Supavisor.Handlers.Proxy.Client do
     {:stop, {:shutdown, :cancel_query}}
   end
 
+  def handle_event(:info, {:client, :cancel_query}, _, %{db_pid: db_pid} = data)
+      when is_pid(db_pid) do
+    Logger.debug("ProxyClient: Cancel query for #{inspect(db_pid)}")
+
+    case db_pid_meta(db_pid) do
+      [{^db_pid, meta}] ->
+        :ok = HH.cancel_query(meta.host, meta.port, meta.ip_ver, meta.pid, meta.key)
+
+      error ->
+        Logger.error(
+          "ClientHandler: Received cancel but no proc was found #{inspect(key)} #{inspect(error)}"
+        )
+    end
+
+    :keep_state_and_data
+  end
+
   def handle_event(:info, {:client, :cancel_query}, _, %{
         auth: auth,
         backend_key_data: b
@@ -738,5 +755,15 @@ defmodule Supavisor.Handlers.Proxy.Client do
     Process.link(db_pid)
     {:ok, db_sock} = DbHandler.change_skt_owner(db_pid, self())
     {db_pid, db_sock}
+  end
+
+  @spec db_pid_meta(pid()) :: [{pid(), map()}]
+  defp db_pid_meta(pid) do
+    rkey = Supavisor.Registry.PoolPids
+    fnode = node(pid)
+
+    if fnode == node(),
+      do: Registry.lookup(rkey, pid),
+      else: :erpc.call(fnode, Registry, :lookup, [rkey, pid], 15_000)
   end
 end
