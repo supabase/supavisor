@@ -365,7 +365,7 @@ defmodule Supavisor do
     opts =
       %{
         max_connections: args.max_clients,
-        num_acceptors: if(acceptors < 10, do: 10, else: acceptors),
+        num_acceptors: max(acceptors, 10),
         socket_opts: [port: 0, keepalive: true]
       }
 

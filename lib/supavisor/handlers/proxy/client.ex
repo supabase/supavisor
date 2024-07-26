@@ -3,13 +3,11 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   require Logger
 
-  alias Supavisor, as: S
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.HandlerHelpers, as: HH
-
-  alias S.{
+  alias Supavisor.{
     Tenants,
+    Helpers,
     DbHandler,
+    HandlerHelpers,
     Protocol.Server,
     Monitoring.Telem,
     Handlers.Proxy.Db
@@ -21,14 +19,19 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
     Logger.debug("ProxyClient: Client is trying to request HTTP")
-    HH.sock_send(data.sock, "HTTP/1.1 204 OK\r\nx-app-version: #{data.version}\r\n\r\n")
+
+    HandlerHelpers.sock_send(
+      data.sock,
+      "HTTP/1.1 204 OK\r\nx-app-version: #{data.version}\r\n\r\n"
+    )
+
     {:stop, {:shutdown, :http_request}}
   end
 
   # cancel request
   def handle_event(:info, {_, _, <<@cancel_query_msg, pid::32, key::32>>}, _, _) do
     Logger.debug("ProxyClient: Got cancel query for #{inspect({pid, key})}")
-    :ok = HH.send_cancel_query(pid, key, {:client, :cancel_query})
+    :ok = HandlerHelpers.send_cancel_query(pid, key, {:client, :cancel_query})
     {:stop, {:shutdown, :cancel_query}}
   end
 
@@ -38,7 +41,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
     case db_pid_meta(db_pid) do
       [{^db_pid, meta}] ->
-        :ok = HH.cancel_query(meta.host, meta.port, meta.ip_ver, meta.pid, meta.key)
+        :ok = HandlerHelpers.cancel_query(meta.host, meta.port, meta.ip_ver, meta.pid, meta.key)
 
       error ->
         Logger.error(
@@ -53,7 +56,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
         auth: auth,
         backend_key_data: b
       }) do
-    :ok = HH.cancel_query(~c"#{auth.host}", auth.port, auth.ip_ver, b.pid, b.key)
+    :ok = HandlerHelpers.cancel_query(~c"#{auth.host}", auth.port, auth.ip_ver, b.pid, b.key)
     :keep_state_and_data
   end
 
@@ -61,13 +64,13 @@ defmodule Supavisor.Handlers.Proxy.Client do
   def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, %{sock: sock} = data) do
     Logger.debug("ProxyClient: Client is trying to connect with SSL")
 
-    downstream_cert = H.downstream_cert()
-    downstream_key = H.downstream_key()
+    downstream_cert = Helpers.downstream_cert()
+    downstream_key = Helpers.downstream_key()
 
     # SSL negotiation, S/N/Error
     if !!downstream_cert and !!downstream_key do
-      :ok = HH.setopts(sock, active: false)
-      :ok = HH.sock_send(sock, "S")
+      :ok = HandlerHelpers.setopts(sock, active: false)
+      :ok = HandlerHelpers.sock_send(sock, "S")
 
       opts = [
         certfile: downstream_cert,
@@ -77,7 +80,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
       case :ssl.handshake(elem(sock, 1), opts) do
         {:ok, ssl_sock} ->
           socket = {:ssl, ssl_sock}
-          :ok = HH.setopts(socket, active: true)
+          :ok = HandlerHelpers.setopts(socket, active: true)
           {:keep_state, %{data | sock: socket, ssl: true}}
 
         error ->
@@ -88,7 +91,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     else
       Logger.error("ProxyClient: User requested SSL connection but no downstream cert/key found")
 
-      :ok = HH.sock_send(data.sock, "N")
+      :ok = HandlerHelpers.sock_send(data.sock, "N")
       :keep_state_and_data
     end
   end
@@ -97,7 +100,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     case Server.decode_startup_packet(bin) do
       {:ok, hello} ->
         Logger.debug("ProxyClient: Client startup message: #{inspect(hello)}")
-        {type, {user, tenant_or_alias, db_name}} = HH.parse_user_info(hello.payload)
+        {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(hello.payload)
 
         # Validate user and db_name according to PostgreSQL rules.
         # The rules are: 1-63 characters, alphanumeric, underscore and $
@@ -115,7 +118,13 @@ defmodule Supavisor.Handlers.Proxy.Client do
           reason = "Invalid format for user or db_name"
           Logger.error("ProxyClient: #{inspect(reason)}")
           Telem.client_join(:fail, tenant_or_alias)
-          HH.send_error(data.sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
+
+          HandlerHelpers.send_error(
+            data.sock,
+            "XX000",
+            "Authentication error, reason: #{inspect(reason)}"
+          )
+
           {:stop, {:shutdown, :invalid_format}}
         end
 
@@ -132,7 +141,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
         :exchange,
         %{sock: sock} = data
       ) do
-    sni_hostname = HH.try_get_sni(sock)
+    sni_hostname = HandlerHelpers.try_get_sni(sock)
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
@@ -147,7 +156,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
             db_name
           )
 
-        mode = S.mode(id)
+        mode = Supavisor.mode(id)
 
         Logger.metadata(
           project: tenant_or_alias,
@@ -161,7 +170,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
-        {:ok, addr} = HH.addr_from_sock(sock)
+        {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
 
         cond do
           info.tenant.enforce_ssl and !data.ssl ->
@@ -169,14 +178,14 @@ defmodule Supavisor.Handlers.Proxy.Client do
               "ProxyClient: Tenant is not allowed to connect without SSL, user #{user}"
             )
 
-            :ok = HH.send_error(sock, "XX000", "SSL connection is required")
+            :ok = HandlerHelpers.send_error(sock, "XX000", "SSL connection is required")
             Telem.client_join(:fail, id)
             {:stop, {:shutdown, :ssl_required}}
 
-          HH.filter_cidrs(info.tenant.allow_list, addr) == [] ->
+          HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] ->
             message = "Address not in tenant allow_list: " <> inspect(addr)
             Logger.error("ProxyClient: #{message}")
-            :ok = HH.send_error(sock, "XX000", message)
+            :ok = HandlerHelpers.send_error(sock, "XX000", message)
 
             Telem.client_join(:fail, id)
             {:stop, {:shutdown, :address_not_allowed}}
@@ -197,7 +206,11 @@ defmodule Supavisor.Handlers.Proxy.Client do
                 Logger.error("ProxyClient: Authentication auth_secrets error: #{inspect(reason)}")
 
                 :ok =
-                  HH.send_error(sock, "XX000", "Authentication error, reason: #{inspect(reason)}")
+                  HandlerHelpers.send_error(
+                    sock,
+                    "XX000",
+                    "Authentication error, reason: #{inspect(reason)}"
+                  )
 
                 Telem.client_join(:fail, id)
                 {:stop, {:shutdown, :auth_secrets_error}}
@@ -209,7 +222,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
           "ProxyClient: User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}"
         )
 
-        :ok = HH.send_error(sock, "XX000", "Tenant or user not found")
+        :ok = HandlerHelpers.send_error(sock, "XX000", "Tenant or user not found")
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :user_not_found}}
     end
@@ -261,7 +274,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
           Logger.debug("ProxyClient: Cache hit for #{inspect(key)}")
         end
 
-        HH.sock_send(sock, msg)
+        HandlerHelpers.sock_send(sock, msg)
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :exchange_error}}
 
@@ -276,7 +289,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
           end
 
         Logger.debug("ProxyClient: Exchange success")
-        :ok = HH.sock_send(sock, Server.authentication_ok())
+        :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
         Telem.client_join(:ok, data.id)
 
         auth = Map.merge(data.auth, %{secrets: secrets, method: method})
@@ -315,12 +328,12 @@ defmodule Supavisor.Handlers.Proxy.Client do
       {:error, :max_clients_reached} ->
         msg = "Max client connections reached"
         Logger.error("ClientHandler: #{msg}")
-        :ok = HH.send_error(data.sock, "XX000", msg)
+        :ok = HandlerHelpers.send_error(data.sock, "XX000", msg)
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :max_clients_reached}}
 
       :proxy ->
-        {:ok, %{port: port, host: host}} = S.get_pool_ranch(data.id)
+        {:ok, %{port: port, host: host}} = Supavisor.get_pool_ranch(data.id)
 
         auth =
           Map.merge(data.auth, %{
@@ -344,7 +357,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
   def handle_event(:internal, {:client, :connect_db}, _, %{auth: auth} = data) do
     Logger.debug("Try to connect to DB")
     Telem.handler_action(:db_handler, :db_connection, data.id)
-    ip_ver = H.ip_version(auth.ip_version, auth.host)
+    ip_ver = Helpers.ip_version(auth.ip_version, auth.host)
 
     sock_opts = [
       :binary,
@@ -360,11 +373,11 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
         case Db.try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            tenant = if(data.proxy, do: S.tenant(data.id))
+            tenant = if(data.proxy, do: Supavisor.tenant(data.id))
 
             case Db.send_startup(sock, auth, tenant) do
               :ok ->
-                HH.active_once(sock)
+                HandlerHelpers.active_once(sock)
                 auth = Map.put(auth, :ip_ver, ip_ver)
                 {:next_state, :db_authentication, %{data | db_sock: sock, auth: auth}}
 
@@ -390,9 +403,9 @@ defmodule Supavisor.Handlers.Proxy.Client do
   def handle_event(:internal, {:client, {:greetings, ps}}, _, %{sock: sock} = data) do
     {header, <<pid::32, key::32>> = payload} = Server.backend_key_data()
     msg = [ps, [header, payload], Server.ready_for_query()]
-    :ok = HH.listen_cancel_query(pid, key)
-    :ok = HH.sock_send(sock, msg)
-    HH.active_once(sock)
+    :ok = HandlerHelpers.listen_cancel_query(pid, key)
+    :ok = HandlerHelpers.sock_send(sock, msg)
+    HandlerHelpers.active_once(sock)
     Telem.client_connection_time(data.connection_start, data.id)
     {:next_state, :idle, data, handle_actions(data)}
   end
@@ -415,7 +428,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   def handle_event(:timeout, :heartbeat_check, _, data) do
     Logger.debug("ProxyClient: Send heartbeat to client")
-    HH.sock_send(data.sock, Server.application_name())
+    HandlerHelpers.sock_send(data.sock, Server.application_name())
     {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
   end
 
@@ -442,14 +455,14 @@ defmodule Supavisor.Handlers.Proxy.Client do
     Telem.pool_checkout_time(time, data.id, same_box)
     Logger.debug("ProxyClient: Checkout new db connection #{inspect({db_pid, db_sock})}")
 
-    HH.sock_send(db_sock, bin)
-    HH.active_once(data.sock)
+    HandlerHelpers.sock_send(db_sock, bin)
+    HandlerHelpers.active_once(data.sock)
     {:keep_state, %{data | db_pid: db_pid, db_sock: db_sock}}
   end
 
   def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
-    HH.sock_send(data.db_sock, bin)
-    HH.active_once(data.sock)
+    HandlerHelpers.sock_send(data.db_sock, bin)
+    HandlerHelpers.active_once(data.sock)
     :keep_state_and_data
   end
 
@@ -465,10 +478,11 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   ## Internal functions
 
-  @spec handle_exchange(S.sock(), {atom(), fun()}) :: {:ok, binary() | nil} | {:error, String.t()}
+  @spec handle_exchange(Supavisor.sock(), {atom(), fun()}) ::
+          {:ok, binary() | nil} | {:error, String.t()}
   def handle_exchange({_, socket} = sock, {:auth_query_md5 = method, secrets}) do
     salt = :crypto.strong_rand_bytes(4)
-    :ok = HH.sock_send(sock, Server.md5_request(salt))
+    :ok = HandlerHelpers.sock_send(sock, Server.md5_request(salt))
 
     with {:ok,
           %{
@@ -484,7 +498,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
   end
 
   def handle_exchange({_, socket} = sock, {method, secrets}) do
-    :ok = HH.sock_send(sock, Server.scram_request())
+    :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
 
     with {:ok,
           %{
@@ -509,7 +523,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
            ),
          {:ok, key} <- authenticate_exchange(method, secrets, signatures, p) do
       message = "v=#{Base.encode64(signatures.server)}"
-      :ok = HH.sock_send(sock, Server.exchange_message(:final, message))
+      :ok = HandlerHelpers.sock_send(sock, Server.exchange_message(:final, message))
       {:ok, key}
     else
       {:error, message} -> {:error, message}
@@ -528,7 +542,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
   def reply_first_exchange(sock, method, secrets, channel, nonce, user) do
     {message, signatures} = exchange_first(method, secrets, nonce, user, channel)
-    :ok = HH.sock_send(sock, Server.exchange_message(:first, message))
+    :ok = HandlerHelpers.sock_send(sock, Server.exchange_message(:first, message))
     {:ok, signatures}
   end
 
@@ -541,18 +555,19 @@ defmodule Supavisor.Handlers.Proxy.Client do
   def authenticate_exchange(:auth_query, secrets, signatures, p) do
     client_key = :crypto.exor(Base.decode64!(p), signatures.client)
 
-    if H.hash(client_key) == secrets.().stored_key,
+    if Helpers.hash(client_key) == secrets.().stored_key,
       do: {:ok, client_key},
       else: {:error, "Wrong password"}
   end
 
   def authenticate_exchange(:auth_query_md5, client_hash, server_hash, salt) do
-    if "md5" <> H.md5([server_hash, salt]) == client_hash,
+    if "md5" <> Helpers.md5([server_hash, salt]) == client_hash,
       do: {:ok, nil},
       else: {:error, "Wrong password"}
   end
 
-  @spec update_user_data(map(), map(), String.t(), S.id(), String.t(), S.mode()) :: map()
+  @spec update_user_data(map(), map(), String.t(), Supavisor.id(), String.t(), Supavisor.mode()) ::
+          map()
   def update_user_data(data, info, user, id, db_name, mode) do
     proxy_type = if info.tenant.require_user, do: :password, else: :auth_query
 
@@ -587,7 +602,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
   end
 
   @spec auth_secrets(map, String.t(), term(), non_neg_integer()) ::
-          {:ok, S.secrets()} | {:error, term()}
+          {:ok, Supavisor.secrets()} | {:error, term()}
   ## password secrets
   def auth_secrets(%{user: user, tenant: %{require_user: true}}, _, _, _) do
     secrets = %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
@@ -616,7 +631,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
       if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
         [
           {:verify, :verify_peer},
-          {:cacerts, [H.upstream_cert(tenant.upstream_tls_ca)]},
+          {:cacerts, [Helpers.upstream_cert(tenant.upstream_tls_ca)]},
           {:server_name_indication, String.to_charlist(tenant.db_host)},
           {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
         ]
@@ -632,7 +647,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
         parameters: [application_name: "Supavisor auth_query"],
         ssl: tenant.upstream_ssl,
         socket_options: [
-          H.ip_version(tenant.ip_version, tenant.db_host)
+          Helpers.ip_version(tenant.ip_version, tenant.db_host)
         ],
         queue_target: 1_000,
         queue_interval: 5_000,
@@ -647,7 +662,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     )
 
     resp =
-      with {:ok, secret} <- H.get_user_secret(conn, tenant.auth_query, db_user) do
+      with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
         t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
         {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
       end
@@ -661,10 +676,10 @@ defmodule Supavisor.Handlers.Proxy.Client do
           {binary(), map()}
   def exchange_first(:password, secret, nonce, user, channel) do
     message = Server.exchange_first_message(nonce)
-    server_first_parts = H.parse_server_first(message, nonce)
+    server_first_parts = Helpers.parse_server_first(message, nonce)
 
     {client_final_message, server_proof} =
-      H.get_client_final(
+      Helpers.get_client_final(
         :password,
         secret.().password,
         server_first_parts,
@@ -684,10 +699,10 @@ defmodule Supavisor.Handlers.Proxy.Client do
   def exchange_first(:auth_query, secret, nonce, user, channel) do
     secret = secret.()
     message = Server.exchange_first_message(nonce, secret.salt)
-    server_first_parts = H.parse_server_first(message, nonce)
+    server_first_parts = Helpers.parse_server_first(message, nonce)
 
     sings =
-      H.signatures(
+      Helpers.signatures(
         secret.stored_key,
         secret.server_key,
         server_first_parts,
@@ -742,14 +757,14 @@ defmodule Supavisor.Handlers.Proxy.Client do
     level = options["log_level"] && String.to_existing_atom(options["log_level"])
 
     if level in [:debug, :info, :notice, :warning, :error] do
-      H.set_log_level(level)
+      Helpers.set_log_level(level)
       level
     end
   end
 
   def maybe_change_log(_), do: :ok
 
-  @spec checkout(pid(), non_neg_integer()) :: {pid(), S.sock()}
+  @spec checkout(pid(), non_neg_integer()) :: {pid(), Supavisor.sock()}
   def checkout(pool, timeout) do
     db_pid = :poolboy.checkout(pool, true, timeout)
     Process.link(db_pid)

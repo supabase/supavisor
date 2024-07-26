@@ -8,13 +8,12 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   alias Supavisor.{
     Helpers,
+    HandlerHelpers,
     Protocol.Server,
     Monitoring.PromEx,
     Handlers.Proxy.Db,
     Handlers.Proxy.Client
   }
-
-  alias Supavisor.HandlerHelpers, as: HH
 
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
@@ -120,7 +119,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   @impl true
   def terminate({:shutdown, reason}, state, data) do
-    HH.sock_send(data.sock, Server.error_message("XX000", "#{inspect(reason)}"))
+    HandlerHelpers.sock_send(data.sock, Server.error_message("XX000", "#{inspect(reason)}"))
     clean_up(data)
 
     Logger.info(
@@ -142,14 +141,12 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   @spec clean_up(map()) :: any()
   defp clean_up(data) do
-    HH.sock_close(data.sock)
-    HH.sock_close(data.db_sock)
+    HandlerHelpers.sock_close(data.sock)
+    HandlerHelpers.sock_close(data.db_sock)
 
     if data.id != nil do
-      with clients <- Registry.lookup(Supavisor.Registry.TenantClients, data.id),
-           true <- clients == [{self(), []}] or clients == [] do
-        PromEx.remove_metrics(data.id)
-      else
+      case Registry.lookup(Supavisor.Registry.TenantClients, data.id) do
+        clients when clients == [{self(), []}] or clients == [] -> PromEx.remove_metrics(data.id)
         _ -> :ok
       end
     end
