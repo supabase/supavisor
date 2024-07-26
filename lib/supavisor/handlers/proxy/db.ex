@@ -187,7 +187,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
         server_first_parts,
         nonce,
         data.auth.user,
-        data.auth.password.()
+        data.auth.secrets.().password
       )
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)

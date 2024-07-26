@@ -359,12 +359,16 @@ defmodule Supavisor do
   end
 
   @spec start_local_server(map()) :: {:ok, map()} | {:error, any()}
-  def start_local_server(args) do
-    acceptors = round(args.max_clients / 100)
+  def start_local_server(%{max_clients: max_clients} = args) do
+    # max_clients=-1 is used for testing the maximum allowed clients in ProxyTest
+    {acceptors, max_clients} =
+      if max_clients > 0,
+        do: {round(max_clients / 100), max_clients},
+        else: {1, 100}
 
     opts =
       %{
-        max_connections: args.max_clients,
+        max_connections: max_clients,
         num_acceptors: max(acceptors, 10),
         socket_opts: [port: 0, keepalive: true]
       }

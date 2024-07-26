@@ -265,8 +265,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :internal_error,
-                  message:
-                    "Authentication error, reason: \"Invalid characters in user or db_name\"",
+                  message: "Authentication error, reason: \"Invalid format for user or db_name\"",
                   pg_code: "XX000",
                   severity: "FATAL",
                   unknown: "FATAL"
