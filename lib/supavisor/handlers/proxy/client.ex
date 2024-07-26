@@ -32,7 +32,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
     {:stop, {:shutdown, :cancel_query}}
   end
 
-  def handle_event(:info, {:client, :cancel_query}, _, %{db_pid: db_pid} = data)
+  def handle_event(:info, {:client, :cancel_query}, _, %{db_pid: db_pid})
       when is_pid(db_pid) do
     Logger.debug("ProxyClient: Cancel query for #{inspect(db_pid)}")
 
@@ -42,7 +42,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
 
       error ->
         Logger.error(
-          "ClientHandler: Received cancel but no proc was found #{inspect(key)} #{inspect(error)}"
+          "ClientHandler: Received cancel but no proc was found #{inspect(db_pid)} #{inspect(error)}"
         )
     end
 
