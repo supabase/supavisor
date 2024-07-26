@@ -1,9 +1,12 @@
 defmodule Supavisor.Protocol.Client do
+  @moduledoc false
+
   require Logger
 
   @pkt_header_size 5
 
   defmodule Pkt do
+    @moduledoc false
     defstruct([:tag, :len, :payload, :bin])
 
     @type t :: %Pkt{

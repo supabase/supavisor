@@ -3,11 +3,12 @@ defmodule Supavisor.SynHandlerTest do
   import ExUnit.CaptureLog
   require Logger
   alias Ecto.Adapters.SQL.Sandbox
+  alias Supavisor.Support.Cluster
 
   @id {{:single, "syn_tenant"}, "postgres", :session, "postgres"}
 
   test "resolving conflict" do
-    {:ok, _pid, node2} = Supavisor.Support.Cluster.start_node()
+    {:ok, _pid, node2} = Cluster.start_node()
 
     secret = %{alias: "postgres"}
     auth_secret = {:password, fn -> secret end}

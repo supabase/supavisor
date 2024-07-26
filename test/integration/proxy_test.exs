@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
 
   alias Postgrex, as: P
+  alias Supavisor.Support.Cluster
 
   @tenant "proxy_tenant1"
 
@@ -75,7 +76,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "query via another node", %{proxy: proxy, user: user} do
-    {:ok, _pid, node2} = Supavisor.Support.Cluster.start_node()
+    {:ok, _pid, node2} = Cluster.start_node()
 
     sup =
       Enum.reduce_while(1..30, nil, fn _, acc ->
