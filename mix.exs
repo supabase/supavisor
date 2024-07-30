@@ -47,8 +47,7 @@ defmodule Supavisor.MixProject do
       {:phoenix_live_view, "~> 0.20.0"},
       {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_poller, "~> 1.0"},
-      # TODO: point it to Supabase fork of prom_ex when available
-      {:peep, github: "hauleth/peep", branch: "ft/custom-prometheus-types", override: true},
+      {:peep, "~> 3.1"},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
