@@ -8,8 +8,7 @@
   darwin,
   protobuf,
   libiconv,
-}:
-let
+}: let
   pname = "supavisor";
   version = "0.0.1";
   src = ./..;
@@ -23,12 +22,13 @@ let
   cargoDeps = rustPlatform.importCargoLock {
     lockFile = ../native/pgparser/Cargo.lock;
   };
-in mixRelease {
-  inherit pname version src mixFodDeps;
+in
+  mixRelease {
+    inherit pname version src mixFodDeps;
 
-  nativeBuildInputs = [cargo protobuf];
+    nativeBuildInputs = [cargo protobuf];
 
-  buildInputs = lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
+    buildInputs = lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
       libiconv
       frameworks.System
       frameworks.CoreFoundation
@@ -38,14 +38,14 @@ in mixRelease {
       frameworks.CFNetwork
       frameworks.Security
       libs.libDER
-  ]);
+    ]);
 
-  preConfigure = ''
-  cat ${cargoDeps}/.cargo/config >> native/pgparser/.cargo/config.toml
-  ln -s ${cargoDeps} native/pgparser/cargo-vendor-dir
-  '';
+    preConfigure = ''
+      cat ${cargoDeps}/.cargo/config >> native/pgparser/.cargo/config.toml
+      ln -s ${cargoDeps} native/pgparser/cargo-vendor-dir
+    '';
 
-  meta = {
-    mainProgram = "supavisor";
-  };
-}
+    meta = {
+      mainProgram = "supavisor";
+    };
+  }
