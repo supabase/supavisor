@@ -1,5 +1,6 @@
 defmodule SupavisorWeb.MetricsControllerTest do
   use SupavisorWeb.ConnCase
+  alias Supavisor.Support.Cluster
 
   setup %{conn: conn} do
     new_conn =
@@ -13,7 +14,7 @@ defmodule SupavisorWeb.MetricsControllerTest do
   end
 
   test "exporting metrics", %{conn: conn} do
-    {:ok, _pid, node2} = Supavisor.Support.Cluster.start_node()
+    {:ok, _pid, node2} = Cluster.start_node()
 
     Node.connect(node2)
 

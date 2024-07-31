@@ -349,4 +349,36 @@ defmodule Supavisor do
       pid -> Manager.set_parameter_status(pid, ps)
     end
   end
+
+  @spec get_pool_ranch(id) :: {:ok, map()} | {:error, :not_found}
+  def get_pool_ranch(id) do
+    case :syn.lookup(:tenants, id) do
+      {_sup_pid, %{port: _port, host: _host} = meta} -> {:ok, meta}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @spec start_local_server(map()) :: {:ok, map()} | {:error, any()}
+  def start_local_server(%{max_clients: max_clients} = args) do
+    # max_clients=-1 is used for testing the maximum allowed clients in ProxyTest
+    {acceptors, max_clients} =
+      if max_clients > 0,
+        do: {ceil(max_clients / 100), max_clients},
+        else: {1, 100}
+
+    opts =
+      %{
+        max_connections: max_clients,
+        num_acceptors: max(acceptors, 10),
+        socket_opts: [port: 0, keepalive: true]
+      }
+
+    handler = Supavisor.Handlers.Proxy.Handler
+    args = Map.put(args, :local, true)
+
+    with {:ok, pid} <- :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do
+      host = Application.get_env(:supavisor, :node_host)
+      {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
+    end
+  end
 end

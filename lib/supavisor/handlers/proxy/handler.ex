@@ -8,13 +8,12 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   alias Supavisor.{
     Helpers,
+    HandlerHelpers,
     Protocol.Server,
     Monitoring.PromEx,
     Handlers.Proxy.Db,
     Handlers.Proxy.Client
   }
-
-  alias Supavisor.HandlerHelpers, as: HH
 
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
@@ -37,7 +36,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
     {:ok, sock} = :ranch.handshake(ref)
     :ok = trans.setopts(sock, active: true)
-    Logger.debug("ClientHandler is: #{inspect(self())}")
+    Logger.debug("ProxyHandler is: #{inspect(self())}")
 
     data = %{
       id: nil,
@@ -71,40 +70,39 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       app_name: nil,
       peer_ip: Helpers.peer_ip(sock),
       auth: %{},
-      backend_key_data: %{}
+      backend_key_data: %{},
+      local: opts[:local] || false,
+      proxy: false
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
   end
 
   @impl true
-  def handle_event(e, {:client, _} = msg, state, data) do
-    Client.handle_event(e, msg, state, data)
-  end
+  def handle_event(:info, {:parameter_status, ps}, :exchange, _),
+    do: {:keep_state_and_data, {:next_event, :internal, {:client, {:greetings, ps}}}}
 
-  def handle_event(:timeout = e, msg, state, data) do
-    Client.handle_event(e, msg, state, data)
-  end
+  def handle_event(e, {:client, _} = msg, state, data),
+    do: Client.handle_event(e, msg, state, data)
+
+  def handle_event(:timeout = e, msg, state, data),
+    do: Client.handle_event(e, msg, state, data)
 
   def handle_event(event, {proto, sock, _payload} = msg, state, %{sock: {_, sock}} = data)
-      when proto in @proto do
-    Client.handle_event(event, msg, state, data)
-  end
+      when proto in @proto,
+      do: Client.handle_event(event, msg, state, data)
 
   def handle_event(event, {proto, sock, _payload} = msg, state, %{db_sock: {_, sock}} = data)
-      when proto in @proto do
-    Db.handle_event(event, msg, state, data)
-  end
+      when proto in @proto,
+      do: Db.handle_event(event, msg, state, data)
 
   def handle_event(event, {closed, sock} = msg, state, %{sock: {_, sock}} = data)
-      when closed in @sock_closed do
-    Client.handle_event(event, msg, state, data)
-  end
+      when closed in @sock_closed,
+      do: Client.handle_event(event, msg, state, data)
 
   def handle_event(event, {closed, sock} = msg, state, %{db_sock: {_, sock}} = data)
-      when closed in @sock_closed do
-    Db.handle_event(event, msg, state, data)
-  end
+      when closed in @sock_closed,
+      do: Db.handle_event(event, msg, state, data)
 
   def handle_event(type, content, state, data) do
     msg = [
@@ -121,7 +119,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   @impl true
   def terminate({:shutdown, reason}, state, data) do
-    HH.sock_send(data.sock, Server.error_message("XX000", "#{inspect(reason)}"))
+    HandlerHelpers.sock_send(data.sock, Server.error_message("XX000", "#{inspect(reason)}"))
     clean_up(data)
 
     Logger.info(
@@ -143,12 +141,14 @@ defmodule Supavisor.Handlers.Proxy.Handler do
 
   @spec clean_up(map()) :: any()
   defp clean_up(data) do
-    HH.sock_close(data.sock)
-    HH.sock_close(data.db_sock)
+    HandlerHelpers.sock_close(data.sock)
+    HandlerHelpers.sock_close(data.db_sock)
 
-    case Registry.lookup(Supavisor.Registry.TenantClients, data.id) do
-      clients when clients == [{self(), []}] or clients == [] -> PromEx.remove_metrics(data.id)
-      _ -> :ok
+    if data.id != nil do
+      case Registry.lookup(Supavisor.Registry.TenantClients, data.id) do
+        clients when clients == [{self(), []}] or clients == [] -> PromEx.remove_metrics(data.id)
+        _ -> :ok
+      end
     end
   end
 end

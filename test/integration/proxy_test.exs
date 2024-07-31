@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
 
   alias Postgrex, as: P
+  alias Supavisor.Support.Cluster
 
   @tenant "proxy_tenant1"
 
@@ -75,7 +76,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "query via another node", %{proxy: proxy, user: user} do
-    {:ok, _pid, node2} = Supavisor.Support.Cluster.start_node()
+    {:ok, _pid, node2} = Cluster.start_node()
 
     sup =
       Enum.reduce_while(1..30, nil, fn _, acc ->
@@ -265,8 +266,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :internal_error,
-                  message:
-                    "Authentication error, reason: \"Invalid characters in user or db_name\"",
+                  message: "Authentication error, reason: \"Invalid format for user or db_name\"",
                   pg_code: "XX000",
                   severity: "FATAL",
                   unknown: "FATAL"

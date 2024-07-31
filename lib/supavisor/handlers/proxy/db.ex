@@ -3,10 +3,13 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
   require Logger
 
-  alias Supavisor, as: S
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.HandlerHelpers, as: HH
-  alias Supavisor.{Monitoring.Telem, Protocol.Server}
+  alias Supavisor.{
+    Helpers,
+    DbHandler,
+    HandlerHelpers,
+    Monitoring.Telem,
+    Protocol.Server
+  }
 
   @type state :: :connect | :authentication | :idle | :busy
 
@@ -16,7 +19,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
   def handle_event(:info, {proto, _, bin}, :db_authentication, data) when proto in @proto do
     dec_pkt = Server.decode(bin)
     Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
-    HH.active_once(data.db_sock)
+    HandlerHelpers.active_once(data.db_sock)
 
     resp = Enum.reduce(dec_pkt, %{}, &handle_auth_pkts(&1, &2, data))
 
@@ -26,6 +29,15 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
       {:authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
+
+      %{authentication_server_final_message: _server_final} ->
+        :keep_state_and_data
+
+      %{authentication_ok: true} ->
+        :keep_state_and_data
+
+      :authentication ->
+        :keep_state_and_data
 
       :authentication_md5 ->
         {:keep_state, data}
@@ -56,15 +68,26 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
   # forwards the message to the client
   def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
-    HH.sock_send(data.sock, bin)
-    HH.active_once(data.db_sock)
+    HandlerHelpers.sock_send(data.sock, bin)
+    HandlerHelpers.active_once(data.db_sock)
 
     data =
       if String.ends_with?(bin, Server.ready_for_query()) do
         Logger.debug("ProxyDb: collected network usage")
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
         {_, db_stats} = Telem.network_usage(:db, data.db_sock, data.id, data.db_stats)
-        %{data | stats: stats, db_stats: db_stats}
+
+        case data.mode do
+          :transaction ->
+            DbHandler.set_idle(data.db_pid)
+            Helpers.controlling_process(data.db_sock, data.db_pid)
+            Process.unlink(data.db_pid)
+            :poolboy.checkin(data.pool, data.db_pid)
+            %{data | stats: stats, db_stats: db_stats, db_pid: nil, db_sock: nil}
+
+          _ ->
+            %{data | stats: stats, db_stats: db_stats}
+        end
       else
         data
       end
@@ -75,8 +98,13 @@ defmodule Supavisor.Handlers.Proxy.Db do
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     Logger.error("ProxyDb: Connection closed when state was #{state}")
     Telem.handler_action(:db_handler, :stopped, data.id)
-    HH.sock_send(data.sock, Server.error_message("XX000", "Database connection closed"))
-    HH.sock_close(data.sock)
+
+    HandlerHelpers.sock_send(
+      data.sock,
+      Server.error_message("XX000", "Database connection closed")
+    )
+
+    HandlerHelpers.sock_close(data.sock)
     {:stop, :db_socket_closed, data}
   end
 
@@ -110,7 +138,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
           ]
 
           bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
-          :ok = HH.sock_send(data.db_sock, bin)
+          :ok = HandlerHelpers.sock_send(data.db_sock, bin)
           nonce
 
         other ->
@@ -128,10 +156,10 @@ defmodule Supavisor.Handlers.Proxy.Db do
        )
        when data.auth.require_user == false do
     nonce = data.nonce
-    server_first_parts = H.parse_server_first(server_first, nonce)
+    server_first_parts = Helpers.parse_server_first(server_first, nonce)
 
     {client_final_message, server_proof} =
-      H.get_client_final(
+      Helpers.get_client_final(
         :auth_query,
         data.auth.secrets.(),
         server_first_parts,
@@ -141,7 +169,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
       )
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-    :ok = HH.sock_send(data.db_sock, bin)
+    :ok = HandlerHelpers.sock_send(data.db_sock, bin)
 
     {:authentication_server_first_message, server_proof}
   end
@@ -159,35 +187,42 @@ defmodule Supavisor.Handlers.Proxy.Db do
         server_first_parts,
         nonce,
         data.auth.user,
-        data.auth.password.()
+        data.auth.secrets.().password
       )
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-    :ok = HH.sock_send(data.db_sock, bin)
+    :ok = HandlerHelpers.sock_send(data.db_sock, bin)
 
     {:authentication_server_first_message, server_proof}
   end
 
   defp handle_auth_pkts(
-         %{payload: {:authentication_server_final_message, _server_final}},
+         %{payload: {:authentication_server_final_message, server_final}},
          acc,
          _data
        ),
-       do: acc
+       do: Map.put(acc, :authentication_server_final_message, server_final)
+
+  defp handle_auth_pkts(
+         %{payload: :authentication_ok},
+         acc,
+         _data
+       ),
+       do: Map.put(acc, :authentication_ok, true)
 
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
     Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     digest =
       if data.auth.method == :password do
-        H.md5([data.auth.password.(), data.auth.user])
+        Helpers.md5([data.auth.password.(), data.auth.user])
       else
         data.auth.secrets.().secret
       end
 
-    payload = ["md5", H.md5([digest, salt]), 0]
+    payload = ["md5", Helpers.md5([digest, salt]), 0]
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
-    :ok = HH.sock_send(data.db_sock, bin)
+    :ok = HandlerHelpers.sock_send(data.db_sock, bin)
     :authentication_md5
   end
 
@@ -196,16 +231,17 @@ defmodule Supavisor.Handlers.Proxy.Db do
 
   defp handle_auth_pkts(_e, acc, _data), do: acc
 
-  @spec try_ssl_handshake(S.tcp_sock(), map()) :: {:ok, S.sock()} | {:error, term()}
+  @spec try_ssl_handshake(Supavisor.tcp_sock(), map()) ::
+          {:ok, Supavisor.sock()} | {:error, term()}
   def try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
-    with :ok <- HH.sock_send(sock, Server.ssl_request()) do
+    with :ok <- HandlerHelpers.sock_send(sock, Server.ssl_request()) do
       ssl_recv(sock, auth)
     end
   end
 
   def try_ssl_handshake(sock, _), do: {:ok, sock}
 
-  @spec ssl_recv(S.tcp_sock(), map) :: {:ok, S.ssl_sock()} | {:error, term}
+  @spec ssl_recv(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.ssl_sock()} | {:error, term}
   def ssl_recv({:gen_tcp, sock} = s, auth) do
     case :gen_tcp.recv(sock, 1, 15_000) do
       {:ok, <<?S>>} -> ssl_connect(s, auth)
@@ -214,7 +250,8 @@ defmodule Supavisor.Handlers.Proxy.Db do
     end
   end
 
-  @spec ssl_connect(S.tcp_sock(), map, pos_integer) :: {:ok, S.ssl_sock()} | {:error, term}
+  @spec ssl_connect(Supavisor.tcp_sock(), map, pos_integer) ::
+          {:ok, Supavisor.ssl_sock()} | {:error, term}
   def ssl_connect({:gen_tcp, sock}, auth, timeout \\ 5000) do
     opts =
       case auth.upstream_verify do
@@ -237,9 +274,10 @@ defmodule Supavisor.Handlers.Proxy.Db do
     end
   end
 
-  @spec send_startup(S.sock(), map()) :: :ok | {:error, term}
-  def send_startup(sock, auth) do
-    user = get_user(auth)
+  @spec send_startup(Supavisor.sock(), map(), String.t() | nil) :: :ok | {:error, term}
+  def send_startup(sock, auth, tenant) do
+    user =
+      if is_nil(tenant), do: get_user(auth), else: "#{get_user(auth)}.#{tenant}"
 
     msg =
       :pgo_protocol.encode_startup_message([
@@ -248,7 +286,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
         {"application_name", auth.application_name}
       ])
 
-    HH.sock_send(sock, msg)
+    HandlerHelpers.sock_send(sock, msg)
   end
 
   @spec get_user(map) :: String.t()

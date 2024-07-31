@@ -27,6 +27,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   defmodule Buckets do
+    @moduledoc false
     use Peep.Buckets.Custom,
       buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
   end

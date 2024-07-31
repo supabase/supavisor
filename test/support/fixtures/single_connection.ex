@@ -1,4 +1,6 @@
 defmodule SingleConnection do
+  @moduledoc false
+
   alias Postgrex, as: P
   @behaviour P.SimpleConnection
 

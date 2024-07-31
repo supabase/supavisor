@@ -350,13 +350,13 @@ defmodule Supavisor.Helpers do
     Process.flag(:max_heap_size, %{size: max_heap_words})
   end
 
-  @spec set_log_level(atom()) :: :ok
-  def set_log_level(nil), do: :ok
-
-  def set_log_level(level) when is_atom(level) do
+  @spec set_log_level(atom()) :: :ok | nil
+  def set_log_level(level) when level in [:debug, :info, :notice, :warning, :error] do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
   end
+
+  def set_log_level(_), do: nil
 
   @spec peer_ip(:gen_tcp.socket()) :: String.t()
   def peer_ip(socket) do
@@ -365,4 +365,8 @@ defmodule Supavisor.Helpers do
       _error -> "undefined"
     end
   end
+
+  @spec controlling_process(Supavisor.sock(), pid) :: :ok | {:error, any()}
+  def controlling_process({mod, socket}, pid),
+    do: mod.controlling_process(socket, pid)
 end

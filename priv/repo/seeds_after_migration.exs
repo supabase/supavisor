@@ -54,6 +54,7 @@ end
           "db_user" => db_conf[:username],
           "db_password" => db_conf[:password],
           "pool_size" => 9,
+          "max_clients" => 100,
           "mode_type" => "transaction"
         },
         %{
@@ -61,6 +62,7 @@ end
           "db_user" => db_conf[:username],
           "db_password" => db_conf[:password],
           "pool_size" => 3,
+          "max_clients" => 100,
           "mode_type" => "transaction"
         },
         %{
@@ -69,6 +71,7 @@ end
           "db_password" => db_conf[:password],
           "pool_size" => 1,
           "mode_type" => "session",
+          "max_clients" => 100,
           "pool_checkout_timeout" => 500
         },
         %{

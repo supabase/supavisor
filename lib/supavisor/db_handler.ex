@@ -31,6 +31,12 @@ defmodule Supavisor.DbHandler do
   @spec cast(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
   def cast(pid, caller, msg), do: :gen_statem.cast(pid, {:db_cast, caller, msg})
 
+  @spec set_idle(pid()) :: :ok
+  def set_idle(pid), do: :gen_statem.cast(pid, :set_idle)
+
+  @spec change_socket_owner(pid(), pid()) :: {:ok, S.sock()}
+  def change_socket_owner(pid, caller), do: :gen_statem.call(pid, {:tcp_owner, caller}, 15_000)
+
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
     try do
@@ -69,7 +75,8 @@ defmodule Supavisor.DbHandler do
       server_proof: nil,
       stats: %{},
       mode: args.mode,
-      replica_type: args.replica_type
+      replica_type: args.replica_type,
+      reply: nil
     }
 
     Telem.handler_action(:db_handler, :started, args.id)
@@ -288,6 +295,12 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  def handle_event(:internal, :check_buffer, :idle, %{reply: {from, pid}} = data) do
+    :ok = H.controlling_process(data.sock, pid)
+    reply = {:reply, from, {:ok, data.sock}}
+    {:next_state, :busy, %{data | reply: nil}, reply}
+  end
+
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
       when is_pid(caller) do
     if buff != [] do
@@ -391,6 +404,17 @@ defmodule Supavisor.DbHandler do
      {:next_event, :internal, :check_anon_buffer}}
   end
 
+  def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: sock} = data) do
+    if state in [:idle, :busy] do
+      :ok = H.controlling_process(data.sock, pid)
+      reply = {:reply, from, {:ok, sock}}
+      {:keep_state, data, reply}
+    else
+      Logger.debug("DbHandler: TCP owner call when state was #{state}")
+      {:keep_state, %{data | reply: {from, pid}}}
+    end
+  end
+
   def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
     reply = {:reply, from, sock_send(sock, bin)}
     {:next_state, :busy, %{data | caller: caller}, reply}
@@ -431,6 +455,11 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | caller: caller, buffer: new_buff}}
   end
 
+  def handle_event(:cast, :set_idle, _, data) do
+    Logger.debug("DbHandler: set_idle")
+    {:next_state, :idle, data}
+  end
+
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
     {:stop, :db_termination, data}
   end
@@ -452,7 +481,7 @@ defmodule Supavisor.DbHandler do
     end
 
     if state == :busy or data.mode == :session do
-      :ok = sock_send(data.sock, <<?X, 4::32>>)
+      sock_send(data.sock, <<?X, 4::32>>)
       :gen_tcp.close(elem(data.sock, 1))
       {:stop, {:client_handler_down, data.mode}}
     else
