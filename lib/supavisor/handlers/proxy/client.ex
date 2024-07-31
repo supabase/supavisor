@@ -768,7 +768,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
   def checkout(pool, timeout) do
     db_pid = :poolboy.checkout(pool, true, timeout)
     Process.link(db_pid)
-    {:ok, db_sock} = DbHandler.change_skt_owner(db_pid, self())
+    {:ok, db_sock} = DbHandler.change_socket_owner(db_pid, self())
     {db_pid, db_sock}
   end
 
