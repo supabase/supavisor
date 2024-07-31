@@ -365,4 +365,8 @@ defmodule Supavisor.Helpers do
       _error -> "undefined"
     end
   end
+
+  @spec controlling_process(Supavisor.sock(), pid) :: :ok | {:error, any()}
+  def controlling_process({mod, socket}, pid),
+    do: mod.controlling_process(socket, pid)
 end
