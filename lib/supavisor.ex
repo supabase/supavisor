@@ -363,7 +363,7 @@ defmodule Supavisor do
     # max_clients=-1 is used for testing the maximum allowed clients in ProxyTest
     {acceptors, max_clients} =
       if max_clients > 0,
-        do: {round(max_clients / 100), max_clients},
+        do: {ceil(max_clients / 100), max_clients},
         else: {1, 100}
 
     opts =

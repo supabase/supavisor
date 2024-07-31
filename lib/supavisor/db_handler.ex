@@ -296,7 +296,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:internal, :check_buffer, :idle, %{reply: {from, pid}} = data) do
-    :ok = H.controlling_process(data.sock, 1, pid)
+    :ok = H.controlling_process(data.sock, pid)
     reply = {:reply, from, {:ok, data.sock}}
     {:next_state, :busy, %{data | reply: nil}, reply}
   end
