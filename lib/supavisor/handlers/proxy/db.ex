@@ -80,7 +80,7 @@ defmodule Supavisor.Handlers.Proxy.Db do
         case data.mode do
           :transaction ->
             DbHandler.set_idle(data.db_pid)
-            :gen_tcp.controlling_process(elem(data.db_sock, 1), data.db_pid)
+            Helpers.controlling_process(data.db_sock, data.db_pid)
             Process.unlink(data.db_pid)
             :poolboy.checkin(data.pool, data.db_pid)
             %{data | stats: stats, db_stats: db_stats, db_pid: nil, db_sock: nil}

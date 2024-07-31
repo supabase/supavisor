@@ -173,7 +173,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
 
         cond do
-          info.tenant.enforce_ssl and !data.ssl ->
+          info.tenant.enforce_ssl and !data.ssl and !data.local ->
             Logger.error(
               "ProxyClient: Tenant is not allowed to connect without SSL, user #{user}"
             )
@@ -628,7 +628,7 @@ defmodule Supavisor.Handlers.Proxy.Client do
   @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
   def get_secrets(%{user: user, tenant: tenant}, db_user) do
     ssl_opts =
-      if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
+      if tenant.upstream_ssl and tenant.upstream_verify == :peer do
         [
           {:verify, :verify_peer},
           {:cacerts, [Helpers.upstream_cert(tenant.upstream_tls_ca)]},

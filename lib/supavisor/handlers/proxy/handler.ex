@@ -71,7 +71,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       peer_ip: Helpers.peer_ip(sock),
       auth: %{},
       backend_key_data: %{},
-      local: false,
+      local: opts[:local] || false,
       proxy: false
     }
 
