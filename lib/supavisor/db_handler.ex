@@ -406,7 +406,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: sock} = data) do
     if state in [:idle, :busy] do
-      :ok = :gen_tcp.controlling_process(elem(sock, 1), pid)
+      :ok = H.controlling_process(data.sock, pid)
       reply = {:reply, from, {:ok, sock}}
       {:keep_state, data, reply}
     else
