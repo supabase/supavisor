@@ -1,7 +1,7 @@
 import Config
 
 require Logger
-alias Supavisor.Helpers, as: H
+alias Supavisor.Helpers
 
 secret_key_base =
   if config_env() in [:dev, :test] do
@@ -101,7 +101,7 @@ config :libcluster,
 upstream_ca =
   if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
     File.read!(path)
-    |> H.cert_to_bin()
+    |> Helpers.cert_to_bin()
     |> case do
       {:ok, bin} ->
         Logger.info("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH",

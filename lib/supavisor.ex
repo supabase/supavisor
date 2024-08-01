@@ -2,9 +2,7 @@ defmodule Supavisor do
   @moduledoc false
   require Logger
   import Cachex.Spec
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.Tenants, as: T
-  alias Supavisor.Manager
+  alias Supavisor.{Manager, Helpers, Tenants}
 
   @type sock :: tcp_sock() | ssl_sock()
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
@@ -32,7 +30,7 @@ defmodule Supavisor do
           start_local_pool(id, secrets, log_level)
         else
           Logger.debug("Starting remote pool for #{inspect(id)}")
-          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets, log_level])
+          Helpers.rpc(node, __MODULE__, :start_local_pool, [id, secrets, log_level])
         end
 
       pid ->
@@ -89,7 +87,7 @@ defmodule Supavisor do
     if node() == dest_node do
       subscribe_local(pid, id)
     else
-      H.rpc(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
+      Helpers.rpc(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
     end
   end
 
@@ -241,18 +239,18 @@ defmodule Supavisor do
     user = elem(secrets, 1).().alias
 
     case type do
-      :single -> T.get_pool_config(tenant, user)
-      :cluster -> T.get_cluster_config(tenant, user)
+      :single -> Tenants.get_pool_config(tenant, user)
+      :cluster -> Tenants.get_cluster_config(tenant, user)
     end
     |> case do
       [_ | _] = replicas ->
         opts =
           Enum.map(replicas, fn replica ->
             case replica do
-              %T.ClusterTenants{tenant: tenant, type: type} ->
+              %Tenants.ClusterTenants{tenant: tenant, type: type} ->
                 Map.put(tenant, :replica_type, type)
 
-              %T.Tenant{} = tenant ->
+              %Tenants.Tenant{} = tenant ->
                 Map.put(tenant, :replica_type, :write)
             end
             |> supervisor_args(id, secrets, log_level)
@@ -317,10 +315,10 @@ defmodule Supavisor do
       database: if(db_name != nil, do: db_name, else: db_database),
       password: fn -> db_pass end,
       application_name: "Supavisor",
-      ip_version: H.ip_version(ip_ver, db_host),
+      ip_version: Helpers.ip_version(ip_ver, db_host),
       upstream_ssl: tenant_record.upstream_ssl,
       upstream_verify: tenant_record.upstream_verify,
-      upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
+      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
       require_user: tenant_record.require_user,
       method: method,
       secrets: secrets
@@ -366,12 +364,11 @@ defmodule Supavisor do
         do: {ceil(max_clients / 100), max_clients},
         else: {1, 100}
 
-    opts =
-      %{
-        max_connections: max_clients,
-        num_acceptors: max(acceptors, 10),
-        socket_opts: [port: 0, keepalive: true]
-      }
+    opts = %{
+      max_connections: max_clients,
+      num_acceptors: max(acceptors, 10),
+      socket_opts: [port: 0, keepalive: true]
+    }
 
     handler = Supavisor.Handlers.Proxy.Handler
     args = Map.put(args, :local, true)
