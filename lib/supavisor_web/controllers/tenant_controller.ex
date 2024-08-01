@@ -4,8 +4,7 @@ defmodule SupavisorWeb.TenantController do
 
   require Logger
 
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.{Tenants, Repo}
+  alias Supavisor.{Tenants, Repo, Helpers}
   alias Tenants.Tenant, as: TenantModel
 
   alias SupavisorWeb.OpenApiSchemas.{
@@ -94,7 +93,7 @@ defmodule SupavisorWeb.TenantController do
         "external_id" => id,
         "tenant" => %{"upstream_tls_ca" => "-----BEGIN" <> _ = upstream_tls_ca} = tenant_params
       }) do
-    case H.cert_to_bin(upstream_tls_ca) do
+    case Helpers.cert_to_bin(upstream_tls_ca) do
       {:ok, bin} ->
         update(conn, %{
           "external_id" => id,
@@ -112,7 +111,7 @@ defmodule SupavisorWeb.TenantController do
 
   def update(conn, %{"external_id" => id, "tenant" => params}) do
     Logger.info("Delete cache dist #{id}: #{inspect(Supavisor.del_all_cache_dist(id))}")
-    cert = H.upstream_cert(params["upstream_tls_ca"])
+    cert = Helpers.upstream_cert(params["upstream_tls_ca"])
 
     if params["upstream_ssl"] && params["upstream_verify"] == "peer" && !cert do
       conn
@@ -123,7 +122,7 @@ defmodule SupavisorWeb.TenantController do
     else
       case Tenants.get_tenant_by_external_id(id) do
         nil ->
-          case H.check_creds_get_ver(params) do
+          case Helpers.check_creds_get_ver(params) do
             {:error, reason} ->
               conn
               |> put_status(400)

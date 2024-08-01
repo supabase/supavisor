@@ -8,11 +8,7 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
-  alias Supavisor, as: S
-  alias Supavisor.ClientHandler, as: Client
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.HandlerHelpers, as: HH
-  alias Supavisor.{Monitoring.Telem, Protocol.Server}
+  alias Supavisor.{Helpers, HandlerHelpers, ClientHandler, Monitoring.Telem, Protocol.Server}
 
   @type state :: :connect | :authentication | :idle | :busy
 
@@ -34,7 +30,7 @@ defmodule Supavisor.DbHandler do
   @spec set_idle(pid()) :: :ok
   def set_idle(pid), do: :gen_statem.cast(pid, :set_idle)
 
-  @spec change_socket_owner(pid(), pid()) :: {:ok, S.sock()}
+  @spec change_socket_owner(pid(), pid()) :: {:ok, Supavisor.sock()}
   def change_socket_owner(pid, caller), do: :gen_statem.call(pid, {:tcp_owner, caller}, 15_000)
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
@@ -52,8 +48,8 @@ defmodule Supavisor.DbHandler do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    H.set_log_level(args.log_level)
-    H.set_max_heap_size(150)
+    Helpers.set_log_level(args.log_level)
+    Helpers.set_max_heap_size(150)
 
     {_, tenant} = args.tenant
     Logger.metadata(project: tenant, user: args.user, mode: args.mode)
@@ -187,10 +183,10 @@ defmodule Supavisor.DbHandler do
         %{payload: {:authentication_server_first_message, server_first}}, {ps, _}
         when data.auth.require_user == false ->
           nonce = data.nonce
-          server_first_parts = H.parse_server_first(server_first, nonce)
+          server_first_parts = Helpers.parse_server_first(server_first, nonce)
 
           {client_final_message, server_proof} =
-            H.get_client_final(
+            Helpers.get_client_final(
               :auth_query,
               data.auth.secrets.(),
               server_first_parts,
@@ -229,12 +225,12 @@ defmodule Supavisor.DbHandler do
 
           digest =
             if data.auth.method == :password do
-              H.md5([data.auth.password.(), data.auth.user])
+              Helpers.md5([data.auth.password.(), data.auth.user])
             else
               data.auth.secrets.().secret
             end
 
-          payload = ["md5", H.md5([digest, salt]), 0]
+          payload = ["md5", Helpers.md5([digest, salt]), 0]
           bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
           :ok = sock_send(data.sock, bin)
           {ps, :authentication_md5}
@@ -296,7 +292,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:internal, :check_buffer, :idle, %{reply: {from, pid}} = data) do
-    :ok = H.controlling_process(data.sock, pid)
+    :ok = Helpers.controlling_process(data.sock, pid)
     reply = {:reply, from, {:ok, data.sock}}
     {:next_state, :busy, %{data | reply: nil}, reply}
   end
@@ -356,7 +352,7 @@ defmodule Supavisor.DbHandler do
           :continue
       end
 
-    :ok = Client.client_cast(data.caller, bin, resp)
+    :ok = ClientHandler.client_cast(data.caller, bin, resp)
 
     if resp != :continue do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
@@ -369,7 +365,7 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got write replica message #{inspect(bin)}")
-    HH.setopts(data.sock, active: :once)
+    HandlerHelpers.setopts(data.sock, active: :once)
     # check if the response ends with "ready for query"
     ready = check_ready(bin)
     sent = data.sent || 0
@@ -382,12 +378,12 @@ defmodule Supavisor.DbHandler do
         _ -> {:client_call, :continue}
       end
 
-    :ok = apply(Client, send_via, [data.caller, bin, progress])
+    :ok = apply(ClientHandler, send_via, [data.caller, bin, progress])
 
     case progress do
       :ready_for_query ->
         {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-        HH.setopts(data.sock, active: true)
+        HandlerHelpers.setopts(data.sock, active: true)
 
         {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data), sent: false},
          {:next_event, :internal, :check_anon_buffer}}
@@ -406,7 +402,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: sock} = data) do
     if state in [:idle, :busy] do
-      :ok = H.controlling_process(data.sock, pid)
+      :ok = Helpers.controlling_process(data.sock, pid)
       reply = {:reply, from, {:ok, sock}}
       {:keep_state, data, reply}
     else
@@ -520,7 +516,7 @@ defmodule Supavisor.DbHandler do
     )
   end
 
-  @spec try_ssl_handshake(S.tcp_sock(), map) :: {:ok, S.sock()} | {:error, term()}
+  @spec try_ssl_handshake(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.sock()} | {:error, term()}
   defp try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
     case sock_send(sock, Server.ssl_request()) do
       :ok -> ssl_recv(sock, auth)
@@ -530,7 +526,7 @@ defmodule Supavisor.DbHandler do
 
   defp try_ssl_handshake(sock, _), do: {:ok, sock}
 
-  @spec ssl_recv(S.tcp_sock(), map) :: {:ok, S.ssl_sock()} | {:error, term}
+  @spec ssl_recv(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.ssl_sock()} | {:error, term}
   defp ssl_recv({:gen_tcp, sock} = s, auth) do
     case :gen_tcp.recv(sock, 1, 15_000) do
       {:ok, <<?S>>} ->
@@ -544,7 +540,8 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec ssl_connect(S.tcp_sock(), map, pos_integer) :: {:ok, S.ssl_sock()} | {:error, term}
+  @spec ssl_connect(Supavisor.tcp_sock(), map, pos_integer) ::
+          {:ok, Supavisor.ssl_sock()} | {:error, term}
   defp ssl_connect({:gen_tcp, sock}, auth, timeout \\ 5000) do
     opts =
       case auth.upstream_verify do
@@ -569,7 +566,7 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec send_startup(S.sock(), map()) :: :ok | {:error, term}
+  @spec send_startup(Supavisor.sock(), map()) :: :ok | {:error, term}
   defp send_startup(sock, auth) do
     user = get_user(auth)
 
@@ -583,12 +580,12 @@ defmodule Supavisor.DbHandler do
     sock_send(sock, msg)
   end
 
-  @spec sock_send(S.sock(), iodata) :: :ok | {:error, term}
+  @spec sock_send(Supavisor.sock(), iodata) :: :ok | {:error, term}
   defp sock_send({mod, sock}, data) do
     mod.send(sock, data)
   end
 
-  @spec activate(S.sock()) :: :ok | {:error, term}
+  @spec activate(Supavisor.sock()) :: :ok | {:error, term}
   defp activate({:gen_tcp, sock}) do
     :inet.setopts(sock, active: true)
   end
