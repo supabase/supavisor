@@ -378,7 +378,7 @@ defmodule Supavisor.DbHandler do
         _ -> {:client_call, :continue}
       end
 
-    :ok = apply(Client, send_via, [data.caller, bin, progress])
+    :ok = apply(ClientHandler, send_via, [data.caller, bin, progress])
 
     case progress do
       :ready_for_query ->
