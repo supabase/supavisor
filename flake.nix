@@ -39,7 +39,7 @@
           devenv-up = self'.devShells.default.config.procfileScript;
 
           supavisor = let
-            erl = pkgs.beam_nox.packages.erlang_26;
+            erl = pkgs.beam_nox.packages.erlang_27;
           in
             erl.callPackage ./nix/package.nix {};
 
@@ -51,13 +51,23 @@
 
           modules = [
             {
+              pre-commit.hooks = {
+                alejandra.enable = true;
+                typos.enable = true;
+              };
+            }
+            {
               languages.elixir = {
                 enable = true;
-                package = pkgs.beam.packages.erlang_26.elixir_1_17;
+                package = pkgs.beam.packages.erlang_27.elixir_1_17;
               };
               packages = [
                 pkgs.lexical
               ];
+
+              pre-commit.hooks = {
+                # credo.enable = true;
+              };
 
               # env.DYLD_INSERT_LIBRARIES = "${pkgs.mimalloc}/lib/libmimalloc.dylib";
             }
