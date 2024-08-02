@@ -56,7 +56,10 @@ defmodule Supavisor.Handlers.Proxy.Client do
         auth: auth,
         backend_key_data: b
       }) do
-    :ok = HandlerHelpers.cancel_query(~c"#{auth.host}", auth.port, auth.ip_ver, b.pid, b.key)
+    if b != %{} do
+      :ok = HandlerHelpers.cancel_query(~c"#{auth.host}", auth.port, auth.ip_ver, b.pid, b.key)
+    end
+
     :keep_state_and_data
   end
 

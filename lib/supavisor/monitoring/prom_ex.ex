@@ -155,7 +155,7 @@ defmodule Supavisor.Monitoring.PromEx do
         |> String.trim()
 
       if value != cleaned do
-        Logger.error("Tag validation: #{inspect(value)} / #{inspect(cleaned)}")
+        Logger.warning("Tag validation: #{inspect(value)} / #{inspect(cleaned)}")
       end
 
       "=\"#{cleaned}\""

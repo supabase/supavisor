@@ -2,6 +2,7 @@ defmodule SingleConnection do
   @moduledoc false
 
   alias Postgrex, as: P
+
   @behaviour P.SimpleConnection
 
   def connect(conf) do

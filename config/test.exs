@@ -42,8 +42,7 @@ config :supavisor, Supavisor.Vault,
 
 # Print only warnings and errors during test
 config :logger, :console,
-  level: :info,
-  format: "$time [$level] $message $metadata\n",
+  level: :error,
   metadata: [:error_code, :file, :line, :pid, :project, :user, :mode]
 
 # Initialize plugs at runtime for faster test compilation
