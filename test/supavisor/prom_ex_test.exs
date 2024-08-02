@@ -6,7 +6,7 @@ defmodule Supavisor.PromExTest do
 
   @tenant "prom_tenant"
 
-  setup_all do
+  setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
     {:ok, proxy} =

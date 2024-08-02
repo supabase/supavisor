@@ -8,7 +8,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
   @tenant "proxy_tenant1"
 
-  setup_all do
+  setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
     {:ok, proxy} =
@@ -205,8 +205,13 @@ defmodule Supavisor.Integration.ProxyTest do
     Process.flag(:trap_exit, true)
     db_conf = Application.get_env(:supavisor, Repo)
 
-    url =
-      "postgresql://max_clients.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_transaction),
+      username: "max_clients.#{@tenant}",
+      database: "postgres",
+      password: db_conf[:password]
+    ]
 
     assert {:error,
             {_,
@@ -219,7 +224,7 @@ defmodule Supavisor.Integration.ProxyTest do
                   severity: "FATAL",
                   unknown: "FATAL"
                 }
-              }, _}}} = parse_uri(url) |> single_connection()
+              }, _}}} = single_connection(connection_opts)
   end
 
   test "change role password", %{origin: origin} do
