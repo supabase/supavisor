@@ -1,12 +1,15 @@
 defmodule Supavisor.NativeHandler do
   @moduledoc false
+
   use GenServer
+
   @behaviour :ranch_protocol
 
   require Logger
+
   alias Supavisor, as: S
-  alias Supavisor.Helpers, as: H
   alias Supavisor.HandlerHelpers, as: HH
+  alias Supavisor.Helpers, as: H
   alias Supavisor.{Protocol.Server, Tenants}
 
   @impl true
@@ -149,7 +152,7 @@ defmodule Supavisor.NativeHandler do
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         payload =
-          if !!hello.payload["user"] do
+          if hello.payload["user"] do
             %{hello.payload | "user" => user}
           else
             hello.payload
@@ -161,7 +164,12 @@ defmodule Supavisor.NativeHandler do
 
         {:ok, addr} = HH.addr_from_sock(sock)
 
-        unless HH.filter_cidrs(tenant.allow_list, addr) == [] do
+        if HH.filter_cidrs(tenant.allow_list, addr) == [] do
+          message = "Address not in tenant allow_list: " <> inspect(addr)
+          Logger.error(message)
+          :ok = HH.send_error(sock, "XX000", message)
+          {:stop, :normal, state}
+        else
           case connect_local(host, port, payload, ip_ver, state.ssl) do
             {:ok, db_sock} ->
               auth = %{host: host, port: port, ip_ver: ip_ver}
@@ -171,11 +179,6 @@ defmodule Supavisor.NativeHandler do
               Logger.error("Error connecting to tenant db: #{inspect(reason)}")
               {:stop, :normal, state}
           end
-        else
-          message = "Address not in tenant allow_list: " <> inspect(addr)
-          Logger.error(message)
-          :ok = HH.send_error(sock, "XX000", message)
-          {:stop, :normal, state}
         end
 
       _ ->

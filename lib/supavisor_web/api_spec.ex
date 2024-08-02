@@ -4,8 +4,8 @@ defmodule SupavisorWeb.ApiSpec do
   alias OpenApiSpex.Info
   alias OpenApiSpex.OpenApi
   alias OpenApiSpex.Paths
-  alias OpenApiSpex.Server
   alias OpenApiSpex.SecurityScheme
+  alias OpenApiSpex.Server
 
   alias SupavisorWeb.Endpoint
   alias SupavisorWeb.Router

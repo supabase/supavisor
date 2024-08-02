@@ -8,7 +8,13 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
-  alias Supavisor.{Helpers, HandlerHelpers, ClientHandler, Monitoring.Telem, Protocol.Server}
+  alias Supavisor.{
+    ClientHandler,
+    HandlerHelpers,
+    Helpers,
+    Monitoring.Telem,
+    Protocol.Server
+  }
 
   @type state :: :connect | :authentication | :idle | :busy
 
@@ -27,11 +33,9 @@ defmodule Supavisor.DbHandler do
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
-    try do
-      {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
-    catch
-      error, reason -> {:error, {error, reason}}
-    end
+    {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
+  catch
+    error, reason -> {:error, {error, reason}}
   end
 
   @spec stop(pid()) :: :ok
@@ -459,7 +463,7 @@ defmodule Supavisor.DbHandler do
   end
 
   @spec receive_ready_for_query() :: :ok | :timeout_error
-  defp receive_ready_for_query() do
+  defp receive_ready_for_query do
     receive do
       {_proto, _socket, <<?Z, 5::32, ?I>>} ->
         :ok

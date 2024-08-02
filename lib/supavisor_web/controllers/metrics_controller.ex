@@ -27,7 +27,7 @@ defmodule SupavisorWeb.MetricsController do
   end
 
   @spec fetch_cluster_metrics() :: String.t()
-  def fetch_cluster_metrics() do
+  def fetch_cluster_metrics do
     Node.list()
     |> Task.async_stream(&fetch_node_metrics/1, timeout: :infinity)
     |> Enum.reduce(PromEx.get_metrics(), &merge_node_metrics/2)

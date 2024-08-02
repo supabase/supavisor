@@ -4,16 +4,21 @@ defmodule SupavisorWeb.TenantController do
 
   require Logger
 
-  alias Supavisor.{Tenants, Repo, Helpers}
+  alias Supavisor.{
+    Helpers,
+    Repo,
+    Tenants
+  }
+
   alias Tenants.Tenant, as: TenantModel
 
   alias SupavisorWeb.OpenApiSchemas.{
-    Tenant,
-    TenantList,
-    TenantCreate,
-    NotFound,
     Created,
-    Empty
+    Empty,
+    NotFound,
+    Tenant,
+    TenantCreate,
+    TenantList
   }
 
   action_fallback(SupavisorWeb.FallbackController)

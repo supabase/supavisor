@@ -18,8 +18,8 @@ defmodule Cluster.Strategy.Postgres do
 
   @vsn "1.1.49"
 
-  alias Cluster.Strategy
   alias Cluster.Logger
+  alias Cluster.Strategy
   alias Postgrex, as: P
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)

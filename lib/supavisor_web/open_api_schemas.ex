@@ -51,7 +51,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       }
     })
 
-    def response(), do: {"User Response", "application/json", __MODULE__}
+    def response, do: {"User Response", "application/json", __MODULE__}
   end
 
   defmodule Tenant do
@@ -114,7 +114,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       }
     })
 
-    def response(), do: {"Tenant Response", "application/json", __MODULE__}
+    def response, do: {"Tenant Response", "application/json", __MODULE__}
   end
 
   defmodule TenantList do
@@ -122,7 +122,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
 
     OpenApiSpex.schema(%{type: :array, items: Tenant})
-    def response(), do: {"Tenant List Response", "application/json", __MODULE__}
+    def response, do: {"Tenant List Response", "application/json", __MODULE__}
   end
 
   defmodule TenantCreate do
@@ -190,7 +190,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       required: [:tenant]
     })
 
-    def params(), do: {"Tenant Create Params", "application/json", __MODULE__}
+    def params, do: {"Tenant Create Params", "application/json", __MODULE__}
   end
 
   defmodule Created do
@@ -203,7 +203,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
-    def response(), do: {"", "application/json", __MODULE__}
+    def response, do: {"", "application/json", __MODULE__}
   end
 
   defmodule NotFound do
@@ -211,6 +211,6 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
-    def response(), do: {"Not found", "application/json", __MODULE__}
+    def response, do: {"Not found", "application/json", __MODULE__}
   end
 end

@@ -14,12 +14,12 @@ defmodule Supavisor.Monitoring.Telem do
   end
 
   defmacro network_usage_disable(do: block) do
-    if not @metrics_disabled do
-      block
-    else
+    if @metrics_disabled do
       quote do
         {:ok, %{recv_oct: 0, send_oct: 0}}
       end
+    else
+      block
     end
   end
 

@@ -275,7 +275,7 @@ defmodule Supavisor.Protocol.Server do
   end
 
   @spec scram_request() :: iodata
-  def scram_request() do
+  def scram_request do
     @scram_request
   end
 
@@ -323,11 +323,11 @@ defmodule Supavisor.Protocol.Server do
     decode_parameter_description(rest, [oid | acc])
   end
 
-  def flush() do
+  def flush do
     <<?H, 4::integer-32>>
   end
 
-  def sync() do
+  def sync do
     <<?S, 4::integer-32>>
   end
 
@@ -337,7 +337,7 @@ defmodule Supavisor.Protocol.Server do
     [<<?P, payload_len::integer-32>>, payload]
   end
 
-  def test_extended_query() do
+  def test_extended_query do
     [
       encode("select * from todos where id = 40;"),
       [<<68, 0, 0, 0, 6, 83>>, [], <<0>>],
@@ -345,13 +345,13 @@ defmodule Supavisor.Protocol.Server do
     ]
   end
 
-  def select_1_response() do
+  def select_1_response do
     <<84, 0, 0, 0, 33, 0, 1, 63, 99, 111, 108, 117, 109, 110, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       23, 0, 4, 255, 255, 255, 255, 0, 0, 68, 0, 0, 0, 11, 0, 1, 0, 0, 0, 1, 49, 67, 0, 0, 0, 13,
       83, 69, 76, 69, 67, 84, 32, 49, 0, 90, 0, 0, 0, 5, 73>>
   end
 
-  def authentication_ok() do
+  def authentication_ok do
     @authentication_ok
   end
 
@@ -370,7 +370,7 @@ defmodule Supavisor.Protocol.Server do
   end
 
   @spec backend_key_data() :: {iodata(), binary}
-  def backend_key_data() do
+  def backend_key_data do
     pid = System.unique_integer([:positive, :monotonic])
     key = :crypto.strong_rand_bytes(4)
     payload = <<pid::integer-32, key::binary>>
@@ -379,13 +379,13 @@ defmodule Supavisor.Protocol.Server do
   end
 
   @spec ready_for_query() :: binary()
-  def ready_for_query() do
+  def ready_for_query do
     @ready_for_query
   end
 
   # SSLRequest message
   @spec ssl_request() :: binary()
-  def ssl_request() do
+  def ssl_request do
     @ssl_request
   end
 
@@ -463,5 +463,5 @@ defmodule Supavisor.Protocol.Server do
   end
 
   @spec application_name() :: binary
-  def application_name(), do: @application_name
+  def application_name, do: @application_name
 end

@@ -6,10 +6,10 @@ defmodule Supavisor.Tenants do
   import Ecto.Query, warn: false
   alias Supavisor.Repo
 
-  alias Supavisor.Tenants.Tenant
-  alias Supavisor.Tenants.User
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
+  alias Supavisor.Tenants.Tenant
+  alias Supavisor.Tenants.User
 
   @doc """
   Returns the list of tenants.

@@ -41,7 +41,7 @@ defmodule Supavisor.TenantsMetrics do
 
   ## Internal functions
 
-  defp check_metrics() do
+  defp check_metrics do
     Process.send_after(
       self(),
       :check_metrics,
