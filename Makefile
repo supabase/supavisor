@@ -12,6 +12,7 @@ dev:
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
 	DB_POOL_SIZE="5" \
+	METRICS_DISABLED="false" \
 	ERL_AFLAGS="-kernel shell_history enabled +zdbbl 2097151" \
 	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
 
