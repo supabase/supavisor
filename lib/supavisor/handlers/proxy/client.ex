@@ -739,10 +739,10 @@ defmodule Supavisor.Handlers.Proxy.Client do
     max_len = 64
     suffix_len = 14
 
-    if String.length(name) <= max_len - suffix_len do
+    if byte_size(name) <= max_len - suffix_len do
       name <> suffix
     else
-      truncated_name = String.slice(name, 0, max_len - suffix_len - 3)
+      truncated_name = binary_slice(name, 0, max_len - suffix_len - 3)
       truncated_name <> "..." <> suffix
     end
   end
