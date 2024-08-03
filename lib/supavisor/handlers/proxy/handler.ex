@@ -15,6 +15,8 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     Handlers.Proxy.Client
   }
 
+  @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
+
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
 
@@ -144,7 +146,7 @@ defmodule Supavisor.Handlers.Proxy.Handler do
     HandlerHelpers.sock_close(data.sock)
     HandlerHelpers.sock_close(data.db_sock)
 
-    if data.id != nil do
+    if not @metrics_disabled and data.id != nil do
       case Registry.lookup(Supavisor.Registry.TenantClients, data.id) do
         clients when clients == [{self(), []}] or clients == [] -> PromEx.remove_metrics(data.id)
         _ -> :ok

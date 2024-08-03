@@ -8,6 +8,8 @@ defmodule Supavisor.Application do
   alias Supavisor.Monitoring.PromEx
   alias Supavisor.Handlers.Proxy.Handler, as: ProxyHandler
 
+  @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
+
   @impl true
   def start(_type, _args) do
     primary_config = :logger.get_primary_config()
@@ -58,13 +60,10 @@ defmodule Supavisor.Application do
     :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants])
 
-    PromEx.set_metrics_tags()
-
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
       Supavisor.ErlSysMon,
-      PromEx,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
@@ -81,10 +80,20 @@ defmodule Supavisor.Application do
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      Supavisor.TenantsMetrics,
+
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]
+
+    Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
+
+    children =
+      if not @metrics_disabled do
+        PromEx.set_metrics_tags()
+        children ++ [PromEx, Supavisor.TenantsMetrics]
+      else
+        children
+      end
 
     # start Cachex only if the node uses names, this is necessary for test setup
     children =

@@ -10,7 +10,8 @@ import Config
 config :supavisor,
   ecto_repos: [Supavisor.Repo],
   version: Mix.Project.config()[:version],
-  env: Mix.env()
+  env: Mix.env(),
+  metrics_disabled: System.get_env("METRICS_DISABLED") == "true"
 
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,
