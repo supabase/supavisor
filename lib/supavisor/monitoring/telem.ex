@@ -5,23 +5,21 @@ defmodule Supavisor.Monitoring.Telem do
 
   @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
 
-  defmacro if_metrics_enabled(do: block) do
-    if @metrics_disabled do
+  defmacro telemetry_execute(event_name, measurements, metadata) do
+    if not @metrics_disabled do
       quote do
-        nil
+        :telemetry.execute(unquote(event_name), unquote(measurements), unquote(metadata))
       end
-    else
-      block
     end
   end
 
   defmacro network_usage_disable(do: block) do
-    if @metrics_disabled do
+    if not @metrics_disabled do
+      block
+    else
       quote do
         {:ok, %{recv_oct: 0, send_oct: 0}}
       end
-    else
-      block
     end
   end
 
@@ -40,13 +38,11 @@ defmodule Supavisor.Monitoring.Telem do
 
           {{ptype, tenant}, user, mode, db_name} = id
 
-          if_metrics_enabled do
-            :telemetry.execute(
-              [:supavisor, type, :network, :stat],
-              stats,
-              %{tenant: tenant, user: user, mode: mode, type: ptype, db_name: db_name}
-            )
-          end
+          :telemetry.execute(
+            [:supavisor, type, :network, :stat],
+            stats,
+            %{tenant: tenant, user: user, mode: mode, type: ptype, db_name: db_name}
+          )
 
           {:ok, %{}}
 
@@ -59,46 +55,38 @@ defmodule Supavisor.Monitoring.Telem do
 
   @spec pool_checkout_time(integer(), Supavisor.id(), :local | :remote) :: :ok | nil
   def pool_checkout_time(time, {{type, tenant}, user, mode, db_name}, same_box) do
-    if_metrics_enabled do
-      :telemetry.execute(
-        [:supavisor, :pool, :checkout, :stop, same_box],
-        %{duration: time},
-        %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
-      )
-    end
+    telemetry_execute(
+      [:supavisor, :pool, :checkout, :stop, same_box],
+      %{duration: time},
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+    )
   end
 
   @spec client_query_time(integer(), Supavisor.id()) :: :ok | nil
   def client_query_time(start, {{type, tenant}, user, mode, db_name}) do
-    if_metrics_enabled do
-      :telemetry.execute(
-        [:supavisor, :client, :query, :stop],
-        %{duration: System.monotonic_time() - start},
-        %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
-      )
-    end
+    telemetry_execute(
+      [:supavisor, :client, :query, :stop],
+      %{duration: System.monotonic_time() - start},
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+    )
   end
 
   @spec client_connection_time(integer(), Supavisor.id()) :: :ok | nil
   def client_connection_time(start, {{type, tenant}, user, mode, db_name}) do
-    if_metrics_enabled do
-      :telemetry.execute(
-        [:supavisor, :client, :connection, :stop],
-        %{duration: System.monotonic_time() - start},
-        %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
-      )
-    end
+    telemetry_execute(
+      [:supavisor, :client, :connection, :stop],
+      %{duration: System.monotonic_time() - start},
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+    )
   end
 
   @spec client_join(:ok | :fail, Supavisor.id() | any()) :: :ok | nil
   def client_join(status, {{type, tenant}, user, mode, db_name}) do
-    if_metrics_enabled do
-      :telemetry.execute(
-        [:supavisor, :client, :joins, status],
-        %{},
-        %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
-      )
-    end
+    telemetry_execute(
+      [:supavisor, :client, :joins, status],
+      %{},
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+    )
   end
 
   def client_join(_status, id) do
@@ -111,13 +99,11 @@ defmodule Supavisor.Monitoring.Telem do
           Supavisor.id()
         ) :: :ok | nil
   def handler_action(handler, action, {{type, tenant}, user, mode, db_name}) do
-    if_metrics_enabled do
-      :telemetry.execute(
-        [:supavisor, handler, action, :all],
-        %{},
-        %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
-      )
-    end
+    telemetry_execute(
+      [:supavisor, handler, action, :all],
+      %{},
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+    )
   end
 
   def handler_action(handler, action, id) do

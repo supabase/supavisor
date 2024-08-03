@@ -88,7 +88,7 @@ defmodule Supavisor.Application do
     Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
 
     children =
-      unless @metrics_disabled do
+      if not @metrics_disabled do
         PromEx.set_metrics_tags()
         children ++ [PromEx, Supavisor.TenantsMetrics]
       else
