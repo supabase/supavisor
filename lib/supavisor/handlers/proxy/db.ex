@@ -8,7 +8,8 @@ defmodule Supavisor.Handlers.Proxy.Db do
     DbHandler,
     HandlerHelpers,
     Monitoring.Telem,
-    Protocol.Server
+    Protocol.Server,
+    Handlers.Proxy.Handler
   }
 
   @type state :: :connect | :authentication | :idle | :busy
@@ -56,8 +57,10 @@ defmodule Supavisor.Handlers.Proxy.Db do
         msg = "ProxyDb: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
         Logger.debug(msg)
         ps_encoded = Server.encode_parameter_status(ps)
+        HandlerHelpers.setopts(data.db_sock, active: true)
 
-        {:next_state, :idle, %{data | parameter_status: ps, backend_key_data: backend_key_data},
+        {:next_state, :idle,
+         %{data | parameter_status: ps, db_send: 0, backend_key_data: backend_key_data},
          {:next_event, :internal, {:client, {:greetings, ps_encoded}}}}
 
       other ->
@@ -70,23 +73,33 @@ defmodule Supavisor.Handlers.Proxy.Db do
   def handle_event(:info, {proto, _, bin}, _, data) when proto in @proto do
     HandlerHelpers.sock_send(data.sock, bin)
     HandlerHelpers.active_once(data.db_sock)
+    # db_send = maybe_active_once(data)
+    db_send = 0
 
     data =
-      if String.ends_with?(bin, Server.ready_for_query()) do
+      if check_ready_for_query_idle(bin) do
         Logger.debug("ProxyDb: collected network usage")
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
         {_, db_stats} = Telem.network_usage(:db, data.db_sock, data.id, data.db_stats)
 
         case data.mode do
           :transaction ->
-            DbHandler.set_idle(data.db_pid)
             Helpers.controlling_process(data.db_sock, data.db_pid)
+            DbHandler.set_idle(data.db_pid)
             Process.unlink(data.db_pid)
             :poolboy.checkin(data.pool, data.db_pid)
-            %{data | stats: stats, db_stats: db_stats, db_pid: nil, db_sock: nil}
+
+            %{
+              data
+              | stats: stats,
+                db_stats: db_stats,
+                db_pid: nil,
+                db_sock: nil,
+                db_send: db_send
+            }
 
           _ ->
-            %{data | stats: stats, db_stats: db_stats}
+            %{data | stats: stats, db_stats: db_stats, db_send: db_send}
         end
       else
         data
@@ -109,6 +122,19 @@ defmodule Supavisor.Handlers.Proxy.Db do
   end
 
   ## Internal functions
+
+  @spec maybe_active_once(map) :: non_neg_integer()
+  def maybe_active_once(%{db_send: 0} = data) do
+    HandlerHelpers.setopts(data.db_sock, active: true)
+    1
+  end
+
+  def maybe_active_once(%{db_send: db_send} = data) when db_send > 1024 do
+    HandlerHelpers.setopts(data.db_sock, active: :once)
+    0
+  end
+
+  def maybe_active_once(data), do: data.db_send + 1
 
   @spec handle_auth_pkts(map(), map(), map()) :: any()
   defp handle_auth_pkts(%{tag: :parameter_status, payload: {k, v}}, acc, _),
@@ -294,5 +320,15 @@ defmodule Supavisor.Handlers.Proxy.Db do
     if auth.require_user,
       do: auth.secrets.().db_user,
       else: auth.secrets.().user
+  end
+
+  @spec check_ready_for_query_idle(binary) :: boolean
+  def check_ready_for_query_idle(bin) do
+    bin_size = byte_size(bin)
+
+    case bin do
+      <<_::binary-size(bin_size - 6), 90, 0, 0, 0, 5, ?I>> -> true
+      _ -> false
+    end
   end
 end

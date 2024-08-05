@@ -453,6 +453,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:cast, :set_idle, _, data) do
     Logger.debug("DbHandler: set_idle")
+    HandlerHelpers.setopts(data.sock, active: true)
     {:next_state, :idle, data}
   end
 
@@ -469,6 +470,14 @@ defmodule Supavisor.DbHandler do
   end
 
   # linked client_handler went down
+  def handle_event(_, {:EXIT, pid, reason}, _, %{caller: nil}) do
+    Logger.error(
+      "DbHandler: ProxyClient #{inspect(pid)} went down with reason #{inspect(reason)}"
+    )
+
+    {:stop, {:client_handler_down}}
+  end
+
   def handle_event(_, {:EXIT, pid, reason}, state, data) do
     if reason != :normal do
       Logger.error(

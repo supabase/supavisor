@@ -74,7 +74,9 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       auth: %{},
       backend_key_data: %{},
       local: opts[:local] || false,
-      proxy: false
+      proxy: false,
+      db_send: 0,
+      client_send: 0
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -153,4 +155,17 @@ defmodule Supavisor.Handlers.Proxy.Handler do
       end
     end
   end
+
+  @spec maybe_client_once(map) :: non_neg_integer()
+  def maybe_client_once(%{client_send: 0} = data) do
+    HandlerHelpers.setopts(data.sock, active: true)
+    1
+  end
+
+  def maybe_client_once(%{client_send: client_send} = data) when client_send > 1024 do
+    HandlerHelpers.setopts(data.sock, active: :once)
+    0
+  end
+
+  def maybe_client_once(data), do: data.client_send + 1
 end
