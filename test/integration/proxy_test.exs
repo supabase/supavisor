@@ -61,11 +61,9 @@ defmodule Supavisor.Integration.ProxyTest do
       "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
     assert {:error,
-            {_,
-             {:stop,
-              %Postgrex.Error{
-                message: "error received in SCRAM server final message: \"Wrong password\""
-              }, _}}} = parse_uri(url) |> single_connection()
+            %Postgrex.Error{
+              message: "error received in SCRAM server final message: \"Wrong password\""
+            }} = parse_uri(url) |> single_connection()
   end
 
   test "insert", %{proxy: proxy, origin: origin} do
@@ -214,17 +212,15 @@ defmodule Supavisor.Integration.ProxyTest do
     ]
 
     assert {:error,
-            {_,
-             {:stop,
-              %Postgrex.Error{
-                postgres: %{
-                  code: :internal_error,
-                  message: "Max client connections reached",
-                  pg_code: "XX000",
-                  severity: "FATAL",
-                  unknown: "FATAL"
-                }
-              }, _}}} = single_connection(connection_opts)
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Max client connections reached",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = single_connection(connection_opts)
   end
 
   test "change role password", %{origin: origin} do
@@ -248,11 +244,9 @@ defmodule Supavisor.Integration.ProxyTest do
     :timer.sleep(1000)
 
     assert {:error,
-            {_,
-             {:stop,
-              %Postgrex.Error{
-                message: "error received in SCRAM server final message: \"Wrong password\""
-              }, _}}} = parse_uri(new_pass) |> single_connection()
+            %Postgrex.Error{
+              message: "error received in SCRAM server final message: \"Wrong password\""
+            }} = parse_uri(new_pass) |> single_connection()
 
     {:ok, pid} = parse_uri(new_pass) |> single_connection()
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
@@ -266,17 +260,15 @@ defmodule Supavisor.Integration.ProxyTest do
       "postgresql://user\"user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
 
     assert {:error,
-            {_,
-             {:stop,
-              %Postgrex.Error{
-                postgres: %{
-                  code: :internal_error,
-                  message: "Authentication error, reason: \"Invalid format for user or db_name\"",
-                  pg_code: "XX000",
-                  severity: "FATAL",
-                  unknown: "FATAL"
-                }
-              }, _}}} = parse_uri(url) |> single_connection()
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Authentication error, reason: \"Invalid format for user or db_name\"",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = parse_uri(url) |> single_connection()
   end
 
   defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
