@@ -15,23 +15,15 @@ defmodule Supavisor.DbHandler do
   @reconnect_timeout 2_500
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
-  @async_send_limit 1_000
 
-  def start_link(config) do
-    :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
-  end
+  def start_link(config),
+    do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
 
-  @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
+  def checkout(pid, sock, caller, timeout \\ 15_000),
+    do: :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
 
-  @spec cast(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def cast(pid, caller, msg), do: :gen_statem.cast(pid, {:db_cast, caller, msg})
-
-  @spec set_idle(pid()) :: :ok
-  def set_idle(pid), do: :gen_statem.cast(pid, :set_idle)
-
-  @spec change_socket_owner(pid(), pid()) :: {:ok, Supavisor.sock()}
-  def change_socket_owner(pid, caller), do: :gen_statem.call(pid, {:tcp_owner, caller}, 15_000)
+  @spec checkin(pid()) :: :ok
+  def checkin(pid), do: :gen_statem.cast(pid, :checkin)
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
@@ -49,31 +41,34 @@ defmodule Supavisor.DbHandler do
   def init(args) do
     Process.flag(:trap_exit, true)
     Helpers.set_log_level(args.log_level)
-    Helpers.set_max_heap_size(150)
+    Helpers.set_max_heap_size(90)
 
     {_, tenant} = args.tenant
     Logger.metadata(project: tenant, user: args.user, mode: args.mode)
 
-    data = %{
-      id: args.id,
-      sock: nil,
-      caller: nil,
-      sent: false,
-      auth: args.auth,
-      user: args.user,
-      tenant: args.tenant,
-      buffer: [],
-      anon_buffer: [],
-      db_state: nil,
-      parameter_status: %{},
-      nonce: nil,
-      messages: "",
-      server_proof: nil,
-      stats: %{},
-      mode: args.mode,
-      replica_type: args.replica_type,
-      reply: nil
-    }
+    data =
+      %{
+        id: args.id,
+        sock: nil,
+        caller: nil,
+        sent: false,
+        auth: args.auth,
+        user: args.user,
+        tenant: args.tenant,
+        buffer: [],
+        anon_buffer: [],
+        db_state: nil,
+        parameter_status: %{},
+        nonce: nil,
+        messages: "",
+        server_proof: nil,
+        stats: %{},
+        mode: args.mode,
+        replica_type: args.replica_type,
+        reply: nil,
+        pool: Supavisor.get_local_pool(args.id),
+        client_sock: nil
+      }
 
     Telem.handler_action(:db_handler, :started, args.id)
     {:ok, :connect, data, {:next_event, :internal, :connect}}
@@ -86,13 +81,19 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
     Logger.debug("DbHandler: Try to connect to DB")
 
-    sock_opts = [
-      :binary,
-      {:packet, :raw},
-      {:active, false},
-      {:nodelay, true},
-      auth.ip_version
-    ]
+    sock_opts =
+      [
+        mode: :binary,
+        packet: :raw,
+        # recbuf: 8192,
+        # sndbuf: 8192,
+        # backlog: 2048,
+        # send_timeout: 120,
+        # keepalive: true,
+        # nopush: true,
+        nodelay: true,
+        active: true
+      ] ++ [auth.ip_version]
 
     reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
 
@@ -291,35 +292,38 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:internal, :check_buffer, :idle, %{reply: {from, pid}} = data) do
-    :ok = Helpers.controlling_process(data.sock, pid)
-    reply = {:reply, from, {:ok, data.sock}}
-    {:next_state, :busy, %{data | reply: nil}, reply}
+  def handle_event(:internal, :check_buffer, :idle, %{reply: from} = data) when from != nil do
+    {:next_state, :busy, %{data | reply: nil}, {:reply, from, data.sock}}
   end
 
-  def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
-      when is_pid(caller) do
-    if buff != [] do
-      Logger.debug("DbHandler: Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
-      buff = Enum.reverse(buff)
-      :ok = sock_send(data.sock, buff)
-    end
+  # def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
+  #     when is_pid(caller) do
+  #   if buff != [] do
+  #     Logger.debug("DbHandler: Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
+  #     buff = Enum.reverse(buff)
+  #     :ok = sock_send(data.sock, buff)
+  #   end
 
-    {:next_state, :busy, %{data | buffer: []}}
-  end
+  #   {:next_state, :busy, %{data | buffer: []}}
+  # end
 
   # check if it needs to apply queries from the anon buffer
-  def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
-    if buff != [] do
-      Logger.debug(
-        "DbHandler: Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes"
-      )
+  # def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
+  #   if buff != [] do
+  #     Logger.debug(
+  #       "DbHandler: Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes"
+  #     )
 
-      buff = Enum.reverse(buff)
-      :ok = sock_send(data.sock, buff)
-    end
+  #     buff = Enum.reverse(buff)
+  #     :ok = sock_send(data.sock, buff)
+  #   end
 
-    {:keep_state, %{data | anon_buffer: []}}
+  #   {:keep_state, %{data | anon_buffer: []}}
+  # end
+
+  def handle_event(:internal, :check_anon_buffer, _, _) do
+    Logger.debug("DbHandler: Anon buffer is empty")
+    :keep_state_and_data
   end
 
   # the process received message from db without linked caller
@@ -352,9 +356,8 @@ defmodule Supavisor.DbHandler do
           :continue
       end
 
-    :ok = ClientHandler.client_cast(data.caller, bin, resp)
-
     if resp != :continue do
+      :ok = ClientHandler.db_status(data.caller, resp, bin)
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
     else
@@ -362,34 +365,30 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
+  def handle_event(:info, {proto, _, bin}, _, %{caller: caller, reply: nil} = data)
       when is_pid(caller) and proto in @proto do
-    Logger.debug("DbHandler: Got write replica message #{inspect(bin)}")
-    HandlerHelpers.setopts(data.sock, active: :once)
-    # check if the response ends with "ready for query"
-    ready = check_ready(bin)
-    sent = data.sent || 0
+    Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
 
-    {send_via, progress} =
-      case ready do
-        {:ready_for_query, :idle} -> {:client_cast, :ready_for_query}
-        {:ready_for_query, _} -> {:client_cast, :continue}
-        _ when sent < @async_send_limit -> {:client_cast, :continue}
-        _ -> {:client_call, :continue}
-      end
+    # HandlerHelpers.setopts(data.sock, active: :once)
 
-    :ok = apply(ClientHandler, send_via, [data.caller, bin, progress])
+    if String.ends_with?(bin, Server.ready_for_query()) do
+      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
-    case progress do
-      :ready_for_query ->
-        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-        HandlerHelpers.setopts(data.sock, active: true)
+      data =
+        case data.mode do
+          :session ->
+            HandlerHelpers.sock_send(data.client_sock, bin)
+            %{data | stats: stats}
 
-        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data), sent: false},
-         {:next_event, :internal, :check_anon_buffer}}
+          :transaction ->
+            ClientHandler.db_status(data.caller, :ready_for_query, bin)
+            %{data | stats: stats, caller: nil, client_sock: nil}
+        end
 
-      :continue ->
-        {:keep_state, %{data | sent: sent + 1}}
+      {:next_state, :idle, data, {:next_event, :internal, :check_anon_buffer}}
+    else
+      HandlerHelpers.sock_send(data.client_sock, bin)
+      :keep_state_and_data
     end
   end
 
@@ -400,60 +399,17 @@ defmodule Supavisor.DbHandler do
      {:next_event, :internal, :check_anon_buffer}}
   end
 
-  def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: sock} = data) do
-    if state in [:idle, :busy] do
-      :ok = Helpers.controlling_process(data.sock, pid)
-      reply = {:reply, from, {:ok, sock}}
-      {:keep_state, data, reply}
-    else
-      Logger.debug("DbHandler: TCP owner call when state was #{state}")
-      {:keep_state, %{data | reply: {from, pid}}}
+  def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
+    Logger.debug("DbHandler: checkout call when state was #{state}")
+
+    if state not in [:idle, :busy] do
+      IO.inspect({:checkout, state, sock, caller})
     end
-  end
 
-  def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
-    reply = {:reply, from, sock_send(sock, bin)}
-    {:next_state, :busy, %{data | caller: caller}, reply}
-  end
-
-  def handle_event({:call, from}, {:db_call, caller, bin}, :busy, %{sock: sock} = data) do
-    reply = {:reply, from, sock_send(sock, bin)}
-    {:keep_state, %{data | caller: caller}, reply}
-  end
-
-  def handle_event({:call, from}, {:db_call, caller, bin}, state, %{buffer: buff} = data) do
-    Logger.debug(
-      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(caller)}"
-    )
-
-    new_buff = [bin | buff]
-    reply = {:reply, from, {:buffering, IO.iodata_length(new_buff)}}
-    {:keep_state, %{data | caller: caller, buffer: new_buff}, reply}
-  end
-
-  # emulate handle_cast
-  def handle_event(:cast, {:db_cast, caller, bin}, state, %{sock: sock})
-      when state in [:idle, :busy] do
-    Logger.debug(
-      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, cast caller: #{inspect(caller)}"
-    )
-
-    sock_send(sock, bin)
-    :keep_state_and_data
-  end
-
-  def handle_event(:cast, {:db_cast, caller, bin}, state, %{buffer: buff} = data) do
-    Logger.debug(
-      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, cast caller: #{inspect(caller)}"
-    )
-
-    new_buff = [bin | buff]
-    {:keep_state, %{data | caller: caller, buffer: new_buff}}
-  end
-
-  def handle_event(:cast, :set_idle, _, data) do
-    Logger.debug("DbHandler: set_idle")
-    {:next_state, :idle, data}
+    # store the reply ref and send it when the state is idle
+    if state in [:idle, :busy],
+      do: {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}},
+      else: {:keep_state, %{data | client_sock: sock, caller: caller, reply: from}}
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
@@ -477,7 +433,7 @@ defmodule Supavisor.DbHandler do
     end
 
     if state == :busy or data.mode == :session do
-      sock_send(data.sock, <<?X, 4::32>>)
+      # sock_send(data.sock, <<?X, 4::32>>)
       :gen_tcp.close(elem(data.sock, 1))
       {:stop, {:client_handler_down, data.mode}}
     else

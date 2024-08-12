@@ -105,14 +105,15 @@ dev_start_rel:
 	DB_POOL_SIZE="5" \
 	_build/prod/rel/supavisor/bin/supavisor start_iex
 
+# rm -rf _build/prod && \
+
 prod_rel:
-	rm -rf _build/prod && \
-	MIX_ENV=prod mix compile && \
-	MIX_ENV=prod mix release supavisor
+	MIX_ENV=prod METRICS_DISABLED=true mix compile && \
+	MIX_ENV=prod METRICS_DISABLED=true mix release supavisor
 
 prod_start_rel:
 	MIX_ENV=prod \
-	NODE_NAME=node1 \
+	NODE_NAME="localhost" \
 	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
 	API_JWT_SECRET=dev \
 	METRICS_JWT_SECRET=dev \

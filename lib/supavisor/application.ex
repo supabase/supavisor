@@ -32,7 +32,7 @@ defmodule Supavisor.Application do
 
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction, ProxyHandler},
+       :transaction, Supavisor.ClientHandler},
       {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
        Supavisor.ClientHandler}
     ]
