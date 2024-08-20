@@ -6,7 +6,6 @@ defmodule Supavisor.Application do
   use Application
   require Logger
   alias Supavisor.Monitoring.PromEx
-  alias Supavisor.Handlers.Proxy.Handler, as: ProxyHandler
 
   @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
 

@@ -174,7 +174,7 @@ defmodule Supavisor.ClientHandler do
         not_allowed = ["\"", "\\"]
 
         if String.contains?(user, not_allowed) or String.contains?(db_name, not_allowed) do
-          reason = "Invalid characters in user or db_name"
+          reason = "Invalid format for user or db_name"
           Logger.error("ClientHandler: #{inspect(reason)}")
           Telem.client_join(:fail, data.id)
 
