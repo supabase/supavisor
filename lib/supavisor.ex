@@ -9,7 +9,7 @@ defmodule Supavisor do
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
-  @type mode :: :transaction | :session | :native
+  @type mode :: :transaction | :session | :native | :proxy
   @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t()}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
@@ -370,7 +370,7 @@ defmodule Supavisor do
       socket_opts: [port: 0, keepalive: true]
     }
 
-    handler = Supavisor.Handlers.Proxy.Handler
+    handler = Supavisor.ClientHandler
     args = Map.put(args, :local, true)
 
     with {:ok, pid} <- :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do

@@ -11,6 +11,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :ranch_protocol
   @behaviour :gen_statem
   @proto [:tcp, :ssl]
+  @cancel_query_msg <<16::32, 1234::16, 5678::16>>
 
   alias Supavisor.{
     Tenants,
@@ -82,7 +83,8 @@ defmodule Supavisor.ClientHandler do
       heartbeat_interval: 0,
       connection_start: System.monotonic_time(),
       log_level: nil,
-      db_sock: nil
+      db_sock: nil,
+      auth: %{}
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -101,7 +103,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   # cancel request
-  def handle_event(:info, {_, _, <<16::32, 1234::16, 5678::16, pid::32, key::32>>}, _, _) do
+  def handle_event(:info, {_, _, <<@cancel_query_msg, pid::32, key::32>>}, _, _) do
     Logger.debug("ClientHandler: Got cancel query for #{inspect({pid, key})}")
     :ok = HandlerHelpers.send_cancel_query(pid, key)
     {:stop, {:shutdown, :cancel_query}}
@@ -355,8 +357,15 @@ defmodule Supavisor.ClientHandler do
         :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
         Telem.client_join(:ok, data.id)
 
-        {:keep_state, %{data | auth_secrets: {method, secrets}},
-         {:next_event, :internal, :subscribe}}
+        auth = Map.merge(data.auth, %{secrets: secrets, method: method})
+
+        conn_type =
+          if data.mode == :proxy,
+            do: :connect_db,
+            else: :subscribe
+
+        {:keep_state, %{data | auth_secrets: {method, secrets}, auth: auth},
+         {:next_event, :internal, conn_type}}
     end
   end
 
@@ -365,6 +374,7 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, sup} <-
            Supavisor.start_dist(data.id, data.auth_secrets, log_level: data.log_level),
+         true <- if(node(sup) != node() and data.mode == :transaction, do: :proxy, else: true),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
@@ -385,10 +395,46 @@ defmodule Supavisor.ClientHandler do
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :max_clients_reached}}
 
+      :proxy ->
+        {:ok, %{port: port, host: host}} = Supavisor.get_pool_ranch(data.id)
+
+        auth =
+          Map.merge(data.auth, %{
+            port: port,
+            host: ~c"#{host}",
+            ip_version: :inet,
+            upstream_ssl: false,
+            upstream_tls_ca: nil,
+            upstream_verify: nil
+          })
+
+        {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
+
       error ->
         Logger.error("ClientHandler: Subscribe error: #{inspect(error)}")
         {:keep_state_and_data, {:timeout, 1000, :subscribe}}
     end
+  end
+
+  def handle_event(:internal, :connect_db, _, data) do
+    Logger.debug("Try to connect to DB")
+
+    args = %{
+      id: data.id,
+      auth: data.auth,
+      user: data.user,
+      tenant: {:single, data.tenant},
+      replica_type: :write,
+      mode: :proxy,
+      proxy: true,
+      log_level: data.log_level,
+      caller: self(),
+      client_sock: data.sock
+    }
+
+    {:ok, db_pid} = DbHandler.start_link(args)
+    db_sock = :gen_statem.call(db_pid, {:checkout, data.sock, self()})
+    {:keep_state, %{data | db_pid: {nil, db_pid, db_sock}, mode: :proxy}}
   end
 
   def handle_event(:internal, {:greetings, ps}, _, %{sock: sock} = data) do
@@ -455,9 +501,15 @@ defmodule Supavisor.ClientHandler do
   # incoming query with a single pool
   def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
       when is_binary(bin) and is_pid(pid) do
+    Logger.debug("ClientHandler: Receive query #{inspect(bin)}")
     db_pid = db_checkout(:both, :on_query, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: System.monotonic_time()},
+     {:next_event, :internal, {proto, nil, bin}}}
+  end
+
+  def handle_event(:info, {proto, _, bin}, _, %{mode: :proxy} = data) do
+    {:next_state, :busy, %{data | query_start: System.monotonic_time()},
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
@@ -491,6 +543,8 @@ defmodule Supavisor.ClientHandler do
   # forward query to db
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in @proto do
     # HandlerHelpers.setopts(data.sock, active: :once)
+
+    Logger.debug("ClientHandler: Forward query to db #{inspect(bin)} #{inspect(data.db_pid)}")
 
     case HandlerHelpers.sock_send(elem(data.db_pid, 2), bin) do
       :ok ->
@@ -723,8 +777,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) :: {pid, pid} | nil
-  defp db_checkout(_, _, %{mode: :session, db_pid: {pool, db_pid, db_sock}})
-       when is_pid(pool) and is_pid(db_pid) do
+  defp db_checkout(_, _, %{mode: mode, db_pid: {pool, db_pid, db_sock}})
+       when is_pid(db_pid) and mode in [:session, :proxy] do
     {pool, db_pid, db_sock}
   end
 
@@ -754,6 +808,7 @@ defmodule Supavisor.ClientHandler do
 
   @spec handle_db_pid(:transaction, pid(), pid() | nil) :: nil
   @spec handle_db_pid(:session, pid(), pid()) :: pid()
+  @spec handle_db_pid(:proxy, pid(), pid()) :: pid()
   defp handle_db_pid(:transaction, _pool, nil), do: nil
 
   defp handle_db_pid(:transaction, pool, {_, db_pid, _}) do
@@ -763,12 +818,28 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp handle_db_pid(:session, _, db_pid), do: db_pid
+  defp handle_db_pid(:proxy, _, db_pid), do: db_pid
 
   defp update_user_data(data, info, user, id, db_name, mode) do
     proxy_type =
       if info.tenant.require_user,
         do: :password,
         else: :auth_query
+
+    auth = %{
+      application_name: data[:app_name] || "Supavisor",
+      database: info.tenant.db_database,
+      host: ~c"#{info.tenant.db_host}",
+      sni_host: info.tenant.sni_hostname,
+      ip_version: Helpers.ip_version(info.tenant.ip_version, info.tenant.db_host),
+      port: info.tenant.db_port,
+      user: user,
+      password: info.user.db_password,
+      require_user: info.tenant.require_user,
+      upstream_ssl: info.tenant.upstream_ssl,
+      upstream_tls_ca: info.tenant.upstream_tls_ca,
+      upstream_verify: info.tenant.upstream_verify
+    }
 
     %{
       data
@@ -780,7 +851,8 @@ defmodule Supavisor.ClientHandler do
         id: id,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
         db_name: db_name,
-        mode: mode
+        mode: mode,
+        auth: auth
     }
   end
 

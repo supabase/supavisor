@@ -34,7 +34,8 @@ defmodule Supavisor.Application do
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
        :transaction, Supavisor.ClientHandler},
       {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
-       Supavisor.ClientHandler}
+       Supavisor.ClientHandler},
+      {:pg_proxy, Application.get_env(:supavisor, :proxy_port), :proxy, Supavisor.ClientHandler}
     ]
 
     for {key, port, mode, handler} <- proxy_ports do
