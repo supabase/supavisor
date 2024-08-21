@@ -156,17 +156,24 @@ defmodule Supavisor do
       [%{inspect(key) => inspect(result)} | acc]
     end
 
-    Supavisor.Cache
-    |> Cachex.stream!()
-    |> Enum.reduce([], fn entry(key: key), acc ->
-      case key do
-        {:metrics, ^tenant} -> del.(key, acc)
-        {:secrets, ^tenant, _} -> del.(key, acc)
-        {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
-        {:tenant_cache, ^tenant, _} -> del.(key, acc)
-        _ -> acc
-      end
-    end)
+    :ets.foldl(
+      fn
+        {:entry, key, _, _, _result}, acc ->
+          case key do
+            {:metrics, ^tenant} -> del.(key, acc)
+            {:secrets, ^tenant, _} -> del.(key, acc)
+            {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
+            {:tenant_cache, ^tenant, _} -> del.(key, acc)
+            _ -> acc
+          end
+
+        other, acc ->
+          Logger.error("Unknown key: #{inspect(other)}")
+          acc
+      end,
+      [],
+      Supavisor.Cache
+    )
   end
 
   @spec del_all_cache_dist(String.t(), pos_integer()) :: [map()]
