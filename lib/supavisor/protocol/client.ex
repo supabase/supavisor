@@ -163,7 +163,7 @@ defmodule Supavisor.Protocol.Client do
     :undef
   end
 
-  def parse_msg_sel_1() do
+  def parse_msg_sel_1 do
     <<80, 0, 0, 0, 16, 0, 115, 101, 108, 101, 99, 116, 32, 49, 0, 0, 0, 66, 0, 0, 0, 12, 0, 0, 0,
       0, 0, 0, 0, 0, 68, 0, 0, 0, 6, 80, 0, 69, 0, 0, 0, 9, 0, 0, 0, 0, 200, 83, 0, 0, 0, 4>>
   end

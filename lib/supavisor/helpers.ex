@@ -57,7 +57,9 @@ defmodule Supavisor.Helpers do
         Postgrex.query(conn, "select version()", [])
         |> case do
           {:ok, %{rows: [[version]]}} ->
-            if !params["require_user"] do
+            if params["require_user"] do
+              {:cont, {:ok, version}}
+            else
               case get_user_secret(conn, params["auth_query"], user["db_user"]) do
                 {:ok, _} ->
                   {:halt, {:ok, version}}
@@ -65,8 +67,6 @@ defmodule Supavisor.Helpers do
                 {:error, reason} ->
                   {:halt, {:error, reason}}
               end
-            else
-              {:cont, {:ok, version}}
             end
 
           {:error, reason} ->
@@ -231,12 +231,12 @@ defmodule Supavisor.Helpers do
   end
 
   @spec downstream_cert() :: Path.t() | nil
-  def downstream_cert() do
+  def downstream_cert do
     Application.get_env(:supavisor, :global_downstream_cert)
   end
 
   @spec downstream_key() :: Path.t() | nil
-  def downstream_key() do
+  def downstream_key do
     Application.get_env(:supavisor, :global_downstream_key)
   end
 
@@ -327,14 +327,12 @@ defmodule Supavisor.Helpers do
 
   @spec rpc(Node.t(), module(), atom(), [any()], non_neg_integer()) :: {:error, any()} | any()
   def rpc(node, module, function, args, timeout \\ 15_000) do
-    try do
-      :erpc.call(node, module, function, args, timeout)
-    catch
-      kind, reason -> {:error, {:badrpc, {kind, reason}}}
-    else
-      {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
-      result -> result
-    end
+    :erpc.call(node, module, function, args, timeout)
+  catch
+    kind, reason -> {:error, {:badrpc, {kind, reason}}}
+  else
+    {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
+    result -> result
   end
 
   @doc """

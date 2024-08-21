@@ -32,7 +32,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
   end
 
-  defp client_metrics() do
+  defp client_metrics do
     Event.build(
       :supavisor_tenant_client_event_metrics,
       [
@@ -138,7 +138,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  defp db_metrics() do
+  defp db_metrics do
     Event.build(
       :supavisor_tenant_db_event_metrics,
       [
@@ -201,7 +201,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  def execute_tenant_metrics() do
+  def execute_tenant_metrics do
     Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
     |> Enum.frequencies()
     |> Enum.each(&emit_telemetry_for_tenant/1)
@@ -232,7 +232,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  def execute_conn_tenants_metrics() do
+  def execute_conn_tenants_metrics do
     num =
       Registry.select(Supavisor.Registry.TenantSups, [{{:"$1", :_, :_}, [], [:"$1"]}])
       |> Enum.uniq()

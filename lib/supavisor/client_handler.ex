@@ -14,13 +14,13 @@ defmodule Supavisor.ClientHandler do
   @cancel_query_msg <<16::32, 1234::16, 5678::16>>
 
   alias Supavisor.{
-    Tenants,
-    Helpers,
     DbHandler,
     HandlerHelpers,
+    Helpers,
+    Monitoring.Telem,
     Protocol.Client,
     Protocol.Server,
-    Monitoring.Telem
+    Tenants
   }
 
   @impl true

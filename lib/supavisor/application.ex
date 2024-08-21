@@ -4,7 +4,10 @@ defmodule Supavisor.Application do
   @moduledoc false
 
   use Application
+
   require Logger
+
+  alias Supavisor.Handlers.Proxy.Handler, as: ProxyHandler
   alias Supavisor.Monitoring.PromEx
 
   @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
@@ -88,11 +91,11 @@ defmodule Supavisor.Application do
     Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
 
     children =
-      if not @metrics_disabled do
+      if @metrics_disabled do
+        children
+      else
         PromEx.set_metrics_tags()
         children ++ [PromEx, Supavisor.TenantsMetrics]
-      else
-        children
       end
 
     # start Cachex only if the node uses names, this is necessary for test setup

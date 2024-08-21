@@ -80,7 +80,7 @@ jobs:
       - name: Compile deps
         run: mix deps.compile
       - name: Credo checks
-        run: mix credo --strict --mute-exit-status
+        run: mix credo --strict --all --mute-exit-status
 
   tests:
     name: Run tests

@@ -42,7 +42,7 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec set_metrics_tags() :: map()
-  def set_metrics_tags() do
+  def set_metrics_tags do
     [_, host] = node() |> Atom.to_string() |> String.split("@")
 
     metrics_tags = %{
@@ -61,7 +61,7 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec short_node_id() :: String.t() | nil
-  def short_node_id() do
+  def short_node_id do
     with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <-
            Application.fetch_env(:supavisor, :fly_alloc_id),
          [short_alloc_id, _] <- String.split(fly_alloc_id, "-", parts: 2) do
@@ -72,7 +72,7 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec get_metrics() :: String.t()
-  def get_metrics() do
+  def get_metrics do
     metrics_tags =
       case Application.fetch_env(:supavisor, :metrics_tags) do
         :error -> set_metrics_tags()
@@ -93,7 +93,7 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec do_cache_tenants_metrics() :: list
-  def do_cache_tenants_metrics() do
+  def do_cache_tenants_metrics do
     metrics = get_metrics() |> String.split("\n")
 
     pools =

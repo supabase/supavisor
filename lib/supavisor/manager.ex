@@ -3,9 +3,9 @@ defmodule Supavisor.Manager do
   use GenServer, restart: :transient
   require Logger
 
+  alias Supavisor.Helpers, as: H
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
-  alias Supavisor.Helpers, as: H
 
   @check_timeout 120_000
 
@@ -135,7 +135,7 @@ defmodule Supavisor.Manager do
 
   ## Internal functions
 
-  defp check_subscribers() do
+  defp check_subscribers do
     Process.send_after(
       self(),
       :check_subscribers,
@@ -143,7 +143,7 @@ defmodule Supavisor.Manager do
     )
   end
 
-  defp now() do
+  defp now do
     System.system_time(:second)
   end
 
