@@ -1,7 +1,6 @@
 defmodule Supavisor do
   @moduledoc false
   require Logger
-  import Cachex.Spec
   alias Supavisor.{Manager, Helpers, Tenants}
 
   @type sock :: tcp_sock() | ssl_sock()
