@@ -27,6 +27,7 @@ dev.node2:
 	CLUSTER_POSTGRES="true" \
 	PROXY_PORT_SESSION="5442" \
 	PROXY_PORT_TRANSACTION="6553" \
+	PROXY_PORT="5402" \
 	NODE_IP=localhost \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server
@@ -106,13 +107,12 @@ dev_start_rel:
 	_build/prod/rel/supavisor/bin/supavisor start_iex
 
 prod_rel:
-	rm -rf _build/prod && \
-	MIX_ENV=prod mix compile && \
-	MIX_ENV=prod mix release supavisor
+	MIX_ENV=prod METRICS_DISABLED=true mix compile && \
+	MIX_ENV=prod METRICS_DISABLED=true mix release supavisor
 
 prod_start_rel:
 	MIX_ENV=prod \
-	NODE_NAME=node1 \
+	NODE_NAME="localhost" \
 	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
 	API_JWT_SECRET=dev \
 	METRICS_JWT_SECRET=dev \

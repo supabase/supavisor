@@ -6,7 +6,6 @@ defmodule Supavisor.Application do
   use Application
   require Logger
   alias Supavisor.Monitoring.PromEx
-  alias Supavisor.Handlers.Proxy.Handler, as: ProxyHandler
 
   @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
 
@@ -32,9 +31,10 @@ defmodule Supavisor.Application do
 
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction, ProxyHandler},
+       :transaction, Supavisor.ClientHandler},
       {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
-       Supavisor.ClientHandler}
+       Supavisor.ClientHandler},
+      {:pg_proxy, Application.get_env(:supavisor, :proxy_port), :proxy, Supavisor.ClientHandler}
     ]
 
     for {key, port, mode, handler} <- proxy_ports do

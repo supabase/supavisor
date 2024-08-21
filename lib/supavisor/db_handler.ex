@@ -15,23 +15,15 @@ defmodule Supavisor.DbHandler do
   @reconnect_timeout 2_500
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
-  @async_send_limit 1_000
 
-  def start_link(config) do
-    :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
-  end
+  def start_link(config),
+    do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
 
-  @spec call(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def call(pid, caller, msg), do: :gen_statem.call(pid, {:db_call, caller, msg}, 15_000)
+  def checkout(pid, sock, caller, timeout \\ 15_000),
+    do: :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
 
-  @spec cast(pid(), pid(), binary()) :: :ok | {:error, any()} | {:buffering, non_neg_integer()}
-  def cast(pid, caller, msg), do: :gen_statem.cast(pid, {:db_cast, caller, msg})
-
-  @spec set_idle(pid()) :: :ok
-  def set_idle(pid), do: :gen_statem.cast(pid, :set_idle)
-
-  @spec change_socket_owner(pid(), pid()) :: {:ok, Supavisor.sock()}
-  def change_socket_owner(pid, caller), do: :gen_statem.call(pid, {:tcp_owner, caller}, 15_000)
+  @spec checkin(pid()) :: :ok
+  def checkin(pid), do: :gen_statem.cast(pid, :checkin)
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
@@ -49,31 +41,35 @@ defmodule Supavisor.DbHandler do
   def init(args) do
     Process.flag(:trap_exit, true)
     Helpers.set_log_level(args.log_level)
-    Helpers.set_max_heap_size(150)
+    Helpers.set_max_heap_size(90)
 
     {_, tenant} = args.tenant
     Logger.metadata(project: tenant, user: args.user, mode: args.mode)
 
-    data = %{
-      id: args.id,
-      sock: nil,
-      caller: nil,
-      sent: false,
-      auth: args.auth,
-      user: args.user,
-      tenant: args.tenant,
-      buffer: [],
-      anon_buffer: [],
-      db_state: nil,
-      parameter_status: %{},
-      nonce: nil,
-      messages: "",
-      server_proof: nil,
-      stats: %{},
-      mode: args.mode,
-      replica_type: args.replica_type,
-      reply: nil
-    }
+    data =
+      %{
+        id: args.id,
+        sock: nil,
+        sent: false,
+        auth: args.auth,
+        user: args.user,
+        tenant: args.tenant,
+        buffer: [],
+        anon_buffer: [],
+        db_state: nil,
+        parameter_status: %{},
+        nonce: nil,
+        messages: "",
+        server_proof: nil,
+        stats: %{},
+        mode: args.mode,
+        replica_type: args.replica_type,
+        reply: nil,
+        pool: Supavisor.get_local_pool(args.id),
+        caller: args[:caller] || nil,
+        client_sock: args[:client_sock] || nil,
+        proxy: args[:proxy] || false
+      }
 
     Telem.handler_action(:db_handler, :started, args.id)
     {:ok, :connect, data, {:next_event, :internal, :connect}}
@@ -86,13 +82,20 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, _, :connect, %{auth: auth} = data) do
     Logger.debug("DbHandler: Try to connect to DB")
 
-    sock_opts = [
-      :binary,
-      {:packet, :raw},
-      {:active, false},
-      {:nodelay, true},
-      auth.ip_version
-    ]
+    sock_opts =
+      [
+        auth.ip_version,
+        mode: :binary,
+        packet: :raw,
+        # recbuf: 8192,
+        # sndbuf: 8192,
+        # backlog: 2048,
+        # send_timeout: 120,
+        # keepalive: true,
+        # nopush: true,
+        nodelay: true,
+        active: true
+      ]
 
     reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
 
@@ -104,7 +107,9 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            case send_startup(sock, auth) do
+            tenant = if data.proxy, do: Supavisor.tenant(data.id)
+
+            case send_startup(sock, auth, tenant) do
               :ok ->
                 :ok = activate(sock)
                 {:next_state, :authentication, %{data | sock: sock}}
@@ -137,137 +142,28 @@ defmodule Supavisor.DbHandler do
     dec_pkt = Server.decode(bin)
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    resp =
-      Enum.reduce(dec_pkt, {%{}, nil}, fn
-        %{tag: :parameter_status, payload: {k, v}}, {ps, db_state} ->
-          {Map.put(ps, k, v), db_state}
-
-        %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
-          {:ready_for_query, ps, db_state}
-
-        %{tag: :backend_key_data, payload: payload}, acc ->
-          key = self()
-          conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
-          Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
-          Logger.debug("DbHandler: Backend #{inspect(key)} data: #{inspect(payload)}")
-          acc
-
-        %{payload: {:authentication_sasl_password, methods_b}}, {ps, _} ->
-          nonce =
-            case Server.decode_string(methods_b) do
-              {:ok, req_method, _} ->
-                Logger.debug("DbHandler: SASL method #{inspect(req_method)}")
-                nonce = :pgo_scram.get_nonce(16)
-                user = get_user(data.auth)
-                client_first = :pgo_scram.get_client_first(user, nonce)
-                client_first_size = IO.iodata_length(client_first)
-
-                sasl_initial_response = [
-                  "SCRAM-SHA-256",
-                  0,
-                  <<client_first_size::32-integer>>,
-                  client_first
-                ]
-
-                bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
-                :ok = sock_send(data.sock, bin)
-                nonce
-
-              other ->
-                Logger.error("DbHandler: Undefined sasl method #{inspect(other)}")
-                nil
-            end
-
-          {ps, :authentication_sasl, nonce}
-
-        %{payload: {:authentication_server_first_message, server_first}}, {ps, _}
-        when data.auth.require_user == false ->
-          nonce = data.nonce
-          server_first_parts = Helpers.parse_server_first(server_first, nonce)
-
-          {client_final_message, server_proof} =
-            Helpers.get_client_final(
-              :auth_query,
-              data.auth.secrets.(),
-              server_first_parts,
-              nonce,
-              data.auth.secrets.().user,
-              "biws"
-            )
-
-          bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :ok = sock_send(data.sock, bin)
-
-          {ps, :authentication_server_first_message, server_proof}
-
-        %{payload: {:authentication_server_first_message, server_first}}, {ps, _} ->
-          nonce = data.nonce
-          server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
-
-          {client_final_message, server_proof} =
-            :pgo_scram.get_client_final(
-              server_first_parts,
-              nonce,
-              data.auth.user,
-              data.auth.password.()
-            )
-
-          bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-          :ok = sock_send(data.sock, bin)
-
-          {ps, :authentication_server_first_message, server_proof}
-
-        %{payload: {:authentication_server_final_message, _server_final}}, acc ->
-          acc
-
-        %{payload: {:authentication_md5_password, salt}}, {ps, _} ->
-          Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
-
-          digest =
-            if data.auth.method == :password do
-              Helpers.md5([data.auth.password.(), data.auth.user])
-            else
-              data.auth.secrets.().secret
-            end
-
-          payload = ["md5", Helpers.md5([digest, salt]), 0]
-          bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
-          :ok = sock_send(data.sock, bin)
-          {ps, :authentication_md5}
-
-        %{tag: :error_response, payload: error}, _ ->
-          {:error_response, error}
-
-        _e, acc ->
-          acc
-      end)
+    resp = Enum.reduce(dec_pkt, %{}, &handle_auth_pkts(&1, &2, data))
 
     case resp do
-      {_, :authentication_sasl, nonce} ->
+      {:authentication_sasl, nonce} ->
         {:keep_state, %{data | nonce: nonce}}
 
-      {_, :authentication_server_first_message, server_proof} ->
+      {:authentication_server_first_message, server_proof} ->
         {:keep_state, %{data | server_proof: server_proof}}
 
-      {_, :authentication_md5} ->
+      %{authentication_server_final_message: _server_final} ->
+        :keep_state_and_data
+
+      %{authentication_ok: true} ->
+        :keep_state_and_data
+
+      :authentication ->
+        :keep_state_and_data
+
+      :authentication_md5 ->
         {:keep_state, data}
 
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
-        tenant = Supavisor.tenant(data.id)
-
-        for node <- [node() | Node.list()] do
-          :erpc.cast(node, fn ->
-            Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
-            Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
-
-            Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
-              for {client_handler, _meta} <- entries,
-                  do: send(client_handler, {:disconnect, reason})
-            end)
-          end)
-        end
-
-        Supavisor.stop(data.id)
         Logger.error("DbHandler: Auth error #{inspect(reason)}")
         {:stop, :invalid_password, data}
 
@@ -275,12 +171,19 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Error auth response #{inspect(error)}")
         {:keep_state, data}
 
-      {:ready_for_query, ps, db_state} ->
+      {:ready_for_query, acc} ->
+        ps = acc.ps
+
         Logger.debug(
-          "DbHandler: DB ready_for_query: #{inspect(db_state)} #{inspect(ps, pretty: true)}"
+          "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
         )
 
-        Supavisor.set_parameter_status(data.id, ps)
+        if data.proxy do
+          bin_ps = Server.encode_parameter_status(ps)
+          send(data.caller, {:parameter_status, bin_ps})
+        else
+          Supavisor.set_parameter_status(data.id, ps)
+        end
 
         {:next_state, :idle, %{data | parameter_status: ps},
          {:next_event, :internal, :check_buffer}}
@@ -291,10 +194,9 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:internal, :check_buffer, :idle, %{reply: {from, pid}} = data) do
-    :ok = Helpers.controlling_process(data.sock, pid)
-    reply = {:reply, from, {:ok, data.sock}}
-    {:next_state, :busy, %{data | reply: nil}, reply}
+  def handle_event(:internal, :check_buffer, :idle, %{reply: from} = data) when from != nil do
+    Logger.debug("DbHandler: Check buffer")
+    {:next_state, :busy, %{data | reply: nil}, {:reply, from, data.sock}}
   end
 
   def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
@@ -310,6 +212,8 @@ defmodule Supavisor.DbHandler do
 
   # check if it needs to apply queries from the anon buffer
   def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
+    Logger.debug("DbHandler: Check anon buffer")
+
     if buff != [] do
       Logger.debug(
         "DbHandler: Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes"
@@ -320,6 +224,11 @@ defmodule Supavisor.DbHandler do
     end
 
     {:keep_state, %{data | anon_buffer: []}}
+  end
+
+  def handle_event(:internal, :check_anon_buffer, _, _) do
+    Logger.debug("DbHandler: Anon buffer is empty")
+    :keep_state_and_data
   end
 
   # the process received message from db without linked caller
@@ -352,9 +261,8 @@ defmodule Supavisor.DbHandler do
           :continue
       end
 
-    :ok = ClientHandler.client_cast(data.caller, bin, resp)
-
     if resp != :continue do
+      :ok = ClientHandler.db_status(data.caller, resp, bin)
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
     else
@@ -362,34 +270,27 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
+  # forward the message to the client
+  def handle_event(:info, {proto, _, bin}, _, %{caller: caller, reply: nil} = data)
       when is_pid(caller) and proto in @proto do
-    Logger.debug("DbHandler: Got write replica message #{inspect(bin)}")
-    HandlerHelpers.setopts(data.sock, active: :once)
-    # check if the response ends with "ready for query"
-    ready = check_ready(bin)
-    sent = data.sent || 0
+    Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
 
-    {send_via, progress} =
-      case ready do
-        {:ready_for_query, :idle} -> {:client_cast, :ready_for_query}
-        {:ready_for_query, _} -> {:client_cast, :continue}
-        _ when sent < @async_send_limit -> {:client_cast, :continue}
-        _ -> {:client_call, :continue}
-      end
+    if String.ends_with?(bin, Server.ready_for_query()) do
+      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
-    :ok = apply(ClientHandler, send_via, [data.caller, bin, progress])
+      data =
+        if data.mode == :transaction do
+          ClientHandler.db_status(data.caller, :ready_for_query, bin)
+          %{data | stats: stats, caller: nil, client_sock: nil}
+        else
+          HandlerHelpers.sock_send(data.client_sock, bin)
+          %{data | stats: stats}
+        end
 
-    case progress do
-      :ready_for_query ->
-        {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-        HandlerHelpers.setopts(data.sock, active: true)
-
-        {:next_state, :idle, %{data | stats: stats, caller: handler_caller(data), sent: false},
-         {:next_event, :internal, :check_anon_buffer}}
-
-      :continue ->
-        {:keep_state, %{data | sent: sent + 1}}
+      {:next_state, :idle, data, {:next_event, :internal, :check_anon_buffer}}
+    else
+      HandlerHelpers.sock_send(data.client_sock, bin)
+      :keep_state_and_data
     end
   end
 
@@ -400,60 +301,18 @@ defmodule Supavisor.DbHandler do
      {:next_event, :internal, :check_anon_buffer}}
   end
 
-  def handle_event({:call, from}, {:tcp_owner, pid}, state, %{sock: sock} = data) do
-    if state in [:idle, :busy] do
-      :ok = Helpers.controlling_process(data.sock, pid)
-      reply = {:reply, from, {:ok, sock}}
-      {:keep_state, data, reply}
-    else
-      Logger.debug("DbHandler: TCP owner call when state was #{state}")
-      {:keep_state, %{data | reply: {from, pid}}}
-    end
+  def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
+    Logger.debug("DbHandler: checkout call when state was #{state}")
+
+    # store the reply ref and send it when the state is idle
+    if state in [:idle, :busy],
+      do: {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}},
+      else: {:keep_state, %{data | client_sock: sock, caller: caller, reply: from}}
   end
 
-  def handle_event({:call, from}, {:db_call, caller, bin}, :idle, %{sock: sock} = data) do
-    reply = {:reply, from, sock_send(sock, bin)}
-    {:next_state, :busy, %{data | caller: caller}, reply}
-  end
-
-  def handle_event({:call, from}, {:db_call, caller, bin}, :busy, %{sock: sock} = data) do
-    reply = {:reply, from, sock_send(sock, bin)}
-    {:keep_state, %{data | caller: caller}, reply}
-  end
-
-  def handle_event({:call, from}, {:db_call, caller, bin}, state, %{buffer: buff} = data) do
-    Logger.debug(
-      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(caller)}"
-    )
-
-    new_buff = [bin | buff]
-    reply = {:reply, from, {:buffering, IO.iodata_length(new_buff)}}
-    {:keep_state, %{data | caller: caller, buffer: new_buff}, reply}
-  end
-
-  # emulate handle_cast
-  def handle_event(:cast, {:db_cast, caller, bin}, state, %{sock: sock})
-      when state in [:idle, :busy] do
-    Logger.debug(
-      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, cast caller: #{inspect(caller)}"
-    )
-
-    sock_send(sock, bin)
-    :keep_state_and_data
-  end
-
-  def handle_event(:cast, {:db_cast, caller, bin}, state, %{buffer: buff} = data) do
-    Logger.debug(
-      "DbHandler: state #{state} <-- <-- bin #{inspect(byte_size(bin))} bytes, cast caller: #{inspect(caller)}"
-    )
-
-    new_buff = [bin | buff]
-    {:keep_state, %{data | caller: caller, buffer: new_buff}}
-  end
-
-  def handle_event(:cast, :set_idle, _, data) do
-    Logger.debug("DbHandler: set_idle")
-    {:next_state, :idle, data}
+  def handle_event({:call, from}, :ps, _, data) do
+    Logger.debug("DbHandler: get parameter status")
+    {:keep_state_and_data, {:reply, from, data.parameter_status}}
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
@@ -529,14 +388,9 @@ defmodule Supavisor.DbHandler do
   @spec ssl_recv(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.ssl_sock()} | {:error, term}
   defp ssl_recv({:gen_tcp, sock} = s, auth) do
     case :gen_tcp.recv(sock, 1, 15_000) do
-      {:ok, <<?S>>} ->
-        ssl_connect(s, auth)
-
-      {:ok, <<?N>>} ->
-        {:error, :ssl_not_available}
-
-      {:error, _} = error ->
-        error
+      {:ok, <<?S>>} -> ssl_connect(s, auth)
+      {:ok, <<?N>>} -> {:error, :ssl_not_available}
+      {:error, _} = error -> error
     end
   end
 
@@ -549,7 +403,8 @@ defmodule Supavisor.DbHandler do
           [
             verify: :verify_peer,
             cacerts: [auth.upstream_tls_ca],
-            server_name_indication: auth.host,
+            # unclear behavior on pg14
+            server_name_indication: auth.sni_host || auth.host,
             customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
           ]
 
@@ -566,9 +421,10 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec send_startup(Supavisor.sock(), map()) :: :ok | {:error, term}
-  defp send_startup(sock, auth) do
-    user = get_user(auth)
+  @spec send_startup(Supavisor.sock(), map(), String.t() | nil) :: :ok | {:error, term}
+  def send_startup(sock, auth, tenant) do
+    user =
+      if is_nil(tenant), do: get_user(auth), else: "#{get_user(auth)}.#{tenant}"
 
     msg =
       :pgo_protocol.encode_startup_message([
@@ -637,4 +493,125 @@ defmodule Supavisor.DbHandler do
         :continue
     end
   end
+
+  @spec handle_auth_pkts(map(), map(), map()) :: any()
+  defp handle_auth_pkts(%{tag: :parameter_status, payload: {k, v}}, acc, _),
+    do: update_in(acc, [:ps], fn ps -> Map.put(ps || %{}, k, v) end)
+
+  defp handle_auth_pkts(%{tag: :ready_for_query, payload: db_state}, acc, _),
+    do: {:ready_for_query, Map.put(acc, :db_state, db_state)}
+
+  defp handle_auth_pkts(%{tag: :backend_key_data, payload: payload}, acc, _),
+    do: Map.put(acc, :backend_key_data, payload)
+
+  defp handle_auth_pkts(%{payload: {:authentication_sasl_password, methods_b}}, _, data) do
+    nonce =
+      case Server.decode_string(methods_b) do
+        {:ok, req_method, _} ->
+          Logger.debug("DbHandler: SASL method #{inspect(req_method)}")
+          nonce = :pgo_scram.get_nonce(16)
+          user = get_user(data.auth)
+          client_first = :pgo_scram.get_client_first(user, nonce)
+          client_first_size = IO.iodata_length(client_first)
+
+          sasl_initial_response = [
+            "SCRAM-SHA-256",
+            0,
+            <<client_first_size::32-integer>>,
+            client_first
+          ]
+
+          bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
+          :ok = HandlerHelpers.sock_send(data.sock, bin)
+          nonce
+
+        other ->
+          Logger.error("DbHandler: Undefined sasl method #{inspect(other)}")
+          nil
+      end
+
+    {:authentication_sasl, nonce}
+  end
+
+  defp handle_auth_pkts(
+         %{payload: {:authentication_server_first_message, server_first}},
+         _,
+         data
+       )
+       when data.auth.require_user == false do
+    nonce = data.nonce
+    server_first_parts = Helpers.parse_server_first(server_first, nonce)
+
+    {client_final_message, server_proof} =
+      Helpers.get_client_final(
+        :auth_query,
+        data.auth.secrets.(),
+        server_first_parts,
+        nonce,
+        data.auth.secrets.().user,
+        "biws"
+      )
+
+    bin = :pgo_protocol.encode_scram_response_message(client_final_message)
+    :ok = HandlerHelpers.sock_send(data.sock, bin)
+
+    {:authentication_server_first_message, server_proof}
+  end
+
+  defp handle_auth_pkts(
+         %{payload: {:authentication_server_first_message, server_first}},
+         _,
+         data
+       ) do
+    nonce = data.nonce
+    server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
+
+    {client_final_message, server_proof} =
+      :pgo_scram.get_client_final(
+        server_first_parts,
+        nonce,
+        data.auth.user,
+        data.auth.secrets.().password
+      )
+
+    bin = :pgo_protocol.encode_scram_response_message(client_final_message)
+    :ok = HandlerHelpers.sock_send(data.sock, bin)
+
+    {:authentication_server_first_message, server_proof}
+  end
+
+  defp handle_auth_pkts(
+         %{payload: {:authentication_server_final_message, server_final}},
+         acc,
+         _data
+       ),
+       do: Map.put(acc, :authentication_server_final_message, server_final)
+
+  defp handle_auth_pkts(
+         %{payload: :authentication_ok},
+         acc,
+         _data
+       ),
+       do: Map.put(acc, :authentication_ok, true)
+
+  defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
+    Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+
+    digest =
+      if data.auth.method == :password do
+        Helpers.md5([data.auth.password.(), data.auth.user])
+      else
+        data.auth.secrets.().secret
+      end
+
+    payload = ["md5", Helpers.md5([digest, salt]), 0]
+    bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
+    :ok = HandlerHelpers.sock_send(data.sock, bin)
+    :authentication_md5
+  end
+
+  defp handle_auth_pkts(%{tag: :error_response, payload: error}, _acc, _data),
+    do: {:error_response, error}
+
+  defp handle_auth_pkts(_e, acc, _data), do: acc
 end
