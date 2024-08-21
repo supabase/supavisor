@@ -84,6 +84,7 @@ defmodule Supavisor.DbHandler do
 
     sock_opts =
       [
+        auth.ip_version,
         mode: :binary,
         packet: :raw,
         # recbuf: 8192,
@@ -94,7 +95,7 @@ defmodule Supavisor.DbHandler do
         # nopush: true,
         nodelay: true,
         active: true
-      ] ++ [auth.ip_version]
+      ]
 
     reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
 
