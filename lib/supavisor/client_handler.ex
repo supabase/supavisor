@@ -417,7 +417,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:internal, :connect_db, _, data) do
-    Logger.debug("Try to connect to DB")
+    Logger.debug("ClientHandler: Trying to connect to DB")
 
     args = %{
       id: data.id,

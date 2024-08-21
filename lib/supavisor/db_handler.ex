@@ -139,8 +139,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
     dec_pkt = Server.decode(bin)
-    Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
-    # HandlerHelpers.active_once(data.sock)
+    Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     resp = Enum.reduce(dec_pkt, %{}, &handle_auth_pkts(&1, &2, data))
 
@@ -164,18 +163,18 @@ defmodule Supavisor.DbHandler do
         {:keep_state, data}
 
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
-        Logger.error("ProxyDb: Auth error #{inspect(reason)}")
+        Logger.error("DbHandler: Auth error #{inspect(reason)}")
         {:stop, :invalid_password, data}
 
       {:error_response, error} ->
-        Logger.error("ProxyDb: Error auth response #{inspect(error)}")
+        Logger.error("DbHandler: Error auth response #{inspect(error)}")
         {:keep_state, data}
 
       {:ready_for_query, acc} ->
         ps = acc.ps
 
         Logger.debug(
-          "ProxyDb: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
+          "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
         )
 
         if data.proxy do
@@ -189,7 +188,7 @@ defmodule Supavisor.DbHandler do
          {:next_event, :internal, :check_buffer}}
 
       other ->
-        Logger.error("ProxyDb: Undefined auth response #{inspect(other)}")
+        Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
         {:stop, :auth_error, data}
     end
   end
@@ -275,8 +274,6 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
 
-    # HandlerHelpers.setopts(data.sock, active: :once)
-
     if String.ends_with?(bin, Server.ready_for_query()) do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
@@ -338,7 +335,7 @@ defmodule Supavisor.DbHandler do
     end
 
     if state == :busy or data.mode == :session do
-      # sock_send(data.sock, <<?X, 4::32>>)
+      sock_send(data.sock, <<?X, 4::32>>)
       :gen_tcp.close(elem(data.sock, 1))
       {:stop, {:client_handler_down, data.mode}}
     else
@@ -510,7 +507,7 @@ defmodule Supavisor.DbHandler do
     nonce =
       case Server.decode_string(methods_b) do
         {:ok, req_method, _} ->
-          Logger.debug("ProxyDb: SASL method #{inspect(req_method)}")
+          Logger.debug("DbHandler: SASL method #{inspect(req_method)}")
           nonce = :pgo_scram.get_nonce(16)
           user = get_user(data.auth)
           client_first = :pgo_scram.get_client_first(user, nonce)
@@ -528,7 +525,7 @@ defmodule Supavisor.DbHandler do
           nonce
 
         other ->
-          Logger.error("ProxyDb: Undefined sasl method #{inspect(other)}")
+          Logger.error("DbHandler: Undefined sasl method #{inspect(other)}")
           nil
       end
 
@@ -597,7 +594,7 @@ defmodule Supavisor.DbHandler do
        do: Map.put(acc, :authentication_ok, true)
 
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
-    Logger.debug("ProxyDb: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+    Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     digest =
       if data.auth.method == :password do

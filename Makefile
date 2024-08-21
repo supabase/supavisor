@@ -106,8 +106,6 @@ dev_start_rel:
 	DB_POOL_SIZE="5" \
 	_build/prod/rel/supavisor/bin/supavisor start_iex
 
-# rm -rf _build/prod && \
-
 prod_rel:
 	MIX_ENV=prod METRICS_DISABLED=true mix compile && \
 	MIX_ENV=prod METRICS_DISABLED=true mix release supavisor
