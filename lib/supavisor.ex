@@ -246,18 +246,19 @@ defmodule Supavisor do
     #   :syn.members(:aws_zone, "1c")
     #   [{#PID<0.381.0>, [node: :"node1@127.0.0.1"]}]
     nodes =
-      case :syn.members(:aws_zone, aws_zone) do
-        [] ->
-          [node() | Node.list()] |> Enum.sort()
-
-        zone_nodes ->
-          zone_nodes
-          |> Enum.map(fn {_, [node: node]} -> node end)
-          |> Enum.sort()
+      with zone when is_binary(zone) <- aws_zone,
+           zone_nodes when zone_nodes != [] <- :syn.members(:aws_zone, zone) do
+        zone_nodes
+        |> Enum.map(fn {_, [node: node]} -> node end)
+      else
+        _ -> [node() | Node.list()]
       end
 
     index = :erlang.phash2(tenant_id, length(nodes))
-    Enum.at(nodes, index)
+
+    nodes
+    |> Enum.sort()
+    |> Enum.at(index)
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
