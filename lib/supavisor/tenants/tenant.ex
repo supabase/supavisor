@@ -31,6 +31,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:client_idle_timeout, :integer, default: 0)
     field(:client_heartbeat_interval, :integer, default: 60)
     field(:allow_list, {:array, :string}, default: ["0.0.0.0/0", "::/0"])
+    field(:aws_zone, :string)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
