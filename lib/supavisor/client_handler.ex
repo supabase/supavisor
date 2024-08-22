@@ -777,7 +777,8 @@ defmodule Supavisor.ClientHandler do
       else: {:error, "Wrong password"}
   end
 
-  @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) :: {pid, pid, Supavisor.sock()} | nil
+  @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) ::
+          {pid, pid, Supavisor.sock()} | nil
   defp db_checkout(_, _, %{mode: mode, db_pid: {pool, db_pid, db_sock}})
        when is_pid(db_pid) and mode in [:session, :proxy] do
     {pool, db_pid, db_sock}
