@@ -64,7 +64,8 @@ defmodule Supavisor.Tenants.Tenant do
       :default_max_clients,
       :client_idle_timeout,
       :client_heartbeat_interval,
-      :allow_list
+      :allow_list,
+      :aws_zone
     ])
     |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")
     |> check_constraint(:upstream_verify, name: :upstream_constraints, prefix: "_supavisor")
