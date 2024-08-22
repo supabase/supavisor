@@ -85,7 +85,7 @@ defmodule Supavisor.ClientHandler do
       log_level: nil,
       db_sock: nil,
       auth: %{},
-      tenant_aws_zone: nil
+      tenant_availability_zone: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -376,7 +376,7 @@ defmodule Supavisor.ClientHandler do
     with {:ok, sup} <-
            Supavisor.start_dist(data.id, data.auth_secrets,
              log_level: data.log_level,
-             aws_zone: data.tenant_aws_zone
+             availability_zone: data.tenant_availability_zone
            ),
          true <- if(node(sup) != node() and data.mode == :transaction, do: :proxy, else: true),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
@@ -862,7 +862,7 @@ defmodule Supavisor.ClientHandler do
         db_name: db_name,
         mode: mode,
         auth: auth,
-        tenant_aws_zone: info.tenant.aws_zone
+        tenant_availability_zone: info.tenant.availability_zone
     }
   end
 

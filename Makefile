@@ -13,7 +13,7 @@ dev:
 	CLUSTER_POSTGRES="true" \
 	DB_POOL_SIZE="5" \
 	METRICS_DISABLED="false" \
-	AWS_ZONE="1b" \
+	AVAILABILITY_ZONE="ap-southeast-1b" \
 	ERL_AFLAGS="-kernel shell_history enabled +zdbbl 2097151" \
 	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
 
@@ -30,7 +30,7 @@ dev.node2:
 	PROXY_PORT_TRANSACTION="6553" \
 	PROXY_PORT="5402" \
 	NODE_IP=localhost \
-	AWS_ZONE="1c" \
+	AVAILABILITY_ZONE="ap-southeast-1c" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node2@127.0.0.1 --cookie cookie -S mix phx.server
 

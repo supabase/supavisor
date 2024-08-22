@@ -17,7 +17,7 @@ config :supavisor,
   ],
   metrics_blocklist: [],
   node_host: System.get_env("NODE_IP", "127.0.0.1"),
-  aws_zone: System.get_env("AWS_ZONE")
+  availability_zone: System.get_env("AVAILABILITY_ZONE")
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",
