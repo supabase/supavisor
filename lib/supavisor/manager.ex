@@ -3,9 +3,9 @@ defmodule Supavisor.Manager do
   use GenServer, restart: :transient
   require Logger
 
-  alias Supavisor.Helpers, as: H
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
+  alias Supavisor.Helpers
 
   @check_timeout 120_000
 
@@ -34,7 +34,7 @@ defmodule Supavisor.Manager do
 
   @impl true
   def init(args) do
-    H.set_log_level(args.log_level)
+    Helpers.set_log_level(args.log_level)
     tid = :ets.new(__MODULE__, [:protected])
 
     [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
