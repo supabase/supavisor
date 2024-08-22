@@ -3,7 +3,7 @@ defmodule Supavisor.Repo.Migrations.AddAwsZone do
 
   def change do
     alter table("tenants", prefix: "_supavisor") do
-      add(:aws_zone, :string)
+      add(:availability_zone, :string)
     end
   end
 end

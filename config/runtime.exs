@@ -160,7 +160,7 @@ if config_env() != :test do
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
     node_host: System.get_env("NODE_IP", "127.0.0.1"),
-    aws_zone: System.get_env("AWS_ZONE")
+    availability_zone: System.get_env("AVAILABILITY_ZONE")
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
