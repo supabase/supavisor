@@ -503,6 +503,7 @@ defmodule Supavisor.ClientHandler do
       when is_binary(bin) and is_pid(pid) do
     Logger.debug("ClientHandler: Receive query #{inspect(bin)}")
     db_pid = db_checkout(:both, :on_query, data)
+    handle_prepared_statements(db_pid, bin, data)
 
     {:next_state, :busy, %{data | db_pid: db_pid, query_start: System.monotonic_time()},
      {:next_event, :internal, {proto, nil, bin}}}
@@ -776,7 +777,8 @@ defmodule Supavisor.ClientHandler do
       else: {:error, "Wrong password"}
   end
 
-  @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) :: {pid, pid} | nil
+  @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) ::
+          {pid, pid, Supavisor.sock()} | nil
   defp db_checkout(_, _, %{mode: mode, db_pid: {pool, db_pid, db_sock}})
        when is_pid(db_pid) and mode in [:session, :proxy] do
     {pool, db_pid, db_sock}
@@ -991,8 +993,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec handle_prepared_statements({pid, pid}, binary, map) :: :ok | nil
-  defp handle_prepared_statements({_, pid}, bin, %{mode: :transaction} = data) do
+  @spec handle_prepared_statements({pid, pid, Supavisor.sock()}, binary, map) :: :ok | nil
+  defp handle_prepared_statements({_, pid, _}, bin, %{mode: :transaction} = data) do
     with {:ok, payload} <- Client.get_payload(bin),
          {:ok, statements} <- Supavisor.PgParser.statements(payload),
          true <- statements in [["PrepareStmt"], ["DeallocateStmt"]] do

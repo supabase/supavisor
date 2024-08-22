@@ -3,8 +3,6 @@ defmodule Supavisor do
 
   require Logger
 
-  import Cachex.Spec
-
   alias Supavisor.{
     Helpers,
     Manager,
