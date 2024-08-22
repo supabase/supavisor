@@ -22,13 +22,14 @@ defmodule Supavisor do
 
   @spec start_dist(id, secrets, keyword()) :: {:ok, pid()} | {:error, any()}
   def start_dist(id, secrets, options \\ []) do
-    options = Keyword.validate!(options, log_level: nil, force_node: false)
+    options = Keyword.validate!(options, log_level: nil, force_node: false, aws_zone: nil)
     log_level = Keyword.fetch!(options, :log_level)
     force_node = Keyword.fetch!(options, :force_node)
+    aws_zone = Keyword.fetch!(options, :aws_zone)
 
     case get_global_sup(id) do
       nil ->
-        node = if force_node, do: force_node, else: determine_node(id)
+        node = if force_node, do: force_node, else: determine_node(id, aws_zone)
 
         if node == node() do
           Logger.debug("Starting local pool for #{inspect(id)}")
@@ -236,12 +237,28 @@ defmodule Supavisor do
   @spec mode(id) :: atom()
   def mode({_, _, mode, _}), do: mode
 
-  @spec determine_node(id) :: Node.t()
-  def determine_node(id) do
+  @spec determine_node(id, String.t() | nil) :: Node.t()
+  def determine_node(id, aws_zone) do
     tenant_id = tenant(id)
-    nodes = [node() | Node.list()] |> Enum.sort()
+
+    # If the AWS zone group is empty, we will use all nodes.
+    # If the AWS zone group exists with the same zone, we will use nodes from this group.
+    #   :syn.members(:aws_zone, "1c")
+    #   [{#PID<0.381.0>, [node: :"node1@127.0.0.1"]}]
+    nodes =
+      with zone when is_binary(zone) <- aws_zone,
+           zone_nodes when zone_nodes != [] <- :syn.members(:aws_zone, zone) do
+        zone_nodes
+        |> Enum.map(fn {_, [node: node]} -> node end)
+      else
+        _ -> [node() | Node.list()]
+      end
+
     index = :erlang.phash2(tenant_id, length(nodes))
-    Enum.at(nodes, index)
+
+    nodes
+    |> Enum.sort()
+    |> Enum.at(index)
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}

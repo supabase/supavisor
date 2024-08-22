@@ -37,6 +37,9 @@ defmodule Supavisor.Support.Cluster do
             {:supavisor, :region} ->
               "usa"
 
+            {:supavisor, :aws_zone} ->
+              "1c"
+
             _ ->
               val
           end

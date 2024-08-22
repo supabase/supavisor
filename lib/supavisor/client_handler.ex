@@ -84,7 +84,8 @@ defmodule Supavisor.ClientHandler do
       connection_start: System.monotonic_time(),
       log_level: nil,
       db_sock: nil,
-      auth: %{}
+      auth: %{},
+      tenant_aws_zone: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -373,7 +374,10 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler: Subscribe to tenant #{inspect(data.id)}")
 
     with {:ok, sup} <-
-           Supavisor.start_dist(data.id, data.auth_secrets, log_level: data.log_level),
+           Supavisor.start_dist(data.id, data.auth_secrets,
+             log_level: data.log_level,
+             aws_zone: data.tenant_aws_zone
+           ),
          true <- if(node(sup) != node() and data.mode == :transaction, do: :proxy, else: true),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(opts.workers.manager)
@@ -857,7 +861,8 @@ defmodule Supavisor.ClientHandler do
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
         db_name: db_name,
         mode: mode,
-        auth: auth
+        auth: auth,
+        tenant_aws_zone: info.tenant.aws_zone
     }
   end
 

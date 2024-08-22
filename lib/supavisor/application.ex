@@ -60,7 +60,8 @@ defmodule Supavisor.Application do
     end
 
     :syn.set_event_handler(Supavisor.SynHandler)
-    :syn.add_node_to_scopes([:tenants])
+    :syn.add_node_to_scopes([:tenants, :aws_zone])
+    :syn.join(:aws_zone, Application.get_env(:supavisor, :aws_zone), self(), node: node())
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
