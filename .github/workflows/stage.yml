@@ -63,8 +63,7 @@ jobs:
             ${{ runner.os }}-mix-
       - name: Clean up old release(s)
         run: |
-          rm -rf ./_build/${{ env.MIX_ENV }}/lib/opentelemetry_api
-          rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
+          rm -rf ./_build/${{ env.MIX_ENV }}/lib/*
           rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
           rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
       - name: Install dependencies
