@@ -321,6 +321,7 @@ defmodule Supavisor do
       default_max_clients: def_max_clients,
       client_idle_timeout: client_idle_timeout,
       replica_type: replica_type,
+      sni_hostname: sni_hostname,
       users: [
         %{
           db_user: db_user,
@@ -341,6 +342,7 @@ defmodule Supavisor do
 
     auth = %{
       host: String.to_charlist(db_host),
+      sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
       user: db_user,
       database: if(db_name != nil, do: db_name, else: db_database),
