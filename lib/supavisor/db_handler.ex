@@ -98,7 +98,7 @@ defmodule Supavisor.DbHandler do
         # keepalive: true,
         # nopush: true,
         nodelay: true,
-        active: true
+        active: false
       ]
 
     reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
