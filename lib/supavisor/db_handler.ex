@@ -505,8 +505,13 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{tag: :ready_for_query, payload: db_state}, acc, _),
     do: {:ready_for_query, Map.put(acc, :db_state, db_state)}
 
-  defp handle_auth_pkts(%{tag: :backend_key_data, payload: payload}, acc, _),
-    do: Map.put(acc, :backend_key_data, payload)
+  defp handle_auth_pkts(%{tag: :backend_key_data, payload: payload}, acc, data) do
+    key = self()
+    conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
+    Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
+    Logger.debug("DbHandler: Backend #{inspect(key)} data: #{inspect(payload)}")
+    Map.put(acc, :backend_key_data, payload)
+  end
 
   defp handle_auth_pkts(%{payload: {:authentication_sasl_password, methods_b}}, _, data) do
     nonce =

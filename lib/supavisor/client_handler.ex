@@ -990,7 +990,7 @@ defmodule Supavisor.ClientHandler do
 
   def try_get_sni(_), do: nil
 
-  defp db_pid_meta({_, {_, pid}} = _key) do
+  defp db_pid_meta({_, {_, pid, _}} = _key) do
     rkey = Supavisor.Registry.PoolPids
     fnode = node(pid)
 
