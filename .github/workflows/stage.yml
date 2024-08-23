@@ -24,6 +24,7 @@ jobs:
             echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
             echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
             echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
+            echo "TYPE=$(elixir ./deploy/upgrade/handler.exs type ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
       - name: Setup Elixir
         run: |
             . ~/.asdf/asdf.sh
@@ -37,8 +38,10 @@ jobs:
       - name: Get git tags
         run: git fetch --tags origin     
       - name: Checkout RELEASE_FROM
+        if: env.TYPE == 'soft'
         run: git checkout v${{ env.RELEASE_FROM }}
       - name: Cache Mix
+        if: env.TYPE == 'soft'
         uses: actions/cache@v3
         with:
           path: deps
@@ -46,11 +49,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
       - name: Install dependencies
+        if: env.TYPE == 'soft'
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
       - name: Make old release
+        if: env.TYPE == 'soft'
         run: mix release supavisor    
       - name: Checkout RELEASE_TO
         run: git checkout v${{ env.RELEASE_TO }}
@@ -62,8 +67,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
       - name: Clean up old release(s)
+        if: env.TYPE == 'soft'
         run: |
-          rm -rf ./_build/${{ env.MIX_ENV }}/lib/*
+          rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
           rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
           rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
       - name: Install dependencies
@@ -72,7 +78,11 @@ jobs:
           mix local.rebar --force
           mix deps.get
       - name: Make upgrade release
+        if: env.TYPE == 'soft'
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
+      - name: Make hard ${{ env.RELEASE_TO }} release
+        if: env.TYPE == 'hard'
+        run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} mix release supavisor        
       - name: Create tarball
         run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
       - name: configure aws credentials - staging
