@@ -19,7 +19,10 @@ defmodule Supavisor.Application do
       :logger.set_primary_config(
         :metadata,
         Enum.into(
-          [region: System.get_env("REGION"), instance_id: System.get_env("INSTANCE_ID")],
+          [
+            region: System.get_env("AVAILABILITY_ZONE") || System.get_env("REGION"),
+            instance_id: System.get_env("INSTANCE_ID")
+          ],
           primary_config.metadata
         )
       )
