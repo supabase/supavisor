@@ -408,7 +408,7 @@ defmodule Supavisor.DbHandler do
             verify: :verify_peer,
             cacerts: [auth.upstream_tls_ca],
             # unclear behavior on pg14
-            server_name_indication: auth.sni_host || auth.host,
+            server_name_indication: auth.sni_hostname || auth.host,
             customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
           ]
 
