@@ -265,7 +265,7 @@ defmodule Supavisor do
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
   def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets, log_level \\ nil) do
-    Logger.debug("Starting pool(s) for #{inspect(id)}")
+    Logger.info("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
 

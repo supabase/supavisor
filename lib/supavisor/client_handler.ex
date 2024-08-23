@@ -477,28 +477,28 @@ defmodule Supavisor.ClientHandler do
   # handle Terminate message
   def handle_event(:info, {proto, _, <<?X, 4::32>>}, :idle, _)
       when proto in @proto do
-    Logger.error("ClientHandler: Terminate received from client")
+    Logger.info("ClientHandler: Terminate received from client")
     {:stop, {:shutdown, :terminate_received}}
   end
 
   # handle Sync message
   def handle_event(:info, {proto, _, <<?S, 4::32>>}, :idle, data)
       when proto in @proto do
-    Logger.error("ClientHandler: Receive sync")
+    Logger.info("ClientHandler: Receive sync")
     :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
     {:keep_state_and_data, handle_actions(data)}
   end
 
   def handle_event(:info, {proto, _, <<?S, 4::32, _::binary>> = msg}, _, data)
       when proto in @proto do
-    Logger.error("ClientHandler: Receive sync while not idle")
+    Logger.warning("ClientHandler: Receive sync while not idle")
     :ok = HandlerHelpers.sock_send(elem(data.db_pid, 2), msg)
     :keep_state_and_data
   end
 
   def handle_event(:info, {proto, _, <<?H, 4::32, _::binary>> = msg}, _, data)
       when proto in @proto do
-    Logger.error("ClientHandler: Receive flush while not idle")
+    Logger.warning("ClientHandler: Receive flush while not idle")
     :ok = HandlerHelpers.sock_send(elem(data.db_pid, 2), msg)
     :keep_state_and_data
   end
