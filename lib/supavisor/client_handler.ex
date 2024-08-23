@@ -85,7 +85,8 @@ defmodule Supavisor.ClientHandler do
       log_level: nil,
       db_sock: nil,
       auth: %{},
-      tenant_availability_zone: nil
+      tenant_availability_zone: nil,
+      local: opts[:local] || false
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -242,7 +243,7 @@ defmodule Supavisor.ClientHandler do
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
 
         cond do
-          info.tenant.enforce_ssl and !data.ssl ->
+          !data.local and info.tenant.enforce_ssl and !data.ssl ->
             Logger.error(
               "ClientHandler: Tenant is not allowed to connect without SSL, user #{user}"
             )
