@@ -400,6 +400,13 @@ defmodule Supavisor.ClientHandler do
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :max_clients_reached}}
 
+      {:error, :max_pools_reached} ->
+        msg = "Max pools count reached"
+        Logger.error("ClientHandler: #{msg}")
+        :ok = HandlerHelpers.send_error(data.sock, "XX000", msg)
+        Telem.client_join(:fail, data.id)
+        {:stop, {:shutdown, :max_pools_reached}}
+
       :proxy ->
         {:ok, %{port: port, host: host}} = Supavisor.get_pool_ranch(data.id)
 

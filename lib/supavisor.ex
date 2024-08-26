@@ -19,6 +19,7 @@ defmodule Supavisor do
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
+  @max_pools Application.compile_env(:supavisor, :max_pools, 10)
 
   @spec start_dist(id, secrets, keyword()) :: {:ok, pid()} | {:error, any()}
   def start_dist(id, secrets, options \\ []) do
@@ -35,10 +36,10 @@ defmodule Supavisor do
 
         if node == node() do
           Logger.debug("Starting local pool for #{inspect(id)}")
-          start_local_pool(id, secrets, log_level)
+          try_start_local_pool(id, secrets, log_level)
         else
           Logger.debug("Starting remote pool for #{inspect(id)}")
-          Helpers.rpc(node, __MODULE__, :start_local_pool, [id, secrets, log_level])
+          Helpers.rpc(node, __MODULE__, :try_start_local_pool, [id, secrets, log_level])
         end
 
       pid ->
@@ -50,7 +51,7 @@ defmodule Supavisor do
   def start(id, secrets) do
     case get_global_sup(id) do
       nil ->
-        start_local_pool(id, secrets)
+        try_start_local_pool(id, secrets, nil)
 
       pid ->
         {:ok, pid}
@@ -263,6 +264,13 @@ defmodule Supavisor do
     |> Enum.at(index)
   end
 
+  @spec try_start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
+  def try_start_local_pool(id, secrets, log_level) do
+    if count_pools(tenant(id)) < @max_pools,
+      do: start_local_pool(id, secrets, log_level),
+      else: {:error, :max_pools_reached}
+  end
+
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
   def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets, log_level \\ nil) do
     Logger.info("Starting pool(s) for #{inspect(id)}")
@@ -411,4 +419,8 @@ defmodule Supavisor do
       {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
     end
   end
+
+  @spec count_pools(String.t()) :: non_neg_integer()
+  def count_pools(tenant),
+    do: Registry.count_match(Supavisor.Registry.TenantSups, tenant, :_)
 end
