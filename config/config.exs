@@ -11,7 +11,8 @@ config :supavisor,
   ecto_repos: [Supavisor.Repo],
   version: Mix.Project.config()[:version],
   env: Mix.env(),
-  metrics_disabled: System.get_env("METRICS_DISABLED") == "true"
+  metrics_disabled: System.get_env("METRICS_DISABLED") == "true",
+  switch_active_count: System.get_env("SWITCH_ACTIVE_COUNT", "100") |> String.to_integer()
 
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,
