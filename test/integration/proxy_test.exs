@@ -155,19 +155,28 @@ defmodule Supavisor.Integration.ProxyTest do
              P.query!(origin, "select * from public.test where details = 'test_delete'", [])
   end
 
-  # test "too many clients in session mode" do
-  #   db_conf = Application.get_env(:supavisor, Repo)
+  test "too many clients in session mode" do
+    Process.flag(:trap_exit, true)
+    db_conf = Application.get_env(:supavisor, Repo)
+    port = Application.get_env(:supavisor, :proxy_port_session)
 
-  #   url =
-  #     "postgresql://session.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port)}/postgres"
+    connection_opts =
+      Keyword.merge(db_conf,
+        username: "max_clients.proxy_tenant1",
+        port: port
+      )
 
-  #   spawn(fn -> System.cmd("psql", [url], stderr_to_stdout: true) end)
-
-  #   :timer.sleep(500)
-
-  #   {result, _} = System.cmd("psql", [url], stderr_to_stdout: true)
-  #   assert result =~ "FATAL:  Too many clients already"
-  # end
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Max client connections reached",
+                unknown: "FATAL",
+                severity: "FATAL",
+                pg_code: "XX000"
+              }
+            }} = single_connection(connection_opts)
+  end
 
   test "http to proxy server returns 200 OK" do
     assert :httpc.request(
@@ -206,7 +215,7 @@ defmodule Supavisor.Integration.ProxyTest do
     connection_opts = [
       hostname: db_conf[:hostname],
       port: Application.get_env(:supavisor, :proxy_port_transaction),
-      username: "max_clients.#{@tenant}",
+      username: "max_clients.prom_tenant",
       database: "postgres",
       password: db_conf[:password]
     ]
@@ -237,7 +246,7 @@ defmodule Supavisor.Integration.ProxyTest do
     assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
 
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
-
+    :gen_statem.stop(pid)
     P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
     Supavisor.stop({{:single, "is_manager"}, "dev_postgres", :transaction, "postgres"})
 
@@ -250,6 +259,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
     {:ok, pid} = parse_uri(new_pass) |> single_connection()
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
+    :gen_statem.stop(pid)
   end
 
   test "invalid characters in user or db_name" do
@@ -269,6 +279,60 @@ defmodule Supavisor.Integration.ProxyTest do
                 unknown: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
+  end
+
+  test "max_pools limit" do
+    Process.flag(:trap_exit, true)
+    db_conf = Application.get_env(:supavisor, Repo)
+    port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+    tenant = "max_pool_tenant"
+
+    {:ok, pid1} =
+      Keyword.merge(db_conf,
+        username: "postgres.#{tenant}",
+        port: port
+      )
+      |> single_connection()
+
+    assert Supavisor.count_pools(tenant) == 1
+
+    {:ok, pid2} =
+      Keyword.merge(db_conf,
+        username: "session.#{tenant}",
+        port: port
+      )
+      |> single_connection()
+
+    assert Supavisor.count_pools(tenant) == 2
+
+    {:ok, pid3} =
+      Keyword.merge(db_conf,
+        username: "transaction.#{tenant}",
+        port: port
+      )
+      |> single_connection()
+
+    assert Supavisor.count_pools(tenant) == 3
+
+    connection_opts =
+      Keyword.merge(db_conf,
+        username: "max_clients.#{tenant}",
+        port: port
+      )
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Max pools count reached",
+                unknown: "FATAL",
+                severity: "FATAL",
+                pg_code: "XX000"
+              }
+            }} = single_connection(connection_opts)
+
+    for pid <- [pid1, pid2, pid3], do: :gen_statem.stop(pid)
   end
 
   defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
