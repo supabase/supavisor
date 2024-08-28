@@ -16,10 +16,13 @@ defmodule Supavisor.MetricsCleaner do
 
   def handle_info(:check, state) do
     Process.cancel_timer(state.check_ref)
-    {time, _} = :timer.tc(__MODULE__, :loop_and_cleanup_metrics_table, [], :millisecond)
 
-    if time > :timer.seconds(5),
-      do: Logger.warning("Metrics check took: #{time} ms")
+    start = System.monotonic_time(:millisecond)
+    loop_and_cleanup_metrics_table()
+    exec_time = System.monotonic_time(:millisecond) - start
+
+    if exec_time > :timer.seconds(5),
+      do: Logger.warning("Metrics check took: #{exec_time} ms")
 
     {:noreply, %{state | check_ref: check()}}
   end
