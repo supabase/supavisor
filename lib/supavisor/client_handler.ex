@@ -12,6 +12,7 @@ defmodule Supavisor.ClientHandler do
   @behaviour :gen_statem
   @proto [:tcp, :ssl]
   @cancel_query_msg <<16::32, 1234::16, 5678::16>>
+  @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
 
   alias Supavisor.{
     DbHandler,
@@ -86,7 +87,8 @@ defmodule Supavisor.ClientHandler do
       db_sock: nil,
       auth: %{},
       tenant_availability_zone: nil,
-      local: opts[:local] || false
+      local: opts[:local] || false,
+      active_count: 0
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -555,13 +557,14 @@ defmodule Supavisor.ClientHandler do
 
   # forward query to db
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in @proto do
-    # HandlerHelpers.setopts(data.sock, active: :once)
-
     Logger.debug("ClientHandler: Forward query to db #{inspect(bin)} #{inspect(data.db_pid)}")
+
+    if data.active_count > @switch_active_count,
+      do: HandlerHelpers.active_once(data.sock)
 
     case HandlerHelpers.sock_send(elem(data.db_pid, 2), bin) do
       :ok ->
-        :keep_state_and_data
+        {:keep_state, %{data | active_count: data.active_count + 1}}
 
       error ->
         Logger.error("ClientHandler: error while sending query: #{inspect(error)}")
@@ -627,7 +630,12 @@ defmodule Supavisor.ClientHandler do
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
 
         Telem.client_query_time(data.query_start, data.id)
-        {:next_state, :idle, %{data | db_pid: db_pid, stats: stats}, handle_actions(data)}
+
+        if data.active_count > @switch_active_count,
+          do: HandlerHelpers.activate(data.sock)
+
+        {:next_state, :idle, %{data | db_pid: db_pid, stats: stats, active_count: 0},
+         handle_actions(data)}
 
       :read_sql_error ->
         Logger.error(
