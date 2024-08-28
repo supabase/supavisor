@@ -35,7 +35,7 @@ defmodule Supavisor.MetricsCleaner do
     metrics_table = Supavisor.Monitoring.PromEx.Metrics
     tenant_registry_table = :syn_registry_by_name_tenants
 
-    fun = fn
+    fn
       {{_, %{type: type, mode: mode, user: user, tenant: tenant, db_name: db}} = key, _}, _ ->
         case :ets.lookup(tenant_registry_table, {{type, tenant}, user, mode, db}) do
           [] ->
@@ -49,7 +49,6 @@ defmodule Supavisor.MetricsCleaner do
       _, acc ->
         acc
     end
-
-    :ets.foldl(fun, nil, metrics_table)
+    |> :ets.foldl(nil, metrics_table)
   end
 end
