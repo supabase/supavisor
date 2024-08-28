@@ -25,12 +25,11 @@ defmodule Supavisor.MetricsCleaner do
   end
 
   def handle_info(msg, state) do
-    Logger.warning("Unexpected message: #{inspect(msg)}")
+    Logger.error("Unexpected message: #{inspect(msg)}")
     {:noreply, state}
   end
 
-  def check(),
-    do: Process.send_after(self(), :check, @interval)
+  def check, do: Process.send_after(self(), :check, @interval)
 
   def loop_and_cleanup_metrics_table do
     metrics_table = Supavisor.Monitoring.PromEx.Metrics
