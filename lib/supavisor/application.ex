@@ -101,7 +101,7 @@ defmodule Supavisor.Application do
         children
       else
         PromEx.set_metrics_tags()
-        children ++ [PromEx, Supavisor.TenantsMetrics]
+        children ++ [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner]
       end
 
     # start Cachex only if the node uses names, this is necessary for test setup
