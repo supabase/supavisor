@@ -63,7 +63,19 @@ config :logger, :console,
   format: "$time [$level] $message $metadata\n",
   level: :debug,
   # level: :notice,
-  metadata: [:error_code, :file, :line, :pid, :project, :user, :mode, :type, :app_name, :peer_ip]
+  metadata: [
+    :error_code,
+    :file,
+    :line,
+    :pid,
+    :project,
+    :user,
+    :mode,
+    :type,
+    :app_name,
+    :peer_ip,
+    :local
+  ]
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.

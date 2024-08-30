@@ -34,7 +34,8 @@ config :logger, :console,
     :mode,
     :type,
     :app_name,
-    :peer_ip
+    :peer_ip,
+    :local
   ]
 
 # Use Jason for JSON parsing in Phoenix

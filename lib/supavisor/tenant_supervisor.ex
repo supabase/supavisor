@@ -5,7 +5,8 @@ defmodule Supavisor.TenantSupervisor do
   require Logger
   alias Supavisor.Manager
 
-  def start_link(%{replicas: [%{mode: :transaction} = single]} = args) do
+  def start_link(%{replicas: [%{mode: mode} = single]} = args)
+      when mode in [:transaction, :session] do
     {:ok, meta} = Supavisor.start_local_server(single)
     Logger.info("Starting ranch instance #{inspect(meta)} for #{inspect(args.id)}")
     name = {:via, :syn, {:tenants, args.id, meta}}

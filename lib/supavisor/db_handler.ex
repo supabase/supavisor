@@ -70,7 +70,6 @@ defmodule Supavisor.DbHandler do
         mode: args.mode,
         replica_type: args.replica_type,
         reply: nil,
-        pool: Supavisor.get_local_pool(args.id),
         caller: args[:caller] || nil,
         client_sock: args[:client_sock] || nil,
         proxy: args[:proxy] || false,
