@@ -19,7 +19,7 @@ defmodule Supavisor do
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
-  @max_pools Application.compile_env(:supavisor, :max_pools, 10)
+  @max_pools Application.compile_env(:supavisor, :max_pools, 20)
 
   @spec start_dist(id, secrets, keyword()) :: {:ok, pid()} | {:error, any()}
   def start_dist(id, secrets, options \\ []) do
