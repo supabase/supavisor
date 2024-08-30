@@ -88,7 +88,9 @@ defmodule Supavisor.ClientHandler do
       auth: %{},
       tenant_availability_zone: nil,
       local: opts[:local] || false,
-      active_count: 0
+      active_count: 0,
+      peer_ip: Helpers.peer_ip(sock),
+      app_name: nil
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -175,12 +177,22 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(hello.payload)
 
-        not_allowed = ["\"", "\\"]
+        # Validate user and db_name according to PostgreSQL rules.
+        # The rules are: 1-63 characters, alphanumeric, underscore and $
+        # TODO: spaces are allowed in db_name, but we don't support it yet
+        rule = ~r/^[a-z_][a-z0-9_$]*$/
 
-        if String.contains?(user, not_allowed) or String.contains?(db_name, not_allowed) do
+        if user =~ rule and db_name =~ rule do
+          log_level = maybe_change_log(hello)
+          event = {:hello, {type, {user, tenant_or_alias, db_name}}}
+          app_name = app_name(hello.payload["application_name"])
+
+          {:keep_state, %{data | log_level: log_level, app_name: app_name},
+           {:next_event, :internal, event}}
+        else
           reason = "Invalid format for user or db_name"
           Logger.error("ClientHandler: #{inspect(reason)}")
-          Telem.client_join(:fail, data.id)
+          Telem.client_join(:fail, tenant_or_alias)
 
           HandlerHelpers.send_error(
             data.sock,
@@ -188,18 +200,7 @@ defmodule Supavisor.ClientHandler do
             "Authentication error, reason: #{inspect(reason)}"
           )
 
-          {:stop, {:shutdown, :invalid_characters}}
-        else
-          log_level =
-            case hello.payload["options"]["log_level"] do
-              nil -> nil
-              level -> String.to_existing_atom(level)
-            end
-
-          Helpers.set_log_level(log_level)
-
-          {:keep_state, %{data | log_level: log_level},
-           {:next_event, :internal, {:hello, {type, {user, tenant_or_alias, db_name}}}}}
+          {:stop, {:shutdown, :invalid_format}}
         end
 
       {:error, error} ->
@@ -237,7 +238,10 @@ defmodule Supavisor.ClientHandler do
           user: user,
           mode: mode,
           type: type,
-          db_name: db_name
+          db_name: db_name,
+          app_name: data.app_name,
+          peer_ip: data.peer_ip,
+          local: data.local
         )
 
         Registry.register(Supavisor.Registry.TenantClients, id, [])
@@ -381,7 +385,11 @@ defmodule Supavisor.ClientHandler do
              log_level: data.log_level,
              availability_zone: data.tenant_availability_zone
            ),
-         true <- if(node(sup) != node() and data.mode == :transaction, do: :proxy, else: true),
+         true <-
+           if(node(sup) != node() and data.mode in [:transaction, :session],
+             do: :proxy,
+             else: true
+           ),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
@@ -951,7 +959,7 @@ defmodule Supavisor.ClientHandler do
       end
 
     GenServer.stop(conn, :normal, 5_000)
-    Logger.info("ProxyClient: Get secrets finished")
+    Logger.info("ClientHandler: Get secrets finished")
     resp
   end
 
@@ -1057,4 +1065,24 @@ defmodule Supavisor.ClientHandler do
 
     idle ++ heartbeat
   end
+
+  @spec app_name(any()) :: String.t()
+  def app_name(name) when is_binary(name), do: name
+
+  def app_name(name) do
+    Logger.error("ClientHandler: Invalid application name #{inspect(name)}")
+    "Supavisor"
+  end
+
+  @spec maybe_change_log(map()) :: atom() | nil
+  def maybe_change_log(%{"payload" => %{"options" => options}}) do
+    level = options["log_level"] && String.to_existing_atom(options["log_level"])
+
+    if level in [:debug, :info, :notice, :warning, :error] do
+      Helpers.set_log_level(level)
+      level
+    end
+  end
+
+  def maybe_change_log(_), do: :ok
 end
