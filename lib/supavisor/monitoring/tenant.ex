@@ -212,7 +212,14 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     :telemetry.execute(
       [:supavisor, :connections],
       %{active: count},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 
