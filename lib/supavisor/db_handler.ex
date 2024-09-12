@@ -178,24 +178,7 @@ defmodule Supavisor.DbHandler do
         {:keep_state, data}
 
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
-        if not data.proxy do
-          tenant = Supavisor.tenant(data.id)
-
-          for node <- [node() | Node.list()] do
-            :erpc.cast(node, fn ->
-              Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
-              Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
-
-              Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
-                for {client_handler, _meta} <- entries,
-                    do: send(client_handler, {:disconnect, reason})
-              end)
-            end)
-          end
-
-          Supavisor.stop(data.id)
-        end
-
+        handle_authentication_error(data, reason)
         Logger.error("DbHandler: Auth error #{inspect(reason)}")
         {:stop, :invalid_password, data}
 
@@ -667,4 +650,25 @@ defmodule Supavisor.DbHandler do
     do: {:error_response, error}
 
   defp handle_auth_pkts(_e, acc, _data), do: acc
+
+  @spec handle_authentication_error(map(), String.t()) :: any()
+  defp handle_authentication_error(%{proxy: false} = data, reason) do
+    tenant = Supavisor.tenant(data.id)
+
+    for node <- [node() | Node.list()] do
+      :erpc.cast(node, fn ->
+        Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
+        Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
+
+        Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
+          for {client_handler, _meta} <- entries,
+              do: send(client_handler, {:disconnect, reason})
+        end)
+      end)
+    end
+
+    Supavisor.stop(data.id)
+  end
+
+  defp handle_authentication_error(%{proxy: true}, _reason), do: :ok
 end
