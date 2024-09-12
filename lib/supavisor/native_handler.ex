@@ -148,7 +148,7 @@ defmodule Supavisor.NativeHandler do
           db_name: db_name
         )
 
-        id = Supavisor.id(ext_id, user, :native, :native, db_name)
+        id = Supavisor.id(ext_id, user, :native, :native, db_name, nil)
         Registry.register(Supavisor.Registry.TenantClients, id, [])
 
         payload =

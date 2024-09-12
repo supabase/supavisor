@@ -196,7 +196,9 @@ defmodule Supavisor.Integration.ProxyTest do
     {:ok, pid} = parse_uri(url) |> single_connection()
 
     [{_, client_pid, _}] =
-      Supavisor.get_local_manager({{:single, @tenant}, "transaction", :transaction, "postgres"})
+      Supavisor.get_local_manager(
+        {{:single, @tenant}, "transaction", :transaction, "postgres", nil}
+      )
       |> :sys.get_state()
       |> Access.get(:tid)
       |> :ets.tab2list()

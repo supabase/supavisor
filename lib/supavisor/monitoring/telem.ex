@@ -36,12 +36,12 @@ defmodule Supavisor.Monitoring.Telem do
             recv_oct: recv_oct
           }
 
-          {{ptype, tenant}, user, mode, db_name} = id
+          {{ptype, tenant}, user, mode, db_name, search_path} = id
 
           :telemetry.execute(
             [:supavisor, type, :network, :stat],
             stats,
-            %{tenant: tenant, user: user, mode: mode, type: ptype, db_name: db_name}
+            %{tenant: tenant, user: user, mode: mode, type: ptype, db_name: db_name, search_path: search_path}
           )
 
           {:ok, %{}}
@@ -54,38 +54,38 @@ defmodule Supavisor.Monitoring.Telem do
   end
 
   @spec pool_checkout_time(integer(), Supavisor.id(), :local | :remote) :: :ok | nil
-  def pool_checkout_time(time, {{type, tenant}, user, mode, db_name}, same_box) do
+  def pool_checkout_time(time, {{type, tenant}, user, mode, db_name, search_path}, same_box) do
     telemetry_execute(
       [:supavisor, :pool, :checkout, :stop, same_box],
       %{duration: time},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     )
   end
 
   @spec client_query_time(integer(), Supavisor.id()) :: :ok | nil
-  def client_query_time(start, {{type, tenant}, user, mode, db_name}) do
+  def client_query_time(start, {{type, tenant}, user, mode, db_name, search_path}) do
     telemetry_execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     )
   end
 
   @spec client_connection_time(integer(), Supavisor.id()) :: :ok | nil
-  def client_connection_time(start, {{type, tenant}, user, mode, db_name}) do
+  def client_connection_time(start, {{type, tenant}, user, mode, db_name, search_path}) do
     telemetry_execute(
       [:supavisor, :client, :connection, :stop],
       %{duration: System.monotonic_time() - start},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     )
   end
 
   @spec client_join(:ok | :fail, Supavisor.id() | any()) :: :ok | nil
-  def client_join(status, {{type, tenant}, user, mode, db_name}) do
+  def client_join(status, {{type, tenant}, user, mode, db_name, search_path}) do
     telemetry_execute(
       [:supavisor, :client, :joins, status],
       %{},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     )
   end
 
@@ -98,11 +98,11 @@ defmodule Supavisor.Monitoring.Telem do
           :started | :stopped | :db_connection,
           Supavisor.id()
         ) :: :ok | nil
-  def handler_action(handler, action, {{type, tenant}, user, mode, db_name}) do
+  def handler_action(handler, action, {{type, tenant}, user, mode, db_name, search_path}) do
     telemetry_execute(
       [:supavisor, handler, action, :all],
       %{},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     )
   end
 
