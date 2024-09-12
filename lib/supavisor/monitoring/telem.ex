@@ -41,7 +41,14 @@ defmodule Supavisor.Monitoring.Telem do
           :telemetry.execute(
             [:supavisor, type, :network, :stat],
             stats,
-            %{tenant: tenant, user: user, mode: mode, type: ptype, db_name: db_name, search_path: search_path}
+            %{
+              tenant: tenant,
+              user: user,
+              mode: mode,
+              type: ptype,
+              db_name: db_name,
+              search_path: search_path
+            }
           )
 
           {:ok, %{}}
@@ -58,7 +65,14 @@ defmodule Supavisor.Monitoring.Telem do
     telemetry_execute(
       [:supavisor, :pool, :checkout, :stop, same_box],
       %{duration: time},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 
@@ -67,7 +81,14 @@ defmodule Supavisor.Monitoring.Telem do
     telemetry_execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 
@@ -76,7 +97,14 @@ defmodule Supavisor.Monitoring.Telem do
     telemetry_execute(
       [:supavisor, :client, :connection, :stop],
       %{duration: System.monotonic_time() - start},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 
@@ -85,7 +113,14 @@ defmodule Supavisor.Monitoring.Telem do
     telemetry_execute(
       [:supavisor, :client, :joins, status],
       %{},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 
@@ -102,7 +137,14 @@ defmodule Supavisor.Monitoring.Telem do
     telemetry_execute(
       [:supavisor, handler, action, :all],
       %{},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 
