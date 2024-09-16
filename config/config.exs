@@ -12,7 +12,8 @@ config :supavisor,
   version: Mix.Project.config()[:version],
   env: Mix.env(),
   metrics_disabled: System.get_env("METRICS_DISABLED") == "true",
-  switch_active_count: System.get_env("SWITCH_ACTIVE_COUNT", "100") |> String.to_integer()
+  switch_active_count: System.get_env("SWITCH_ACTIVE_COUNT", "100") |> String.to_integer(),
+  reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer()
 
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,

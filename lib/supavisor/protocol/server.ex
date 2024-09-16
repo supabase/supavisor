@@ -317,6 +317,12 @@ defmodule Supavisor.Protocol.Server do
     [<<?E, IO.iodata_length(message) + 4::32>>, message]
   end
 
+  @spec encode_error_message(list()) :: iodata()
+  def encode_error_message(message) when is_list(message) do
+    message = Enum.join(message, <<0>>) <> <<0, 0>>
+    [<<?E, byte_size(message) + 4::32>>, message]
+  end
+
   def decode_parameter_description("", acc), do: Enum.reverse(acc)
 
   def decode_parameter_description(<<oid::integer-32, rest::binary>>, acc) do

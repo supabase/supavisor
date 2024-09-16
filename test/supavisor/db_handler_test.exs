@@ -15,7 +15,8 @@ defmodule Supavisor.DbHandlerTest do
         user: "user",
         mode: :transaction,
         replica_type: :single,
-        log_level: nil
+        log_level: nil,
+        reconnect_retries: 5
       }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
@@ -98,7 +99,13 @@ defmodule Supavisor.DbHandlerTest do
         ip_version: :inet
       }
 
-      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: nil, id: @id})
+      state =
+        Db.handle_event(:internal, nil, :connect, %{
+          auth: auth,
+          sock: nil,
+          id: {"a", "b"},
+          reconnect_retries: 5
+        })
 
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
       :meck.unload(:gen_tcp)
