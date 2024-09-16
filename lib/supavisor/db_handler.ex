@@ -119,8 +119,9 @@ defmodule Supavisor.DbHandler do
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
             tenant = if data.proxy, do: Supavisor.tenant(data.id)
+            search_path = Supavisor.search_path(data.id)
 
-            case send_startup(sock, auth, tenant) do
+            case send_startup(sock, auth, tenant, search_path) do
               :ok ->
                 :ok = activate(sock)
                 {:next_state, :authentication, %{data | sock: sock}}
@@ -452,17 +453,20 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec send_startup(Supavisor.sock(), map(), String.t() | nil) :: :ok | {:error, term}
-  def send_startup(sock, auth, tenant) do
+  @spec send_startup(Supavisor.sock(), map(), String.t() | nil, String.t() | nil) ::
+          :ok | {:error, term}
+  def send_startup(sock, auth, tenant, search_path) do
     user =
       if is_nil(tenant), do: get_user(auth), else: "#{get_user(auth)}.#{tenant}"
 
     msg =
-      :pgo_protocol.encode_startup_message([
-        {"user", user},
-        {"database", auth.database},
-        {"application_name", auth.application_name}
-      ])
+      :pgo_protocol.encode_startup_message(
+        [
+          {"user", user},
+          {"database", auth.database},
+          {"application_name", auth.application_name}
+        ] ++ if(search_path, do: [{"options", "--search_path=#{search_path}"}], else: [])
+      )
 
     sock_send(sock, msg)
   end

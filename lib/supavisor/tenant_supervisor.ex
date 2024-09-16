@@ -35,8 +35,8 @@ defmodule Supavisor.TenantSupervisor do
 
     children = [{Manager, args} | pools]
 
-    {{type, tenant}, user, mode, db_name} = args.id
-    map_id = %{user: user, mode: mode, type: type, db_name: db_name}
+    {{type, tenant}, user, mode, db_name, search_path} = args.id
+    map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
 
     Supervisor.init(children,

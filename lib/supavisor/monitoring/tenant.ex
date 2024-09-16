@@ -6,7 +6,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   alias Supavisor, as: S
 
-  @tags [:tenant, :user, :mode, :type, :db_name]
+  @tags [:tenant, :user, :mode, :type, :db_name, :search_path]
 
   @impl true
   def polling_metrics(opts) do
@@ -208,11 +208,18 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   @spec emit_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
-  def emit_telemetry_for_tenant({{{type, tenant}, user, mode, db_name}, count}) do
+  def emit_telemetry_for_tenant({{{type, tenant}, user, mode, db_name, search_path}, count}) do
     :telemetry.execute(
       [:supavisor, :connections],
       %{active: count},
-      %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 

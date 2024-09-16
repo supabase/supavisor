@@ -3,11 +3,12 @@ defmodule Supavisor.DbHandlerTest do
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.Server
   # import Mock
+  @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
 
   describe "init/1" do
     test "starts with correct state" do
       args = %{
-        id: {"a", "b"},
+        id: @id,
         auth: %{},
         tenant: {:single, "test_tenant"},
         user_alias: "test_user_alias",
@@ -58,7 +59,7 @@ defmodule Supavisor.DbHandlerTest do
         Db.handle_event(:internal, nil, :connect, %{
           auth: auth,
           sock: {:gen_tcp, nil},
-          id: {"a", "b"},
+          id: @id,
           proxy: false
         })
 
@@ -76,7 +77,7 @@ defmodule Supavisor.DbHandlerTest do
                     secrets: secrets
                   },
                   sock: {:gen_tcp, :sock},
-                  id: {"a", "b"},
+                  id: @id,
                   proxy: false
                 }}
 
@@ -89,7 +90,7 @@ defmodule Supavisor.DbHandlerTest do
       :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:error, "some error"} end)
 
       auth = %{
-        id: {"a", "b"},
+        id: @id,
         host: "host",
         port: 0,
         user: "some user",
@@ -158,7 +159,7 @@ defmodule Supavisor.DbHandlerTest do
       caller_pid = self()
 
       data = %{
-        id: {{:single, "tenant"}, "user", :session, "postgres"},
+        id: @id,
         caller: caller_pid,
         sock: {:gen_tcp, nil},
         stats: %{},

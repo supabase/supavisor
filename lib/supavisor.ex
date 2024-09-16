@@ -15,7 +15,7 @@ defmodule Supavisor do
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
   @type mode :: :transaction | :session | :native | :proxy
-  @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t()}
+  @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t(), String.t() | nil}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
@@ -221,8 +221,9 @@ defmodule Supavisor do
     end
   end
 
-  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t()) :: id
-  def id(tenant, user, port_mode, user_mode, db_name) do
+  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t(), String.t() | nil) ::
+          id
+  def id(tenant, user, port_mode, user_mode, db_name, search_path) do
     # temporary hack
     mode =
       if port_mode == :transaction do
@@ -231,14 +232,17 @@ defmodule Supavisor do
         port_mode
       end
 
-    {tenant, user, mode, db_name}
+    {tenant, user, mode, db_name, search_path}
   end
 
   @spec tenant(id) :: String.t()
-  def tenant({{_, tenant}, _, _, _}), do: tenant
+  def tenant({{_, tenant}, _, _, _, _}), do: tenant
 
   @spec mode(id) :: atom()
-  def mode({_, _, mode, _}), do: mode
+  def mode({_, _, mode, _, _}), do: mode
+
+  @spec search_path(id) :: String.t() | nil
+  def search_path({_, _, _, _, search_path}), do: search_path
 
   @spec determine_node(id, String.t() | nil) :: Node.t()
   def determine_node(id, availability_zone) do
@@ -272,7 +276,11 @@ defmodule Supavisor do
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
-  def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets, log_level \\ nil) do
+  def start_local_pool(
+        {{type, tenant}, _user, _mode, _db_name, _search_path} = id,
+        secrets,
+        log_level \\ nil
+      ) do
     Logger.info("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
@@ -315,7 +323,7 @@ defmodule Supavisor do
 
   defp supervisor_args(
          tenant_record,
-         {tenant, user, mode, db_name} = id,
+         {tenant, user, mode, db_name, _search_path} = id,
          {method, secrets},
          log_level
        ) do

@@ -171,6 +171,11 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  def handle_event(:info, {_, _, bin}, :exchange, _) when byte_size(bin) > 1024 do
+    Logger.error("ClientHandler: Startup packet too large #{byte_size(bin)}")
+    {:stop, {:shutdown, :startup_packet_too_large}}
+  end
+
   def handle_event(:info, {_, _, bin}, :exchange, data) do
     case Server.decode_startup_packet(bin) do
       {:ok, hello} ->
@@ -184,7 +189,8 @@ defmodule Supavisor.ClientHandler do
 
         if user =~ rule and db_name =~ rule do
           log_level = maybe_change_log(hello)
-          event = {:hello, {type, {user, tenant_or_alias, db_name}}}
+          search_path = hello.payload["options"]["--search_path"]
+          event = {:hello, {type, {user, tenant_or_alias, db_name, search_path}}}
           app_name = app_name(hello.payload["application_name"])
 
           {:keep_state, %{data | log_level: log_level, app_name: app_name},
@@ -212,7 +218,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_name}}},
+        {:hello, {type, {user, tenant_or_alias, db_name, search_path}}},
         :exchange,
         %{sock: sock} = data
       ) do
@@ -228,7 +234,8 @@ defmodule Supavisor.ClientHandler do
             user,
             data.mode,
             info.user.mode_type,
-            db_name
+            db_name,
+            search_path
           )
 
         mode = Supavisor.mode(id)

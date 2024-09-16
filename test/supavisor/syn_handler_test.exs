@@ -5,7 +5,7 @@ defmodule Supavisor.SynHandlerTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Supavisor.Support.Cluster
 
-  @id {{:single, "syn_tenant"}, "postgres", :session, "postgres"}
+  @id {{:single, "syn_tenant"}, "postgres", :session, "postgres", nil}
 
   test "resolving conflict" do
     {:ok, _pid, node2} = Cluster.start_node()
