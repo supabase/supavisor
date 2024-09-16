@@ -22,6 +22,7 @@ defmodule Supavisor.DbHandler do
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
+  @reconnect_retries Application.compile_env(:supavisor, :reconnect_retries)
 
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -73,7 +74,8 @@ defmodule Supavisor.DbHandler do
         caller: args[:caller] || nil,
         client_sock: args[:client_sock] || nil,
         proxy: args[:proxy] || false,
-        active_count: 0
+        active_count: 0,
+        reconnect_retries: 0
       }
 
     Telem.handler_action(:db_handler, :started, args.id)
@@ -102,7 +104,11 @@ defmodule Supavisor.DbHandler do
         active: false
       ]
 
-    reconnect_callback = {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
+    maybe_reconnect_callback = fn reason ->
+      if data.reconnect_retries > @reconnect_retries and data.client_sock != nil,
+        do: {:stop, {:failed_to_connect, reason}},
+        else: {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
+    end
 
     Telem.handler_action(:db_handler, :db_connection, data.id)
 
@@ -121,12 +127,12 @@ defmodule Supavisor.DbHandler do
 
               {:error, reason} ->
                 Logger.error("DbHandler: Send startup error #{inspect(reason)}")
-                reconnect_callback
+                maybe_reconnect_callback.(reason)
             end
 
-          {:error, error} ->
-            Logger.error("DbHandler: Handshake error #{inspect(error)}")
-            reconnect_callback
+          {:error, reason} ->
+            Logger.error("DbHandler: Handshake error #{inspect(reason)}")
+            maybe_reconnect_callback.(reason)
         end
 
       other ->
@@ -134,13 +140,16 @@ defmodule Supavisor.DbHandler do
           "DbHandler: Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
         )
 
-        reconnect_callback
+        maybe_reconnect_callback.(other)
     end
   end
 
-  def handle_event(:state_timeout, :connect, _state, _) do
-    Logger.warning("DbHandler: Reconnect")
-    {:keep_state_and_data, {:next_event, :internal, :connect}}
+  def handle_event(:state_timeout, :connect, _state, data) do
+    retry = data.reconnect_retries
+    Logger.warning("DbHandler: Reconnect #{retry} to DB")
+
+    {:keep_state, %{data | reconnect_retries: data.reconnect_retries + 1},
+     {:next_event, :internal, :connect}}
   end
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
@@ -169,12 +178,13 @@ defmodule Supavisor.DbHandler do
         {:keep_state, data}
 
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
+        handle_authentication_error(data, reason)
         Logger.error("DbHandler: Auth error #{inspect(reason)}")
         {:stop, :invalid_password, data}
 
       {:error_response, error} ->
         Logger.error("DbHandler: Error auth response #{inspect(error)}")
-        {:keep_state, data}
+        {:stop, {:encode_and_forward, error}}
 
       {:ready_for_query, acc} ->
         ps = acc.ps
@@ -190,7 +200,7 @@ defmodule Supavisor.DbHandler do
           Supavisor.set_parameter_status(data.id, ps)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps},
+        {:next_state, :idle, %{data | parameter_status: ps, reconnect_retries: 0},
          {:next_event, :internal, :check_buffer}}
 
       other ->
@@ -380,6 +390,16 @@ defmodule Supavisor.DbHandler do
 
   def terminate(reason, state, data) do
     Telem.handler_action(:db_handler, :stopped, data.id)
+
+    if data.client_sock != nil do
+      message =
+        case reason do
+          {:encode_and_forward, msg} -> Server.encode_error_message(msg)
+          _ -> Server.error_message("XX000", inspect(reason))
+        end
+
+      HandlerHelpers.sock_send(data.client_sock, message)
+    end
 
     Logger.error(
       "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
@@ -630,4 +650,25 @@ defmodule Supavisor.DbHandler do
     do: {:error_response, error}
 
   defp handle_auth_pkts(_e, acc, _data), do: acc
+
+  @spec handle_authentication_error(map(), String.t()) :: any()
+  defp handle_authentication_error(%{proxy: false} = data, reason) do
+    tenant = Supavisor.tenant(data.id)
+
+    for node <- [node() | Node.list()] do
+      :erpc.cast(node, fn ->
+        Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
+        Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
+
+        Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
+          for {client_handler, _meta} <- entries,
+              do: send(client_handler, {:disconnect, reason})
+        end)
+      end)
+    end
+
+    Supavisor.stop(data.id)
+  end
+
+  defp handle_authentication_error(%{proxy: true}, _reason), do: :ok
 end
