@@ -1077,7 +1077,7 @@ defmodule Supavisor.ClientHandler do
   def app_name(name) when is_binary(name), do: name
 
   def app_name(name) do
-    Logger.error("ClientHandler: Invalid application name #{inspect(name)}")
+    Logger.debug("ClientHandler: Invalid application name #{inspect(name)}")
     "Supavisor"
   end
 
