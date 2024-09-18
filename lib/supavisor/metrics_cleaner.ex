@@ -39,8 +39,17 @@ defmodule Supavisor.MetricsCleaner do
     tenant_registry_table = :syn_registry_by_name_tenants
 
     fn
-      {{_, %{type: type, mode: mode, user: user, tenant: tenant, db_name: db}} = key, _}, _ ->
-        case :ets.lookup(tenant_registry_table, {{type, tenant}, user, mode, db}) do
+      {{_,
+        %{
+          type: type,
+          mode: mode,
+          user: user,
+          tenant: tenant,
+          db_name: db,
+          search_path: search_path
+        }} = key, _},
+      _ ->
+        case :ets.lookup(tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) do
           [] ->
             Logger.warning("Found orphaned metric: #{inspect(key)}")
             :ets.delete(metrics_table, key)
