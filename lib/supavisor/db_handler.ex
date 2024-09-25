@@ -298,7 +298,7 @@ defmodule Supavisor.DbHandler do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
       data =
-        if data.mode == :transaction do
+        if data.mode in [:transaction, :session] do
           ClientHandler.db_status(data.caller, :ready_for_query, bin)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
