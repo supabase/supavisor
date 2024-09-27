@@ -84,7 +84,6 @@ defmodule Supavisor.ClientHandler do
       heartbeat_interval: 0,
       connection_start: System.monotonic_time(),
       log_level: nil,
-      db_sock: nil,
       auth: %{},
       tenant_availability_zone: nil,
       local: opts[:local] || false,
@@ -506,25 +505,32 @@ defmodule Supavisor.ClientHandler do
   end
 
   # handle Sync message
-  def handle_event(:info, {proto, _, <<?S, 4::32>>}, :idle, data)
+  def handle_event(:info, {proto, _, <<?S, 4::32, _::binary>> = msg}, :idle, data)
       when proto in @proto do
-    Logger.info("ClientHandler: Receive sync")
-    :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
-    {:keep_state_and_data, handle_actions(data)}
+    Logger.debug("ClientHandler: Receive sync")
+
+    # db_pid can be nil in transaction mode, so we will send ready_for_query
+    # without checking out a direct connection. If there is a linked db_pid,
+    # we will forward the message to it
+    if data.db_pid != nil,
+      do: :ok = sock_send_maybe_active_once(msg, data),
+      else: :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
+
+    {:keep_state, %{data | active_count: 0}, handle_actions(data)}
   end
 
   def handle_event(:info, {proto, _, <<?S, 4::32, _::binary>> = msg}, _, data)
       when proto in @proto do
-    Logger.warning("ClientHandler: Receive sync while not idle")
-    :ok = HandlerHelpers.sock_send(elem(data.db_pid, 2), msg)
-    :keep_state_and_data
+    Logger.debug("ClientHandler: Receive sync while not idle")
+    :ok = sock_send_maybe_active_once(msg, data)
+    {:keep_state, %{data | active_count: 0}, handle_actions(data)}
   end
 
   def handle_event(:info, {proto, _, <<?H, 4::32, _::binary>> = msg}, _, data)
       when proto in @proto do
-    Logger.warning("ClientHandler: Receive flush while not idle")
-    :ok = HandlerHelpers.sock_send(elem(data.db_pid, 2), msg)
-    :keep_state_and_data
+    Logger.debug("ClientHandler: Receive flush while not idle")
+    :ok = sock_send_maybe_active_once(msg, data)
+    {:keep_state, %{data | active_count: 0}, handle_actions(data)}
   end
 
   # incoming query with a single pool
@@ -574,10 +580,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(_, {proto, _, bin}, :busy, data) when proto in @proto do
     Logger.debug("ClientHandler: Forward query to db #{inspect(bin)} #{inspect(data.db_pid)}")
 
-    if data.active_count > @switch_active_count,
-      do: HandlerHelpers.active_once(data.sock)
-
-    case HandlerHelpers.sock_send(elem(data.db_pid, 2), bin) do
+    case sock_send_maybe_active_once(bin, data) do
       :ok ->
         {:keep_state, %{data | active_count: data.active_count + 1}}
 
@@ -1092,4 +1095,17 @@ defmodule Supavisor.ClientHandler do
   end
 
   def maybe_change_log(_), do: :ok
+
+  @spec sock_send_maybe_active_once(binary(), map()) :: :ok | {:error, term()}
+  def sock_send_maybe_active_once(bin, data) do
+    Logger.debug("ClientHandler: Send maybe active once")
+    active_count = data.active_count
+
+    if active_count > @switch_active_count do
+      Logger.debug("ClientHandler: Activate socket #{inspect(active_count)}")
+      HandlerHelpers.active_once(data.sock)
+    end
+
+    HandlerHelpers.sock_send(elem(data.db_pid, 2), bin)
+  end
 end

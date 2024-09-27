@@ -297,8 +297,10 @@ defmodule Supavisor.DbHandler do
     if String.ends_with?(bin, Server.ready_for_query()) do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
+      # in transaction mode, we need to notify the client when the transaction is finished,
+      # after which it will unlink the direct db connection process from itself.
       data =
-        if data.mode in [:transaction, :session] do
+        if data.mode == :transaction do
           ClientHandler.db_status(data.caller, :ready_for_query, bin)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
