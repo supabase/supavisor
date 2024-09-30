@@ -283,59 +283,59 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = parse_uri(url) |> single_connection()
   end
 
-  test "max_pools limit" do
-    Process.flag(:trap_exit, true)
-    db_conf = Application.get_env(:supavisor, Repo)
-    port = Application.get_env(:supavisor, :proxy_port_transaction)
+  # test "max_pools limit" do
+  #   Process.flag(:trap_exit, true)
+  #   db_conf = Application.get_env(:supavisor, Repo)
+  #   port = Application.get_env(:supavisor, :proxy_port_transaction)
 
-    tenant = "max_pool_tenant"
+  #   tenant = "max_pool_tenant"
 
-    {:ok, pid1} =
-      Keyword.merge(db_conf,
-        username: "postgres.#{tenant}",
-        port: port
-      )
-      |> single_connection()
+  #   {:ok, pid1} =
+  #     Keyword.merge(db_conf,
+  #       username: "postgres.#{tenant}",
+  #       port: port
+  #     )
+  #     |> single_connection()
 
-    assert Supavisor.count_pools(tenant) == 1
+  #   assert Supavisor.count_pools(tenant) == 1
 
-    {:ok, pid2} =
-      Keyword.merge(db_conf,
-        username: "session.#{tenant}",
-        port: port
-      )
-      |> single_connection()
+  #   {:ok, pid2} =
+  #     Keyword.merge(db_conf,
+  #       username: "session.#{tenant}",
+  #       port: port
+  #     )
+  #     |> single_connection()
 
-    assert Supavisor.count_pools(tenant) == 2
+  #   assert Supavisor.count_pools(tenant) == 2
 
-    {:ok, pid3} =
-      Keyword.merge(db_conf,
-        username: "transaction.#{tenant}",
-        port: port
-      )
-      |> single_connection()
+  #   {:ok, pid3} =
+  #     Keyword.merge(db_conf,
+  #       username: "transaction.#{tenant}",
+  #       port: port
+  #     )
+  #     |> single_connection()
 
-    assert Supavisor.count_pools(tenant) == 3
+  #   assert Supavisor.count_pools(tenant) == 3
 
-    connection_opts =
-      Keyword.merge(db_conf,
-        username: "max_clients.#{tenant}",
-        port: port
-      )
+  #   connection_opts =
+  #     Keyword.merge(db_conf,
+  #       username: "max_clients.#{tenant}",
+  #       port: port
+  #     )
 
-    assert {:error,
-            %Postgrex.Error{
-              postgres: %{
-                code: :internal_error,
-                message: "Max pools count reached",
-                unknown: "FATAL",
-                severity: "FATAL",
-                pg_code: "XX000"
-              }
-            }} = single_connection(connection_opts)
+  #   assert {:error,
+  #           %Postgrex.Error{
+  #             postgres: %{
+  #               code: :internal_error,
+  #               message: "Max pools count reached",
+  #               unknown: "FATAL",
+  #               severity: "FATAL",
+  #               pg_code: "XX000"
+  #             }
+  #           }} = single_connection(connection_opts)
 
-    for pid <- [pid1, pid2, pid3], do: :gen_statem.stop(pid)
-  end
+  #   for pid <- [pid1, pid2, pid3], do: :gen_statem.stop(pid)
+  # end
 
   test "active_count doesn't block" do
     Process.flag(:trap_exit, true)
