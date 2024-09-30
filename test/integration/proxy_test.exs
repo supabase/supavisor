@@ -337,6 +337,39 @@ defmodule Supavisor.Integration.ProxyTest do
     for pid <- [pid1, pid2, pid3], do: :gen_statem.stop(pid)
   end
 
+  test "active_count doesn't block" do
+    Process.flag(:trap_exit, true)
+    db_conf = Application.get_env(:supavisor, Repo)
+    port = Application.get_env(:supavisor, :proxy_port_session)
+
+    connection_opts =
+      Keyword.merge(db_conf,
+        username: db_conf[:username] <> "." <> @tenant,
+        port: port
+      )
+
+    assert {:ok, pid} = single_connection(connection_opts)
+
+    id = {{:single, @tenant}, db_conf[:username], :session, db_conf[:database], nil}
+    [{client_pid, _}] = Registry.lookup(Supavisor.Registry.TenantClients, id)
+
+    assert match?({_, %{active_count: 1}}, :sys.get_state(client_pid))
+
+    Enum.each(0..200, fn _ ->
+      P.SimpleConnection.call(pid, {:query, "select 1;"})
+    end)
+    |> IO.inspect()
+
+    assert match?(
+             [
+               %Postgrex.Result{
+                 command: :select
+               }
+             ],
+             P.SimpleConnection.call(pid, {:query, "select 1;"})
+           )
+  end
+
   defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
     port = c_port || db_conf[:port]
 
