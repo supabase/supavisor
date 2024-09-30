@@ -358,7 +358,6 @@ defmodule Supavisor.Integration.ProxyTest do
     Enum.each(0..200, fn _ ->
       P.SimpleConnection.call(pid, {:query, "select 1;"})
     end)
-    |> IO.inspect()
 
     assert match?(
              [
