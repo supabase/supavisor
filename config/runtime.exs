@@ -160,7 +160,8 @@ if config_env() != :test do
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
     node_host: System.get_env("NODE_IP", "127.0.0.1"),
-    availability_zone: System.get_env("AVAILABILITY_ZONE")
+    availability_zone: System.get_env("AVAILABILITY_ZONE"),
+    local_proxy_multiplier: System.get_env("LOCAL_PROXY_MULTIPLIER", "20") |> String.to_integer()
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),

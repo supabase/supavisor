@@ -31,7 +31,7 @@ defmodule Supavisor.PromExTest do
     :ok = GenServer.stop(proxy)
     :ok = Supavisor.stop({{:single, @tenant}, user, :transaction, db_name, nil})
 
-    Process.sleep(1000)
+    Process.sleep(3000)
 
     refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
   end

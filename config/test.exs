@@ -19,7 +19,8 @@ config :supavisor,
   node_host: System.get_env("NODE_IP", "127.0.0.1"),
   availability_zone: System.get_env("AVAILABILITY_ZONE"),
   max_pools: 5,
-  reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer()
+  reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer(),
+  local_proxy_multiplier: System.get_env("LOCAL_PROXY_MULTIPLIER", "20") |> String.to_integer()
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",
