@@ -414,7 +414,7 @@ defmodule Supavisor do
         else: {1, 100}
 
     opts = %{
-      max_connections: max_clients,
+      max_connections: max_clients * Application.get_env(:supavisor, :local_proxy_multiplier),
       num_acceptors: max(acceptors, 10),
       socket_opts: [port: 0, keepalive: true]
     }
