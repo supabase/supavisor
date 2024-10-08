@@ -20,6 +20,7 @@ config :supavisor,
   availability_zone: System.get_env("AVAILABILITY_ZONE"),
   max_pools: 5,
   reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer(),
+  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer(),
   local_proxy_multiplier: System.get_env("LOCAL_PROXY_MULTIPLIER", "20") |> String.to_integer()
 
 config :supavisor, Supavisor.Repo,
