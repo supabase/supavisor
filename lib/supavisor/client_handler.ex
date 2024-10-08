@@ -13,6 +13,8 @@ defmodule Supavisor.ClientHandler do
   @proto [:tcp, :ssl]
   @cancel_query_msg <<16::32, 1234::16, 5678::16>>
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
+  @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
+  @timeout_subscribe 500
 
   alias Supavisor.{
     DbHandler,
@@ -89,7 +91,8 @@ defmodule Supavisor.ClientHandler do
       local: opts[:local] || false,
       active_count: 0,
       peer_ip: Helpers.peer_ip(sock),
-      app_name: nil
+      app_name: nil,
+      subscribe_retries: 0
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -424,23 +427,28 @@ defmodule Supavisor.ClientHandler do
         {:stop, {:shutdown, :max_pools_reached}}
 
       :proxy ->
-        {:ok, %{port: port, host: host}} = Supavisor.get_pool_ranch(data.id)
+        case Supavisor.get_pool_ranch(data.id) do
+          {:ok, %{port: port, host: host}} ->
+            auth =
+              Map.merge(data.auth, %{
+                port: port,
+                host: to_charlist(host),
+                ip_version: :inet,
+                upstream_ssl: false,
+                upstream_tls_ca: nil,
+                upstream_verify: nil
+              })
 
-        auth =
-          Map.merge(data.auth, %{
-            port: port,
-            host: to_charlist(host),
-            ip_version: :inet,
-            upstream_ssl: false,
-            upstream_tls_ca: nil,
-            upstream_verify: nil
-          })
+            {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
 
-        {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
+          other ->
+            Logger.error("ClientHandler: Subscribe proxy error: #{inspect(other)}")
+            timeout_subscribe_or_terminate(data)
+        end
 
       error ->
         Logger.error("ClientHandler: Subscribe error: #{inspect(error)}")
-        {:keep_state_and_data, {:timeout, 1000, :subscribe}}
+        timeout_subscribe_or_terminate(data)
     end
   end
 
@@ -1107,5 +1115,18 @@ defmodule Supavisor.ClientHandler do
     end
 
     HandlerHelpers.sock_send(elem(data.db_pid, 2), bin)
+  end
+
+  @spec timeout_subscribe_or_terminate(map()) :: :gen_statem.handle_event_result()
+  def timeout_subscribe_or_terminate(%{subscribe_retries: subscribe_retries} = data) do
+    if subscribe_retries < @subscribe_retries do
+      Logger.warning("ClientHandler: Retry subscribe")
+
+      {:keep_state, %{data | subscribe_retries: subscribe_retries + 1},
+       {:timeout, @timeout_subscribe, :subscribe}}
+    else
+      Logger.error("ClientHandler: Terminate after retries")
+      {:stop, {:shutdown, :subscribe_retries}}
+    end
   end
 end
