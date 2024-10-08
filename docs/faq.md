@@ -36,5 +36,5 @@ the tenant.
 Also running N pools on N nodes for N clients will not scale horizontally as
 well because all nodes will be doing all the same work of issuing database
 connections to clients. While not a lot of overhead, at some point this won't
-scale and we'd have to run multiple independant clusters and route tenants to
+scale and we'd have to run multiple independent clusters and route tenants to
 clusters to scale horizontally.

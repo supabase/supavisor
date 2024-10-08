@@ -91,12 +91,12 @@ defmodule Supavisor.HotUpgrade do
     end
   end
 
-  def reint_funs() do
+  def reint_funs do
     reinit_pool_args()
     reinit_auth_query()
   end
 
-  def reinit_pool_args() do
+  def reinit_pool_args do
     for [_tenant, pid, _meta] <-
           Registry.select(Supavisor.Registry.TenantSups, [
             {{:"$1", :"$2", :"$3"}, [], [[:"$1", :"$2", :"$3"]]}
@@ -131,7 +131,7 @@ defmodule Supavisor.HotUpgrade do
     end
   end
 
-  def reinit_auth_query() do
+  def reinit_auth_query do
     Supavisor.Cache
     |> Cachex.stream!()
     |> Enum.each(fn entry(key: key, value: value) ->
@@ -159,12 +159,10 @@ defmodule Supavisor.HotUpgrade do
   def do_enc(val), do: fn -> val end
 
   def get_state(pid) do
-    try do
-      {:ok, :sys.get_state(pid)}
-    catch
-      type, exception ->
-        IO.write("Error getting state: #{inspect(exception)}")
-        {:error, {type, exception}}
-    end
+    {:ok, :sys.get_state(pid)}
+  catch
+    type, exception ->
+      IO.write("Error getting state: #{inspect(exception)}")
+      {:error, {type, exception}}
   end
 end

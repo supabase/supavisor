@@ -10,7 +10,11 @@ import Config
 config :supavisor,
   ecto_repos: [Supavisor.Repo],
   version: Mix.Project.config()[:version],
-  env: Mix.env()
+  env: Mix.env(),
+  metrics_disabled: System.get_env("METRICS_DISABLED") == "true",
+  switch_active_count: System.get_env("SWITCH_ACTIVE_COUNT", "100") |> String.to_integer(),
+  reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer(),
+  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "20") |> String.to_integer()
 
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,
@@ -23,7 +27,18 @@ config :supavisor, SupavisorWeb.Endpoint,
 # Configures Elixir's Logger
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :project, :user, :region, :instance_id, :mode, :type]
+  metadata: [
+    :request_id,
+    :project,
+    :user,
+    :region,
+    :instance_id,
+    :mode,
+    :type,
+    :app_name,
+    :peer_ip,
+    :local
+  ]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

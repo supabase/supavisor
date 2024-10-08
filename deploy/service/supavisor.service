@@ -19,3 +19,5 @@ WantedBy=multi-user.target
 
 [Service]
 TasksMax=infinity
+
+# vi: ft=systemd

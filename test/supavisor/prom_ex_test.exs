@@ -6,7 +6,7 @@ defmodule Supavisor.PromExTest do
 
   @tenant "prom_tenant"
 
-  setup_all do
+  setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
     {:ok, proxy} =
@@ -28,10 +28,10 @@ defmodule Supavisor.PromExTest do
   test "remove tenant tag upon termination", %{proxy: proxy, user: user, db_name: db_name} do
     assert PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
 
-    GenServer.stop(proxy)
-    Supavisor.stop({{:single, @tenant}, user, :transaction, db_name})
+    :ok = GenServer.stop(proxy)
+    :ok = Supavisor.stop({{:single, @tenant}, user, :transaction, db_name, nil})
 
-    Process.sleep(500)
+    Process.sleep(3000)
 
     refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
   end

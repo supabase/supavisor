@@ -22,11 +22,11 @@ defmodule Supavisor.MixProject do
     [
       mod: {Supavisor.Application, []},
       extra_applications:
-        [:logger, :runtime_tools, :os_mon, :ssl, :partisan] ++ extra_applications(Mix.env())
+        [:logger, :runtime_tools, :os_mon, :ssl] ++ extra_applications(Mix.env())
     ]
   end
 
-  defp extra_applications(:test), do: [:common_test]
+  defp extra_applications(:dev), do: [:wx, :observer]
   defp extra_applications(_), do: []
 
   # Specifies which paths to compile per environment.
@@ -42,39 +42,37 @@ defmodule Supavisor.MixProject do
       {:phoenix_ecto, "~> 4.4"},
       {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
-      {:phoenix_html, "~> 3.0"},
       {:phoenix_view, "~> 2.0.2"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
-      {:phoenix_live_view, "~> 0.18.18"},
+      {:phoenix_live_view, "~> 0.20.0"},
       {:phoenix_live_dashboard, "~> 0.7"},
-      {:telemetry_metrics, "~> 0.6"},
       {:telemetry_poller, "~> 1.0"},
+      {:peep, "~> 3.1"},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
-      {:joken, "~> 2.5.0"},
-      {:cloak_ecto, "~> 1.2.0"},
-      {:meck, "~> 0.9.2", only: :test},
+      {:joken, "~> 2.6.0"},
+      {:cloak_ecto, "~> 1.3.0"},
+      {:meck, "~> 0.9.2", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:benchee, "~> 1.1.0", only: :dev},
-      {:prom_ex, "~> 1.8.0"},
+      {:benchee, "~> 1.3", only: :dev},
+      {:prom_ex, "~> 1.10"},
       {:open_api_spex, "~> 3.16"},
-      {:burrito, github: "burrito-elixir/burrito"},
       {:libcluster, "~> 3.3.1"},
       {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.4"},
       {:distillery, "~> 2.1"},
       {:cachex, "~> 3.6"},
       {:inet_cidr, "~> 1.0.0"},
       {:observer_cli, "~> 1.7"},
+      {:eflambe, "~> 0.3.1", only: [:dev]},
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
       {:poolboy, git: "https://github.com/abc3/poolboy.git", tag: "v0.0.2"},
-      {:partisan, git: "https://github.com/lasp-lang/partisan.git", tag: "v5.0.0-rc.12"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:rustler, "~> 0.29.1"}
-      # TODO: add ranch deps
+      {:rustler, "~> 0.34.0"},
+      {:ranch, "~> 2.0", override: true}
     ]
   end
 
@@ -84,17 +82,6 @@ defmodule Supavisor.MixProject do
         steps: [:assemble, &upgrade/1, :tar],
         include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
         cookie: System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30)))
-      ],
-      supavisor_bin: [
-        steps: [:assemble, &Burrito.wrap/1],
-        burrito: [
-          targets: [
-            macos_aarch64: [os: :darwin, cpu: :aarch64],
-            macos_x86_64: [os: :darwin, cpu: :x86_64],
-            linux_x86_64: [os: :linux, cpu: :x86_64],
-            linux_aarch64: [os: :linux, cpu: :aarch64]
-          ]
-        ]
       ]
     ]
   end

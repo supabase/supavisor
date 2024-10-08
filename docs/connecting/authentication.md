@@ -1,7 +1,7 @@
 When a client connection is established Supavisor needs to verify the
 credentials of the connection.
 
-Credential verificiation is done either via `user` records or an `auth_query`.
+Credential verification is done either via `user` records or an `auth_query`.
 
 ## Tenant User Record
 

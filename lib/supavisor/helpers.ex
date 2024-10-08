@@ -57,7 +57,9 @@ defmodule Supavisor.Helpers do
         Postgrex.query(conn, "select version()", [])
         |> case do
           {:ok, %{rows: [[version]]}} ->
-            if !params["require_user"] do
+            if params["require_user"] do
+              {:cont, {:ok, version}}
+            else
               case get_user_secret(conn, params["auth_query"], user["db_user"]) do
                 {:ok, _} ->
                   {:halt, {:ok, version}}
@@ -65,8 +67,6 @@ defmodule Supavisor.Helpers do
                 {:error, reason} ->
                   {:halt, {:error, reason}}
               end
-            else
-              {:cont, {:ok, version}}
             end
 
           {:error, reason} ->
@@ -101,9 +101,9 @@ defmodule Supavisor.Helpers do
         {:error,
          "There is no user '#{user}' in the database. Please create it or change the user in the config"}
 
-      %{columns: colums} ->
+      %{columns: columns} ->
         {:error,
-         "Authentification query returned wrong format. Should be two columns: user and secret, but got: #{inspect(colums)}"}
+         "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
 
       {:error, reason} ->
         {:error, reason}
@@ -231,12 +231,12 @@ defmodule Supavisor.Helpers do
   end
 
   @spec downstream_cert() :: Path.t() | nil
-  def downstream_cert() do
+  def downstream_cert do
     Application.get_env(:supavisor, :global_downstream_cert)
   end
 
   @spec downstream_key() :: Path.t() | nil
-  def downstream_key() do
+  def downstream_key do
     Application.get_env(:supavisor, :global_downstream_key)
   end
 
@@ -327,14 +327,12 @@ defmodule Supavisor.Helpers do
 
   @spec rpc(Node.t(), module(), atom(), [any()], non_neg_integer()) :: {:error, any()} | any()
   def rpc(node, module, function, args, timeout \\ 15_000) do
-    try do
-      :erpc.call(node, module, function, args, timeout)
-    catch
-      kind, reason -> {:error, {:badrpc, {kind, reason}}}
-    else
-      {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
-      result -> result
-    end
+    :erpc.call(node, module, function, args, timeout)
+  catch
+    kind, reason -> {:error, {:badrpc, {kind, reason}}}
+  else
+    {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
+    result -> result
   end
 
   @doc """
@@ -350,11 +348,23 @@ defmodule Supavisor.Helpers do
     Process.flag(:max_heap_size, %{size: max_heap_words})
   end
 
-  @spec set_log_level(atom()) :: :ok
-  def set_log_level(nil), do: :ok
-
-  def set_log_level(level) when is_atom(level) do
+  @spec set_log_level(atom()) :: :ok | nil
+  def set_log_level(level) when level in [:debug, :info, :notice, :warning, :error] do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
   end
+
+  def set_log_level(_), do: nil
+
+  @spec peer_ip(:gen_tcp.socket()) :: String.t()
+  def peer_ip(socket) do
+    case :inet.peername(socket) do
+      {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
+      _error -> "undefined"
+    end
+  end
+
+  @spec controlling_process(Supavisor.sock(), pid) :: :ok | {:error, any()}
+  def controlling_process({mod, socket}, pid),
+    do: mod.controlling_process(socket, pid)
 end

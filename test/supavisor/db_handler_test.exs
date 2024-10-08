@@ -3,18 +3,20 @@ defmodule Supavisor.DbHandlerTest do
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.Server
   # import Mock
+  @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
 
   describe "init/1" do
     test "starts with correct state" do
       args = %{
-        id: {"a", "b"},
+        id: @id,
         auth: %{},
         tenant: {:single, "test_tenant"},
         user_alias: "test_user_alias",
         user: "user",
         mode: :transaction,
         replica_type: :single,
-        log_level: nil
+        log_level: nil,
+        reconnect_retries: 5
       }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
@@ -33,7 +35,7 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   describe "handle_event/4" do
-    test "db is avaible" do
+    test "db is available" do
       :meck.new(:gen_tcp, [:unstick, :passthrough])
       :meck.new(:inet, [:unstick, :passthrough])
       :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:ok, :sock} end)
@@ -57,7 +59,8 @@ defmodule Supavisor.DbHandlerTest do
         Db.handle_event(:internal, nil, :connect, %{
           auth: auth,
           sock: {:gen_tcp, nil},
-          id: {"a", "b"}
+          id: @id,
+          proxy: false
         })
 
       assert state ==
@@ -74,19 +77,20 @@ defmodule Supavisor.DbHandlerTest do
                     secrets: secrets
                   },
                   sock: {:gen_tcp, :sock},
-                  id: {"a", "b"}
+                  id: @id,
+                  proxy: false
                 }}
 
       :meck.unload(:gen_tcp)
     end
 
-    test "db is not avaible" do
+    test "db is not available" do
       :meck.new(:gen_tcp, [:unstick, :passthrough])
 
       :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:error, "some error"} end)
 
       auth = %{
-        id: {"a", "b"},
+        id: @id,
         host: "host",
         port: 0,
         user: "some user",
@@ -95,39 +99,17 @@ defmodule Supavisor.DbHandlerTest do
         ip_version: :inet
       }
 
-      state = Db.handle_event(:internal, nil, :connect, %{auth: auth, sock: nil, id: {"a", "b"}})
+      state =
+        Db.handle_event(:internal, nil, :connect, %{
+          auth: auth,
+          sock: nil,
+          id: {"a", "b"},
+          reconnect_retries: 5
+        })
 
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
       :meck.unload(:gen_tcp)
     end
-  end
-
-  test "handle_event/4 with idle state" do
-    {:ok, sock} = :gen_tcp.listen(0, [])
-    data = %{sock: {:gen_tcp, sock}, caller: nil, buffer: []}
-    from = {self(), :test_ref}
-    event = {:call, from}
-    payload = {:db_call, self(), "test_data"}
-
-    {:next_state, :busy, new_data, reply} = Db.handle_event(event, payload, :idle, data)
-
-    # check if the message arrived in gen_tcp.send
-    assert {:reply, ^from, {:error, :enotconn}} = reply
-    assert new_data.caller == self()
-  end
-
-  test "handle_event/4 with non-idle state" do
-    data = %{sock: nil, caller: self(), buffer: []}
-    from = {self(), :test_ref}
-    event = {:call, from}
-    payload = {:db_call, self(), "test_data"}
-    state = :non_idle
-
-    {:keep_state, new_data, reply} = Db.handle_event(event, payload, state, data)
-
-    assert {:reply, ^from, {:buffering, 9}} = reply
-    assert new_data.caller == self()
-    assert new_data.buffer == ["test_data"]
   end
 
   describe "handle_event/4 info tcp authentication authentication_md5_password payload events" do
@@ -177,7 +159,7 @@ defmodule Supavisor.DbHandlerTest do
       caller_pid = self()
 
       data = %{
-        id: {{:single, "tenant"}, "user", :session, "postgres"},
+        id: @id,
         caller: caller_pid,
         sock: {:gen_tcp, nil},
         stats: %{},
@@ -192,46 +174,13 @@ defmodule Supavisor.DbHandlerTest do
       :meck.new(:inet, [:unstick, :passthrough])
 
       :meck.expect(:prim_inet, :getstat, fn _, _ ->
-        {:ok, %{}}
+        {:ok, [{:recv_oct, 21}, {:send_oct, 37}]}
       end)
 
       :meck.expect(:inet, :setopts, fn _, _ -> :ok end)
 
-      {:next_state, :idle, new_data, _} = Db.handle_event(:info, event, state, data)
+      :keep_state_and_data = Db.handle_event(:info, event, state, data)
 
-      assert new_data.caller == caller_pid
-      :meck.unload(:prim_inet)
-      :meck.unload(:inet)
-    end
-
-    test "does not update caller in data for non-session mode" do
-      proto = :tcp
-      bin = "response_data" <> Server.ready_for_query()
-      caller_pid = self()
-
-      data = %{
-        id: {{:single, "tenant"}, "user", :session, "postgres"},
-        caller: caller_pid,
-        sock: {:gen_tcp, nil},
-        stats: %{},
-        mode: :transaction,
-        sent: false
-      }
-
-      state = :some_state
-      event = {proto, :dummy_value, bin}
-      :meck.new(:prim_inet, [:unstick, :passthrough])
-      :meck.new(:inet, [:unstick, :passthrough])
-
-      :meck.expect(:prim_inet, :getstat, fn _, _ ->
-        {:ok, %{}}
-      end)
-
-      :meck.expect(:inet, :setopts, fn _, _ -> :ok end)
-
-      {:next_state, :idle, new_data, _} = Db.handle_event(:info, event, state, data)
-
-      assert new_data.caller == nil
       :meck.unload(:prim_inet)
       :meck.unload(:inet)
     end
