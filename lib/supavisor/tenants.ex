@@ -141,6 +141,18 @@ defmodule Supavisor.Tenants do
     )
   end
 
+  def get_pool_config_cache(external_id, user, ttl \\ nil) do
+    ttl = if is_nil(ttl), do: :timer.hours(24), else: ttl
+    cache_key = {:pool_config_cache, external_id, user}
+
+    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+           {:commit, {:cached, get_pool_config(external_id, user)}, ttl: ttl}
+         end) do
+      {_, {:cached, value}} -> value
+      {_, {:cached, value}, _} -> value
+    end
+  end
+
   @spec get_cluster_config(String.t(), String.t()) :: [ClusterTenants.t()] | {:error, any()}
   def get_cluster_config(external_id, user) do
     case Repo.all(ClusterTenants, cluster_alias: external_id) do
