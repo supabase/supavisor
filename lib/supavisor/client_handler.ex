@@ -1120,7 +1120,7 @@ defmodule Supavisor.ClientHandler do
   @spec timeout_subscribe_or_terminate(map()) :: :gen_statem.handle_event_result()
   def timeout_subscribe_or_terminate(%{subscribe_retries: subscribe_retries} = data) do
     if subscribe_retries < @subscribe_retries do
-      Logger.warning("ClientHandler: Retry subscribe")
+      Logger.warning("ClientHandler: Retry subscribe #{inspect(subscribe_retries)}")
 
       {:keep_state, %{data | subscribe_retries: subscribe_retries + 1},
        {:timeout, @timeout_subscribe, :subscribe}}
