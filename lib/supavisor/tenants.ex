@@ -141,7 +141,7 @@ defmodule Supavisor.Tenants do
     )
   end
 
-  def get_pool_config_cache(external_id, user, ttl \\ nil) do
+  def get_pool_config_cache(external_id, user, ttl \\ :timer.hours(24)) do
     ttl = if is_nil(ttl), do: :timer.hours(24), else: ttl
     cache_key = {:pool_config_cache, external_id, user}
 
