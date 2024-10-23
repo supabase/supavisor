@@ -77,7 +77,10 @@ defmodule Supavisor.Application do
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
-      {Registry, keys: :duplicate, name: Supavisor.Registry.TenantClients},
+      {Registry,
+       keys: :duplicate,
+       name: Supavisor.Registry.TenantClients,
+       partitions: System.schedulers_online()},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor

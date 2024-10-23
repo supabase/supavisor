@@ -883,7 +883,6 @@ defmodule Supavisor.ClientHandler do
       host: to_charlist(info.tenant.db_host),
       sni_hostname:
         if(info.tenant.sni_hostname != nil, do: to_charlist(info.tenant.sni_hostname)),
-      ip_version: Helpers.ip_version(info.tenant.ip_version, info.tenant.db_host),
       port: info.tenant.db_port,
       user: user,
       password: info.user.db_password,

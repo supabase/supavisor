@@ -201,6 +201,7 @@ defmodule Supavisor.Helpers do
   """
   @spec detect_ip_version(String.t()) :: :inet | :inet6
   def detect_ip_version(host) when is_binary(host) do
+    Logger.info("Detecting IP version for #{host}")
     host = String.to_charlist(host)
 
     case :inet.gethostbyname(host) do

@@ -331,6 +331,7 @@ defmodule Supavisor do
       db_host: db_host,
       db_port: db_port,
       db_database: db_database,
+      auth_query: auth_query,
       default_parameter_status: ps,
       ip_version: ip_ver,
       default_pool_size: def_pool_size,
@@ -343,6 +344,7 @@ defmodule Supavisor do
           db_user: db_user,
           db_password: db_pass,
           pool_size: pool_size,
+          db_user_alias: alias,
           # mode_type: mode_type,
           max_clients: max_clients
         }
@@ -361,6 +363,8 @@ defmodule Supavisor do
       sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
       user: db_user,
+      alias: alias,
+      auth_query: auth_query,
       database: if(db_name != nil, do: db_name, else: db_database),
       password: fn -> db_pass end,
       application_name: "Supavisor",
