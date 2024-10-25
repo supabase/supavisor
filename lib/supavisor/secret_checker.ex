@@ -98,7 +98,7 @@ defmodule Supavisor.SecretChecker do
         update_cache =
           case Cachex.get(Supavisor.Cache, state.key) do
             {:ok, {:cached, {_, {old_method, old_secrets}}}} ->
-              method != old_method or not match?(^secrets, old_secrets.())
+              method != old_method or secrets != old_secrets.()
 
             other ->
               Logger.error("Failed to get cache: #{inspect(other)}")
