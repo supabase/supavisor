@@ -4,6 +4,7 @@ defmodule Supavisor.TenantSupervisor do
 
   require Logger
   alias Supavisor.Manager
+  alias Supavisor.SecretChecker
 
   def start_link(%{replicas: [%{mode: mode} = single]} = args)
       when mode in [:transaction, :session] do
@@ -33,7 +34,7 @@ defmodule Supavisor.TenantSupervisor do
         }
       end)
 
-    children = [{Manager, args} | pools]
+    children = [{Manager, args}, {SecretChecker, args} | pools]
 
     {{type, tenant}, user, mode, db_name, search_path} = args.id
     map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
