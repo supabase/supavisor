@@ -1,4 +1,6 @@
 defmodule Supavisor.SecretChecker do
+  @moduledoc false
+
   use GenServer
   require Logger
 
