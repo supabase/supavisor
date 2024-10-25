@@ -19,6 +19,7 @@ defmodule Supavisor.DbHandler do
   @type state :: :connect | :authentication | :idle | :busy
 
   @reconnect_timeout 2_500
+  @reconnect_timeout_proxy 500
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
@@ -107,7 +108,7 @@ defmodule Supavisor.DbHandler do
     maybe_reconnect_callback = fn reason ->
       if data.reconnect_retries > @reconnect_retries and data.client_sock != nil,
         do: {:stop, {:failed_to_connect, reason}},
-        else: {:keep_state_and_data, {:state_timeout, @reconnect_timeout, :connect}}
+        else: {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
     end
 
     Telem.handler_action(:db_handler, :db_connection, data.id)
@@ -149,8 +150,7 @@ defmodule Supavisor.DbHandler do
     retry = data.reconnect_retries
     Logger.warning("DbHandler: Reconnect #{retry} to DB")
 
-    {:keep_state, %{data | reconnect_retries: data.reconnect_retries + 1},
-     {:next_event, :internal, :connect}}
+    {:keep_state, %{data | reconnect_retries: retry + 1}, {:next_event, :internal, :connect}}
   end
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
@@ -347,7 +347,7 @@ defmodule Supavisor.DbHandler do
     Logger.error("DbHandler: Connection closed when state was #{state}")
 
     if Application.get_env(:supavisor, :reconnect_on_db_close),
-      do: {:next_state, :connect, data, {:state_timeout, @reconnect_timeout, :connect}},
+      do: {:next_state, :connect, data, {:state_timeout, reconnect_timeout(data), :connect}},
       else: {:stop, :db_termination, data}
   end
 
@@ -677,4 +677,11 @@ defmodule Supavisor.DbHandler do
   end
 
   defp handle_authentication_error(%{proxy: true}, _reason), do: :ok
+
+  @spec reconnect_timeout(map()) :: pos_integer()
+  def reconnect_timeout(%{proxy: true}),
+    do: @reconnect_timeout_proxy
+
+  def reconnect_timeout(_),
+    do: @reconnect_timeout
 end

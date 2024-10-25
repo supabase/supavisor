@@ -152,6 +152,7 @@ defmodule Supavisor do
       {:secrets, ^tenant, ^user} = key, acc -> del.(key, acc)
       {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
       {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
+      {:pool_config_cache, ^tenant, ^user} = key, acc -> del.(key, acc)
       _, acc -> acc
     end)
   end
@@ -173,6 +174,7 @@ defmodule Supavisor do
             {:secrets, ^tenant, _} -> del.(key, acc)
             {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
             {:tenant_cache, ^tenant, _} -> del.(key, acc)
+            {:pool_config_cache, ^tenant, _} -> del.(key, acc)
             _ -> acc
           end
 
@@ -286,7 +288,7 @@ defmodule Supavisor do
     user = elem(secrets, 1).().alias
 
     case type do
-      :single -> Tenants.get_pool_config(tenant, user)
+      :single -> Tenants.get_pool_config_cache(tenant, user)
       :cluster -> Tenants.get_cluster_config(tenant, user)
     end
     |> case do
