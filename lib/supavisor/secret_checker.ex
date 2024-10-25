@@ -18,8 +18,7 @@ defmodule Supavisor.SecretChecker do
     Logger.debug("SecretChecker: Starting secret checker")
     tenant = Supavisor.tenant(args.id)
 
-    [%{auth: auth, user: user} | _] =
-      Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
+    %{auth: auth, user: user} = Enum.find(args.replicas, fn e -> e.replica_type == :write end)
 
     state = %{
       tenant: tenant,
@@ -93,7 +92,6 @@ defmodule Supavisor.SecretChecker do
       {:ok, secret} ->
         method = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
         secrets = Map.put(secret, :alias, auth.alias)
-        value = {:ok, {method, fn -> secrets end}}
 
         update_cache =
           case Cachex.get(Supavisor.Cache, state.key) do
@@ -107,6 +105,7 @@ defmodule Supavisor.SecretChecker do
 
         if update_cache do
           Logger.info("Secrets changed or not present, updating cache")
+          value = {:ok, {method, fn -> secrets end}}
           Cachex.put(Supavisor.Cache, state.key, {:cached, value}, expire: :timer.hours(24))
         end
 
