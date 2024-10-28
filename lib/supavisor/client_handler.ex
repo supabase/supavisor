@@ -184,12 +184,7 @@ defmodule Supavisor.ClientHandler do
         Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
         {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(hello.payload)
 
-        # Validate user and db_name according to PostgreSQL rules.
-        # The rules are: 1-63 characters, alphanumeric, underscore and $
-        # TODO: spaces are allowed in db_name, but we don't support it yet
-        rule = ~r/^[a-z_][a-z0-9_$]*$/
-
-        if user =~ rule and db_name =~ rule do
+        if Helpers.validate_name(user) and Helpers.validate_name(db_name) do
           log_level = maybe_change_log(hello)
           search_path = hello.payload["options"]["--search_path"]
           event = {:hello, {type, {user, tenant_or_alias, db_name, search_path}}}
