@@ -194,7 +194,7 @@ defmodule Supavisor.ClientHandler do
            {:next_event, :internal, event}}
         else
           reason = "Invalid format for user or db_name"
-          Logger.error("ClientHandler: #{inspect(reason)}")
+          Logger.error("ClientHandler: #{inspect(reason)} #{inspect({user, db_name})}")
           Telem.client_join(:fail, tenant_or_alias)
 
           HandlerHelpers.send_error(
