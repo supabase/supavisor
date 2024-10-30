@@ -68,9 +68,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   def handle_info(:check, state) do
-    Logger.debug("Checking secrets")
     check_secrets(state)
-    Logger.debug("Secrets checked")
     {:noreply, %{state | check_ref: check()}}
   end
 
