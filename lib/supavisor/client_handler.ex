@@ -707,7 +707,7 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
-  def terminate(reason, _state, %{db_pid: {_, pid}}) do
+  def terminate(reason, _state, %{db_pid: {_, pid, _}}) do
     db_info =
       with {:ok, {state, mode} = resp} <- DbHandler.get_state_and_mode(pid) do
         if state == :busy or mode == :session, do: DbHandler.stop(pid)
