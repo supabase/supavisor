@@ -44,7 +44,7 @@ defmodule Supavisor.DbHandler do
   @spec stop(pid()) :: :ok
   def stop(pid) do
     Logger.debug("DbHandler: Stop pid #{inspect(pid)}")
-    :gen_statem.stop(pid, :client_termination, 5_000)
+    :gen_statem.stop(pid, {:shutdown, :client_termination}, 5_000)
   end
 
   @impl true
