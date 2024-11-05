@@ -2,6 +2,8 @@ defmodule Supavisor.PromExTest do
   use ExUnit.Case, async: true
   use Supavisor.DataCase
 
+  import Supavisor.Asserts
+
   alias Supavisor.Monitoring.PromEx
 
   @tenant "prom_tenant"
@@ -31,9 +33,7 @@ defmodule Supavisor.PromExTest do
     :ok = GenServer.stop(proxy)
     :ok = Supavisor.stop({{:single, @tenant}, user, :transaction, db_name, nil})
 
-    Process.sleep(3000)
-
-    refute PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
+    refute_eventually(10, fn -> PromEx.get_metrics() =~ "tenant=\"#{@tenant}\"" end)
   end
 
   test "clean_string/1 removes extra spaces from metric string" do
