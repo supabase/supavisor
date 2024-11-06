@@ -294,10 +294,10 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
 
-    if data.active_count > @switch_active_count,
-      do: HandlerHelpers.active_once(data.sock)
-
     if String.ends_with?(bin, Server.ready_for_query()) do
+      if data.active_count >= @switch_active_count,
+        do: HandlerHelpers.activate(data.sock)
+
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
       # in transaction mode, we need to notify the client when the transaction is finished,
@@ -311,11 +311,11 @@ defmodule Supavisor.DbHandler do
           %{data | stats: stats, active_count: 0}
         end
 
-      if data.active_count > @switch_active_count,
-        do: HandlerHelpers.activate(data.sock)
-
       {:next_state, :idle, data, {:next_event, :internal, :check_anon_buffer}}
     else
+      if data.active_count > @switch_active_count,
+        do: HandlerHelpers.active_once(data.sock)
+
       HandlerHelpers.sock_send(data.client_sock, bin)
       {:keep_state, %{data | active_count: data.active_count + 1}}
     end
