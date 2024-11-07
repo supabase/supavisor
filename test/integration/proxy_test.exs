@@ -170,7 +170,8 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Max client connections reached",
+                message:
+                  "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size",
                 unknown: "FATAL",
                 severity: "FATAL",
                 pg_code: "XX000"
