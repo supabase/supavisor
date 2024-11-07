@@ -2,9 +2,14 @@ defmodule Supavisor.SynHandler do
   @moduledoc """
   Custom defined Syn's callbacks
   """
+
+  @behaviour :syn_event_handler
+
   require Logger
+
   alias Supavisor.Monitoring.PromEx
 
+  @impl true
   def on_process_unregistered(
         :tenants,
         {{_type, _tenant}, _user, _mode, _db_name, _search_path} = id,
@@ -35,6 +40,7 @@ defmodule Supavisor.SynHandler do
     PromEx.remove_metrics(id)
   end
 
+  @impl true
   def resolve_registry_conflict(
         :tenants,
         id,
