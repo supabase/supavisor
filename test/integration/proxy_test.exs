@@ -166,16 +166,24 @@ defmodule Supavisor.Integration.ProxyTest do
         port: port
       )
 
+    {:ok, pid1} = single_connection(connection_opts)
+    {:ok, pid2} = single_connection(connection_opts)
+
+    :timer.sleep(1000)
+
     assert {:error,
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Max client connections reached",
+                message:
+                  "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size",
                 unknown: "FATAL",
                 severity: "FATAL",
                 pg_code: "XX000"
               }
             }} = single_connection(connection_opts)
+
+    for pid <- [pid1, pid2], do: :gen_statem.stop(pid)
   end
 
   test "http to proxy server returns 200 OK" do

@@ -78,7 +78,7 @@ end
           "db_user_alias" => "max_clients",
           "db_user" => db_conf[:username],
           "db_password" => db_conf[:password],
-          "pool_size" => 2,
+          "pool_size" => 1,
           "max_clients" => -1,
           "mode_type" => "transaction",
           "pool_checkout_timeout" => 500

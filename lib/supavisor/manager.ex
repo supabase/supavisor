@@ -65,7 +65,7 @@ defmodule Supavisor.Manager do
 
     # don't limit if max_clients is null
     {reply, new_state} =
-      if :ets.info(state.tid, :size) < state.max_clients do
+      if :ets.info(state.tid, :size) < state.max_clients or Supavisor.mode(state.id) == :session do
         :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
 
         case state.parameter_status do

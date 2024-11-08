@@ -696,7 +696,7 @@ defmodule Supavisor.ClientHandler do
     msg =
       case data.mode do
         :session ->
-          "Max client connections reached"
+          "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size"
 
         :transaction ->
           "Unable to check out process from the pool due to timeout"
