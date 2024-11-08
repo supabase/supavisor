@@ -166,6 +166,12 @@ defmodule Supavisor.Integration.ProxyTest do
         port: port
       )
 
+    {:ok, pid1} = single_connection(connection_opts)
+    {:ok, pid2} = single_connection(connection_opts)
+    {:ok, pid3} = single_connection(connection_opts)
+
+    :timer.sleep(1000)
+
     assert {:error,
             %Postgrex.Error{
               postgres: %{
@@ -177,6 +183,8 @@ defmodule Supavisor.Integration.ProxyTest do
                 pg_code: "XX000"
               }
             }} = single_connection(connection_opts)
+
+    for pid <- [pid1, pid2, pid3], do: :gen_statem.stop(pid)
   end
 
   test "http to proxy server returns 200 OK" do
