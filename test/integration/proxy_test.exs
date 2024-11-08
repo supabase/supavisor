@@ -168,7 +168,6 @@ defmodule Supavisor.Integration.ProxyTest do
 
     {:ok, pid1} = single_connection(connection_opts)
     {:ok, pid2} = single_connection(connection_opts)
-    {:ok, pid3} = single_connection(connection_opts)
 
     :timer.sleep(1000)
 
@@ -184,7 +183,7 @@ defmodule Supavisor.Integration.ProxyTest do
               }
             }} = single_connection(connection_opts)
 
-    for pid <- [pid1, pid2, pid3], do: :gen_statem.stop(pid)
+    for pid <- [pid1, pid2], do: :gen_statem.stop(pid)
   end
 
   test "http to proxy server returns 200 OK" do
