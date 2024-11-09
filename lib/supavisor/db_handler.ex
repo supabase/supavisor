@@ -343,7 +343,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
-    {:stop, :db_termination, data}
+    {:stop, {:shutdown, :db_termination}, data}
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
@@ -351,7 +351,7 @@ defmodule Supavisor.DbHandler do
 
     if Application.get_env(:supavisor, :reconnect_on_db_close),
       do: {:next_state, :connect, data, {:state_timeout, reconnect_timeout(data), :connect}},
-      else: {:stop, :db_termination, data}
+      else: {:stop, {:shutdown, :db_termination}, data}
   end
 
   # linked client_handler went down
