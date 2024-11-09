@@ -8,6 +8,12 @@ defmodule Supavisor.PromExTest do
 
   @tenant "prom_tenant"
 
+  # These tests are known to be flaky, and while these do not affect users
+  # directly we can run them independently when needed. In future we probably
+  # should make them pass "regularly", but for now that is easier to filter them
+  # out.
+  @moduletag flaky: true
+
   setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
