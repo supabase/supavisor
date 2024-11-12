@@ -519,21 +519,21 @@ defmodule Supavisor.ClientHandler do
       do: :ok = sock_send_maybe_active_once(msg, data),
       else: :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
 
-    {:keep_state, %{data | active_count: 0}, handle_actions(data)}
+    {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
   end
 
   def handle_event(:info, {proto, _, <<?S, 4::32, _::binary>> = msg}, _, data)
       when proto in @proto do
     Logger.debug("ClientHandler: Receive sync while not idle")
     :ok = sock_send_maybe_active_once(msg, data)
-    {:keep_state, %{data | active_count: 0}, handle_actions(data)}
+    {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
   end
 
   def handle_event(:info, {proto, _, <<?H, 4::32, _::binary>> = msg}, _, data)
       when proto in @proto do
     Logger.debug("ClientHandler: Receive flush while not idle")
     :ok = sock_send_maybe_active_once(msg, data)
-    {:keep_state, %{data | active_count: 0}, handle_actions(data)}
+    {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
   end
 
   # incoming query with a single pool
@@ -645,17 +645,16 @@ defmodule Supavisor.ClientHandler do
       :ready_for_query ->
         Logger.debug("ClientHandler: Client is ready")
 
-        HandlerHelpers.sock_send(data.sock, bin)
+        :ok = sock_send_maybe_active_once(bin, data)
+
         db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
 
         Telem.client_query_time(data.query_start, data.id)
 
-        if data.active_count > @switch_active_count,
-          do: HandlerHelpers.activate(data.sock)
-
-        {:next_state, :idle, %{data | db_pid: db_pid, stats: stats, active_count: 0},
+        {:next_state, :idle,
+         %{data | db_pid: db_pid, stats: stats, active_count: reset_active_count(data)},
          handle_actions(data)}
 
       :read_sql_error ->
@@ -1122,5 +1121,15 @@ defmodule Supavisor.ClientHandler do
       Logger.error("ClientHandler: Terminate after retries")
       {:stop, {:shutdown, :subscribe_retries}}
     end
+  end
+
+  @spec reset_active_count(map()) :: 0
+  def reset_active_count(data) do
+    if data.active_count >= @switch_active_count do
+      Logger.debug("ClientHandler: Activate socket #{inspect(data.active_count)}")
+      HandlerHelpers.activate(data.sock)
+    end
+
+    0
   end
 end
