@@ -295,8 +295,7 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
 
     if String.ends_with?(bin, Server.ready_for_query()) do
-      if data.active_count >= @switch_active_count,
-        do: HandlerHelpers.activate(data.sock)
+      HandlerHelpers.activate(data.sock)
 
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
 
@@ -363,7 +362,7 @@ defmodule Supavisor.DbHandler do
     end
 
     if state == :busy or data.mode == :session do
-      sock_send(data.sock, <<?X, 4::32>>)
+      sock_send(data.sock, Server.terminate_message())
       :gen_tcp.close(elem(data.sock, 1))
       {:stop, {:client_handler_down, data.mode}}
     else
