@@ -645,7 +645,7 @@ defmodule Supavisor.ClientHandler do
       :ready_for_query ->
         Logger.debug("ClientHandler: Client is ready")
 
-        :ok = sock_send_maybe_active_once(bin, data)
+        :ok = HandlerHelpers.sock_send(data.sock, bin)
 
         db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
