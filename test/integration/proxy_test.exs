@@ -1,5 +1,5 @@
 defmodule Supavisor.Integration.ProxyTest do
-  use Supavisor.DataCase, async: true
+  use Supavisor.DataCase, async: false
 
   require Logger
 
@@ -361,20 +361,17 @@ defmodule Supavisor.Integration.ProxyTest do
     id = {{:single, @tenant}, db_conf[:username], :session, db_conf[:database], nil}
     [{client_pid, _}] = Registry.lookup(Supavisor.Registry.TenantClients, id)
 
-    assert match?({_, %{active_count: 1}}, :sys.get_state(client_pid))
+    assert {_, %{active_count: 1}} = :sys.get_state(client_pid)
 
     Enum.each(0..200, fn _ ->
       P.SimpleConnection.call(pid, {:query, "select 1;"})
     end)
 
-    assert match?(
-             [
-               %Postgrex.Result{
-                 command: :select
-               }
-             ],
-             P.SimpleConnection.call(pid, {:query, "select 1;"})
-           )
+    assert [
+             %Postgrex.Result{
+               command: :select
+             }
+           ] = P.SimpleConnection.call(pid, {:query, "select 1;"})
   end
 
   defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
