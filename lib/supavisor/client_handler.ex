@@ -529,6 +529,7 @@ defmodule Supavisor.ClientHandler do
     {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
   end
 
+  # handle Flush message
   def handle_event(:info, {proto, _, <<?H, 4::32, _::binary>> = msg}, _, data)
       when proto in @proto do
     Logger.debug("ClientHandler: Receive flush while not idle")
@@ -1125,11 +1126,7 @@ defmodule Supavisor.ClientHandler do
 
   @spec reset_active_count(map()) :: 0
   def reset_active_count(data) do
-    if data.active_count >= @switch_active_count do
-      Logger.debug("ClientHandler: Activate socket #{inspect(data.active_count)}")
-      HandlerHelpers.activate(data.sock)
-    end
-
+    HandlerHelpers.activate(data.sock)
     0
   end
 end
