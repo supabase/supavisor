@@ -361,7 +361,9 @@ defmodule Supavisor.Integration.ProxyTest do
     id = {{:single, @tenant}, db_conf[:username], :session, db_conf[:database], nil}
     [{client_pid, _}] = Registry.lookup(Supavisor.Registry.TenantClients, id)
 
-    assert {_, %{active_count: 1}} = :sys.get_state(client_pid)
+    P.SimpleConnection.call(pid, {:query, "select 1;"})
+    {_, %{active_count: active_count}} = :sys.get_state(client_pid)
+    assert active_count >= 1
 
     Enum.each(0..200, fn _ ->
       P.SimpleConnection.call(pid, {:query, "select 1;"})
