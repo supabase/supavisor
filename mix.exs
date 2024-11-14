@@ -43,7 +43,6 @@ defmodule Supavisor.MixProject do
       {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_view, "~> 2.0.2"},
-      {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_view, "~> 0.20.0"},
       {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_poller, "~> 1.0"},
