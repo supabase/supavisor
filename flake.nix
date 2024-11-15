@@ -53,7 +53,12 @@
             {
               pre-commit.hooks = {
                 alejandra.enable = true;
-                typos.enable = true;
+                typos = {
+                  enable = true;
+                  excludes = [
+                    "test/integration/"
+                  ];
+                };
               };
             }
             {
@@ -78,6 +83,7 @@
 
               services.postgres = {
                 enable = true;
+                package = pkgs.postgresql_15;
                 initialScript = ''
                   ${builtins.readFile ./dev/postgres/00-setup.sql}
 
@@ -85,12 +91,22 @@
                 '';
                 listen_addresses = "127.0.0.1";
                 port = 6432;
+                settings = {
+                  max_prepared_transactions = 262143;
+                };
               };
 
               process.implementation = "honcho";
 
               # Force connection through TCP instead of Unix socket
               env.PGHOST = lib.mkForce "";
+            }
+            {
+              languages.javascript = {
+                enable = true;
+                bun.enable = true;
+                yarn.enable = true;
+              };
             }
             ({
               pkgs,
