@@ -957,22 +957,26 @@ defmodule Supavisor.ClientHandler do
         ssl_opts: ssl_opts || []
       )
 
-    # kill the postgrex connection if the current process exits unexpectedly
-    Process.link(conn)
+    try do
+      Logger.debug(
+        "ClientHandler: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
+      )
 
-    Logger.debug(
-      "ClientHandler: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
-    )
+      resp =
+        with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
+          t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
+          {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
+        end
 
-    resp =
-      with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
-        t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-        {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
-      end
-
-    GenServer.stop(conn, :normal, 5_000)
-    Logger.info("ClientHandler: Get secrets finished")
-    resp
+      Logger.info("ClientHandler: Get secrets finished")
+      resp
+    rescue
+      exception ->
+        Logger.error("ClientHandler: Couldn't fetch user secrets from #{tenant.db_host}")
+        reraise exception, __STACKTRACE__
+    after
+      GenServer.stop(conn, :normal, 5_000)
+    end
   end
 
   @spec exchange_first(:password | :auth_query, fun(), binary(), binary(), binary()) ::
