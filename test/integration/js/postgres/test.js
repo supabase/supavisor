@@ -8,7 +8,9 @@ let ignored = 0
 let failed = false
 let promise = Promise.resolve()
 const tests = {}
-    , ignore = {}
+    , ignore = Symbol('ignore')
+
+const failFast = !!process.env.FAIL_FAST
 
 export const nt = () => ignored++
 export const ot = (...rest) => (only = true, test(true, ...rest))
@@ -29,9 +31,10 @@ async function test(o, name, options, fn) {
     new Promise((resolve, reject) =>
       fn.timer = setTimeout(() => reject('Timed out'), (options.timeout || t.timeout) * 1000)
     ),
-    failed
-      ? (ignored++, ignore)
-      : fn()
+    (failed && failFast) ? (ignored++, ignore) : (function() {
+      process.stdout.write(`${name}: `)
+      return fn()
+    })()
   ]))
     .then(async x => {
       clearTimeout(fn.timer)
@@ -48,11 +51,13 @@ async function test(o, name, options, fn) {
       }
 
       tests[line].succeeded = true
-      process.stdout.write('✅')
+      process.stdout.write('✅\n')
     })
     .catch(err => {
+      process.stdout.write('⛔️')
       tests[line].failed = failed = true
       tests[line].error = err instanceof Error ? err : new Error(util.inspect(err))
+      console.error(name + ' at line', line, 'failed\n', util.inspect(err))
     })
     .then(() => {
       ++done === Object.keys(tests).length && exit()
@@ -66,12 +71,6 @@ function exit() {
       return true
 
     success = false
-    x.cleanup
-      ? console.error('⛔️', x.name + ' at line', x.line, 'cleanup failed', '\n', util.inspect(x.cleanup))
-      : console.error('⛔️', x.name + ' at line', x.line, x.failed
-        ? 'failed'
-        : 'never finished', x.error ? '\n' + util.inspect(x.error) : ''
-      )
   })
 
   only
