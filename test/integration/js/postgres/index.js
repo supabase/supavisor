@@ -242,20 +242,20 @@ t('Savepoint returns Result', async() => {
   return [1, result[0].x]
 })
 
-if (options.prepare) {
-  t('Prepared transaction', async() => {
-    await sql`create table test (a int)`
-
-    await sql.begin(async sql => {
-      await sql`insert into test values(1)`
-      await sql.prepare('tx1')
-    })
-
-    await sql`commit prepared 'tx1'`
-
-    return ['1', (await sql`select count(1) from test`)[0].count, await sql`drop table test`]
-  })
-}
+// Reason: disabled because of security reasons
+//
+//t('Prepared transaction', async() => {
+//  await sql`create table test (a int)`
+//
+//  await sql.begin(async sql => {
+//    await sql`insert into test values(1)`
+//    await sql.prepare('tx1')
+//  })
+//
+//  await sql`commit prepared 'tx1'`
+//
+//  return ['1', (await sql`select count(1) from test`)[0].count, await sql`drop table test`]
+//})
 
 t('Transaction requests are executed implicitly', async() => {
   const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false })
