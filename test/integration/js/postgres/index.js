@@ -2407,27 +2407,30 @@ t('Ensure transactions throw if connection is closed dwhile there is no query', 
   return ['CONNECTION_CLOSED', x.code]
 })
 
-t('Custom socket', {}, async() => {
-  let result
-  const sql = postgres({
-    ...options,
-    socket: () => new Promise((resolve, reject) => {
-      const socket = new net.Socket()
-      socket.connect(options.port)
-      socket.once('data', x => result = x[0])
-      socket.on('error', reject)
-      socket.on('connect', () => resolve(socket))
-    }),
-    idle_timeout
-  })
-
-  await sql`select 1`
-
-  return [
-    result,
-    82
-  ]
-})
+// Reason: Irrelevant to us, if user wants to use custom socket, it is up to
+// them to make it work.
+//
+//t('Custom socket', {}, async() => {
+//  let result
+//  const sql = postgres({
+//    ...options,
+//    socket: () => new Promise((resolve, reject) => {
+//      const socket = new net.Socket()
+//      socket.connect(options.port)
+//      socket.once('data', x => result = x[0])
+//      socket.on('error', reject)
+//      socket.on('connect', () => resolve(socket))
+//    }),
+//    idle_timeout
+//  })
+//
+//  await sql`select 1`
+//
+//  return [
+//    result,
+//    82
+//  ]
+//})
 
 t('Ensure drain only dequeues if ready', async() => {
   const sql = postgres(options)
