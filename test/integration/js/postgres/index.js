@@ -1850,10 +1850,11 @@ t('Catches connection config errors with end', async() => {
   ]
 })
 
-t('Catches query format errors', async() => [
-  'wat',
-  await sql.unsafe({ toString: () => { throw new Error('wat') } }).catch((e) => e.message)
-])
+// Reason: It tests internals of the library, not DB connection
+//nt('Catches query format errors', async() => [
+//  'wat',
+//  await sql.unsafe({ toString: () => { throw new Error('wat') } }).catch((e) => e.message)
+//])
 
 // Reason: single host only
 //t('Multiple hosts', {
