@@ -950,13 +950,13 @@ t('big query body', { timeout: t.timeout * 2 }, async() => {
   }`).count, await sql`drop table test`]
 })
 
-ot('Throws if more than 65534 parameters', {timeout: t.timeout * 2}, async() => {
-  const sql = postgres(options)
-  await sql`create table test (x int)`
-  return ['MAX_PARAMETERS_EXCEEDED', (await sql`insert into test ${
-    sql([...Array(65535).keys()].map(x => ({ x })))
-  }`.catch(e => e.code)), await sql`drop table test`]
-})
+// Reason: This tests checks internalt of the library, not the DB stuff
+//ot('Throws if more than 65534 parameters', {timeout: t.timeout * 2}, async() => {
+//  await sql`create table test (x int) -- barfoo `
+//  return ['MAX_PARAMETERS_EXCEEDED', (await sql`insert into test ${
+//    sql([...Array(65535).keys()].map(x => ({ x })))
+//  }`.catch(e => (console.debug(e.code), e.code)))] //, await sql`drop table test -- foobar`]
+//})
 
 t('let postgres do implicit cast of unknown types', async() => {
   await sql`create table test (x timestamp with time zone)`
