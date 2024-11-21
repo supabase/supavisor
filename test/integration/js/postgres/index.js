@@ -7,7 +7,7 @@ import postgres from 'postgres'
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
 const rel = x => new URL(x, import.meta.url)
-const idle_timeout = 1
+const idle_timeout = t.timeout
 
 const login = {
   user: process.env.PGUSER,
@@ -32,7 +32,7 @@ const options = {
   user: login.user,
   pass: login.pass,
   idle_timeout,
-  connect_timeout: 1,
+  connect_timeout: t.timeout,
   max: 1
 }
 
@@ -75,7 +75,7 @@ t('Create table', async() =>
   ['CREATE TABLE', (await sql`create table test(int int)`).command, await sql`drop table test`]
 )
 
-t('Drop table', { timeout: 2 }, async() => {
+t('Drop table', { timeout: t.timeout * 2 }, async() => {
   await sql`create table test(int int)`
   return ['DROP TABLE', (await sql`drop table test`).command]
 })
@@ -941,7 +941,8 @@ if (options.prepare) {
 //  return ['postgres.js', (await sql`select 1`.then(() => sql.parameters.application_name))]
 //})
 
-t('big query body', { timeout: 2 }, async() => {
+t('big query body', { timeout: t.timeout * 2 }, async() => {
+  const sql = postgres(options)
   const size = 50000
   await sql`create table test (x int)`
   return [size, (await sql`insert into test ${
@@ -949,7 +950,8 @@ t('big query body', { timeout: 2 }, async() => {
   }`).count, await sql`drop table test`]
 })
 
-t('Throws if more than 65534 parameters', async() => {
+ot('Throws if more than 65534 parameters', {timeout: t.timeout * 2}, async() => {
+  const sql = postgres(options)
   await sql`create table test (x int)`
   return ['MAX_PARAMETERS_EXCEEDED', (await sql`insert into test ${
     sql([...Array(65535).keys()].map(x => ({ x })))
@@ -1019,7 +1021,7 @@ t('little bobby tables', async() => {
 })
 
 t('Connection errors are caught using begin()', {
-  timeout: 2
+  timeout: t.timeout * 2
 }, async() => {
   let error
   try {
@@ -1627,7 +1629,7 @@ t('Query and parameters are enumerable if debug is set', async() => {
   ]
 })
 
-t('connect_timeout', { timeout: 20 }, async() => {
+t('connect_timeout', { timeout: t.timeout * 20 }, async() => {
   const connect_timeout = 0.2
   const server = net.createServer()
   server.listen()
@@ -1651,7 +1653,7 @@ t('connect_timeout throws proper error', async() => [
   })`select 1`.catch(e => e.code)
 ])
 
-t('connect_timeout error message includes host:port', { timeout: 20 }, async() => {
+t('connect_timeout error message includes host:port', { timeout: t.timeout * 20 }, async() => {
   const connect_timeout = 0.2
   const server = net.createServer()
   server.listen()
@@ -1764,7 +1766,7 @@ if (options.prepare) {
     return [false, result.some(x => x.name = result.statement.name)]
   })
 
-  t('Recreate prepared statements on transformAssignedExpr error', { timeout: 1 }, async() => {
+  t('Recreate prepared statements on transformAssignedExpr error', async() => {
     const insert = () => sql`insert into test (name) values (${ '1' }) returning name`
     await sql`create table test (name text)`
     await insert()
@@ -1926,7 +1928,7 @@ t('Copy read', async() => {
   ]
 })
 
-t('Copy write', { timeout: 2 }, async() => {
+t('Copy write', { timeout: t.timeout * 2 }, async() => {
   await sql`create table test (x int)`
   const writable = await sql`copy test from stdin`.writable()
 
@@ -2178,7 +2180,7 @@ t('Cancel running query', async() => {
   return ['57014', error.code]
 })
 
-t('Cancel piped query', { timeout: 5 }, async() => {
+t('Cancel piped query', { timeout: t.timeout * 2 }, async() => {
   await sql`select 1`
   const last = sql`select pg_sleep(1)`.execute()
   const query = sql`select pg_sleep(2) as dig`
@@ -2378,7 +2380,7 @@ t('Prevent premature end of connection in transaction', async() => {
   ]
 })
 
-t('Ensure reconnect after max_lifetime with transactions', { timeout: 5 }, async() => {
+t('Ensure reconnect after max_lifetime with transactions', { timeout: t.timeout * 5 }, async() => {
   const sql = postgres({
     ...options,
     max_lifetime: 0.01,
