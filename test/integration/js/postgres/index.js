@@ -942,7 +942,6 @@ if (options.prepare) {
 //})
 
 t('big query body', { timeout: t.timeout * 2 }, async() => {
-  const sql = postgres(options)
   const size = 50000
   await sql`create table test (x int)`
   return [size, (await sql`insert into test ${
@@ -1220,6 +1219,7 @@ t('dynamic values multi row', async() => {
 //})
 
 t('Multiple queries', async() => {
+  const sql = postgres({ ...options, max: 5 })
   return [4, (await Promise.all([
     sql`select 1`,
     sql`select 2`,
@@ -2184,6 +2184,7 @@ t('Cancel running query', async() => {
 })
 
 t('Cancel piped query', { timeout: t.timeout * 2 }, async() => {
+  const sql = postgres({...options, max: 2})
   await sql`select 1`
   const last = sql`select pg_sleep(1)`.execute()
   const query = sql`select pg_sleep(2) as dig`
