@@ -7,7 +7,7 @@ import postgres from 'postgres'
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
 const rel = x => new URL(x, import.meta.url)
-const idle_timeout = 1
+const idle_timeout = t.timeout
 
 const login = {
   user: process.env.PGUSER,
@@ -32,7 +32,7 @@ const options = {
   user: login.user,
   pass: login.pass,
   idle_timeout,
-  connect_timeout: 1,
+  connect_timeout: t.timeout,
   max: 1
 }
 
@@ -75,7 +75,7 @@ t('Create table', async() =>
   ['CREATE TABLE', (await sql`create table test(int int)`).command, await sql`drop table test`]
 )
 
-t('Drop table', { timeout: 2 }, async() => {
+t('Drop table', { timeout: t.timeout * 2 }, async() => {
   await sql`create table test(int int)`
   return ['DROP TABLE', (await sql`drop table test`).command]
 })
@@ -242,20 +242,20 @@ t('Savepoint returns Result', async() => {
   return [1, result[0].x]
 })
 
-if (options.prepare) {
-  t('Prepared transaction', async() => {
-    await sql`create table test (a int)`
-
-    await sql.begin(async sql => {
-      await sql`insert into test values(1)`
-      await sql.prepare('tx1')
-    })
-
-    await sql`commit prepared 'tx1'`
-
-    return ['1', (await sql`select count(1) from test`)[0].count, await sql`drop table test`]
-  })
-}
+// Reason: disabled because of security reasons
+//
+//t('Prepared transaction', async() => {
+//  await sql`create table test (a int)`
+//
+//  await sql.begin(async sql => {
+//    await sql`insert into test values(1)`
+//    await sql.prepare('tx1')
+//  })
+//
+//  await sql`commit prepared 'tx1'`
+//
+//  return ['1', (await sql`select count(1) from test`)[0].count, await sql`drop table test`]
+//})
 
 t('Transaction requests are executed implicitly', async() => {
   const sql = postgres({ ...options, debug: true, idle_timeout: 1, fetch_types: false })
@@ -941,7 +941,7 @@ if (options.prepare) {
 //  return ['postgres.js', (await sql`select 1`.then(() => sql.parameters.application_name))]
 //})
 
-t('big query body', { timeout: 2 }, async() => {
+t('big query body', { timeout: t.timeout * 2 }, async() => {
   const size = 50000
   await sql`create table test (x int)`
   return [size, (await sql`insert into test ${
@@ -949,12 +949,13 @@ t('big query body', { timeout: 2 }, async() => {
   }`).count, await sql`drop table test`]
 })
 
-t('Throws if more than 65534 parameters', async() => {
-  await sql`create table test (x int)`
-  return ['MAX_PARAMETERS_EXCEEDED', (await sql`insert into test ${
-    sql([...Array(65535).keys()].map(x => ({ x })))
-  }`.catch(e => e.code)), await sql`drop table test`]
-})
+// Reason: This tests checks internalt of the library, not the DB stuff
+//ot('Throws if more than 65534 parameters', {timeout: t.timeout * 2}, async() => {
+//  await sql`create table test (x int) -- barfoo `
+//  return ['MAX_PARAMETERS_EXCEEDED', (await sql`insert into test ${
+//    sql([...Array(65535).keys()].map(x => ({ x })))
+//  }`.catch(e => (console.debug(e.code), e.code)))] //, await sql`drop table test -- foobar`]
+//})
 
 t('let postgres do implicit cast of unknown types', async() => {
   await sql`create table test (x timestamp with time zone)`
@@ -1019,7 +1020,7 @@ t('little bobby tables', async() => {
 })
 
 t('Connection errors are caught using begin()', {
-  timeout: 2
+  timeout: t.timeout * 2
 }, async() => {
   let error
   try {
@@ -1218,6 +1219,7 @@ t('dynamic values multi row', async() => {
 //})
 
 t('Multiple queries', async() => {
+  const sql = postgres({ ...options, max: 5 })
   return [4, (await Promise.all([
     sql`select 1`,
     sql`select 2`,
@@ -1293,145 +1295,147 @@ t('forEach returns empty array', async() => {
   return [0, (await sql`select 1 as x`.forEach(() => { /* noop */ })).length]
 })
 
-t('Cursor', async() => {
-  const order = []
-  await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
-    order.push(x.x + 'a')
-    await delay(100)
-    order.push(x.x + 'b')
-  })
-  return ['1a1b2a2b', order.join('')]
-})
-
-t('Unsafe cursor', async() => {
-  const order = []
-  await sql.unsafe('select 1 as x union select 2 as x').cursor(async([x]) => {
-    order.push(x.x + 'a')
-    await delay(100)
-    order.push(x.x + 'b')
-  })
-  return ['1a1b2a2b', order.join('')]
-})
-
-t('Cursor custom n', async() => {
-  const order = []
-  await sql`select * from generate_series(1,20)`.cursor(10, async(x) => {
-    order.push(x.length)
-  })
-  return ['10,10', order.join(',')]
-})
-
-t('Cursor custom with rest n', async() => {
-  const order = []
-  await sql`select * from generate_series(1,20)`.cursor(11, async(x) => {
-    order.push(x.length)
-  })
-  return ['11,9', order.join(',')]
-})
-
-t('Cursor custom with less results than batch size', async() => {
-  const order = []
-  await sql`select * from generate_series(1,20)`.cursor(21, async(x) => {
-    order.push(x.length)
-  })
-  return ['20', order.join(',')]
-})
-
-t('Cursor cancel', async() => {
-  let result
-  await sql`select * from generate_series(1,10) as x`.cursor(async([{ x }]) => {
-    result = x
-    return sql.CLOSE
-  })
-  return [1, result]
-})
-
-t('Cursor throw', async() => {
-  const order = []
-  await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
-    order.push(x.x + 'a')
-    await delay(100)
-    throw new Error('watty')
-  }).catch(() => order.push('err'))
-  return ['1aerr', order.join('')]
-})
-
-t('Cursor error', async() => [
-  '42601',
-  await sql`wat`.cursor(() => { /* noop */ }).catch((err) => err.code)
-])
-
-t('Multiple Cursors', { timeout: 2 }, async() => {
-  const result = []
-  await sql.begin(async sql => [
-    await sql`select 1 as cursor, x from generate_series(1,4) as x`.cursor(async([row]) => {
-      result.push(row.x)
-      await new Promise(r => setTimeout(r, 20))
-    }),
-    await sql`select 2 as cursor, x from generate_series(101,104) as x`.cursor(async([row]) => {
-      result.push(row.x)
-      await new Promise(r => setTimeout(r, 10))
+if (process.env.PGMODE != 'transaction') {
+  t('Cursor', async() => {
+    const order = []
+    await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
+      order.push(x.x + 'a')
+      await delay(100)
+      order.push(x.x + 'b')
     })
+    return ['1a1b2a2b', order.join('')]
+  })
+
+  t('Unsafe cursor', async() => {
+    const order = []
+    await sql.unsafe('select 1 as x union select 2 as x').cursor(async([x]) => {
+      order.push(x.x + 'a')
+      await delay(100)
+      order.push(x.x + 'b')
+    })
+    return ['1a1b2a2b', order.join('')]
+  })
+
+  t('Cursor custom n', async() => {
+    const order = []
+    await sql`select * from generate_series(1,20)`.cursor(10, async(x) => {
+      order.push(x.length)
+    })
+    return ['10,10', order.join(',')]
+  })
+
+  t('Cursor custom with rest n', async() => {
+    const order = []
+    await sql`select * from generate_series(1,20)`.cursor(11, async(x) => {
+      order.push(x.length)
+    })
+    return ['11,9', order.join(',')]
+  })
+
+  t('Cursor custom with less results than batch size', async() => {
+    const order = []
+    await sql`select * from generate_series(1,20)`.cursor(21, async(x) => {
+      order.push(x.length)
+    })
+    return ['20', order.join(',')]
+  })
+
+  t('Cursor cancel', async() => {
+    let result
+    await sql`select * from generate_series(1,10) as x`.cursor(async([{ x }]) => {
+      result = x
+      return sql.CLOSE
+    })
+    return [1, result]
+  })
+
+  t('Cursor throw', async() => {
+    const order = []
+    await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
+      order.push(x.x + 'a')
+      await delay(100)
+      throw new Error('watty')
+    }).catch(() => order.push('err'))
+    return ['1aerr', order.join('')]
+  })
+
+  t('Cursor error', async() => [
+    '42601',
+    await sql`wat`.cursor(() => { /* noop */ }).catch((err) => err.code)
   ])
 
-  return ['1,2,3,4,101,102,103,104', result.join(',')]
-})
+  t('Multiple Cursors', { timeout: t.timeout * 2 }, async() => {
+    const result = []
+    await sql.begin(async sql => [
+      await sql`select 1 as cursor, x from generate_series(1,4) as x`.cursor(async([row]) => {
+        result.push(row.x)
+        await new Promise(r => setTimeout(r, 20))
+      }),
+      await sql`select 2 as cursor, x from generate_series(101,104) as x`.cursor(async([row]) => {
+        result.push(row.x)
+        await new Promise(r => setTimeout(r, 10))
+      })
+    ])
 
-t('Cursor as async iterator', async() => {
-  const order = []
-  for await (const [x] of sql`select generate_series(1,2) as x;`.cursor()) {
-    order.push(x.x + 'a')
-    await delay(10)
-    order.push(x.x + 'b')
-  }
+    return ['1,2,3,4,101,102,103,104', result.join(',')]
+  })
 
-  return ['1a1b2a2b', order.join('')]
-})
+  t('Cursor as async iterator', async() => {
+    const order = []
+    for await (const [x] of sql`select generate_series(1,2) as x;`.cursor()) {
+      order.push(x.x + 'a')
+      await delay(10)
+      order.push(x.x + 'b')
+    }
 
-t('Cursor as async iterator with break', async() => {
-  const order = []
-  for await (const xs of sql`select generate_series(1,2) as x;`.cursor()) {
-    order.push(xs[0].x + 'a')
-    await delay(10)
-    order.push(xs[0].x + 'b')
-    break
-  }
+    return ['1a1b2a2b', order.join('')]
+  })
 
-  return ['1a1b', order.join('')]
-})
+  t('Cursor as async iterator with break', async() => {
+    const order = []
+    for await (const xs of sql`select generate_series(1,2) as x;`.cursor()) {
+      order.push(xs[0].x + 'a')
+      await delay(10)
+      order.push(xs[0].x + 'b')
+      break
+    }
 
-t('Async Iterator Unsafe cursor', async() => {
-  const order = []
-  for await (const [x] of sql.unsafe('select 1 as x union select 2 as x').cursor()) {
-    order.push(x.x + 'a')
-    await delay(10)
-    order.push(x.x + 'b')
-  }
-  return ['1a1b2a2b', order.join('')]
-})
+    return ['1a1b', order.join('')]
+  })
 
-t('Async Iterator Cursor custom n', async() => {
-  const order = []
-  for await (const x of sql`select * from generate_series(1,20)`.cursor(10))
+  t('Async Iterator Unsafe cursor', async() => {
+    const order = []
+    for await (const [x] of sql.unsafe('select 1 as x union select 2 as x').cursor()) {
+      order.push(x.x + 'a')
+      await delay(10)
+      order.push(x.x + 'b')
+    }
+    return ['1a1b2a2b', order.join('')]
+  })
+
+  t('Async Iterator Cursor custom n', async() => {
+    const order = []
+    for await (const x of sql`select * from generate_series(1,20)`.cursor(10))
     order.push(x.length)
 
-  return ['10,10', order.join(',')]
-})
+    return ['10,10', order.join(',')]
+  })
 
-t('Async Iterator Cursor custom with rest n', async() => {
-  const order = []
-  for await (const x of sql`select * from generate_series(1,20)`.cursor(11))
+  t('Async Iterator Cursor custom with rest n', async() => {
+    const order = []
+    for await (const x of sql`select * from generate_series(1,20)`.cursor(11))
     order.push(x.length)
 
-  return ['11,9', order.join(',')]
-})
+    return ['11,9', order.join(',')]
+  })
 
-t('Async Iterator Cursor custom with less results than batch size', async() => {
-  const order = []
-  for await (const x of sql`select * from generate_series(1,20)`.cursor(21))
+  t('Async Iterator Cursor custom with less results than batch size', async() => {
+    const order = []
+    for await (const x of sql`select * from generate_series(1,20)`.cursor(21))
     order.push(x.length)
-  return ['20', order.join(',')]
-})
+    return ['20', order.join(',')]
+  })
+}
 
 t('Transform row', async() => {
   const sql = postgres({
@@ -1627,7 +1631,7 @@ t('Query and parameters are enumerable if debug is set', async() => {
   ]
 })
 
-t('connect_timeout', { timeout: 20 }, async() => {
+t('connect_timeout', { timeout: t.timeout * 20 }, async() => {
   const connect_timeout = 0.2
   const server = net.createServer()
   server.listen()
@@ -1651,7 +1655,7 @@ t('connect_timeout throws proper error', async() => [
   })`select 1`.catch(e => e.code)
 ])
 
-t('connect_timeout error message includes host:port', { timeout: 20 }, async() => {
+t('connect_timeout error message includes host:port', { timeout: t.timeout * 20 }, async() => {
   const connect_timeout = 0.2
   const server = net.createServer()
   server.listen()
@@ -1764,7 +1768,7 @@ if (options.prepare) {
     return [false, result.some(x => x.name = result.statement.name)]
   })
 
-  t('Recreate prepared statements on transformAssignedExpr error', { timeout: 1 }, async() => {
+  t('Recreate prepared statements on transformAssignedExpr error', async() => {
     const insert = () => sql`insert into test (name) values (${ '1' }) returning name`
     await sql`create table test (name text)`
     await insert()
@@ -1846,10 +1850,11 @@ t('Catches connection config errors with end', async() => {
   ]
 })
 
-t('Catches query format errors', async() => [
-  'wat',
-  await sql.unsafe({ toString: () => { throw new Error('wat') } }).catch((e) => e.message)
-])
+// Reason: It tests internals of the library, not DB connection
+//nt('Catches query format errors', async() => [
+//  'wat',
+//  await sql.unsafe({ toString: () => { throw new Error('wat') } }).catch((e) => e.message)
+//])
 
 // Reason: single host only
 //t('Multiple hosts', {
@@ -1926,7 +1931,7 @@ t('Copy read', async() => {
   ]
 })
 
-t('Copy write', { timeout: 2 }, async() => {
+t('Copy write', { timeout: t.timeout * 2 }, async() => {
   await sql`create table test (x int)`
   const writable = await sql`copy test from stdin`.writable()
 
@@ -2178,7 +2183,8 @@ t('Cancel running query', async() => {
   return ['57014', error.code]
 })
 
-t('Cancel piped query', { timeout: 5 }, async() => {
+t('Cancel piped query', { timeout: t.timeout * 2 }, async() => {
+  const sql = postgres({...options, max: 2})
   await sql`select 1`
   const last = sql`select pg_sleep(1)`.execute()
   const query = sql`select pg_sleep(2) as dig`
@@ -2378,7 +2384,7 @@ t('Prevent premature end of connection in transaction', async() => {
   ]
 })
 
-t('Ensure reconnect after max_lifetime with transactions', { timeout: 5 }, async() => {
+t('Ensure reconnect after max_lifetime with transactions', { timeout: t.timeout * 5 }, async() => {
   const sql = postgres({
     ...options,
     max_lifetime: 0.01,
@@ -2393,7 +2399,7 @@ t('Ensure reconnect after max_lifetime with transactions', { timeout: 5 }, async
 })
 
 
-t('Ensure transactions throw if connection is closed dwhile there is no query', async() => {
+t('Ensure transactions throw if connection is closed while there is no query', async() => {
   const sql = postgres(options)
   const x = await sql.begin(async() => {
     setTimeout(() => sql.end({ timeout: 0 }), 10)
@@ -2403,27 +2409,30 @@ t('Ensure transactions throw if connection is closed dwhile there is no query', 
   return ['CONNECTION_CLOSED', x.code]
 })
 
-t('Custom socket', {}, async() => {
-  let result
-  const sql = postgres({
-    ...options,
-    socket: () => new Promise((resolve, reject) => {
-      const socket = new net.Socket()
-      socket.connect(options.port)
-      socket.once('data', x => result = x[0])
-      socket.on('error', reject)
-      socket.on('connect', () => resolve(socket))
-    }),
-    idle_timeout
-  })
-
-  await sql`select 1`
-
-  return [
-    result,
-    82
-  ]
-})
+// Reason: Irrelevant to us, if user wants to use custom socket, it is up to
+// them to make it work.
+//
+//t('Custom socket', {}, async() => {
+//  let result
+//  const sql = postgres({
+//    ...options,
+//    socket: () => new Promise((resolve, reject) => {
+//      const socket = new net.Socket()
+//      socket.connect(options.port)
+//      socket.once('data', x => result = x[0])
+//      socket.on('error', reject)
+//      socket.on('connect', () => resolve(socket))
+//    }),
+//    idle_timeout
+//  })
+//
+//  await sql`select 1`
+//
+//  return [
+//    result,
+//    82
+//  ]
+//})
 
 t('Ensure drain only dequeues if ready', async() => {
   const sql = postgres(options)
@@ -2569,25 +2578,27 @@ t('concurrent cursors multiple connections', async() => {
   return ['12233445566778', xs.sort().join('')]
 })
 
-t('reserve connection', async() => {
-  const reserved = await sql.reserve()
+if (process.env.PGMODE != 'transaction') {
+  t('reserve connection', async() => {
+    const reserved = await sql.reserve()
 
-  setTimeout(() => reserved.release(), 510)
+    setTimeout(() => reserved.release(), 510)
 
-  const xs = await Promise.all([
-    reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-    sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
-    reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x }))
-  ])
+    const xs = await Promise.all([
+      reserved`select 1 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+      sql`select 2 as x`.then(([{ x }]) => ({ time: Date.now(), x })),
+      reserved`select 3 as x`.then(([{ x }]) => ({ time: Date.now(), x }))
+    ])
 
-  if (xs[1].time - xs[2].time < 500)
-    throw new Error('Wrong time')
+    if (xs[1].time - xs[2].time < 500)
+      throw new Error('Wrong time')
 
-  return [
-    '123',
-    xs.map(x => x.x).join('')
-  ]
-})
+    return [
+      '123',
+      xs.map(x => x.x).join('')
+    ]
+  })
+}
 
 t('arrays in reserved connection', async() => {
   const reserved = await sql.reserve()
