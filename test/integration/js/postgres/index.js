@@ -1295,145 +1295,147 @@ t('forEach returns empty array', async() => {
   return [0, (await sql`select 1 as x`.forEach(() => { /* noop */ })).length]
 })
 
-t('Cursor', async() => {
-  const order = []
-  await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
-    order.push(x.x + 'a')
-    await delay(100)
-    order.push(x.x + 'b')
-  })
-  return ['1a1b2a2b', order.join('')]
-})
-
-t('Unsafe cursor', async() => {
-  const order = []
-  await sql.unsafe('select 1 as x union select 2 as x').cursor(async([x]) => {
-    order.push(x.x + 'a')
-    await delay(100)
-    order.push(x.x + 'b')
-  })
-  return ['1a1b2a2b', order.join('')]
-})
-
-t('Cursor custom n', async() => {
-  const order = []
-  await sql`select * from generate_series(1,20)`.cursor(10, async(x) => {
-    order.push(x.length)
-  })
-  return ['10,10', order.join(',')]
-})
-
-t('Cursor custom with rest n', async() => {
-  const order = []
-  await sql`select * from generate_series(1,20)`.cursor(11, async(x) => {
-    order.push(x.length)
-  })
-  return ['11,9', order.join(',')]
-})
-
-t('Cursor custom with less results than batch size', async() => {
-  const order = []
-  await sql`select * from generate_series(1,20)`.cursor(21, async(x) => {
-    order.push(x.length)
-  })
-  return ['20', order.join(',')]
-})
-
-t('Cursor cancel', async() => {
-  let result
-  await sql`select * from generate_series(1,10) as x`.cursor(async([{ x }]) => {
-    result = x
-    return sql.CLOSE
-  })
-  return [1, result]
-})
-
-t('Cursor throw', async() => {
-  const order = []
-  await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
-    order.push(x.x + 'a')
-    await delay(100)
-    throw new Error('watty')
-  }).catch(() => order.push('err'))
-  return ['1aerr', order.join('')]
-})
-
-t('Cursor error', async() => [
-  '42601',
-  await sql`wat`.cursor(() => { /* noop */ }).catch((err) => err.code)
-])
-
-t('Multiple Cursors', { timeout: 2 }, async() => {
-  const result = []
-  await sql.begin(async sql => [
-    await sql`select 1 as cursor, x from generate_series(1,4) as x`.cursor(async([row]) => {
-      result.push(row.x)
-      await new Promise(r => setTimeout(r, 20))
-    }),
-    await sql`select 2 as cursor, x from generate_series(101,104) as x`.cursor(async([row]) => {
-      result.push(row.x)
-      await new Promise(r => setTimeout(r, 10))
+if (process.env.PGMODE != 'transaction') {
+  t('Cursor', async() => {
+    const order = []
+    await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
+      order.push(x.x + 'a')
+      await delay(100)
+      order.push(x.x + 'b')
     })
+    return ['1a1b2a2b', order.join('')]
+  })
+
+  t('Unsafe cursor', async() => {
+    const order = []
+    await sql.unsafe('select 1 as x union select 2 as x').cursor(async([x]) => {
+      order.push(x.x + 'a')
+      await delay(100)
+      order.push(x.x + 'b')
+    })
+    return ['1a1b2a2b', order.join('')]
+  })
+
+  t('Cursor custom n', async() => {
+    const order = []
+    await sql`select * from generate_series(1,20)`.cursor(10, async(x) => {
+      order.push(x.length)
+    })
+    return ['10,10', order.join(',')]
+  })
+
+  t('Cursor custom with rest n', async() => {
+    const order = []
+    await sql`select * from generate_series(1,20)`.cursor(11, async(x) => {
+      order.push(x.length)
+    })
+    return ['11,9', order.join(',')]
+  })
+
+  t('Cursor custom with less results than batch size', async() => {
+    const order = []
+    await sql`select * from generate_series(1,20)`.cursor(21, async(x) => {
+      order.push(x.length)
+    })
+    return ['20', order.join(',')]
+  })
+
+  t('Cursor cancel', async() => {
+    let result
+    await sql`select * from generate_series(1,10) as x`.cursor(async([{ x }]) => {
+      result = x
+      return sql.CLOSE
+    })
+    return [1, result]
+  })
+
+  t('Cursor throw', async() => {
+    const order = []
+    await sql`select 1 as x union select 2 as x`.cursor(async([x]) => {
+      order.push(x.x + 'a')
+      await delay(100)
+      throw new Error('watty')
+    }).catch(() => order.push('err'))
+    return ['1aerr', order.join('')]
+  })
+
+  t('Cursor error', async() => [
+    '42601',
+    await sql`wat`.cursor(() => { /* noop */ }).catch((err) => err.code)
   ])
 
-  return ['1,2,3,4,101,102,103,104', result.join(',')]
-})
+  t('Multiple Cursors', { timeout: t.timeout * 2 }, async() => {
+    const result = []
+    await sql.begin(async sql => [
+      await sql`select 1 as cursor, x from generate_series(1,4) as x`.cursor(async([row]) => {
+        result.push(row.x)
+        await new Promise(r => setTimeout(r, 20))
+      }),
+      await sql`select 2 as cursor, x from generate_series(101,104) as x`.cursor(async([row]) => {
+        result.push(row.x)
+        await new Promise(r => setTimeout(r, 10))
+      })
+    ])
 
-t('Cursor as async iterator', async() => {
-  const order = []
-  for await (const [x] of sql`select generate_series(1,2) as x;`.cursor()) {
-    order.push(x.x + 'a')
-    await delay(10)
-    order.push(x.x + 'b')
-  }
+    return ['1,2,3,4,101,102,103,104', result.join(',')]
+  })
 
-  return ['1a1b2a2b', order.join('')]
-})
+  t('Cursor as async iterator', async() => {
+    const order = []
+    for await (const [x] of sql`select generate_series(1,2) as x;`.cursor()) {
+      order.push(x.x + 'a')
+      await delay(10)
+      order.push(x.x + 'b')
+    }
 
-t('Cursor as async iterator with break', async() => {
-  const order = []
-  for await (const xs of sql`select generate_series(1,2) as x;`.cursor()) {
-    order.push(xs[0].x + 'a')
-    await delay(10)
-    order.push(xs[0].x + 'b')
-    break
-  }
+    return ['1a1b2a2b', order.join('')]
+  })
 
-  return ['1a1b', order.join('')]
-})
+  t('Cursor as async iterator with break', async() => {
+    const order = []
+    for await (const xs of sql`select generate_series(1,2) as x;`.cursor()) {
+      order.push(xs[0].x + 'a')
+      await delay(10)
+      order.push(xs[0].x + 'b')
+      break
+    }
 
-t('Async Iterator Unsafe cursor', async() => {
-  const order = []
-  for await (const [x] of sql.unsafe('select 1 as x union select 2 as x').cursor()) {
-    order.push(x.x + 'a')
-    await delay(10)
-    order.push(x.x + 'b')
-  }
-  return ['1a1b2a2b', order.join('')]
-})
+    return ['1a1b', order.join('')]
+  })
 
-t('Async Iterator Cursor custom n', async() => {
-  const order = []
-  for await (const x of sql`select * from generate_series(1,20)`.cursor(10))
+  t('Async Iterator Unsafe cursor', async() => {
+    const order = []
+    for await (const [x] of sql.unsafe('select 1 as x union select 2 as x').cursor()) {
+      order.push(x.x + 'a')
+      await delay(10)
+      order.push(x.x + 'b')
+    }
+    return ['1a1b2a2b', order.join('')]
+  })
+
+  t('Async Iterator Cursor custom n', async() => {
+    const order = []
+    for await (const x of sql`select * from generate_series(1,20)`.cursor(10))
     order.push(x.length)
 
-  return ['10,10', order.join(',')]
-})
+    return ['10,10', order.join(',')]
+  })
 
-t('Async Iterator Cursor custom with rest n', async() => {
-  const order = []
-  for await (const x of sql`select * from generate_series(1,20)`.cursor(11))
+  t('Async Iterator Cursor custom with rest n', async() => {
+    const order = []
+    for await (const x of sql`select * from generate_series(1,20)`.cursor(11))
     order.push(x.length)
 
-  return ['11,9', order.join(',')]
-})
+    return ['11,9', order.join(',')]
+  })
 
-t('Async Iterator Cursor custom with less results than batch size', async() => {
-  const order = []
-  for await (const x of sql`select * from generate_series(1,20)`.cursor(21))
+  t('Async Iterator Cursor custom with less results than batch size', async() => {
+    const order = []
+    for await (const x of sql`select * from generate_series(1,20)`.cursor(21))
     order.push(x.length)
-  return ['20', order.join(',')]
-})
+    return ['20', order.join(',')]
+  })
+}
 
 t('Transform row', async() => {
   const sql = postgres({
