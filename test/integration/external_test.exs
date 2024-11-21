@@ -111,7 +111,7 @@ defmodule Supavisor.Integration.ExternalTest do
                external_id: external_id,
                users: [
                  %{
-                   "pool_size" => 3,
+                   "pool_size" => 15,
                    "db_user" => "postgres",
                    "db_password" => "postgres",
                    "is_manager" => true,
