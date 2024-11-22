@@ -44,7 +44,6 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
             peep_bucket_calculator: Buckets
           ]
         ),
@@ -56,7 +55,6 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
             peep_bucket_calculator: Buckets
           ]
         ),
@@ -68,7 +66,6 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
             peep_bucket_calculator: Buckets
           ]
         ),
@@ -80,7 +77,6 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000],
             peep_bucket_calculator: Buckets
           ]
         ),

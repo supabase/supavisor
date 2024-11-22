@@ -16,6 +16,8 @@ config :supavisor,
   reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer(),
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "20") |> String.to_integer()
 
+config :prom_ex, storage_adapter: PromEx.Storage.Peep
+
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,
   url: [host: "localhost"],
