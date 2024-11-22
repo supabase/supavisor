@@ -5,7 +5,7 @@ defmodule Supavisor.Monitoring.PromEx do
   and provides a function to remove remote metrics associated with a specific tenant.
   """
 
-  use PromEx, otp_app: :supavisor, store: PromEx.Storage.Peep
+  use PromEx, otp_app: :supavisor
   require Logger
 
   alias PromEx.Plugins
