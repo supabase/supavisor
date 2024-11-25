@@ -28,6 +28,12 @@ defmodule Supavisor.Protocol.Server do
           }
   end
 
+  defmacro cancel_message(pid, key) do
+    quote do
+      <<unquote(@msg_cancel_header)::binary, unquote(pid)::32, unquote(key)::32>>
+    end
+  end
+
   @spec decode(iodata()) :: [Pkt.t()] | []
   def decode(data) do
     decode(data, [])
@@ -454,11 +460,6 @@ defmodule Supavisor.Protocol.Server do
       end)
 
     <<byte_size(bin) + 9::32, 0, 3, 0, 0, bin::binary, 0>>
-  end
-
-  @spec cancel_message(non_neg_integer, non_neg_integer) :: iodata
-  def cancel_message(pid, key) do
-    [@msg_cancel_header, <<pid::32, key::32>>]
   end
 
   @spec has_read_only_error?(list) :: boolean

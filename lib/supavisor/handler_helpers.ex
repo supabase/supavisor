@@ -2,7 +2,8 @@ defmodule Supavisor.HandlerHelpers do
   @moduledoc false
 
   alias Phoenix.PubSub
-  alias Supavisor.Protocol.Server
+
+  require Supavisor.Protocol.Server, as: Server
 
   @spec sock_send(Supavisor.sock(), iodata()) :: :ok | {:error, term()}
   def sock_send({mod, sock}, data) do
