@@ -11,7 +11,6 @@ defmodule Supavisor.ClientHandler do
   @behaviour :ranch_protocol
   @behaviour :gen_statem
   @proto [:tcp, :ssl]
-  @cancel_query_msg <<16::32, 1234::16, 5678::16>>
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
   @timeout_subscribe 500
@@ -22,9 +21,10 @@ defmodule Supavisor.ClientHandler do
     Helpers,
     Monitoring.Telem,
     Protocol.Client,
-    Protocol.Server,
     Tenants
   }
+
+  require Supavisor.Protocol.Server, as: Server
 
   @impl true
   def start_link(ref, transport, opts) do
@@ -111,7 +111,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   # cancel request
-  def handle_event(:info, {_, _, <<@cancel_query_msg, pid::32, key::32>>}, _, _) do
+  def handle_event(:info, {_, _, Server.cancel_message(pid, key)}, _, _) do
     Logger.debug("ClientHandler: Got cancel query for #{inspect({pid, key})}")
     :ok = HandlerHelpers.send_cancel_query(pid, key)
     {:stop, {:shutdown, :cancel_query}}
