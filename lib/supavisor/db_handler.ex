@@ -28,8 +28,8 @@ defmodule Supavisor.DbHandler do
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
 
-  def checkout(pid, sock, caller, timeout \\ 15_000),
-    do: :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  def checkout(pid, sock, timeout \\ 15_000),
+    do: :gen_statem.call(pid, {:checkout, sock, self()}, timeout)
 
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)

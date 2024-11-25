@@ -469,7 +469,20 @@ defmodule Supavisor.ClientHandler do
     }
 
     {:ok, db_pid} = DbHandler.start_link(args)
-    db_sock = :gen_statem.call(db_pid, {:checkout, data.sock, self()})
+
+    db_sock =
+      try do
+        DbHandler.checkout(db_pid, data.sock)
+      rescue
+        err ->
+          Logger.error(
+            "ClientHandler: Error while connecting to the DB - #{Exception.message(err)}"
+          )
+
+          _ = DbHandler.stop(db_pid)
+          reraise err, __STACKTRACE__
+      end
+
     {:keep_state, %{data | db_pid: {nil, db_pid, db_sock}, mode: :proxy}}
   end
 
@@ -769,7 +782,7 @@ defmodule Supavisor.ClientHandler do
     start = System.monotonic_time(:microsecond)
     db_pid = :poolboy.checkout(data.pool, true, data.timeout)
     Process.link(db_pid)
-    db_sock = DbHandler.checkout(db_pid, data.sock, self())
+    db_sock = DbHandler.checkout(db_pid, data.sock)
     same_box = if node(db_pid) == node(), do: :local, else: :remote
     Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
     {data.pool, db_pid, db_sock}
