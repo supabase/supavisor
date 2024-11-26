@@ -384,9 +384,6 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _, data) do
     Logger.debug("ClientHandler: Subscribe to tenant #{inspect(data.id)}")
 
-    manager_ref = Process.monitor(opts.workers.manager)
-    data = %{data | manager: manager_ref}
-
     with {:ok, sup} <-
            Supavisor.start_dist(data.id, data.auth_secrets,
              log_level: data.log_level,
@@ -398,9 +395,10 @@ defmodule Supavisor.ClientHandler do
              else: true
            ),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
+      manager_ref = Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
       db_pid = db_checkout(:both, :on_connect, data)
-      data = %{data | db_pid: db_pid, idle_timeout: opts.idle_timeout}
+      data = %{data | manager: manager_ref, db_pid: db_pid, idle_timeout: opts.idle_timeout}
 
       next =
         if opts.ps == [],
@@ -426,6 +424,9 @@ defmodule Supavisor.ClientHandler do
       :proxy ->
         case Supavisor.get_pool_ranch(data.id) do
           {:ok, %{port: port, host: host}} ->
+            # Not sure if manager is alive yet
+            # manager_ref = Process.monitor(opts.workers.manager)
+
             auth =
               Map.merge(data.auth, %{
                 port: port,
@@ -436,7 +437,8 @@ defmodule Supavisor.ClientHandler do
                 upstream_verify: nil
               })
 
-            {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
+            {:keep_state, %{data | auth: auth, manager: manager_ref},
+             {:next_event, :internal, :connect_db}}
 
           other ->
             Logger.error("ClientHandler: Subscribe proxy error: #{inspect(other)}")
