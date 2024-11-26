@@ -629,8 +629,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   # pool's manager went down
-  def handle_event(:info, {:DOWN, ref, _, _, reason}, state, %{manager: manager_ref} = data)
-      when ref == manager_ref do
+  def handle_event(:info, {:DOWN, ref, _, _, reason}, state, %{manager: ref} = data) do
     Logger.error(
       "ClientHandler: Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}"
     )
