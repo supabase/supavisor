@@ -395,10 +395,10 @@ defmodule Supavisor.ClientHandler do
              else: true
            ),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
-      Process.monitor(opts.workers.manager)
+      man_ref = Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
       db_pid = db_checkout(:both, :on_connect, data)
-      data = %{data | db_pid: db_pid, idle_timeout: opts.idle_timeout}
+      data = %{data | manager: man_ref, db_pid: db_pid, idle_timeout: opts.idle_timeout}
 
       next =
         if opts.ps == [],
@@ -623,7 +623,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   # pool's manager went down
-  def handle_event(:info, {:DOWN, _, _, _, reason}, state, data) do
+  def handle_event(:info, {:DOWN, man_ref, _, _, reason}, state, %{manager: man_ref} = data) do
     Logger.error(
       "ClientHandler: Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}"
     )
