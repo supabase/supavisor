@@ -437,8 +437,10 @@ defmodule Supavisor.ClientHandler do
                 upstream_verify: nil
               })
 
-            {:keep_state, %{data | auth: auth, manager: manager_ref},
-             {:next_event, :internal, :connect_db}}
+            # {:keep_state, %{data | auth: auth, manager: manager_ref},
+            # {:next_event, :internal, :connect_db}}
+
+            {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
 
           other ->
             Logger.error("ClientHandler: Subscribe proxy error: #{inspect(other)}")
