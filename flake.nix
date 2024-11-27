@@ -71,6 +71,7 @@
               ];
 
               pre-commit.hooks = {
+                mix-format.enable = true;
                 # credo.enable = true;
               };
 
