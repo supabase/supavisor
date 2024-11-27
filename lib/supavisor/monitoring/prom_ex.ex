@@ -29,7 +29,7 @@ defmodule Supavisor.Monitoring.PromEx do
     ]
   end
 
-  @spec remove_metrics(S.id()) :: non_neg_integer
+  @spec remove_metrics(S.id()) :: :ok
   def remove_metrics({{type, tenant}, user, mode, db_name, search_path} = id) do
     Logger.debug("Removing metrics for #{inspect(id)}")
 
@@ -42,11 +42,16 @@ defmodule Supavisor.Monitoring.PromEx do
       search_path: search_path
     }
 
-    Supavisor.Monitoring.PromEx.Metrics
-    |> :ets.select_delete([
-      {{{:_, meta}, :_}, [], [true]},
-      {{{:_, meta, :_}, :_}, [], [true]}
-    ])
+    {_, tids} = Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
+
+    tids
+    |> List.wrap()
+    |> Enum.each(
+      &:ets.select_delete(&1, [
+        {{{:_, meta}, :_}, [], [true]},
+        {{{:_, meta, :_}, :_}, [], [true]}
+      ])
+    )
   end
 
   @spec set_metrics_tags() :: map()
