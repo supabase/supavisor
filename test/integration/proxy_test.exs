@@ -156,7 +156,6 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "too many clients in session mode" do
-    Process.flag(:trap_exit, true)
     db_conf = Application.get_env(:supavisor, Repo)
     port = Application.get_env(:supavisor, :proxy_port_session)
 
@@ -166,8 +165,8 @@ defmodule Supavisor.Integration.ProxyTest do
         port: port
       )
 
-    {:ok, pid1} = single_connection(connection_opts)
-    {:ok, pid2} = single_connection(connection_opts)
+    assert {:ok, _} = single_connection(connection_opts)
+    assert {:ok, _} = single_connection(connection_opts)
 
     :timer.sleep(1000)
 
@@ -182,8 +181,6 @@ defmodule Supavisor.Integration.ProxyTest do
                 pg_code: "XX000"
               }
             }} = single_connection(connection_opts)
-
-    for pid <- [pid1, pid2], do: :gen_statem.stop(pid)
   end
 
   test "http to proxy server returns 200 OK" do
@@ -379,7 +376,7 @@ defmodule Supavisor.Integration.ProxyTest do
   defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
     port = c_port || db_conf[:port]
 
-    [
+    opts = [
       hostname: db_conf[:hostname],
       port: port,
       database: db_conf[:database],
@@ -387,7 +384,10 @@ defmodule Supavisor.Integration.ProxyTest do
       username: db_conf[:username],
       pool_size: 1
     ]
-    |> SingleConnection.connect()
+
+    with {:error, {error, _}} <- start_supervised({SingleConnection, opts}) do
+      {:error, error}
+    end
   end
 
   defp parse_uri(uri) do

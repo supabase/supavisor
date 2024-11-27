@@ -1,18 +1,11 @@
 defmodule Supavisor.PromExTest do
-  use ExUnit.Case, async: true
-  use Supavisor.DataCase
+  use Supavisor.DataCase, async: true
 
   import Supavisor.Asserts
 
-  alias Supavisor.Monitoring.PromEx
+  @subject Supavisor.Monitoring.PromEx
 
   @tenant "prom_tenant"
-
-  # These tests are known to be flaky, and while these do not affect users
-  # directly we can run them independently when needed. In future we probably
-  # should make them pass "regularly", but for now that is easier to filter them
-  # out.
-  @moduletag flaky: true
 
   setup do
     db_conf = Application.get_env(:supavisor, Repo)
@@ -34,12 +27,14 @@ defmodule Supavisor.PromExTest do
   end
 
   test "remove tenant tag upon termination", %{proxy: proxy, user: user, db_name: db_name} do
-    assert PromEx.get_metrics() =~ "tenant=\"#{@tenant}\""
+    assert @subject.get_metrics() =~ "tenant=\"#{@tenant}\""
 
     :ok = GenServer.stop(proxy)
     :ok = Supavisor.stop({{:single, @tenant}, user, :transaction, db_name, nil})
 
-    refute_eventually(10, fn -> PromEx.get_metrics() =~ "tenant=\"#{@tenant}\"" end)
+    Process.sleep(1000)
+
+    refute_eventually(10, fn -> @subject.get_metrics() =~ "tenant=\"#{@tenant}\"" end)
   end
 
   test "clean_string/1 removes extra spaces from metric string" do
@@ -49,6 +44,6 @@ defmodule Supavisor.PromExTest do
     expected_output =
       "db_name=\"postgres\",mode=\"transaction\",tenant=\"dev_tenant\",type=\"single\",user=\"postgres\""
 
-    assert expected_output == PromEx.clean_string(input)
+    assert expected_output == @subject.clean_string(input)
   end
 end

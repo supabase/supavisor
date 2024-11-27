@@ -5,6 +5,14 @@ defmodule SingleConnection do
 
   @behaviour P.SimpleConnection
 
+  def child_spec(conf) do
+    %{
+      id: {__MODULE__, System.unique_integer()},
+      start: {__MODULE__, :connect, [conf]},
+      restart: :temporary
+    }
+  end
+
   def connect(conf) do
     P.SimpleConnection.start_link(__MODULE__, [], conf)
   end
