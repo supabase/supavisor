@@ -1,4 +1,8 @@
 defmodule Supavisor.Asserts do
+  @moduledoc """
+  Additional assertions useful in Supavisor tests
+  """
+
   @doc """
   Asserts that `function` will eventually success. Fails otherwise.
 
