@@ -37,23 +37,23 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       :supavisor_tenant_client_event_metrics,
       [
         distribution(
-          [:supavisor, :pool, :checkout, :duration, :local],
+          [:supavisor, :pool, :checkout, :duration, :local, :us],
           event_name: [:supavisor, :pool, :checkout, :stop, :local],
           measurement: :duration,
           description: "Duration of the checkout local process in the tenant db pool.",
           tags: @tags,
-          unit: {:native, :millisecond},
+          unit: {:native, :microsecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
           ]
         ),
         distribution(
-          [:supavisor, :pool, :checkout, :duration, :remote],
+          [:supavisor, :pool, :checkout, :duration, :remote, :us],
           event_name: [:supavisor, :pool, :checkout, :stop, :remote],
           measurement: :duration,
           description: "Duration of the checkout remote process in the tenant db pool.",
           tags: @tags,
-          unit: {:native, :millisecond},
+          unit: {:native, :microsecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
           ]
