@@ -545,7 +545,7 @@ defmodule Supavisor.ClientHandler do
 
   # incoming query with a single pool
   def handle_event(:info, {proto, _, bin}, :idle, %{pool: pid} = data)
-      when is_binary(bin) and is_pid(pid) do
+      when is_binary(bin) and is_pid(pid) and proto in @proto do
     Logger.debug("ClientHandler: Receive query #{inspect(bin)}")
     db_pid = db_checkout(:both, :on_query, data)
     handle_prepared_statements(db_pid, bin, data)
@@ -554,13 +554,13 @@ defmodule Supavisor.ClientHandler do
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
-  def handle_event(:info, {proto, _, bin}, _, %{mode: :proxy} = data) do
+  def handle_event(:info, {proto, _, bin}, _, %{mode: :proxy} = data) when proto in @proto do
     {:next_state, :busy, %{data | query_start: System.monotonic_time()},
      {:next_event, :internal, {proto, nil, bin}}}
   end
 
   # incoming query with read/write pools
-  def handle_event(:info, {proto, _, bin}, :idle, data) do
+  def handle_event(:info, {proto, _, bin}, :idle, data) when proto in @proto do
     query_type =
       with {:ok, payload} <- Client.get_payload(bin),
            {:ok, statements} <- Supavisor.PgParser.statements(payload) do
