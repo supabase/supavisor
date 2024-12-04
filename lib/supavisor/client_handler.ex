@@ -688,7 +688,7 @@ defmodule Supavisor.ClientHandler do
       {"data", data}
     ]
 
-    Logger.debug("ClientHandler: Undefined msg: #{inspect(msg, pretty: true)}")
+    Logger.error("ClientHandler: Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
   end
