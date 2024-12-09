@@ -14,6 +14,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
     [
       concurrent_connections(poll_rate),
+      concurrent_proxy_connections(poll_rate),
       concurrent_tenants(poll_rate)
     ]
   end
@@ -207,6 +208,45 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   def emit_telemetry_for_tenant({{{type, tenant}, user, mode, db_name, search_path}, count}) do
     :telemetry.execute(
       [:supavisor, :connections],
+      %{active: count},
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
+    )
+  end
+
+  defp concurrent_proxy_connections(poll_rate) do
+    Polling.build(
+      :supavisor_concurrent_proxy_connections,
+      poll_rate,
+      {__MODULE__, :execute_tenant_proxy_metrics, []},
+      [
+        last_value(
+          [:supavisor, :proxy, :connections, :active],
+          event_name: [:supavisor, :proxy, :connections],
+          description: "The total count of active proxy clients for a tenant.",
+          measurement: :active,
+          tags: @tags
+        )
+      ]
+    )
+  end
+
+  def execute_tenant_proxy_metrics do
+    Registry.select(Supavisor.Registry.TenantProxyClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.frequencies()
+    |> Enum.each(&emit_proxy_telemetry_for_tenant/1)
+  end
+
+  @spec emit_proxy_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
+  def emit_proxy_telemetry_for_tenant({{{type, tenant}, user, mode, db_name, search_path}, count}) do
+    :telemetry.execute(
+      [:supavisor, :proxy, :connections],
       %{active: count},
       %{
         tenant: tenant,

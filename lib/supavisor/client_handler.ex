@@ -14,6 +14,8 @@ defmodule Supavisor.ClientHandler do
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
   @timeout_subscribe 500
+  @clients_registry Supavisor.Registry.TenantClients
+  @proxy_clients_registry Supavisor.Registry.TenantProxyClients
 
   alias Supavisor.{
     DbHandler,
@@ -248,7 +250,7 @@ defmodule Supavisor.ClientHandler do
           local: data.local
         )
 
-        Registry.register(Supavisor.Registry.TenantClients, id, [])
+        Registry.register(@clients_registry, id, [])
 
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
 
@@ -424,9 +426,6 @@ defmodule Supavisor.ClientHandler do
       :proxy ->
         case Supavisor.get_pool_ranch(data.id) do
           {:ok, %{port: port, host: host}} ->
-            # Not sure if manager is alive yet
-            # manager_ref = Process.monitor(opts.workers.manager)
-
             auth =
               Map.merge(data.auth, %{
                 port: port,
@@ -437,8 +436,8 @@ defmodule Supavisor.ClientHandler do
                 upstream_verify: nil
               })
 
-            # {:keep_state, %{data | auth: auth, manager: manager_ref},
-            # {:next_event, :internal, :connect_db}}
+            Logger.metadata(proxy: true)
+            set_proxy_registry(data.id)
 
             {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
 
@@ -1155,5 +1154,11 @@ defmodule Supavisor.ClientHandler do
   def reset_active_count(data) do
     HandlerHelpers.activate(data.sock)
     0
+  end
+
+  @spec set_proxy_registry(Supavisor.id()) :: {:ok, pid()} | {:error, term()}
+  defp set_proxy_registry(id) do
+    Registry.unregister(@clients_registry, id)
+    Registry.register(@proxy_clients_registry, id, [])
   end
 end
