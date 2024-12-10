@@ -143,6 +143,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
+          cache-dependency-path: 'test/integration/js/'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
@@ -172,6 +173,8 @@ jobs:
         run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Start epmd
         run: epmd -daemon
+      - name: Install Node dependencies
+        run: 'cd test/integration/js/; npm install'
       - name: Run tests
         run: mix test --only integration --trace
 
