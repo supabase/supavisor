@@ -29,16 +29,33 @@ defmodule Supavisor.Monitoring.PromEx do
     ]
   end
 
-  @spec remove_metrics(S.id()) :: non_neg_integer
-  def remove_metrics({{type, tenant}, user, mode, db_name}) do
-    meta = %{tenant: tenant, user: user, mode: mode, type: type, db_name: db_name}
+  @spec remove_metrics(S.id()) :: :ok
+  def remove_metrics({{type, tenant}, user, mode, db_name, search_path} = id) do
+    Logger.debug("Removing metrics for #{inspect(id)}")
 
-    Supavisor.Monitoring.PromEx.Metrics
-    |> :ets.select_delete([{{{:_, meta}, :_}, [], [true]}])
+    meta = %{
+      tenant: tenant,
+      user: user,
+      mode: mode,
+      type: type,
+      db_name: db_name,
+      search_path: search_path
+    }
+
+    {_, tids} = Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
+
+    tids
+    |> List.wrap()
+    |> Enum.each(
+      &:ets.select_delete(&1, [
+        {{{:_, meta}, :_}, [], [true]},
+        {{{:_, meta, :_}, :_}, [], [true]}
+      ])
+    )
   end
 
   @spec set_metrics_tags() :: map()
-  def set_metrics_tags() do
+  def set_metrics_tags do
     [_, host] = node() |> Atom.to_string() |> String.split("@")
 
     metrics_tags = %{
@@ -57,7 +74,7 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec short_node_id() :: String.t() | nil
-  def short_node_id() do
+  def short_node_id do
     with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <-
            Application.fetch_env(:supavisor, :fly_alloc_id),
          [short_alloc_id, _] <- String.split(fly_alloc_id, "-", parts: 2) do
@@ -68,7 +85,7 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec get_metrics() :: String.t()
-  def get_metrics() do
+  def get_metrics do
     metrics_tags =
       case Application.fetch_env(:supavisor, :metrics_tags) do
         :error -> set_metrics_tags()
@@ -89,7 +106,7 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec do_cache_tenants_metrics() :: list
-  def do_cache_tenants_metrics() do
+  def do_cache_tenants_metrics do
     metrics = get_metrics() |> String.split("\n")
 
     pools =
@@ -97,7 +114,7 @@ defmodule Supavisor.Monitoring.PromEx do
       |> Enum.uniq()
 
     _ =
-      Enum.reduce(pools, metrics, fn {{_type, tenant}, _, _, _}, acc ->
+      Enum.reduce(pools, metrics, fn {{_type, tenant}, _, _, _, _}, acc ->
         {matched, rest} = Enum.split_with(acc, &String.contains?(&1, "tenant=\"#{tenant}\""))
 
         if matched != [] do
@@ -151,7 +168,7 @@ defmodule Supavisor.Monitoring.PromEx do
         |> String.trim()
 
       if value != cleaned do
-        Logger.error("Tag validation: #{inspect(value)} / #{inspect(cleaned)}")
+        Logger.warning("Tag validation: #{inspect(value)} / #{inspect(cleaned)}")
       end
 
       "=\"#{cleaned}\""

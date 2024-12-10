@@ -1,7 +1,7 @@
 import Config
 
 require Logger
-alias Supavisor.Helpers, as: H
+alias Supavisor.Helpers
 
 secret_key_base =
   if config_env() in [:dev, :test] do
@@ -85,8 +85,7 @@ topologies =
       config: [
         url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
         heartbeat_interval: 5_000,
-        channel_name: "supavisor_#{region}_#{maj}_#{min}",
-        channel_name_partisan: "supavisor_partisan_#{region}_#{maj}_#{min}"
+        channel_name: "supavisor_#{region}_#{maj}_#{min}"
       ]
     ]
 
@@ -102,7 +101,7 @@ config :libcluster,
 upstream_ca =
   if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
     File.read!(path)
-    |> H.cert_to_bin()
+    |> Helpers.cert_to_bin()
     |> case do
       {:ok, bin} ->
         Logger.info("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH",
@@ -152,13 +151,17 @@ if config_env() != :test do
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
+    proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,
     reconnect_on_db_close: System.get_env("RECONNECT_ON_DB_CLOSE") == "true",
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
-    metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(",")
+    metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
+    node_host: System.get_env("NODE_IP", "127.0.0.1"),
+    availability_zone: System.get_env("AVAILABILITY_ZONE"),
+    local_proxy_multiplier: System.get_env("LOCAL_PROXY_MULTIPLIER", "20") |> String.to_integer()
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
@@ -174,23 +177,6 @@ if config_env() != :test do
         tag: "AES.GCM.V1", key: System.get_env("VAULT_ENC_KEY")
       }
     ]
-
-  config :partisan,
-    # Which overlay to use
-    peer_service_manager: :partisan_pluggable_peer_service_manager,
-    listen_addrs: [
-      {
-        System.get_env("PARTISAN_PEER_IP", "127.0.0.1"),
-        String.to_integer(System.get_env("PARTISAN_PEER_PORT", "20100"))
-      }
-    ],
-    channels: [
-      data: %{parallelism: System.get_env("PARTISAN_PARALLELISM", "5") |> String.to_integer()}
-    ],
-    # Encoding for pid(), reference() and names
-    pid_encoding: false,
-    ref_encoding: false,
-    remote_ref_format: :improper_list
 end
 
 if System.get_env("LOGS_ENGINE") == "logflare" do

@@ -8,7 +8,12 @@ defmodule Supavisor.TenantsMetrics do
   @check_timeout 10_000
 
   def start_link(args) do
-    GenServer.start_link(__MODULE__, args, name: __MODULE__)
+    GenServer.start_link(__MODULE__, args,
+      name: __MODULE__,
+      spawn_opt: [
+        priority: :low
+      ]
+    )
   end
 
   ## Callbacks
@@ -26,7 +31,7 @@ defmodule Supavisor.TenantsMetrics do
     active_pools = PromEx.do_cache_tenants_metrics() |> MapSet.new()
 
     MapSet.difference(state.pools, active_pools)
-    |> Enum.each(fn {{_type, tenant}, _, _, _} = pool ->
+    |> Enum.each(fn {{_type, tenant}, _, _, _, _} = pool ->
       Logger.debug("Removing cached metrics for #{inspect(pool)}")
       Cachex.del(Supavisor.Cache, {:metrics, tenant})
     end)
@@ -36,7 +41,7 @@ defmodule Supavisor.TenantsMetrics do
 
   ## Internal functions
 
-  defp check_metrics() do
+  defp check_metrics do
     Process.send_after(
       self(),
       :check_metrics,

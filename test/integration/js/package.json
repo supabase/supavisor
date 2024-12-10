@@ -1,0 +1,13 @@
+{
+  "name": "supavisor-integration",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test:postgres": "node ./postgres/index.js"
+  },
+  "dependencies": {
+    "postgres": "^3.4.5"
+  }
+}

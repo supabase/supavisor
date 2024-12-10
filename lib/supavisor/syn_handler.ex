@@ -2,22 +2,45 @@ defmodule Supavisor.SynHandler do
   @moduledoc """
   Custom defined Syn's callbacks
   """
+
+  @behaviour :syn_event_handler
+
   require Logger
+
   alias Supavisor.Monitoring.PromEx
 
+  @impl true
   def on_process_unregistered(
         :tenants,
-        {{_type, _tenant}, _user, _mode, _db_name} = id,
+        {{_type, _tenant}, _user, _mode, _db_name, _search_path} = id,
         _pid,
-        _meta,
+        meta,
         reason
       ) do
     Logger.debug("Process unregistered: #{inspect(id)} #{inspect(reason)}")
+
+    case meta do
+      %{port: port, listener: listener} ->
+        try do
+          :ranch.stop_listener(id)
+
+          Logger.notice(
+            "Stopped listener #{inspect(id)} on port #{inspect(port)} listener #{inspect(listener)}"
+          )
+        rescue
+          exception ->
+            Logger.error("Failed to stop listener #{inspect(id)} #{Exception.message(exception)}")
+        end
+
+      _ ->
+        nil
+    end
 
     # remove all Prometheus metrics for the specified tenant
     PromEx.remove_metrics(id)
   end
 
+  @impl true
   def resolve_registry_conflict(
         :tenants,
         id,

@@ -1,5 +1,6 @@
 defmodule SupavisorWeb.MetricsControllerTest do
   use SupavisorWeb.ConnCase
+  alias Supavisor.Support.Cluster
 
   setup %{conn: conn} do
     new_conn =
@@ -13,6 +14,10 @@ defmodule SupavisorWeb.MetricsControllerTest do
   end
 
   test "exporting metrics", %{conn: conn} do
+    {:ok, _pid, node2} = Cluster.start_node()
+
+    Node.connect(node2)
+
     :meck.expect(Supavisor.Jwt, :authorize, fn _token, _secret -> {:ok, %{}} end)
     conn = get(conn, Routes.metrics_path(conn, :index))
     assert conn.status == 200

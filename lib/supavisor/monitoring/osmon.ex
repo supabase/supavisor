@@ -61,7 +61,7 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
     )
   end
 
-  def execute_metrics() do
+  def execute_metrics do
     execute_metrics(@event_ram_usage, %{ram: ram_usage()})
     execute_metrics(@event_cpu_util, %{cpu: cpu_util()})
     execute_metrics(@event_cpu_la, cpu_la())
@@ -72,13 +72,13 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   end
 
   @spec ram_usage() :: float()
-  def ram_usage() do
+  def ram_usage do
     mem = :memsup.get_system_memory_data()
     100 - mem[:free_memory] / mem[:total_memory] * 100
   end
 
   @spec cpu_la() :: %{avg1: float(), avg5: float(), avg15: float()}
-  def cpu_la() do
+  def cpu_la do
     %{
       avg1: :cpu_sup.avg1() / 256,
       avg5: :cpu_sup.avg5() / 256,
@@ -87,7 +87,7 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   end
 
   @spec cpu_util() :: float() | {:error, term()}
-  def cpu_util() do
+  def cpu_util do
     :cpu_sup.util()
   end
 end

@@ -5,7 +5,7 @@ defmodule Supavisor.Manager do
 
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
-  alias Supavisor.Helpers, as: H
+  alias Supavisor.Helpers
 
   @check_timeout 120_000
 
@@ -34,12 +34,12 @@ defmodule Supavisor.Manager do
 
   @impl true
   def init(args) do
-    H.set_log_level(args.log_level)
+    Helpers.set_log_level(args.log_level)
     tid = :ets.new(__MODULE__, [:protected])
 
     [args | _] = Enum.filter(args.replicas, fn e -> e.replica_type == :write end)
 
-    {{type, tenant}, user, _mode, db_name} = args.id
+    {{type, tenant}, user, _mode, db_name, _search_path} = args.id
 
     state = %{
       id: args.id,
@@ -65,7 +65,7 @@ defmodule Supavisor.Manager do
 
     # don't limit if max_clients is null
     {reply, new_state} =
-      if :ets.info(state.tid, :size) < state.max_clients do
+      if :ets.info(state.tid, :size) < state.max_clients or Supavisor.mode(state.id) == :session do
         :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
 
         case state.parameter_status do
@@ -135,7 +135,7 @@ defmodule Supavisor.Manager do
 
   ## Internal functions
 
-  defp check_subscribers() do
+  defp check_subscribers do
     Process.send_after(
       self(),
       :check_subscribers,
@@ -143,15 +143,19 @@ defmodule Supavisor.Manager do
     )
   end
 
-  defp now() do
+  defp now do
     System.system_time(:second)
   end
 
   @spec check_parameter_status(map, map) :: :ok | {:error, String.t()}
   defp check_parameter_status(ps, def_ps) do
-    Enum.find_value(ps, :ok, fn {key, value} ->
-      if def_ps[key] && def_ps[key] != value do
-        {:error, "Parameter #{key} changed from #{def_ps[key]} to #{value}"}
+    Enum.find_value(ps, :ok, fn {key, new_value} ->
+      case def_ps do
+        %{^key => old_value} when old_value != new_value ->
+          {:error, "Parameter #{key} changed from #{old_value} to #{new_value}"}
+
+        _ ->
+          nil
       end
     end)
   end

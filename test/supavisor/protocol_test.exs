@@ -1,6 +1,9 @@
 defmodule Supavisor.ProtocolTest do
   use ExUnit.Case, async: true
-  alias Supavisor.Protocol.Server, as: S
+
+  @subject Supavisor.Protocol.Server
+
+  require Supavisor.Protocol.Server
 
   @initial_data %{
     "DateStyle" => "ISO, MDY",
@@ -27,42 +30,43 @@ defmodule Supavisor.ProtocolTest do
                     97, 105, 108, 101, 100, 0, 0>>
 
   test "encode_parameter_status/1" do
-    result = S.encode_parameter_status(@initial_data)
+    result = @subject.encode_parameter_status(@initial_data)
 
-    for {key, value} <- @initial_data do
-      assert :erlang.is_binary(key)
-      assert :erlang.is_binary(value)
-      encoded = S.encode_pkt(:parameter_status, key, value)
-      assert Enum.member?(result, encoded)
+    for entry <- @initial_data do
+      assert {key, value} = entry
+      assert is_binary(key)
+      assert is_binary(value)
+      encoded = @subject.encode_pkt(:parameter_status, key, value)
+      assert encoded in result
     end
   end
 
   test "encode_pkt/3" do
     key = "TimeZone"
     value = "UTC"
-    result = S.encode_pkt(:parameter_status, key, value)
+    result = @subject.encode_pkt(:parameter_status, key, value)
 
     assert result == [<<?S, 17::32>>, [key, <<0>>, value, <<0>>]]
   end
 
   test "backend_key_data/0" do
-    {header, payload} = S.backend_key_data()
+    {header, payload} = @subject.backend_key_data()
     len = byte_size(payload) + 4
 
     assert [
-             %S.Pkt{
+             %@subject.Pkt{
                tag: :backend_key_data,
                len: 13,
                payload: %{pid: _, key: _}
              }
-           ] = S.decode([header, payload] |> IO.iodata_to_binary())
+           ] = @subject.decode([header, payload] |> IO.iodata_to_binary())
 
     assert header == <<?K, len::32>>
     assert byte_size(payload) == 8
   end
 
   test "decode_payload for error_response" do
-    assert S.decode(@auth_bin_error) == [
+    assert @subject.decode(@auth_bin_error) == [
              %Supavisor.Protocol.Server.Pkt{
                tag: :error_response,
                len: 112,
@@ -84,7 +88,6 @@ defmodule Supavisor.ProtocolTest do
     key = 123_456
     expected = <<0, 0, 0, 16, 4, 210, 22, 46, 0, 0, 0, 123, 0, 1, 226, 64>>
 
-    assert S.cancel_message(pid, key)
-           |> IO.iodata_to_binary() == expected
+    assert @subject.cancel_message(pid, key) == expected
   end
 end

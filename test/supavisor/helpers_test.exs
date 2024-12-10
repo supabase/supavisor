@@ -35,4 +35,52 @@ defmodule Supavisor.HelpersTest do
                {:error, "Unsupported or invalid secret format"}
     end
   end
+
+  describe "validate_name/1" do
+    test "allows valid unquoted names" do
+      assert Helpers.validate_name("valid_name")
+      # Minimum length
+      assert Helpers.validate_name("a")
+      assert Helpers.validate_name("valid_name_123")
+      assert Helpers.validate_name("name$123")
+    end
+
+    test "rejects invalid unquoted names" do
+      # Empty name
+      refute Helpers.validate_name("")
+      # Starts with a number
+      refute Helpers.validate_name("0invalid")
+      # Contains uppercase letters
+      refute Helpers.validate_name("InvalidName")
+      # Contains hyphen
+      refute Helpers.validate_name("invalid-name")
+      # Contains period
+      refute Helpers.validate_name("invalid.name")
+      # Over 63 chars
+      refute Helpers.validate_name(
+               "this_name_is_way_toooooo_long_and_exceeds_sixty_three_characters"
+             )
+    end
+
+    test "allows valid quoted names" do
+      # Contains space
+      assert Helpers.validate_name("\"Valid Name\"")
+      # Contains uppercase letters
+      assert Helpers.validate_name("\"ValidName123\"")
+      # Same as unquoted but quoted
+      assert Helpers.validate_name("\"valid_name\"")
+      # Contains dollar sign
+      assert Helpers.validate_name("\"Name with $\"")
+      assert Helpers.validate_name("\"name with multiple spaces\"")
+    end
+
+    test "rejects invalid quoted names" do
+      # Contains hyphen
+      refute Helpers.validate_name("\"invalid-name\"")
+      # Contains period
+      refute Helpers.validate_name("\"invalid.name\"")
+      # Empty name
+      refute Helpers.validate_name("\"\"")
+    end
+  end
 end

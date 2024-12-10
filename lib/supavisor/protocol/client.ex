@@ -1,9 +1,12 @@
 defmodule Supavisor.Protocol.Client do
+  @moduledoc false
+
   require Logger
 
   @pkt_header_size 5
 
   defmodule Pkt do
+    @moduledoc false
     defstruct([:tag, :len, :payload, :bin])
 
     @type t :: %Pkt{
@@ -103,22 +106,18 @@ defmodule Supavisor.Protocol.Client do
   end
 
   def decode_payload(:simple_query, payload) do
-    case String.split(payload, <<0>>) do
+    case :binary.split(payload, <<0>>) do
       [query, ""] -> query
       _ -> :undefined
     end
   end
 
-  def decode_payload(:parse_message, payload) do
-    case String.split(payload, <<0>>) do
-      [""] ->
-        :undefined
+  def decode_payload(:parse_message, <<0>>), do: :undefined
 
-      other ->
-        case Enum.filter(other, &(&1 != "")) do
-          [sql] -> sql
-          message -> message
-        end
+  def decode_payload(:parse_message, payload) do
+    case :binary.split(payload, <<0>>, [:global, :trim_all]) do
+      [sql] -> sql
+      message -> message
     end
   end
 
@@ -164,7 +163,7 @@ defmodule Supavisor.Protocol.Client do
     :undef
   end
 
-  def parse_msg_sel_1() do
+  def parse_msg_sel_1 do
     <<80, 0, 0, 0, 16, 0, 115, 101, 108, 101, 99, 116, 32, 49, 0, 0, 0, 66, 0, 0, 0, 12, 0, 0, 0,
       0, 0, 0, 0, 0, 68, 0, 0, 0, 6, 80, 0, 69, 0, 0, 0, 9, 0, 0, 0, 0, 200, 83, 0, 0, 0, 4>>
   end
