@@ -81,6 +81,6 @@ function exit() {
         ? console.log('🎉')
         : console.error('⚠️', 'Not good')
 
-  !process.exitCode && (!success || only || ignored) && (process.exitCode = 1)
+  if (!success || only || ignored) { process.exit(1) } else { process.exit(0) }
 }
 
