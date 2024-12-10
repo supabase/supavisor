@@ -601,7 +601,7 @@ defmodule Supavisor.ClientHandler do
     msg = [
       {"type", type},
       {"content", content},
-      {"state", state},
+      {"state", Map.put(state, :auth_secrets, "<REDACTED>")},
       {"data", data}
     ]
 
