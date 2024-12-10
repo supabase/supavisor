@@ -81,6 +81,10 @@ defmodule Supavisor.Application do
        keys: :duplicate,
        name: Supavisor.Registry.TenantClients,
        partitions: System.schedulers_online()},
+      {Registry,
+       keys: :duplicate,
+       name: Supavisor.Registry.TenantProxyClients,
+       partitions: System.schedulers_online()},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor
