@@ -235,6 +235,9 @@ defmodule Supavisor.DbHandler do
         %{tag: :error_response, payload: error}, _ ->
           {:error_response, error}
 
+        %{tag: :notice_response, payload: error}, _ ->
+          {:notice_response, error}
+
         _e, acc ->
           acc
       end)
@@ -268,8 +271,8 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Auth error #{inspect(reason)}")
         {:stop, :invalid_password, data}
 
-      {:error_response, error} ->
-        Logger.error("DbHandler: Error auth response #{inspect(error)}")
+      {response, error} when response in [:notice_response, :error_response] ->
+        Logger.error("DbHandler: #{inspect(response)} #{inspect(error)}")
         {:keep_state, data}
 
       {:ready_for_query, ps, db_state} ->
