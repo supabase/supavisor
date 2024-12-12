@@ -171,9 +171,8 @@ defmodule Supavisor.Protocol.Server do
   end
 
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
-  def decode_payload(:error_response, payload) do
-    String.split(payload, <<0>>, trim: true)
-  end
+  def decode_payload(tag, payload) when tag in [:error_response, :notice_response],
+    do: String.split(payload, <<0>>, trim: true)
 
   def decode_payload(
         :password_message,
