@@ -25,15 +25,15 @@ defmodule Supavisor.Monitoring.Telem do
 
   @spec network_usage(:client | :db, Supavisor.sock(), Supavisor.id(), map()) ::
           {:ok | :error, map()}
-  def network_usage(type, {mod, socket}, id, _stats) do
+  def network_usage(type, {mod, socket}, id, stats) do
     network_usage_disable do
       mod = if mod == :ssl, do: :ssl, else: :inet
 
       case mod.getstat(socket, [:recv_oct, :send_oct]) do
         {:ok, [{:recv_oct, recv_oct}, {:send_oct, send_oct}]} ->
           stats = %{
-            send_oct: send_oct,
-            recv_oct: recv_oct
+            send_oct: send_oct - Map.get(stats, :send_oct, 0),
+            recv_oct: recv_oct - Map.get(stats, :recv_oct, 0)
           }
 
           {{ptype, tenant}, user, mode, db_name, search_path} = id
@@ -51,11 +51,11 @@ defmodule Supavisor.Monitoring.Telem do
             }
           )
 
-          {:ok, %{}}
+          {:ok, %{recv_oct: recv_oct, send_oct: send_oct}}
 
         {:error, reason} ->
           Logger.error("Failed to get socket stats: #{inspect(reason)}")
-          {:error, %{}}
+          {:error, stats}
       end
     end
   end

@@ -81,25 +81,19 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
             peep_bucket_calculator: Buckets
           ]
         ),
-        last_value(
+        sum(
           [:supavisor, :client, :network, :recv],
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :recv_oct,
           description: "The total number of bytes received by clients.",
-          tags: @tags,
-          reporter_options: [
-            prometheus_type: :sum
-          ]
+          tags: @tags
         ),
-        last_value(
+        sum(
           [:supavisor, :client, :network, :send],
           event_name: [:supavisor, :client, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by clients.",
-          tags: @tags,
-          reporter_options: [
-            prometheus_type: :sum
-          ]
+          tags: @tags
         ),
         counter(
           [:supavisor, :client, :queries, :count],
