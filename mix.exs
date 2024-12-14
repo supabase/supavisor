@@ -66,6 +66,10 @@ defmodule Supavisor.MixProject do
       {:cachex, "~> 3.6"},
       {:inet_cidr, "~> 1.0.0"},
       {:observer_cli, "~> 1.7"},
+      # Open Telemetry,
+      {:opentelemetry, "~> 1.4"},
+      {:opentelemetry_api, "~> 1.3", override: true},
+      {:opentelemetry_exporter, "~> 1.7"},
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
@@ -83,7 +87,13 @@ defmodule Supavisor.MixProject do
       supavisor: [
         steps: [:assemble, &upgrade/1, :tar],
         include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
-        cookie: System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30)))
+        cookie:
+          System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30))),
+        applications: [
+          opentelemetry_exporter: :permanent,
+          opentelemetry: :temporary,
+          supavisor: :permanent
+        ]
       ],
       supavisor_bin: [
         steps: [:assemble, &Burrito.wrap/1],
