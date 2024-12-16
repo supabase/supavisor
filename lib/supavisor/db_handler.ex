@@ -72,6 +72,7 @@ defmodule Supavisor.DbHandler do
         messages: "",
         server_proof: nil,
         stats: %{},
+        client_stats: %{},
         mode: args.mode,
         replica_type: args.replica_type,
         reply: nil,
@@ -297,7 +298,10 @@ defmodule Supavisor.DbHandler do
     if String.ends_with?(bin, Server.ready_for_query()) do
       HandlerHelpers.activate(data.sock)
 
-      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+      {_, stats} =
+        if not data.proxy,
+          do: Telem.network_usage(:db, data.sock, data.id, data.stats),
+          else: {nil, data.stats}
 
       # in transaction mode, we need to notify the client when the transaction is finished,
       # after which it will unlink the direct db connection process from itself.
@@ -307,7 +311,13 @@ defmodule Supavisor.DbHandler do
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
           HandlerHelpers.sock_send(data.client_sock, bin)
-          %{data | stats: stats, active_count: 0}
+
+          {_, client_stats} =
+            if not data.proxy,
+              do: Telem.network_usage(:client, data.client_sock, data.client_stats),
+              else: {nil, data.client_stats}
+
+          %{data | stats: stats, active_count: 0, client_stats: client_stats}
         end
 
       {:next_state, :idle, data, {:next_event, :internal, :check_anon_buffer}}

@@ -575,6 +575,11 @@ defmodule Supavisor.ClientHandler do
 
         {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
 
+        {_, stats} =
+          if not data.local,
+            do: Telem.network_usage(:client, data.sock, data.id, data.stats),
+            else: {nil, data.stats}
+
         Telem.client_query_time(data.query_start, data.id)
 
         {:next_state, :idle,
