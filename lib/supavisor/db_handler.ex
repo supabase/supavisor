@@ -314,7 +314,7 @@ defmodule Supavisor.DbHandler do
 
           {_, client_stats} =
             if not data.proxy,
-              do: Telem.network_usage(:client, data.client_sock, data.client_stats),
+              do: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats),
               else: {nil, data.client_stats}
 
           %{data | stats: stats, active_count: 0, client_stats: client_stats}
