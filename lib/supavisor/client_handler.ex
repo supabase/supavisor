@@ -573,8 +573,6 @@ defmodule Supavisor.ClientHandler do
 
         db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
-        {_, stats} = Telem.network_usage(:client, data.sock, data.id, data.stats)
-
         {_, stats} =
           if not data.local,
             do: Telem.network_usage(:client, data.sock, data.id, data.stats),
