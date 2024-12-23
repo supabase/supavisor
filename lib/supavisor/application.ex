@@ -58,7 +58,6 @@ defmodule Supavisor.Application do
 
     children = [
       Supavisor.ErlSysMon,
-      PromEx,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
@@ -67,6 +66,7 @@ defmodule Supavisor.Application do
        keys: :duplicate,
        name: Supavisor.Registry.TenantClients,
        partitions: System.schedulers_online()},
+      PromEx,
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor
