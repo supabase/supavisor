@@ -1,5 +1,5 @@
 defmodule Supavisor.Integration.ExternalTest do
-  use ExUnit.Case, async: false
+  use Supavisor.E2ECase, async: false
 
   @moduletag integration: true
 
@@ -13,7 +13,9 @@ defmodule Supavisor.Integration.ExternalTest do
     {:ok, npm: npm}
   end
 
-  setup :external_id
+  setup ctx do
+    create_instance([ctx.runtime, ctx.library, ctx.mode])
+  end
 
   setup ctx do
     if get_tool(ctx.runtime) do
@@ -89,42 +91,4 @@ defmodule Supavisor.Integration.ExternalTest do
 
   defp port("session"), do: Application.fetch_env!(:supavisor, :proxy_port_session)
   defp port("transaction"), do: Application.fetch_env!(:supavisor, :proxy_port_transaction)
-
-  defp external_id(ctx) do
-    external_id =
-      [ctx.runtime, ctx.library, ctx.mode]
-      |> Enum.map_join("_", &String.replace(&1, ~r/\W/, ""))
-
-    # Ensure that there are no leftovers
-    _ = Supavisor.Tenants.delete_tenant_by_external_id(external_id)
-
-    _ = Supavisor.Repo.query("DROP DATABASE IF EXISTS #{external_id}")
-    assert {:ok, _} = Supavisor.Repo.query("CREATE DATABASE #{external_id}")
-
-    assert {:ok, tenant} =
-             Supavisor.Tenants.create_tenant(%{
-               default_parameter_status: %{},
-               db_host: "localhost",
-               db_port: 6432,
-               db_database: external_id,
-               auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
-               external_id: external_id,
-               users: [
-                 %{
-                   "pool_size" => 15,
-                   "db_user" => "postgres",
-                   "db_password" => "postgres",
-                   "is_manager" => true,
-                   "mode_type" => "session"
-                 }
-               ]
-             })
-
-    on_exit(fn ->
-      Supavisor.Tenants.delete_tenant(tenant)
-      _ = Supavisor.Repo.query("DROP DATABASE IF EXISTS #{external_id}")
-    end)
-
-    {:ok, user: "postgres.#{external_id}", db: tenant.db_database, external_id: external_id}
-  end
 end

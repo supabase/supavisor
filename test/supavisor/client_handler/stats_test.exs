@@ -1,10 +1,9 @@
 defmodule Supavisor.ClientHandler.StatsTest do
-  use Supavisor.DataCase, async: false
+  use Supavisor.E2ECase, async: false
 
   @moduletag telemetry: true
 
-  setup :external_id
-
+  # Listen on Telemetry events
   setup ctx do
     :telemetry.attach(
       {ctx.test, :client},
@@ -30,6 +29,11 @@ defmodule Supavisor.ClientHandler.StatsTest do
     send(pid, {:telemetry, {name, measurement, meta}})
   end
 
+  setup ctx do
+    create_instance([__MODULE__, ctx.line])
+  end
+
+  # Connect to the instance
   setup ctx do
     conn =
       start_supervised!(
@@ -70,7 +74,7 @@ defmodule Supavisor.ClientHandler.StatsTest do
     test "do not not increase if other tenant is used", ctx do
       external_id = ctx.external_id
 
-      {:ok, other} = external_id(ctx, "another")
+      {:ok, other} = create_instance([__MODULE__, "another"])
 
       # Cleanup initial data related to sign in
       assert_receive {:telemetry, {:client, _, %{tenant: ^external_id}}}
@@ -118,7 +122,7 @@ defmodule Supavisor.ClientHandler.StatsTest do
     test "do not not increase if other tenant is used", ctx do
       external_id = ctx.external_id
 
-      {:ok, other} = external_id(ctx, "another")
+      {:ok, other} = create_instance([__MODULE__, "another"])
 
       # Cleanup initial data related to sign in
       assert_receive {:telemetry, {:db, _, %{tenant: ^external_id}}}
@@ -138,42 +142,5 @@ defmodule Supavisor.ClientHandler.StatsTest do
 
       refute_receive {:telemetry, {:db, _, %{tenant: ^external_id}}}
     end
-  end
-
-  defp external_id(_ctx, prefix \\ "default") do
-    external_id =
-      prefix <> "_" <> String.replace(Ecto.UUID.generate(), "-", "_")
-
-    unboxed(fn ->
-      _ = Repo.query("DROP DATABASE IF EXISTS #{external_id}")
-      assert {:ok, _} = Repo.query("CREATE DATABASE #{external_id}")
-    end)
-
-    assert {:ok, tenant} =
-             Supavisor.Tenants.create_tenant(%{
-               default_parameter_status: %{},
-               db_host: "localhost",
-               db_port: 6432,
-               db_database: external_id,
-               auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
-               external_id: external_id,
-               users: [
-                 %{
-                   "pool_size" => 15,
-                   "db_user" => "postgres",
-                   "db_password" => "postgres",
-                   "is_manager" => true,
-                   "mode_type" => "session"
-                 }
-               ]
-             })
-
-    on_exit(fn ->
-      unboxed(fn ->
-        _ = Repo.query("DROP DATABASE IF EXISTS #{external_id}")
-      end)
-    end)
-
-    {:ok, %{user: "postgres.#{external_id}", db: tenant.db_database, external_id: external_id}}
   end
 end
