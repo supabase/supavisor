@@ -122,7 +122,6 @@ defmodule Supavisor.Integration.ExternalTest do
 
     on_exit(fn ->
       Supavisor.Tenants.delete_tenant(tenant)
-
       _ = Supavisor.Repo.query("DROP DATABASE IF EXISTS #{external_id}")
     end)
 
