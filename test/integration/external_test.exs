@@ -120,6 +120,12 @@ defmodule Supavisor.Integration.ExternalTest do
                ]
              })
 
+    on_exit(fn ->
+      Supavisor.Tenants.delete_tenant(tenant)
+
+      _ = Supavisor.Repo.query("DROP DATABASE IF EXISTS #{external_id}")
+    end)
+
     {:ok, user: "postgres.#{external_id}", db: tenant.db_database, external_id: external_id}
   end
 end
