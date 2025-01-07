@@ -38,7 +38,7 @@ defmodule Supavisor.MetricsCleaner do
     metrics_table = Supavisor.Monitoring.PromEx.Metrics
     tenant_registry_table = :syn_registry_by_name_tenants
 
-    fn
+    func = fn
       {{_,
         %{
           type: type,
@@ -61,6 +61,9 @@ defmodule Supavisor.MetricsCleaner do
       _, acc ->
         acc
     end
-    |> :ets.foldl(nil, metrics_table)
+
+    {_, tids} = Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
+
+    Enum.each(List.wrap(tids), &:ets.foldl(func, nil, &1))
   end
 end
