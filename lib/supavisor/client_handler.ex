@@ -250,8 +250,6 @@ defmodule Supavisor.ClientHandler do
           local: data.local
         )
 
-        Registry.register(@clients_registry, id, [])
-
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
 
         cond do
@@ -402,6 +400,8 @@ defmodule Supavisor.ClientHandler do
       db_pid = db_checkout(:both, :on_connect, data)
       data = %{data | manager: manager_ref, db_pid: db_pid, idle_timeout: opts.idle_timeout}
 
+      Registry.register(@clients_registry, data.id, [])
+
       next =
         if opts.ps == [],
           do: {:timeout, 10_000, :wait_ps},
@@ -437,7 +437,7 @@ defmodule Supavisor.ClientHandler do
               })
 
             Logger.metadata(proxy: true)
-            set_proxy_registry(data.id)
+            Registry.register(@proxy_clients_registry, data.id, [])
 
             {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
 
@@ -1157,11 +1157,5 @@ defmodule Supavisor.ClientHandler do
   def reset_active_count(data) do
     HandlerHelpers.activate(data.sock)
     0
-  end
-
-  @spec set_proxy_registry(Supavisor.id()) :: {:ok, pid()} | {:error, term()}
-  defp set_proxy_registry(id) do
-    Registry.unregister(@clients_registry, id)
-    Registry.register(@proxy_clients_registry, id, [])
   end
 end
