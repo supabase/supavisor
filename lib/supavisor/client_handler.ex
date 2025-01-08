@@ -400,7 +400,7 @@ defmodule Supavisor.ClientHandler do
       db_pid = db_checkout(:both, :on_connect, data)
       data = %{data | manager: manager_ref, db_pid: db_pid, idle_timeout: opts.idle_timeout}
 
-      Registry.register(@clients_registry, id, [])
+      Registry.register(@clients_registry, data.id, [])
 
       next =
         if opts.ps == [],
@@ -437,7 +437,7 @@ defmodule Supavisor.ClientHandler do
               })
 
             Logger.metadata(proxy: true)
-            Registry.register(@proxy_clients_registry, id, [])
+            Registry.register(@proxy_clients_registry, data.id, [])
 
             {:keep_state, %{data | auth: auth}, {:next_event, :internal, :connect_db}}
 
