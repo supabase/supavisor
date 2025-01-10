@@ -26,18 +26,22 @@ defmodule Supavisor.ClientHandler.StatsTest do
   end
 
   def handle_event([:supavisor, name, :network, :stat], measurement, meta, pid) do
-    send(pid, {:telemetry, {name, measurement, meta}})
+    send(pid, {:telemetry, {name, measurement, meta}, Node.self()})
   end
 
   setup ctx do
-    create_instance([__MODULE__, ctx.line])
+    if !ctx[:external_id] do
+      create_instance([__MODULE__, ctx.line])
+    else
+      {:ok, db: "postgres", user: "postgres.#{ctx.external_id}"}
+    end
   end
 
   # Connect to the instance
   setup ctx do
     conn =
       start_supervised!(
-        {Postgrex,
+        {SingleConnection,
          hostname: "localhost",
          port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
          database: ctx.db,
@@ -52,10 +56,10 @@ defmodule Supavisor.ClientHandler.StatsTest do
     test "increase on query", ctx do
       external_id = ctx.external_id
 
-      assert {:ok, _} = Postgrex.query(ctx.conn, "SELECT 1", [])
+      assert {:ok, _} = SingleConnection.query(ctx.conn, "SELECT 1")
 
       assert_receive {:telemetry,
-                      {:client, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}}
+                      {:client, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
 
       assert recv > 0
       assert sent > 0
@@ -65,7 +69,7 @@ defmodule Supavisor.ClientHandler.StatsTest do
       external_id = ctx.external_id
 
       assert_receive {:telemetry,
-                      {:client, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}}
+                      {:client, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
 
       assert recv > 0
       assert sent > 0
@@ -77,11 +81,11 @@ defmodule Supavisor.ClientHandler.StatsTest do
       {:ok, other} = create_instance([__MODULE__, "another"])
 
       # Cleanup initial data related to sign in
-      assert_receive {:telemetry, {:client, _, %{tenant: ^external_id}}}
+      assert_receive {:telemetry, {:client, _, %{tenant: ^external_id}}, _}
 
       other_conn =
         start_supervised!(
-          {Postgrex,
+          {SingleConnection,
            hostname: "localhost",
            port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
            database: other.db,
@@ -90,9 +94,39 @@ defmodule Supavisor.ClientHandler.StatsTest do
           id: :postgrex_another
         )
 
-      assert {:ok, _} = Postgrex.query(other_conn, "SELECT 1", [])
+      assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
 
-      refute_receive {:telemetry, {:client, _, %{tenant: ^external_id}}}
+      refute_receive {:telemetry, {:client, _, %{tenant: ^external_id}}, _}
+    end
+
+    @tag external_id: "proxy_tenant1"
+    test "another instance do not send events here", ctx do
+      assert {:ok, _pid, node} = Supavisor.Support.Cluster.start_node()
+
+      :erpc.call(node, :telemetry, :attach, [
+        {ctx.test, :client},
+        [:supavisor, :client, :network, :stat],
+        &__MODULE__.handle_event/4,
+        self()
+      ])
+
+      other_conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :secondary_proxy_port),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"},
+          id: :postgrex_another
+        )
+
+      assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
+
+      this = Node.self()
+
+      refute_receive {:telemetry, {:client, _, %{tenant: "proxy_tenant1"}}, ^node}
+      assert_receive {:telemetry, {:client, _, %{tenant: "proxy_tenant1"}}, ^this}
     end
   end
 
@@ -100,10 +134,10 @@ defmodule Supavisor.ClientHandler.StatsTest do
     test "increase on query", ctx do
       external_id = ctx.external_id
 
-      assert {:ok, _} = Postgrex.query(ctx.conn, "SELECT 1", [])
+      assert {:ok, _} = SingleConnection.query(ctx.conn, "SELECT 1")
 
       assert_receive {:telemetry,
-                      {:db, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}}
+                      {:db, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
 
       assert recv > 0
       assert sent > 0
@@ -113,7 +147,7 @@ defmodule Supavisor.ClientHandler.StatsTest do
       external_id = ctx.external_id
 
       assert_receive {:telemetry,
-                      {:db, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}}
+                      {:db, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
 
       assert recv > 0
       assert sent > 0
@@ -125,11 +159,11 @@ defmodule Supavisor.ClientHandler.StatsTest do
       {:ok, other} = create_instance([__MODULE__, "another"])
 
       # Cleanup initial data related to sign in
-      assert_receive {:telemetry, {:db, _, %{tenant: ^external_id}}}
+      assert_receive {:telemetry, {:db, _, %{tenant: ^external_id}}, _}
 
       other_conn =
         start_supervised!(
-          {Postgrex,
+          {SingleConnection,
            hostname: "localhost",
            port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
            database: other.db,
@@ -138,9 +172,9 @@ defmodule Supavisor.ClientHandler.StatsTest do
           id: :postgrex_another
         )
 
-      assert {:ok, _} = Postgrex.query(other_conn, "SELECT 1", [])
+      assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
 
-      refute_receive {:telemetry, {:db, _, %{tenant: ^external_id}}}
+      refute_receive {:telemetry, {:db, _, %{tenant: ^external_id}}, _}
     end
   end
 end
