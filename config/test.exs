@@ -48,7 +48,7 @@ config :supavisor, Supavisor.Vault,
 
 # Print only warnings and errors during test
 config :logger, :console,
-  level: :error,
+  level: String.to_atom(System.get_env("LOGGER_LEVEL", "error")),
   metadata: [:error_code, :file, :line, :pid, :project, :user, :mode]
 
 # Initialize plugs at runtime for faster test compilation
