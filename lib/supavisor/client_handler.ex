@@ -600,12 +600,10 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(type, content, state, data) do
+  def handle_event(type, content, _state, _data) do
     msg = [
       {"type", type},
-      {"content", content},
-      {"state", Map.put(data, :auth_secrets, "<REDACTED>")},
-      {"data", data}
+      {"content", content}
     ]
 
     Logger.error("ClientHandler: Undefined msg: #{inspect(msg, pretty: true)}")
