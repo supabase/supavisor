@@ -43,6 +43,10 @@ defmodule Supavisor.HelpersTest do
       assert Helpers.validate_name("a")
       assert Helpers.validate_name("valid_name_123")
       assert Helpers.validate_name("name$123")
+
+      assert Helpers.validate_name(
+               "prisma_migrate_shadow_db_dfe467a1-f7e4-4c27-87de-a930270f4622"
+             )
     end
 
     test "rejects invalid unquoted names" do
@@ -52,8 +56,8 @@ defmodule Supavisor.HelpersTest do
       refute Helpers.validate_name("0invalid")
       # Contains uppercase letters
       refute Helpers.validate_name("InvalidName")
-      # Contains hyphen
-      refute Helpers.validate_name("invalid-name")
+      # Prima needs this
+      # refute Helpers.validate_name("invalid-name")
       # Contains period
       refute Helpers.validate_name("invalid.name")
       # Over 63 chars
@@ -69,6 +73,7 @@ defmodule Supavisor.HelpersTest do
       assert Helpers.validate_name("\"ValidName123\"")
       # Same as unquoted but quoted
       assert Helpers.validate_name("\"valid_name\"")
+      assert Helpers.validate_name("\"valid-name\"")
       # Contains dollar sign
       assert Helpers.validate_name("\"Name with $\"")
       assert Helpers.validate_name("\"name with multiple spaces\"")
@@ -76,7 +81,7 @@ defmodule Supavisor.HelpersTest do
 
     test "rejects invalid quoted names" do
       # Contains hyphen
-      refute Helpers.validate_name("\"invalid-name\"")
+      # refute Helpers.validate_name("\"invalid-name\"")
       # Contains period
       refute Helpers.validate_name("\"invalid.name\"")
       # Empty name
