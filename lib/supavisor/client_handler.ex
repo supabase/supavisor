@@ -531,6 +531,11 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {:parameter_status, ps}, :exchange, _),
     do: {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
 
+  def handle_event(:info, {:ssl_error, sock, reason}, _, %{sock: {_, sock}}) do
+    Logger.error("ClientHandler: SSL error #{inspect(reason)}")
+    {:stop, {:shutdown, :ssl_error}}
+  end
+
   # client closed connection
   def handle_event(_, {closed, _}, _, data)
       when closed in [:tcp_closed, :ssl_closed] do
