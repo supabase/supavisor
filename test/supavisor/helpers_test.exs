@@ -43,6 +43,10 @@ defmodule Supavisor.HelpersTest do
       assert Helpers.validate_name("a")
       assert Helpers.validate_name("valid_name_123")
       assert Helpers.validate_name("name$123")
+
+      assert Helpers.validate_name(
+               "prisma_migrate_shadow_db_dfe467a1-f7e4-4c27-87de-a930270f4622"
+             )
     end
 
     test "rejects invalid unquoted names" do

@@ -371,9 +371,9 @@ defmodule Supavisor.Helpers do
 
   @spec validate_name(String.t()) :: boolean()
   def validate_name(name) do
-    # 1-63 characters, starting with a lowercase letter or underscore, and containing only alphanumeric characters, underscores, and dollar signs. Names with spaces or uppercase letters must be enclosed in double quotes.
+    # 1-63 characters, starting with a lowercase letter or underscore, and containing only alphanumeric characters, underscores, dollar signs, and hyphens. Names with spaces or uppercase letters must be enclosed in double quotes.
     String.length(name) <= 63 and
-      name =~ ~r/^(?:[a-z_][a-z0-9_$ ]*|"[a-zA-Z0-9_$ ]+")$/ and
+      name =~ ~r/^(?:[a-z_][a-z0-9_$\-]*|"[a-zA-Z0-9_$\-]+")$/ and
       name != ~s/""/
   end
 end
