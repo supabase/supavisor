@@ -73,6 +73,7 @@ defmodule Supavisor.HelpersTest do
       assert Helpers.validate_name("\"ValidName123\"")
       # Same as unquoted but quoted
       assert Helpers.validate_name("\"valid_name\"")
+      assert Helpers.validate_name("\"valid-name\"")
       # Contains dollar sign
       assert Helpers.validate_name("\"Name with $\"")
       assert Helpers.validate_name("\"name with multiple spaces\"")
@@ -80,7 +81,7 @@ defmodule Supavisor.HelpersTest do
 
     test "rejects invalid quoted names" do
       # Contains hyphen
-      refute Helpers.validate_name("\"invalid-name\"")
+      # refute Helpers.validate_name("\"invalid-name\"")
       # Contains period
       refute Helpers.validate_name("\"invalid.name\"")
       # Empty name
