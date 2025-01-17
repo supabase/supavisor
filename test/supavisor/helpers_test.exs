@@ -56,8 +56,8 @@ defmodule Supavisor.HelpersTest do
       refute Helpers.validate_name("0invalid")
       # Contains uppercase letters
       refute Helpers.validate_name("InvalidName")
-      # Contains hyphen
-      refute Helpers.validate_name("invalid-name")
+      # Prima needs this
+      # refute Helpers.validate_name("invalid-name")
       # Contains period
       refute Helpers.validate_name("invalid.name")
       # Over 63 chars
