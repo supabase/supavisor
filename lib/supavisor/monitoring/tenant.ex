@@ -133,25 +133,19 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     Event.build(
       :supavisor_tenant_db_event_metrics,
       [
-        last_value(
+        sum(
           [:supavisor, :db, :network, :recv],
           event_name: [:supavisor, :db, :network, :stat],
           measurement: :recv_oct,
           description: "The total number of bytes received by db process",
-          tags: @tags,
-          reporter_options: [
-            prometheus_type: :sum
-          ]
+          tags: @tags
         ),
-        last_value(
+        sum(
           [:supavisor, :db, :network, :send],
           event_name: [:supavisor, :db, :network, :stat],
           measurement: :send_oct,
           description: "The total number of bytes sent by db process",
-          tags: @tags,
-          reporter_options: [
-            prometheus_type: :sum
-          ]
+          tags: @tags
         ),
         counter(
           [:supavisor, :db_handler, :started, :count],
