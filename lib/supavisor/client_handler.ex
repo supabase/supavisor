@@ -801,8 +801,6 @@ defmodule Supavisor.ClientHandler do
         do: :password,
         else: :auth_query
 
-    db_name = db_name || info.tenant.db_database
-
     auth = %{
       application_name: data[:app_name] || "Supavisor",
       database: db_name,
