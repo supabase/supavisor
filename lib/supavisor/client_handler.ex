@@ -225,7 +225,7 @@ defmodule Supavisor.ClientHandler do
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
-        db_name = if(db_name != nil, do: db_name, else: info.tenant.db_database)
+        db_name = db_name || info.tenant.db_database
 
         id =
           Supavisor.id(
@@ -801,9 +801,11 @@ defmodule Supavisor.ClientHandler do
         do: :password,
         else: :auth_query
 
+    db_name = db_name || info.tenant.db_database
+
     auth = %{
       application_name: data[:app_name] || "Supavisor",
-      database: info.tenant.db_database,
+      database: db_name,
       host: to_charlist(info.tenant.db_host),
       sni_hostname:
         if(info.tenant.sni_hostname != nil, do: to_charlist(info.tenant.sni_hostname)),
