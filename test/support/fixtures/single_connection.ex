@@ -5,6 +5,13 @@ defmodule SingleConnection do
 
   @behaviour P.SimpleConnection
 
+  def query(pid, query) do
+    case P.SimpleConnection.call(pid, {:query, query}) do
+      [%P.Result{} = result] -> {:ok, result}
+      other -> {:error, other}
+    end
+  end
+
   def child_spec(conf) do
     %{
       id: {__MODULE__, System.unique_integer()},
