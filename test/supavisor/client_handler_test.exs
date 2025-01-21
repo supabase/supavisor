@@ -1,6 +1,7 @@
 defmodule Supavisor.ClientHandlerTest do
   use ExUnit.Case, async: true
-  alias Supavisor.ClientHandler
+
+  @subject Supavisor.ClientHandler
 
   test "handle ssl_error" do
     sock =
@@ -22,7 +23,7 @@ defmodule Supavisor.ClientHandlerTest do
 
     data = %{sock: {:ssl, sock}}
 
-    assert {:stop, {:shutdown, :ssl_error}} =
-             ClientHandler.handle_event(:info, error, nil, data)
+    assert :keep_state_and_data ==
+             @subject.handle_event(:info, error, nil, data)
   end
 end
