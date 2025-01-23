@@ -1,9 +1,11 @@
 name: Elixir tests
 on:
+  push:
+    branches:
+      - master
   pull_request:
     branches:
       - main
-      - v2
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
