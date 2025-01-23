@@ -977,6 +977,11 @@ defmodule Supavisor.ClientHandler do
              data: term()
 
   # handle Terminate message
+  defp handle_data(:info, <<?X, 4::32>>, :idle, %{local: true}) do
+    Logger.info("ClientHandler: Terminate received from proxy client")
+    :keep_state_and_data
+  end
+
   defp handle_data(:info, <<?X, 4::32>>, :idle, _data) do
     Logger.info("ClientHandler: Terminate received from client")
     {:stop, {:shutdown, :terminate_received}}
