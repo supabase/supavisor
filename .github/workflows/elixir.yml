@@ -86,7 +86,8 @@ jobs:
     name: Run tests
     runs-on: u22-arm-runner
     needs: [deps]
-
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Elixir
@@ -125,13 +126,14 @@ jobs:
       - name: Start epmd
         run: epmd -daemon
       - name: Run tests
-        run: mix test
+        run: mix coveralls.github
 
   integration:
     name: Run integration tests
     runs-on: u22-arm-runner
     needs: [deps]
-
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Elixir
@@ -176,7 +178,7 @@ jobs:
       - name: Install Node dependencies
         run: 'cd test/integration/js/; npm install'
       - name: Run tests
-        run: mix test --only integration --trace
+        run: mix coveralls.github --only integration --trace
 
   dialyzer:
     name: Dialyze
