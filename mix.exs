@@ -11,7 +11,13 @@ defmodule Supavisor.MixProject do
       aliases: aliases(),
       deps: deps(),
       releases: releases(),
-      dialyzer: [plt_add_apps: [:mix]]
+      dialyzer: [plt_add_apps: [:mix]],
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.html": :test,
+        "coveralls.github": :test
+      ]
     ]
   end
 
@@ -71,7 +77,10 @@ defmodule Supavisor.MixProject do
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
       {:rustler, "~> 0.34.0"},
-      {:ranch, "~> 2.0", override: true}
+      {:ranch, "~> 2.0", override: true},
+
+      # Test utilities
+      {:excoveralls, ">= 0.0.0", only: [:dev, :test]}
     ]
   end
 
