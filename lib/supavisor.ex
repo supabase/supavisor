@@ -133,8 +133,7 @@ defmodule Supavisor do
   end
 
   def terminate_global(tenant) do
-    [node() | Node.list()]
-    |> :erpc.multicall(Supavisor, :dirty_terminate, [tenant], 60_000)
+    :erpc.multicall([node() | Node.list()], Supavisor, :dirty_terminate, [tenant], 60_000)
   end
 
   @spec del_all_cache(String.t(), String.t()) :: [map()]
