@@ -110,7 +110,7 @@ defmodule Supavisor.DbHandler do
       ]
 
     maybe_reconnect_callback = fn reason ->
-      if data.reconnect_retries > @reconnect_retries and data.client_sock != nil,
+      if @reconnect_retries != -1 and data.reconnect_retries > @reconnect_retries and data.client_sock != nil,
         do: {:stop, {:failed_to_connect, reason}},
         else: {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
     end
