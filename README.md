@@ -2,7 +2,7 @@
 
 # Supavisor - Postgres connection pooler
 
-- [Overview](#overiew)
+- [Overview](#overview)
 - [Motivation](#motivation)
 - [Architecture](#architecture)
 - [Docs](#docs)
