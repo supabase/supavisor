@@ -673,17 +673,15 @@ defmodule Supavisor.DbHandler do
   defp handle_authentication_error(%{proxy: false} = data, reason) do
     tenant = Supavisor.tenant(data.id)
 
-    for node <- [node() | Node.list()] do
-      :erpc.cast(node, fn ->
-        Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
-        Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
+    :erpc.multicast([node() | Node.list()], fn ->
+      Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
+      Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
 
-        Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
-          for {client_handler, _meta} <- entries,
-              do: send(client_handler, {:disconnect, reason})
-        end)
+      Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
+        for {client_handler, _meta} <- entries,
+            do: send(client_handler, {:disconnect, reason})
       end)
-    end
+    end)
 
     Supavisor.stop(data.id)
   end
