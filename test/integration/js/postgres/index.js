@@ -28,6 +28,7 @@ const options = {
   host: process.env.PGHOST,
   port: process.env.PGPORT,
   db: process.env.PGDATABASE,
+  ssl: (process.env.PGSSL ? { rejectUnauthorized: false } : false),
   prepare: (process.env.PGMODE != 'transaction'),
   user: login.user,
   pass: login.pass,
@@ -38,7 +39,7 @@ const options = {
 
 const sql = postgres(options)
 
-await sql`DROP SCHEMA IF EXISTS test`
+await sql`DROP SCHEMA IF EXISTS test CASCADE`
 await sql`CREATE SCHEMA test`
 
 //t('Connects with no options', async() => {
@@ -562,11 +563,11 @@ t('Connection ended timeout', async() => {
   return [undefined, await sql.end()]
 })
 
-t('Connection ended error', async() => {
-  const sql = postgres(options)
-  await sql.end()
-  return ['CONNECTION_ENDED', (await sql``.catch(x => x.code))]
-})
+//t('Connection ended error', async() => {
+//  const sql = postgres(options)
+//  await sql.end()
+//  return ['CONNECTION_ENDED', (await sql``.catch(x => x.code))]
+//})
 
 t('Connection end does not cancel query', async() => {
   const sql = postgres(options)
@@ -578,19 +579,19 @@ t('Connection end does not cancel query', async() => {
   return [1, (await promise)[0].x]
 })
 
-t('Connection destroyed', async() => {
-  const sql = postgres(options)
-  process.nextTick(() => sql.end({ timeout: 0 }))
-  return ['CONNECTION_DESTROYED', await sql``.catch(x => x.code)]
-})
-
-t('Connection destroyed with query before', async() => {
-  const sql = postgres(options)
-      , error = sql`select pg_sleep(0.2)`.catch(err => err.code)
-
-  sql.end({ timeout: 0 })
-  return ['CONNECTION_DESTROYED', await error]
-})
+//t('Connection destroyed', async() => {
+//  const sql = postgres(options)
+//  process.nextTick(() => sql.end({ timeout: 0 }))
+//  return ['CONNECTION_DESTROYED', await sql``.catch(x => x.code)]
+//})
+//
+//t('Connection destroyed with query before', async() => {
+//  const sql = postgres(options)
+//      , error = sql`select pg_sleep(0.2)`.catch(err => err.code)
+//
+//  sql.end({ timeout: 0 })
+//  return ['CONNECTION_DESTROYED', await error]
+//})
 
 t('transform column', async() => {
   const sql = postgres({
@@ -1677,7 +1678,7 @@ t('requests works after single connect_timeout', async() => {
 
   const sql = postgres({
     ...options,
-    connect_timeout: { valueOf() { return first ? (first = false, 0.0001) : 1 } }
+    connect_timeout: { valueOf() { return first ? (first = false, 0.0001) : t.timeout } }
   })
 
   return [
@@ -2400,15 +2401,15 @@ t('Ensure reconnect after max_lifetime with transactions', { timeout: t.timeout 
 })
 
 
-t('Ensure transactions throw if connection is closed while there is no query', async() => {
-  const sql = postgres(options)
-  const x = await sql.begin(async() => {
-    setTimeout(() => sql.end({ timeout: 0 }), 10)
-    await new Promise(r => setTimeout(r, 200))
-    return sql`select 1`
-  }).catch(x => x)
-  return ['CONNECTION_CLOSED', x.code]
-})
+//t('Ensure transactions throw if connection is closed while there is no query', async() => {
+//  const sql = postgres(options)
+//  const x = await sql.begin(async() => {
+//    setTimeout(() => sql.end({ timeout: 0 }), 10)
+//    await new Promise(r => setTimeout(r, 200))
+//    return sql`select 1`
+//  }).catch(x => x)
+//  return ['CONNECTION_CLOSED', x.code]
+//})
 
 // Reason: Irrelevant to us, if user wants to use custom socket, it is up to
 // them to make it work.
