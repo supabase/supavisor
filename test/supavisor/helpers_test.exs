@@ -43,6 +43,7 @@ defmodule Supavisor.HelpersTest do
       assert Helpers.validate_name("a")
       assert Helpers.validate_name("valid_name_123")
       assert Helpers.validate_name("name$123")
+      assert Helpers.validate_name("FOO_BAR")
 
       assert Helpers.validate_name(
                "prisma_migrate_shadow_db_dfe467a1-f7e4-4c27-87de-a930270f4622"
@@ -54,10 +55,7 @@ defmodule Supavisor.HelpersTest do
       refute Helpers.validate_name("")
       # Starts with a number
       refute Helpers.validate_name("0invalid")
-      # Contains uppercase letters
-      refute Helpers.validate_name("InvalidName")
-      # Prima needs this
-      # refute Helpers.validate_name("invalid-name")
+
       # Contains period
       refute Helpers.validate_name("invalid.name")
       # Over 63 chars
