@@ -4,6 +4,7 @@ Use these error codes to debug a running Supavisor cluster.
 
 ## Error Codes
 
-| Code                    | Description                                                          |
-| ----------------------- | -------------------------------------------------------------------- |
-| MaxClientsInSessionMode | When in Session mode client connections are limited by the pool_size |
+| Code                      | Description                                                          |
+| ------------------------- | -------------------------------------------------------------------- |
+| `MaxClientsInSessionMode` | When in Session mode client connections are limited by the pool_size |
+| `ListenerShutdownError` | There was an error during listener process shutdown                    |
