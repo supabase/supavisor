@@ -1,6 +1,10 @@
 defmodule Supavisor.HelpersTest do
   use ExUnit.Case, async: true
+  use ExUnitProperties
+
   alias Supavisor.Helpers
+
+  @subject Supavisor.Helpers
 
   describe "parse_secret/2" do
     test "parses SCRAM-SHA-256 secrets correctly" do
@@ -37,55 +41,42 @@ defmodule Supavisor.HelpersTest do
   end
 
   describe "validate_name/1" do
-    test "allows valid unquoted names" do
-      assert Helpers.validate_name("valid_name")
-      # Minimum length
-      assert Helpers.validate_name("a")
-      assert Helpers.validate_name("valid_name_123")
-      assert Helpers.validate_name("name$123")
-
-      assert Helpers.validate_name(
-               "prisma_migrate_shadow_db_dfe467a1-f7e4-4c27-87de-a930270f4622"
-             )
+    test "Prisma migration databases are accepted" do
+      assert @subject.validate_name(
+                "prisma_migrate_shadow_db_dfe467a1-f7e4-4c27-87de-a930270f4622"
+              )
     end
 
-    test "rejects invalid unquoted names" do
-      # Empty name
-      refute Helpers.validate_name("")
-      # Starts with a number
-      refute Helpers.validate_name("0invalid")
-      # Contains uppercase letters
-      refute Helpers.validate_name("InvalidName")
-      # Prima needs this
-      # refute Helpers.validate_name("invalid-name")
-      # Contains period
-      refute Helpers.validate_name("invalid.name")
-      # Over 63 chars
-      refute Helpers.validate_name(
-               "this_name_is_way_toooooo_long_and_exceeds_sixty_three_characters"
-             )
+    property "ASCII strings with length within 1..63 are valid" do
+      check all name <- string(:ascii, min_length: 1, max_length: 63) do
+        assert @subject.validate_name(name)
+      end
     end
 
-    test "allows valid quoted names" do
-      # Contains space
-      assert Helpers.validate_name("\"Valid Name\"")
-      # Contains uppercase letters
-      assert Helpers.validate_name("\"ValidName123\"")
-      # Same as unquoted but quoted
-      assert Helpers.validate_name("\"valid_name\"")
-      assert Helpers.validate_name("\"valid-name\"")
-      # Contains dollar sign
-      assert Helpers.validate_name("\"Name with $\"")
-      assert Helpers.validate_name("\"name with multiple spaces\"")
+    property "string that is longer that 63 characters is invalid" do
+      check all name <- string(:printable, min_length: 64) do
+        refute @subject.validate_name(name)
+      end
     end
 
-    test "rejects invalid quoted names" do
-      # Contains hyphen
-      # refute Helpers.validate_name("\"invalid-name\"")
-      # Contains period
-      refute Helpers.validate_name("\"invalid.name\"")
-      # Empty name
-      refute Helpers.validate_name("\"\"")
+    property "printable strings with at most 63 *bytes* are valid" do
+      check all name <- string(:printable, min_length: 1, max_length: 63) do
+        # It is defined in weird way, as it is hard to generate strings with at
+        # most 63 bytes, but that test is functionally equivalend
+        assert @subject.validate_name(name) == (byte_size(name) < 64)
+      end
+    end
+
+    property "non-printable strings are invalid" do
+      check all prefix <- string(:utf8), suffix <- string(:utf8) do
+        refute @subject.validate_name(prefix <> <<0>>)
+        refute @subject.validate_name(<<0>> <> suffix)
+        refute @subject.validate_name(prefix <> <<0>> <> suffix)
+
+        refute @subject.validate_name(prefix <> <<0x10>>)
+        refute @subject.validate_name(<<0x10>> <> suffix)
+        refute @subject.validate_name(prefix <> <<0x10>> <> suffix)
+      end
     end
   end
 end
