@@ -369,11 +369,12 @@ defmodule Supavisor.Helpers do
   def controlling_process({mod, socket}, pid),
     do: mod.controlling_process(socket, pid)
 
+  # This is the value of `NAMEDATALEN` set when compiling PostgreSQL. By default
+  # we use default Postgres value of `64`
+  @max_length Application.compile_env(:supabase, :namedatalen, 64) - 1
+
   @spec validate_name(String.t()) :: boolean()
   def validate_name(name) do
-    # 1-63 characters, starting with a lowercase letter or underscore, and containing only alphanumeric characters, underscores, dollar signs, and hyphens. Names with spaces or uppercase letters must be enclosed in double quotes.
-    String.length(name) <= 63 and
-      name =~ ~r/^(?:[a-z_][a-z0-9_$\- ]*|"[a-z0-9_$\- ]+")$/i and
-      name != ~s/""/
+    byte_size(name) in 1..@max_length and String.printable?(name)
   end
 end

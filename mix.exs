@@ -82,7 +82,8 @@ defmodule Supavisor.MixProject do
       {:ranch, "~> 2.0", override: true},
 
       # Test utilities
-      {:excoveralls, ">= 0.0.0", only: [:dev, :test]}
+      {:excoveralls, ">= 0.0.0", only: [:dev, :test]},
+      {:stream_data, "~> 1.0", only: [:dev, :test]}
     ]
   end
 

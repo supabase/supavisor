@@ -270,7 +270,7 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://user\"user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
+      "postgresql://user\x10user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
 
     assert {:error,
             %Postgrex.Error{
