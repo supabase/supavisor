@@ -9,7 +9,6 @@ defmodule Supavisor.Monitoring.PromEx do
   require Logger
 
   alias PromEx.Plugins
-  alias Supavisor, as: S
   alias Supavisor.PromEx.Plugins.{OsMon, Tenant}
 
   @impl true
@@ -27,31 +26,6 @@ defmodule Supavisor.Monitoring.PromEx do
       {OsMon, poll_rate: poll_rate},
       {Tenant, poll_rate: poll_rate}
     ]
-  end
-
-  @spec remove_metrics(S.id()) :: :ok
-  def remove_metrics({{type, tenant}, user, mode, db_name, search_path} = id) do
-    Logger.debug("Removing metrics for #{inspect(id)}")
-
-    meta = %{
-      tenant: tenant,
-      user: user,
-      mode: mode,
-      type: type,
-      db_name: db_name,
-      search_path: search_path
-    }
-
-    {_, tids} = Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
-
-    tids
-    |> List.wrap()
-    |> Enum.each(
-      &:ets.select_delete(&1, [
-        {{{:_, meta}, :_}, [], [true]},
-        {{{:_, meta, :_}, :_}, [], [true]}
-      ])
-    )
   end
 
   @spec set_metrics_tags() :: map()

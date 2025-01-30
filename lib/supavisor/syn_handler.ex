@@ -7,8 +7,6 @@ defmodule Supavisor.SynHandler do
 
   require Logger
 
-  alias Supavisor.Monitoring.PromEx
-
   @impl true
   def on_process_unregistered(
         :tenants,
@@ -47,9 +45,6 @@ defmodule Supavisor.SynHandler do
       _ ->
         nil
     end
-
-    # remove all Prometheus metrics for the specified tenant
-    PromEx.remove_metrics(id)
   end
 
   @impl true
