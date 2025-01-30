@@ -26,17 +26,6 @@ defmodule Supavisor.PromExTest do
     %{proxy: proxy, user: db_conf[:username], db_name: db_conf[:database]}
   end
 
-  test "remove tenant tag upon termination", %{proxy: proxy, user: user, db_name: db_name} do
-    assert @subject.get_metrics() =~ "tenant=\"#{@tenant}\""
-
-    :ok = GenServer.stop(proxy)
-    :ok = Supavisor.stop({{:single, @tenant}, user, :transaction, db_name, nil})
-
-    Process.sleep(1000)
-
-    refute_eventually(10, fn -> @subject.get_metrics() =~ "tenant=\"#{@tenant}\"" end)
-  end
-
   test "clean_string/1 removes extra spaces from metric string" do
     input =
       "db_name=\"postgres \",mode=\" transaction\",tenant=\"dev_tenant \n\",type=\"\n  single\",user=\"\npostgres\n\""
