@@ -37,13 +37,6 @@
         packages = {
           # Expose Devenv supervisor
           devenv-up = self'.devShells.default.config.procfileScript;
-
-          supavisor = let
-            erl = pkgs.beam_nox.packages.erlang_27;
-          in
-            erl.callPackage ./nix/package.nix {};
-
-          default = self'.packages.supavisor;
         };
 
         devShells.default = devenv.lib.mkShell {
@@ -64,7 +57,7 @@
             {
               languages.elixir = {
                 enable = true;
-                package = pkgs.beam.packages.erlang_27.elixir_1_17;
+                package = pkgs.beam27Packages.elixir_1_18;
               };
               packages = [
                 pkgs.lexical
@@ -97,7 +90,7 @@
                 };
               };
 
-              process.implementation = "honcho";
+              process.manager.implementation = "honcho";
 
               # Force connection through TCP instead of Unix socket
               env.PGHOST = lib.mkForce "";
