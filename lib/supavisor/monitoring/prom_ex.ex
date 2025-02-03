@@ -58,7 +58,7 @@ defmodule Supavisor.Monitoring.PromEx do
     end
   end
 
-  @spec get_metrics() :: String.t()
+  @spec get_metrics() :: iodata()
   def get_metrics do
     metrics_tags =
       case Application.fetch_env(:supavisor, :metrics_tags) do
@@ -71,7 +71,7 @@ defmodule Supavisor.Monitoring.PromEx do
     metrics =
       PromEx.get_metrics(__MODULE__)
       |> String.split("\n")
-      |> Enum.map_join("\n", &parse_and_add_tags(&1, def_tags))
+      |> Enum.map(&parse_and_add_tags(&1, def_tags))
 
     Supavisor.Monitoring.PromEx.ETSCronFlusher
     |> PromEx.ETSCronFlusher.defer_ets_flush()
@@ -81,7 +81,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec do_cache_tenants_metrics() :: list
   def do_cache_tenants_metrics do
-    metrics = get_metrics() |> String.split("\n")
+    metrics = get_metrics() |> IO.iodata_to_binary() |> String.split("\n")
 
     pools =
       Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
@@ -109,43 +109,21 @@ defmodule Supavisor.Monitoring.PromEx do
     end
   end
 
-  @spec parse_and_add_tags(String.t(), String.t()) :: String.t()
+  @spec parse_and_add_tags(String.t(), String.t()) :: iodata()
   defp parse_and_add_tags(line, def_tags) do
     case Regex.run(~r/(?!\#)^(\w+)(?:{(.*?)})?\s*(.+)$/, line) do
       nil ->
-        line
+        [line, "\n"]
 
       [_, key, tags, value] ->
-        tags = clean_string(tags)
-
         tags =
           if tags == "" do
             def_tags
           else
-            "#{tags},#{def_tags}"
+            [tags, ",", def_tags]
           end
 
-        "#{key}{#{tags}} #{value}"
+        [key, "{", tags, "}", value, "\n"]
     end
-  end
-
-  @spec clean_string(String.t()) :: String.t()
-  def clean_string(metric_string) do
-    regex = ~r/=\s*"([^"]*?)"/
-
-    String.replace(metric_string, regex, fn match ->
-      [_, value] = Regex.run(regex, match)
-
-      cleaned =
-        value
-        |> String.replace(~r/\n+/, "")
-        |> String.trim()
-
-      if value != cleaned do
-        Logger.warning("Tag validation: #{inspect(value)} / #{inspect(cleaned)}")
-      end
-
-      "=\"#{cleaned}\""
-    end)
   end
 end

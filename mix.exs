@@ -52,8 +52,7 @@ defmodule Supavisor.MixProject do
       {:phoenix_live_view, "~> 1.0"},
       {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_poller, "~> 1.0"},
-      {:peep, "~> 3.1",
-       github: "hauleth/peep", ref: "94dd35d2c98a858ef20983f2b3da2ab112a07238", override: true},
+      {:peep, "~> 3.4"},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
@@ -83,7 +82,8 @@ defmodule Supavisor.MixProject do
 
       # Test utilities
       {:excoveralls, ">= 0.0.0", only: [:dev, :test]},
-      {:stream_data, "~> 1.0", only: [:dev, :test]}
+      {:stream_data, "~> 1.0", only: [:dev, :test]},
+      {:req, "~> 0.5"}
     ]
   end
 
