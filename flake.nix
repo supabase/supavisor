@@ -1,7 +1,7 @@
 {
   description = "Elixir's application";
 
-  inputs.nixpkgs.url = "flake:nixpkgs";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.flake-parts.url = "github:hercules-ci/flake-parts";
 
   inputs.devenv = {
