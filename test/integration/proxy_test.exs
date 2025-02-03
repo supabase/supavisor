@@ -11,23 +11,23 @@ defmodule Supavisor.Integration.ProxyTest do
   setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
-    {:ok, proxy} =
-      Postgrex.start_link(
-        hostname: db_conf[:hostname],
-        port: Application.get_env(:supavisor, :proxy_port_transaction),
-        database: db_conf[:database],
-        password: db_conf[:password],
-        username: db_conf[:username] <> "." <> @tenant
-      )
+    assert {:ok, proxy} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: Application.get_env(:supavisor, :proxy_port_transaction),
+               database: db_conf[:database],
+               password: db_conf[:password],
+               username: db_conf[:username] <> "." <> @tenant
+             )
 
-    {:ok, origin} =
-      Postgrex.start_link(
-        hostname: db_conf[:hostname],
-        port: db_conf[:port],
-        database: db_conf[:database],
-        password: db_conf[:password],
-        username: db_conf[:username]
-      )
+    assert {:ok, origin} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: db_conf[:port],
+               database: db_conf[:database],
+               password: db_conf[:password],
+               username: db_conf[:username]
+             )
 
     %{proxy: proxy, origin: origin, user: db_conf[:username]}
   end
@@ -38,9 +38,9 @@ defmodule Supavisor.Integration.ProxyTest do
 
     db_conf = Application.get_env(:supavisor, Repo)
 
-    {:ok, pid} =
-      Keyword.merge(db_conf, username: db_conf[:username] <> "." <> @tenant)
-      |> single_connection(Application.get_env(:supavisor, :proxy_port_transaction))
+    assert {:ok, pid} =
+             Keyword.merge(db_conf, username: db_conf[:username] <> "." <> @tenant)
+             |> single_connection(Application.get_env(:supavisor, :proxy_port_transaction))
 
     assert [%Postgrex.Result{command: :prepare}] =
              P.SimpleConnection.call(pid, {:query, prepare_sql})
@@ -73,7 +73,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "query via another node", %{proxy: proxy, user: user} do
-    {:ok, _pid, node2} = Cluster.start_node()
+    assert {:ok, _pid, node2} = Cluster.start_node()
 
     sup =
       Enum.reduce_while(1..30, nil, fn _, acc ->
@@ -98,14 +98,14 @@ defmodule Supavisor.Integration.ProxyTest do
 
     db_conf = Application.fetch_env!(:supavisor, Repo)
 
-    {:ok, proxy2} =
-      Postgrex.start_link(
-        hostname: db_conf[:hostname],
-        port: Application.get_env(:supavisor, :secondary_proxy_port),
-        database: db_conf[:database],
-        password: db_conf[:password],
-        username: db_conf[:username] <> "." <> @tenant
-      )
+    assert {:ok, proxy2} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: Application.get_env(:supavisor, :secondary_proxy_port),
+               database: db_conf[:database],
+               password: db_conf[:password],
+               username: db_conf[:username] <> "." <> @tenant
+             )
 
     P.query!(proxy2, "insert into public.test (details) values ('dist_test_insert')", [])
 
@@ -197,7 +197,7 @@ defmodule Supavisor.Integration.ProxyTest do
     url =
       "postgresql://transaction.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
-    {:ok, pid} = parse_uri(url) |> single_connection()
+    assert {:ok, pid} = parse_uri(url) |> single_connection()
 
     [{_, client_pid, _}] =
       Supavisor.get_local_manager(
@@ -261,7 +261,7 @@ defmodule Supavisor.Integration.ProxyTest do
               message: "error received in SCRAM server final message: \"Wrong password\""
             }} = parse_uri(new_pass) |> single_connection()
 
-    {:ok, pid} = parse_uri(new_pass) |> single_connection()
+    assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
     :gen_statem.stop(pid)
   end
