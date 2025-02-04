@@ -28,7 +28,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@v1
         with:
-          otp-version: '25.3.2.7'
+          otp-version: '27.2.1'
           elixir-version: '1.18.2'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
