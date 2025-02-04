@@ -2,33 +2,38 @@ defmodule SupavisorWeb.MetricsControllerTest do
   use SupavisorWeb.ConnCase
   alias Supavisor.Support.Cluster
 
-  setup %{conn: conn} do
-    new_conn =
-      conn
-      |> put_req_header(
-        "authorization",
-        "Bearer auth_token"
-      )
-
-    {:ok, conn: new_conn}
-  end
-
   @tag cluster: true
   test "exporting metrics", %{conn: conn} do
     {:ok, _pid, node2} = Cluster.start_node()
 
     Node.connect(node2)
 
-    :meck.expect(Supavisor.Jwt, :authorize, fn _token, _secret -> {:ok, %{}} end)
-    conn = get(conn, Routes.metrics_path(conn, :index))
+    conn =
+      conn
+      |> auth
+      |> get(Routes.metrics_path(conn, :index))
+
     assert conn.status == 200
     assert conn.resp_body =~ "region=\"eu\""
     assert conn.resp_body =~ "region=\"usa\""
   end
 
   test "invalid jwt", %{conn: conn} do
-    :meck.expect(Supavisor.Jwt, :authorize, fn _token, _secret -> {:error, nil} end)
-    conn = get(conn, Routes.metrics_path(conn, :index))
+    token = "invalid"
+
+    conn =
+      conn
+      |> auth(token)
+      |> get(Routes.metrics_path(conn, :index))
+
     assert conn.status == 403
+  end
+
+  defp auth(conn, bearer \\ gen_token()) do
+    put_req_header(conn, "authorization", "Bearer " <> bearer)
+  end
+
+  defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
+    Supavisor.Jwt.Token.gen!(secret)
   end
 end

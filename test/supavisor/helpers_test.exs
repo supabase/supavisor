@@ -43,8 +43,8 @@ defmodule Supavisor.HelpersTest do
   describe "validate_name/1" do
     test "Prisma migration databases are accepted" do
       assert @subject.validate_name(
-                "prisma_migrate_shadow_db_dfe467a1-f7e4-4c27-87de-a930270f4622"
-              )
+               "prisma_migrate_shadow_db_dfe467a1-f7e4-4c27-87de-a930270f4622"
+             )
     end
 
     property "ASCII strings with length within 1..63 are valid" do
@@ -63,7 +63,7 @@ defmodule Supavisor.HelpersTest do
       check all name <- string(:printable, min_length: 1, max_length: 63) do
         # It is defined in weird way, as it is hard to generate strings with at
         # most 63 bytes, but that test is functionally equivalend
-        assert @subject.validate_name(name) == (byte_size(name) < 64)
+        assert @subject.validate_name(name) == byte_size(name) < 64
       end
     end
 
