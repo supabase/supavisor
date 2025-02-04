@@ -3,10 +3,8 @@ defmodule Supavisor.Monitoring.Telem do
 
   require Logger
 
-  @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
-
   defmacro telemetry_execute(event_name, measurements, metadata) do
-    if not @metrics_disabled do
+    if not Application.get_env(:supavisor, :metrics_disabled, false) do
       quote do
         :telemetry.execute(unquote(event_name), unquote(measurements), unquote(metadata))
       end
@@ -14,7 +12,7 @@ defmodule Supavisor.Monitoring.Telem do
   end
 
   defmacro network_usage_disable(do: block) do
-    if @metrics_disabled do
+    if Application.get_env(:supavisor, :metrics_disabled, false) do
       quote do
         {:ok, %{recv_oct: 0, send_oct: 0}}
       end
