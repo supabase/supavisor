@@ -1,9 +1,9 @@
 defmodule SupavisorWeb.TenantControllerTest do
-  use SupavisorWeb.ConnCase
+  use SupavisorWeb.ConnCase, async: false
 
   import Supavisor.TenantsFixtures
   import ExUnit.CaptureLog
-  require Logger
+
   alias Supavisor.Tenants.Tenant
 
   @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"

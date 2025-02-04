@@ -4,9 +4,23 @@ defmodule Supavisor.Jwt do
   """
   require Logger
 
-  defmodule JwtAuthToken do
+  defmodule Token do
     @moduledoc false
     use Joken.Config
+
+    def default_signer(secret),
+      do: Joken.Signer.create("HS256", secret)
+
+    def gen!(claims \\ %{}, secret)
+
+    def gen!(claims, secret) when is_binary(secret),
+      do: gen!(claims, default_signer(secret))
+
+    def gen!(claims, signer) do
+      default = %{"exp" => Joken.current_time() + 3600}
+
+      generate_and_sign!(Map.merge(default, claims), signer)
+    end
 
     @impl true
     def token_config do
@@ -61,7 +75,7 @@ defmodule Supavisor.Jwt do
     with {:ok, _claims} <- check_claims_format(token),
          {:ok, header} <- check_header_format(token),
          {:ok, signer} <- generate_signer(header, secret) do
-      JwtAuthToken.verify_and_validate(token, signer)
+      Token.verify_and_validate(token, signer)
     end
   end
 

@@ -104,7 +104,10 @@ defmodule Supavisor.Monitoring.PromExTest do
     end
 
     @tag :tmp_dir
-    property "non-standard tenant names do not cause parsing issues", %{tmp_dir: dir, prom2json: exe} do
+    property "non-standard tenant names do not cause parsing issues", %{
+      tmp_dir: dir,
+      prom2json: exe
+    } do
       db_name = "db_name"
       user = "user"
 
