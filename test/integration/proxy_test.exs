@@ -72,6 +72,7 @@ defmodule Supavisor.Integration.ProxyTest do
              P.query!(origin, "select * from public.test where details = 'test_insert'", [])
   end
 
+  @tag cluster: true
   test "query via another node", %{proxy: proxy, user: user} do
     assert {:ok, _pid, node2} = Cluster.start_node()
 
