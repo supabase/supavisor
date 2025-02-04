@@ -64,7 +64,7 @@
             {
               languages.elixir = {
                 enable = true;
-                package = pkgs.beam.packages.erlang_27.elixir_1_17;
+                package = pkgs.beam.packages.erlang_27.elixir_1_18;
               };
               packages = [
                 pkgs.lexical
@@ -97,7 +97,7 @@
                 };
               };
 
-              process.implementation = "honcho";
+              process.manager.implementation = "honcho";
 
               # Force connection through TCP instead of Unix socket
               env.PGHOST = lib.mkForce "";

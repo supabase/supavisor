@@ -25,11 +25,11 @@ jobs:
             echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
             echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
       - name: Setup Elixir
-        run: |
-            . ~/.asdf/asdf.sh
-            echo 'elixir v1.14.5-otp-25' >> ~/.tool-versions
-            echo 'erlang 25.3.2.7' >> ~/.tool-versions
-            elixir -v
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '25.3.2.7'
+          elixir-version: '1.18.2'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:

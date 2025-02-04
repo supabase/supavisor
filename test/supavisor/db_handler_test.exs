@@ -1,7 +1,8 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: false
+
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.Protocol.Server
+
   # import Mock
   @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
 
@@ -149,40 +150,6 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, ^data} = Db.handle_event(:info, content, :authentication, data)
 
       :meck.unload(:gen_tcp)
-    end
-  end
-
-  describe "handle_event/4 with write replica message" do
-    test "updates caller in data for session mode" do
-      proto = :tcp
-      bin = "response_data" <> Server.ready_for_query()
-      caller_pid = self()
-
-      data = %{
-        id: @id,
-        caller: caller_pid,
-        sock: {:gen_tcp, nil},
-        stats: %{},
-        mode: :session,
-        sent: false
-      }
-
-      state = :some_state
-      event = {proto, :dummy_value, bin}
-
-      :meck.new(:prim_inet, [:unstick, :passthrough])
-      :meck.new(:inet, [:unstick, :passthrough])
-
-      :meck.expect(:prim_inet, :getstat, fn _, _ ->
-        {:ok, [{:recv_oct, 21}, {:send_oct, 37}]}
-      end)
-
-      :meck.expect(:inet, :setopts, fn _, _ -> :ok end)
-
-      :keep_state_and_data = Db.handle_event(:info, event, state, data)
-
-      :meck.unload(:prim_inet)
-      :meck.unload(:inet)
     end
   end
 

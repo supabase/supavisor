@@ -13,6 +13,7 @@ defmodule SupavisorWeb.MetricsControllerTest do
     {:ok, conn: new_conn}
   end
 
+  @tag cluster: true
   test "exporting metrics", %{conn: conn} do
     {:ok, _pid, node2} = Cluster.start_node()
 

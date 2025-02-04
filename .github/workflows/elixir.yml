@@ -29,7 +29,7 @@ jobs:
         uses: erlef/setup-beam@v1
         with:
           otp-version: '25.3.2.7'
-          elixir-version: '1.14.5'
+          elixir-version: '1.18.2'
       - name: Cache Mix
         uses: actions/cache@v4
         with:
@@ -52,7 +52,7 @@ jobs:
         uses: erlef/setup-beam@v1
         with:
           otp-version: '25.3.2.7'
-          elixir-version: '1.17'
+          elixir-version: '1.18.2'
       - name: Cache Mix
         uses: actions/cache@v4
         with:
@@ -73,7 +73,7 @@ jobs:
         uses: erlef/setup-beam@v1
         with:
           otp-version: '25.3.2.7'
-          elixir-version: '1.14.5'
+          elixir-version: '1.18.2'
       - name: Cache Mix
         uses: actions/cache@v4
         with:
@@ -92,12 +92,14 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Postgres
+        run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Setup Elixir
         id: beam
         uses: erlef/setup-beam@v1
         with:
           otp-version: '25.3.2.7'
-          elixir-version: '1.14.5'
+          elixir-version: '1.18.2'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
@@ -123,8 +125,6 @@ jobs:
         run: mix deps.compile
       - name: Compile
         run: mix compile
-      - name: Set up Postgres
-        run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Start epmd
         run: epmd -daemon
       - name: Run tests
@@ -138,12 +138,14 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Postgres
+        run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Setup Elixir
         id: beam
         uses: erlef/setup-beam@v1
         with:
           otp-version: '25.3.2.7'
-          elixir-version: '1.14.5'
+          elixir-version: '1.18.2'
       - uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
@@ -173,8 +175,6 @@ jobs:
         run: mix deps.compile
       - name: Compile
         run: mix compile
-      - name: Set up Postgres
-        run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Start epmd
         run: epmd -daemon
       - name: Install Node dependencies
@@ -194,7 +194,7 @@ jobs:
         uses: erlef/setup-beam@v1
         with:
           otp-version: '25.3.2.7'
-          elixir-version: '1.14.5'
+          elixir-version: '1.18.2'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:

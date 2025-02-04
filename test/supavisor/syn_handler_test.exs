@@ -7,6 +7,7 @@ defmodule Supavisor.SynHandlerTest do
 
   @id {{:single, "syn_tenant"}, "postgres", :session, "postgres", nil}
 
+  @tag cluster: true
   test "resolving conflict" do
     {:ok, _pid, node2} = Cluster.start_node()
 
