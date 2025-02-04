@@ -77,7 +77,7 @@ defmodule Supavisor.MixProject do
       {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.1"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:rustler, "~> 0.34.0"},
+      {:rustler, "~> 0.36.1"},
       {:ranch, "~> 2.0", override: true},
 
       # Test utilities
