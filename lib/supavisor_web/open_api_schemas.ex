@@ -12,7 +12,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       type: :object,
       properties: %{
         id: %Schema{type: :string, format: :binary_id, readOnly: true},
-        tenant_external_id: %Schema{type: :string, description: "External Teanant ID"},
+        tenant_external_id: %Schema{type: :string, description: "External Tenant ID"},
         db_user_alias: %Schema{type: :string, description: "Database user alias"},
         db_user: %Schema{type: :string, description: "Database user"},
         db_password: %Schema{type: :string, description: "Database password"},
