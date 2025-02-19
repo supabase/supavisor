@@ -14,6 +14,8 @@ import Config
 # Do not print debug messages in production
 config :logger,
   level: :info,
+  sync_threshold: 10_000,
+  discard_threshold: 10_000,
   compile_time_purge_matching: [
     [level_lower_than: :info]
   ]
