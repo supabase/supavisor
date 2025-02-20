@@ -605,6 +605,13 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  def handle_event(:info, {sock_error, _sock, msg}, _state, _data)
+      when sock_error in [:tcp_error, :ssl_error] do
+    Logger.error("ClientHandler: Socket error: #{inspect(msg)}")
+
+    {:stop, {:shutdown, {:socket_error, msg}}}
+  end
+
   def handle_event(type, content, _state, _data) do
     msg = [
       {"type", type},
