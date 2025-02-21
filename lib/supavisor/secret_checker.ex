@@ -36,12 +36,16 @@ defmodule Supavisor.SecretChecker do
 
   def handle_continue(:init_conn, %{auth: auth} = state) do
     ssl_opts =
-      if auth.upstream_ssl and auth.upstream_verify == "peer" do
+      if auth.upstream_ssl and auth.upstream_verify == :peer do
         [
-          {:verify, :verify_peer},
-          {:cacerts, [Helpers.upstream_cert(auth.upstream_tls_ca)]},
-          {:server_name_indication, auth.host},
-          {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
+          verify: :verify_peer,
+          cacerts: [Helpers.upstream_cert(auth.upstream_tls_ca)],
+          server_name_indication: auth.host,
+          customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+        ]
+      else
+        [
+          verify: :verify_none
         ]
       end
 
@@ -59,7 +63,7 @@ defmodule Supavisor.SecretChecker do
         ],
         queue_target: 1_000,
         queue_interval: 5_000,
-        ssl_opts: ssl_opts || []
+        ssl_opts: ssl_opts
       )
 
     # kill the postgrex connection if the current process exits unexpectedly

@@ -867,12 +867,16 @@ defmodule Supavisor.ClientHandler do
   @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
   def get_secrets(%{user: user, tenant: tenant}, db_user) do
     ssl_opts =
-      if tenant.upstream_ssl and tenant.upstream_verify == "peer" do
+      if tenant.upstream_ssl and tenant.upstream_verify == :peer do
         [
-          {:verify, :verify_peer},
-          {:cacerts, [Helpers.upstream_cert(tenant.upstream_tls_ca)]},
-          {:server_name_indication, String.to_charlist(tenant.db_host)},
-          {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
+          verify: :verify_peer,
+          cacerts: [Helpers.upstream_cert(tenant.upstream_tls_ca)],
+          server_name_indication: String.to_charlist(tenant.db_host),
+          customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+        ]
+      else
+        [
+          verify: :verify_none
         ]
       end
 
@@ -890,7 +894,7 @@ defmodule Supavisor.ClientHandler do
         ],
         queue_target: 1_000,
         queue_interval: 5_000,
-        ssl_opts: ssl_opts || []
+        ssl_opts: ssl_opts
       )
 
     try do
