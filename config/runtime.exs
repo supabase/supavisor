@@ -166,6 +166,9 @@ if config_env() != :test do
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
     pool_size: System.get_env("DB_POOL_SIZE", "25") |> String.to_integer(),
+    ssl_opts: [
+      verify: :verify_none
+    ],
     parameters: [
       application_name: "supavisor_meta"
     ]
