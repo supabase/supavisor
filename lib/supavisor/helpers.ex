@@ -30,10 +30,14 @@ defmodule Supavisor.Helpers do
       ssl_opts =
         if upstream_ssl? and params["upstream_verify"] == "peer" do
           [
-            {:verify, :verify_peer},
-            {:cacerts, [upstream_cert(params["upstream_tls_ca"])]},
-            {:server_name_indication, String.to_charlist(params["db_host"])},
-            {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
+            verify: :verify_peer,
+            cacerts: [upstream_cert(params["upstream_tls_ca"])],
+            server_name_indication: String.to_charlist(params["db_host"]),
+            customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+          ]
+        else
+          [
+            verify: :verify_none
           ]
         end
 
@@ -50,7 +54,7 @@ defmodule Supavisor.Helpers do
           ],
           queue_target: 1_000,
           queue_interval: 5_000,
-          ssl_opts: ssl_opts || []
+          ssl_opts: ssl_opts
         )
 
       check =
