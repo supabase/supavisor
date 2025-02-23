@@ -20,7 +20,7 @@ defmodule Cluster.Strategy.Postgres do
 
   alias Cluster.Logger
   alias Cluster.Strategy
-  alias Postgrex, as: P
+  alias Postgrex
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
@@ -33,6 +33,7 @@ defmodule Cluster.Strategy.Postgres do
       Ecto.Repo.Supervisor.parse_url(state.config[:url])
       |> Keyword.put_new(:parameters, application_name: "cluster_node_#{node()}")
       |> Keyword.put_new(:auto_reconnect, true)
+      |> Keyword.put_new(:ssl_opts, verify: :verify_none)
 
     new_config =
       state.config
@@ -51,9 +52,9 @@ defmodule Cluster.Strategy.Postgres do
   end
 
   def handle_continue(:connect, state) do
-    with {:ok, conn} <- P.start_link(state.meta.opts.()),
-         {:ok, conn_notif} <- P.Notifications.start_link(state.meta.opts.()),
-         {_, _} <- P.Notifications.listen(conn_notif, state.config[:channel_name]) do
+    with {:ok, conn} <- Postgrex.start_link(state.meta.opts.()),
+         {:ok, conn_notif} <- Postgrex.Notifications.start_link(state.meta.opts.()),
+         {_, _} <- Postgrex.Notifications.listen(conn_notif, state.config[:channel_name]) do
       Logger.info(state.topology, "Connected to Postgres database")
 
       meta = %{
@@ -73,7 +74,7 @@ defmodule Cluster.Strategy.Postgres do
 
   def handle_info(:heartbeat, state) do
     Process.cancel_timer(state.meta.heartbeat_ref)
-    P.query(state.meta.conn, "NOTIFY #{state.config[:channel_name]}, '#{node()}'", [])
+    Postgrex.query(state.meta.conn, "NOTIFY #{state.config[:channel_name]}, '#{node()}'", [])
     ref = heartbeat(state.config[:heartbeat_interval])
     {:noreply, put_in(state.meta.heartbeat_ref, ref)}
   end
