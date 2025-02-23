@@ -77,6 +77,7 @@ defmodule Supavisor.NativeHandler do
       :ok = HH.sock_send(client_sock, "S")
 
       opts = [
+        verify: :verify_none,
         certfile: downstream_cert,
         keyfile: downstream_key
       ]

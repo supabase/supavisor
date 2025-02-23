@@ -150,6 +150,7 @@ defmodule Supavisor.ClientHandler do
       :ok = HandlerHelpers.sock_send(sock, "S")
 
       opts = [
+        verify: :verify_none,
         certfile: downstream_cert,
         keyfile: downstream_key
       ]
