@@ -22,6 +22,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   @impl true
   def event_metrics(_opts) do
     [
+      system_metrics(),
       client_metrics(),
       db_metrics()
     ]
@@ -31,6 +32,19 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     @moduledoc false
     use Peep.Buckets.Custom,
       buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+  end
+
+  defp system_metrics do
+    Event.build(
+      :supavisor_metrics_cleaner_metrics,
+      [
+        counter(
+          [:supavisor, :metrics_cleaner, :orphaned_metrics],
+          event_name: [:supavisor, :metrics, :orphaned],
+          description: "Amount of orphaned metrics that were cleaned up"
+        )
+      ]
+    )
   end
 
   defp client_metrics do
