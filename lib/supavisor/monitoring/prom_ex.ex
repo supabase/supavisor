@@ -30,12 +30,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec set_metrics_tags() :: map()
   def set_metrics_tags do
-    [_, host] = node() |> Atom.to_string() |> String.split("@")
-
-    metrics_tags = %{
-      region: Application.fetch_env!(:supavisor, :region),
-      host: host
-    }
+    metrics_tags = :logger.get_primary_config().metadata
 
     metrics_tags =
       case short_node_id() do
