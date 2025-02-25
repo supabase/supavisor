@@ -15,16 +15,24 @@ defmodule Supavisor.Application do
   def start(_type, _args) do
     primary_config = :logger.get_primary_config()
 
+    host =
+      case node() |> Atom.to_string() |> String.split("@") do
+        [_, host] -> host
+        _ -> nil
+      end
+
+    global_metadata =
+      %{
+        host: host,
+        az: Application.get_env(:supavisor, :availability_zone),
+        region: Application.get_env(:supavisor, :region),
+        instance_id: System.get_env("INSTANCE_ID")
+      }
+
     :ok =
       :logger.set_primary_config(
         :metadata,
-        Enum.into(
-          [
-            region: System.get_env("AVAILABILITY_ZONE") || System.get_env("REGION"),
-            instance_id: System.get_env("INSTANCE_ID")
-          ],
-          primary_config.metadata
-        )
+        Map.merge(primary_config.metadata, global_metadata)
       )
 
     :ok =
