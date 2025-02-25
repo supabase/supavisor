@@ -128,7 +128,12 @@ jobs:
       - name: Start epmd
         run: epmd -daemon
       - name: Run tests
-        run: mix coveralls.github
+        run: mix coveralls.lcov
+      - name: Upload Parallel Coverage Report
+        uses: coverallsapp/github-action@v2
+        with:
+          flag-name: run-tests
+          parallel: true
 
   integration:
     name: Run integration tests
@@ -180,7 +185,23 @@ jobs:
       - name: Install Node dependencies
         run: 'cd test/integration/js/; npm install'
       - name: Run tests
-        run: mix coveralls.github --only integration --trace
+        run: mix coveralls.lcov --only integration --trace
+      - name: Upload Parallel Coverage Report
+        uses: coverallsapp/github-action@v2
+        with:
+          flag-name: run-integration
+          parallel: true
+
+  finish:
+    needs: [tests, integration]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close parallel build
+        uses: coverallsapp/github-action@v2
+        with:
+          parallel-finished: true
+          carryforward: "run-tests,run-integration"
 
   dialyzer:
     name: Dialyze
