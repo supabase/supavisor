@@ -49,13 +49,14 @@ defmodule Supavisor.E2ECase do
                    "db_user" => "postgres",
                    "db_password" => "postgres",
                    "is_manager" => true,
-                   "mode_type" => "session"
+                   "mode_type" => "transaction"
                  }
                ]
              })
 
     on_exit(fn ->
-      :ok = Supavisor.stop({{:single, external_id}, "postgres", :session, external_id, nil})
+      _ = Supavisor.stop({{:single, external_id}, "postgres", :session, external_id, nil})
+      _ = Supavisor.stop({{:single, external_id}, "postgres", :transaction, external_id, nil})
 
       unboxed(fn ->
         assert {:ok, _} = @repo.query("DROP DATABASE #{external_id}")
