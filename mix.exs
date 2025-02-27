@@ -16,7 +16,8 @@ defmodule Supavisor.MixProject do
       preferred_cli_env: [
         coveralls: :test,
         "coveralls.html": :test,
-        "coveralls.github": :test
+        "coveralls.github": :test,
+        "coveralls.lcov": :test
       ]
     ]
   end
