@@ -143,7 +143,6 @@ downstream_key =
 
 if config_env() != :test do
   config :supavisor,
-    availability_zone: System.get_env("AVAILABILITY_ZONE"),
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
