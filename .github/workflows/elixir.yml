@@ -82,7 +82,12 @@ jobs:
       - name: Compile deps
         run: mix deps.compile
       - name: Credo checks
-        run: mix credo --strict --all --mute-exit-status
+        run: mix credo --strict --all --mute-exit-status --format=sarif > results.sarif
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: credo
 
   tests:
     name: Run tests
