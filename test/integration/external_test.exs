@@ -70,7 +70,8 @@ defmodule Supavisor.Integration.ExternalTest do
         {"PGHOST", "localhost"},
         {"PGPORT", to_string(port(ctx.mode))},
         {"PGUSER", ctx.user},
-        {"PGPASS", "postgres"}
+        {"PGPASS", "postgres"},
+        {"FAIL_FAST", to_string(ExUnit.configuration()[:max_failures] != :infinity)}
       ] ++ (opts[:env] || [])
 
     assert {output, code} =
