@@ -61,6 +61,34 @@ jobs:
       - name: Run format check
         run: mix format --check-formatted
 
+  sobelow:
+    name: Security check
+    runs-on: u22-arm-runner
+    needs: [deps]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27.2.1'
+          elixir-version: '1.18.2'
+      - name: Cache Mix
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+      - name: Compile deps
+        run: mix deps.compile
+      - name: Sobelow checks
+        run: mix sobelow --config > results.sarif
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: sobelow
+
   credo:
     name: Code style
     runs-on: u22-arm-runner

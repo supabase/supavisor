@@ -103,6 +103,7 @@ defmodule Cluster.Strategy.Postgres do
     Process.send_after(self(), :heartbeat, interval)
   end
 
+  # sobelow_skip ["DOS.StringToAtom"]
   @spec handle_channels(:disterl, String.t(), map()) :: any()
   def handle_channels(:disterl, msg, state) do
     node = String.to_atom(msg)

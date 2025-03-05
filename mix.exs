@@ -58,11 +58,7 @@ defmodule Supavisor.MixProject do
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
       {:cloak_ecto, "~> 1.3.0"},
-      # Override needed due to eflambe
-      {:meck, "~> 1.0", only: [:dev, :test], override: true},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:benchee, "~> 1.3", only: :dev},
+      {:req, "~> 0.5"},
       {:prom_ex, "~> 1.10"},
       {:open_api_spex, "~> 3.16"},
       {:libcluster, "~> 3.5"},
@@ -71,7 +67,6 @@ defmodule Supavisor.MixProject do
       {:cachex, "~> 3.6"},
       {:inet_cidr, "~> 1.0.0"},
       {:observer_cli, "~> 1.7"},
-      {:eflambe, "~> 0.3.1", only: [:dev]},
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
@@ -81,10 +76,20 @@ defmodule Supavisor.MixProject do
       {:rustler, "~> 0.36.1"},
       {:ranch, "~> 2.0", override: true},
 
+      # Linting
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:sobelow, ">= 0.0.0", only: [:dev, :test], runtime: false},
+
+      # Benchmarking and performance
+      {:benchee, "~> 1.3", only: :dev},
+      {:eflambe, "~> 0.3.1", only: :dev},
+
       # Test utilities
       {:excoveralls, ">= 0.0.0", only: [:dev, :test]},
       {:stream_data, "~> 1.0", only: [:dev, :test]},
-      {:req, "~> 0.5"}
+      # Override needed due to eflambe
+      {:meck, "~> 1.0", only: [:dev, :test], override: true}
     ]
   end
 
