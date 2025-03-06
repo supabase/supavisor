@@ -1,0 +1,90 @@
+name: Security checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Every day at midnight UTC
+    - cron: "0 0 * * *"
+
+jobs:
+  deps:
+    name: Fetch deps
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Elixir
+      id: beam
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '27.2.1'
+        elixir-version: '1.18.2'
+    - name: Cache Mix
+      uses: actions/cache@v4
+      with:
+        path: deps
+        key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+        restore-keys: |
+          ${{ runner.os }}-mix-
+    - name: Install dependencies
+      run: mix deps.get --check-locked
+
+  audit:
+    name: Check dependencies for vulnerabilities
+    runs-on: ubuntu-24.04
+    needs: [deps]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Elixir
+      id: beam
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '27.2.1'
+        elixir-version: '1.18.2'
+    - name: Cache Mix
+      uses: actions/cache@v4
+      with:
+        path: deps
+        key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+        restore-keys: |
+          ${{ runner.os }}-mix-
+    - name: Compile deps
+      run: mix deps.compile
+    - name: MixAudit check
+      run: mix deps.audit
+
+  sobelow:
+    name: Security check
+    runs-on: ubuntu-24.04
+    needs: [deps]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Elixir
+      id: beam
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '27.2.1'
+        elixir-version: '1.18.2'
+    - name: Cache Mix
+      uses: actions/cache@v4
+      with:
+        path: deps
+        key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+        restore-keys: |
+          ${{ runner.os }}-mix-
+    - name: Compile deps
+      run: mix deps.compile
+    - name: Sobelow checks
+      run: mix sobelow --config > results.sarif
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: results.sarif
+        category: sobelow
