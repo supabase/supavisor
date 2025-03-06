@@ -1,10 +1,30 @@
 defmodule Supavisor.DbHandlerTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Supavisor.DbHandler, as: Db
 
   # import Mock
   @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
+
+  defp sockpair do
+    {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
+    {:ok, {address, port}} = :inet.sockname(listen)
+    this = self()
+    ref = make_ref()
+
+    spawn(fn ->
+      {:ok, recv} = :gen_tcp.accept(listen)
+
+      :gen_tcp.controlling_process(recv, this)
+
+      send(this, {ref, recv})
+    end)
+
+    {:ok, send} = :gen_tcp.connect(address, port, mode: :binary, active: false)
+    assert_receive {^ref, recv}
+
+    {send, recv}
+  end
 
   describe "init/1" do
     test "starts with correct state" do
@@ -37,17 +57,14 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "handle_event/4" do
     test "db is available" do
-      :meck.new(:gen_tcp, [:unstick, :passthrough])
-      :meck.new(:inet, [:unstick, :passthrough])
-      :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:ok, :sock} end)
-      :meck.expect(:gen_tcp, :send, fn _sock, _msg -> :ok end)
-      :meck.expect(:inet, :setopts, fn _sock, _opts -> :ok end)
+      {:ok, sock} = :gen_tcp.listen(0, mode: :binary, active: false)
+      {:ok, {host, port}} = :inet.sockname(sock)
 
       secrets = fn -> %{user: "some user", db_user: "some user"} end
 
       auth = %{
-        host: "host",
-        port: 0,
+        host: host,
+        port: port,
         user: "some user",
         require_user: true,
         database: "some database",
@@ -64,53 +81,53 @@ defmodule Supavisor.DbHandlerTest do
           proxy: false
         })
 
-      assert state ==
-               {:next_state, :authentication,
-                %{
-                  auth: %{
-                    application_name: "some application name",
-                    database: "some database",
-                    host: "host",
-                    port: 0,
-                    user: "some user",
-                    require_user: true,
-                    ip_version: :inet,
-                    secrets: secrets
-                  },
-                  sock: {:gen_tcp, :sock},
-                  id: @id,
-                  proxy: false
-                }}
-
-      :meck.unload(:inet)
-      :meck.unload(:gen_tcp)
+      assert {:next_state, :authentication,
+              %{
+                auth: %{
+                  application_name: "some application name",
+                  database: "some database",
+                  host: ^host,
+                  port: ^port,
+                  user: "some user",
+                  require_user: true,
+                  ip_version: :inet,
+                  secrets: ^secrets
+                },
+                sock: {:gen_tcp, _},
+                id: @id,
+                proxy: false
+              }} = state
     end
 
     test "db is not available" do
-      :meck.new(:gen_tcp, [:unstick, :passthrough])
+      # We assume that there is nothing running on this port
+      # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
+      {host, port} = {{127, 0, 0, 1}, 12345}
 
-      :meck.expect(:gen_tcp, :connect, fn _host, _port, _sock_opts -> {:error, "some error"} end)
+      secrets = fn -> %{user: "some user", db_user: "some user"} end
 
       auth = %{
         id: @id,
-        host: "host",
-        port: 0,
+        host: host,
+        port: port,
         user: "some user",
         database: "some database",
         application_name: "some application name",
-        ip_version: :inet
+        require_user: true,
+        ip_version: :inet,
+        secrets: secrets
       }
 
       state =
         Db.handle_event(:internal, nil, :connect, %{
           auth: auth,
           sock: nil,
-          id: {"a", "b"},
+          id: @id,
+          proxy: false,
           reconnect_retries: 5
         })
 
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
-      :meck.unload(:gen_tcp)
     end
   end
 
@@ -122,13 +139,9 @@ defmodule Supavisor.DbHandlerTest do
       # `100, 100, 100, 100` is the md5 salt from db, a random 4 bytes value
       bin = <<82, 0, 0, 0, 12, 0, 0, 0, 5, 100, 100, 100, 100>>
 
-      # The incoming port (#Port<0.00>), unused
-      tcp_port = Enum.random(1..999_999)
+      {a, b} = sockpair()
 
-      content = {:tcp, tcp_port, bin}
-
-      # The outgoing port (#Port<0.00>), used to send message to the db, meck overrides it
-      sock_port = Enum.random(1..999_999)
+      content = {:tcp, b, bin}
 
       data = %{
         auth: %{
@@ -136,21 +149,14 @@ defmodule Supavisor.DbHandlerTest do
           user: "some_user",
           method: :password
         },
-        sock: {:gen_tcp, sock_port}
+        sock: {:gen_tcp, a}
       }
-
-      :meck.new(:gen_tcp, [:unstick, :passthrough])
-
-      :meck.expect(:gen_tcp, :send, fn port, message ->
-        assert port == sock_port
-        assert message == [?p, <<40::integer-32>>, ["md5", "ae5546ff52734a18d0277977f626946c", 0]]
-
-        :ok
-      end)
 
       assert {:keep_state, ^data} = Db.handle_event(:info, content, :authentication, data)
 
-      :meck.unload(:gen_tcp)
+      assert {:ok, message} = :gen_tcp.recv(b, 0)
+
+      assert message == <<?p, 40::integer-32, "md5", "ae5546ff52734a18d0277977f626946c", 0>>
     end
   end
 
