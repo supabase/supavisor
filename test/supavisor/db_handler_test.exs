@@ -82,6 +82,7 @@ defmodule Supavisor.DbHandlerTest do
                   proxy: false
                 }}
 
+      :meck.unload(:inet)
       :meck.unload(:gen_tcp)
     end
 

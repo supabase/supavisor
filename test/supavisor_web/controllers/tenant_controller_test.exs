@@ -61,6 +61,10 @@ defmodule SupavisorWeb.TenantControllerTest do
         "Bearer " <> @blocked_jwt
       )
 
+    on_exit(fn ->
+      :meck.unload(Supavisor.Helpers)
+    end)
+
     {:ok, conn: new_conn, blocked_conn: blocked_conn}
   end
 
