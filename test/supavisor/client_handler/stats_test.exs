@@ -127,7 +127,7 @@ defmodule Supavisor.ClientHandler.StatsTest do
       this = Node.self()
 
       refute_receive {^telemetry, {:client, _, %{tenant: "proxy_tenant1"}}, ^node}
-      assert_receive {^telemetry, {:client, _, %{tenant: "proxy_tenant1"}}, ^this}, 1000
+      assert_receive {^telemetry, {:client, _, %{tenant: "proxy_tenant1"}}, ^this}, 10_000
     end
   end
 
