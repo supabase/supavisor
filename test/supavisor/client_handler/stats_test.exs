@@ -34,10 +34,10 @@ defmodule Supavisor.ClientHandler.StatsTest do
   end
 
   setup ctx do
-    if !ctx[:external_id] do
-      create_instance([__MODULE__, ctx.line])
-    else
+    if ctx[:external_id] do
       {:ok, db: "postgres", user: "postgres.#{ctx.external_id}"}
+    else
+      create_instance([__MODULE__, ctx.line])
     end
   end
 

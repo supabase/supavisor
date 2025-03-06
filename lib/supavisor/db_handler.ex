@@ -299,9 +299,9 @@ defmodule Supavisor.DbHandler do
       HandlerHelpers.activate(data.sock)
 
       {_, stats} =
-        if not data.proxy,
-          do: Telem.network_usage(:db, data.sock, data.id, data.stats),
-          else: {nil, data.stats}
+        if data.proxy,
+          do: {nil, data.stats},
+          else: Telem.network_usage(:db, data.sock, data.id, data.stats)
 
       # in transaction mode, we need to notify the client when the transaction is finished,
       # after which it will unlink the direct db connection process from itself.
@@ -313,9 +313,9 @@ defmodule Supavisor.DbHandler do
           HandlerHelpers.sock_send(data.client_sock, bin)
 
           {_, client_stats} =
-            if not data.proxy,
-              do: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats),
-              else: {nil, data.client_stats}
+            if data.proxy,
+              do: {nil, data.client_stats},
+              else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
 
           %{data | stats: stats, active_count: 0, client_stats: client_stats}
         end
