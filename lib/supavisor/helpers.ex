@@ -90,28 +90,22 @@ defmodule Supavisor.Helpers do
   end
 
   @spec get_user_secret(pid(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
-  def get_user_secret(conn, auth_query, user) do
-    try do
-      Postgrex.query!(conn, auth_query, [user])
-    catch
-      _error, reason ->
-        {:error, "Authentication query failed: #{inspect(reason)}"}
-    end
-    |> case do
-      %{columns: [_, _], rows: [[^user, secret]]} ->
-        parse_secret(secret, user)
+  def get_user_secret(conn, auth_query, user) when is_binary(auth_query) do
+    Postgrex.query!(conn, auth_query, [user])
+  catch
+    _error, reason ->
+      {:error, "Authentication query failed: #{inspect(reason)}"}
+  else
+    %{columns: [_, _], rows: [[^user, secret]]} ->
+      parse_secret(secret, user)
 
-      %{columns: [_, _], rows: []} ->
-        {:error,
-         "There is no user '#{user}' in the database. Please create it or change the user in the config"}
+    %{columns: [_, _], rows: []} ->
+      {:error,
+       "There is no user '#{user}' in the database. Please create it or change the user in the config"}
 
-      %{columns: columns} ->
-        {:error,
-         "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    %{columns: columns} ->
+      {:error,
+       "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
   end
 
   @spec parse_secret(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
