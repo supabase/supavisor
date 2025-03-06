@@ -1,4 +1,12 @@
 defmodule Supavisor.Downloader do
+  @moduledoc """
+  Download and extract files. Used for fetching executables from GitHub
+  """
+
+  @doc """
+  Ensure that executable `name` exists or fetch.
+  """
+  @spec ensure(String.t(), %{{atom(), atom()} => String.t()}) :: String.t()
   def ensure(name, sources) do
     case System.find_executable(name) do
       nil -> do_download(name, sources)
@@ -6,7 +14,7 @@ defmodule Supavisor.Downloader do
     end
   end
 
-  def do_download(name, sources) do
+  defp do_download(name, sources) do
     path = System.tmp_dir!()
     arch = os_arch()
 
