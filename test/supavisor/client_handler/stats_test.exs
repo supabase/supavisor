@@ -100,7 +100,7 @@ defmodule Supavisor.ClientHandler.StatsTest do
       refute_receive {^telemetry, {:client, _, %{tenant: ^external_id}}, _}
     end
 
-    @tag external_id: "proxy_tenant1"
+    @tag external_id: "metrics_tenant"
     test "another instance do not send events here", %{telemetry: telemetry} = ctx do
       assert {:ok, _pid, node} = Supavisor.Support.Cluster.start_node()
 
@@ -111,6 +111,21 @@ defmodule Supavisor.ClientHandler.StatsTest do
         self()
       ])
 
+      # Start pool on local node
+      _this_conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"},
+          id: :postgrex_this
+        )
+
+      stop_supervised!(:postgrex_this)
+
+      # Connect via other node and issue a query
       other_conn =
         start_supervised!(
           {SingleConnection,
@@ -126,8 +141,10 @@ defmodule Supavisor.ClientHandler.StatsTest do
 
       this = Node.self()
 
-      refute_receive {^telemetry, {:client, _, %{tenant: "proxy_tenant1"}}, ^node}
-      assert_receive {^telemetry, {:client, _, %{tenant: "proxy_tenant1"}}, ^this}, 10_000
+      external_id = ctx.external_id
+
+      refute_receive {^telemetry, {:client, _, %{tenant: ^external_id}}, ^node}
+      assert_receive {^telemetry, {:client, _, %{tenant: ^external_id}}, ^this}, 10_000
     end
   end
 

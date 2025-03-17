@@ -89,7 +89,10 @@ defmodule Supavisor.Helpers do
     end
   end
 
-  @spec get_user_secret(pid(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  @spec get_user_secret(pid(), String.t() | nil, String.t()) ::
+          {:ok, map()} | {:error, String.t()}
+  def get_user_secret(_conn, nil, _user), do: {:error, "No auth_query specified"}
+
   def get_user_secret(conn, auth_query, user) when is_binary(auth_query) do
     Postgrex.query!(conn, auth_query, [user])
   catch
