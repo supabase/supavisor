@@ -21,11 +21,14 @@ defmodule Supavisor.Application do
         _ -> nil
       end
 
+    region = Application.get_env(:supavisor, :region)
+
     global_metadata =
       %{
         host: host,
         az: Application.get_env(:supavisor, :availability_zone),
-        region: Application.get_env(:supavisor, :region),
+        region: region,
+        location: System.get_env("LOCATION_KEY") || region,
         instance_id: System.get_env("INSTANCE_ID")
       }
 
