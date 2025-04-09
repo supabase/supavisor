@@ -78,7 +78,9 @@ topologies =
     %Version{major: maj, minor: min} =
       Application.spec(:supavisor, :vsn) |> List.to_string() |> Version.parse!()
 
-    region = System.get_env("REGION") |> String.replace("-", "_")
+    region =
+      Enum.find_value(~W[CLUSTER_ID LOCATION_ID REGION], &System.get_env/1)
+      |> String.replace("-", "_")
 
     postgres = [
       strategy: Cluster.Strategy.Postgres,
