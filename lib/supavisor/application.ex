@@ -25,7 +25,7 @@ defmodule Supavisor.Application do
 
     global_metadata =
       %{
-        host: host,
+        nodehost: host,
         az: Application.get_env(:supavisor, :availability_zone),
         region: region,
         location: System.get_env("LOCATION_KEY") || region,
