@@ -47,7 +47,5 @@ defmodule Supavisor.Support.Cluster do
         :peer.call(pid, Application, :put_env, [app_name, key, val])
       end
     end
-
-    :peer.call(pid, Supavisor.Monitoring.PromEx, :set_metrics_tags, [])
   end
 end
