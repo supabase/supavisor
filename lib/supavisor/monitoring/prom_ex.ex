@@ -8,12 +8,19 @@ defmodule Supavisor.Monitoring.PromEx do
   use PromEx, otp_app: :supavisor
   require Logger
 
+  alias Peep.Storage
   alias PromEx.Plugins
   alias Supavisor.PromEx.Plugins.{OsMon, Tenant}
-
   alias Telemetry.Metrics
 
   defmodule Store do
+    @moduledoc """
+    Storage module for PromEx that provide additional functionality of using
+    global tags (extracted from Logger global metadata). It also disables
+    scraping using `PromEx.scrape/1` function as it should not be used directly.
+    We expose scraping via `Supavisor.Monitoring.PromEx.get_metrics/0` function.
+    """
+
     @behaviour PromEx.Storage
 
     @impl true
@@ -206,6 +213,6 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   defp group_metric({{%Metrics.Distribution{} = metric, tags}, atomics}, acc) do
-    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], Peep.Storage.Atomics.values(atomics))
+    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], Storage.Atomics.values(atomics))
   end
 end
