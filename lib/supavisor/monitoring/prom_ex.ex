@@ -11,6 +11,38 @@ defmodule Supavisor.Monitoring.PromEx do
   alias PromEx.Plugins
   alias Supavisor.PromEx.Plugins.{OsMon, Tenant}
 
+  defmodule Store do
+    @behaviour PromEx.Storage
+
+    @impl true
+    def scrape(_name) do
+      # Hack to not report errors from ETSCronFlusher
+      if match?({PromEx.ETSCronFlusher, _, _}, Process.get(:"$initial_call")) do
+        ""
+      else
+        raise(
+          "Do not use PromEx.scrape/1, instead use Supavisor.Monitoring.PromEx.fetch_cluster_metrics/0"
+        )
+      end
+    end
+
+    @impl true
+    def child_spec(name, metrics) do
+      global_tags = :logger.get_primary_config().metadata
+      global_tags_keys = Map.keys(global_tags)
+
+      Peep.child_spec(
+        name: name,
+        metrics: Enum.map(metrics, &extent_tags(&1, global_tags_keys)),
+        global_tags: global_tags
+      )
+    end
+
+    defp extent_tags(%{tags: tags} = metric, global_tags) do
+      %{metric | tags: tags ++ global_tags}
+    end
+  end
+
   @impl true
   def plugins do
     poll_rate = Application.fetch_env!(:supavisor, :prom_poll_rate)
@@ -28,50 +60,16 @@ defmodule Supavisor.Monitoring.PromEx do
     ]
   end
 
-  @spec set_metrics_tags() :: map()
-  def set_metrics_tags do
-    metrics_tags = :logger.get_primary_config().metadata
-
-    metrics_tags =
-      case short_node_id() do
-        nil -> metrics_tags
-        short_alloc_id -> Map.put(metrics_tags, :short_alloc_id, short_alloc_id)
-      end
-
-    Application.put_env(:supavisor, :metrics_tags, metrics_tags)
-    metrics_tags
-  end
-
-  @spec short_node_id() :: String.t() | nil
-  def short_node_id do
-    with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <-
-           Application.fetch_env(:supavisor, :fly_alloc_id),
-         [short_alloc_id, _] <- String.split(fly_alloc_id, "-", parts: 2) do
-      short_alloc_id
-    else
-      _ -> nil
-    end
-  end
-
   @spec get_metrics() :: iodata()
   def get_metrics do
-    metrics_tags =
-      case Application.fetch_env(:supavisor, :metrics_tags) do
-        :error -> set_metrics_tags()
-        {:ok, tags} -> tags
-      end
+    fetch_metrics()
+    |> Peep.Prometheus.export()
+  end
 
-    def_tags = Enum.map_join(metrics_tags, ",", fn {k, v} -> "#{k}=\"#{v}\"" end)
-
-    metrics =
-      PromEx.get_metrics(__MODULE__)
-      |> String.split("\n")
-      |> Enum.map(&parse_and_add_tags(&1, def_tags))
-
-    Supavisor.Monitoring.PromEx.ETSCronFlusher
-    |> PromEx.ETSCronFlusher.defer_ets_flush()
-
-    metrics
+  @spec get_cluster_metrics() :: iodata()
+  def get_cluster_metrics do
+    fetch_cluster_metrics()
+    |> Peep.Prometheus.export()
   end
 
   @spec do_cache_tenants_metrics() :: list
@@ -104,21 +102,41 @@ defmodule Supavisor.Monitoring.PromEx do
     end
   end
 
-  @spec parse_and_add_tags(String.t(), String.t()) :: iodata()
-  defp parse_and_add_tags(line, def_tags) do
-    case Regex.run(~r/(?!\#)^(\w+)(?:{(.*?)})?\s*(.+)$/, line) do
-      nil ->
-        [line, "\n"]
+  def fetch_metrics do
+    Peep.get_all_metrics(__metrics_collector_name__())
+  end
 
-      [_, key, tags, value] ->
-        tags =
-          if tags == "" do
-            def_tags
-          else
-            [tags, ",", def_tags]
-          end
+  def fetch_cluster_metrics do
+    [node() | Node.list()]
+    |> Task.async_stream(&fetch_node_metrics/1, timeout: :infinity)
+    |> Stream.map(fn {_, map} -> map end)
+    |> Enum.reduce(&merge_metrics/2)
+  end
 
-        [key, "{", tags, "}", value, "\n"]
+  @spec fetch_node_metrics(atom()) :: {atom(), term()}
+  defp fetch_node_metrics(node) do
+    case :rpc.call(node, __MODULE__, :fetch_metrics, [], 25_000) do
+      map when is_map(map) ->
+        map
+
+      {:badrpc, reason} ->
+        Logger.error(
+          "Cannot fetch metrics from the node #{inspect(node)} because #{inspect(reason)}"
+        )
+
+        %{}
     end
   end
+
+  defp merge_metrics(a, {_, b}), do: Map.merge(a, b, &do_merge/3)
+
+  defp do_merge(%Telemetry.Metrics.Counter{}, a, b), do: sum_merge(a, b)
+  defp do_merge(%Telemetry.Metrics.Sum{}, a, b), do: sum_merge(a, b)
+  defp do_merge(%Telemetry.Metrics.LastValue{}, a, b), do: Map.merge(a, b)
+
+  defp do_merge(%Telemetry.Metrics.Distribution{}, a, b) do
+    Map.merge(a, b, fn _, a, b -> sum_merge(a, b) end)
+  end
+
+  defp sum_merge(a, b), do: Map.merge(a, b, fn _, a, b -> a + b end)
 end
