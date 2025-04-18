@@ -1,5 +1,5 @@
 defmodule Supavisor.Monitoring.PromExTest do
-  use Supavisor.DataCase, async: true
+  use Supavisor.DataCase, async: false
   use ExUnitProperties
 
   @subject Supavisor.Monitoring.PromEx
