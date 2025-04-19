@@ -1130,6 +1130,8 @@ defmodule Supavisor.ClientHandler do
   @spec app_name(any()) :: String.t()
   def app_name(name) when is_binary(name), do: name
 
+  def app_name(nil), do: "Supavisor"
+
   def app_name(name) do
     Logger.debug("ClientHandler: Invalid application name #{inspect(name)}")
     "Supavisor"

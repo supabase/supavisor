@@ -73,7 +73,7 @@ defmodule Supavisor do
       pool: get_local_pool(id)
     }
 
-    if Map.values(workers) |> Enum.member?(nil) do
+    if nil in Map.values(workers) do
       Logger.error("Could not get workers for tenant #{inspect(id)}")
       {:error, :worker_not_found}
     else
