@@ -122,6 +122,7 @@
                 [
                   pkgs.protobuf
                   pkgs.cargo-outdated
+                  pkgs.prom2json
                 ]
                 ++ lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk; [
                   frameworks.System

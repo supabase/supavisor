@@ -1,29 +1,8 @@
 defmodule Supavisor.Monitoring.PromExTest do
-  use Supavisor.DataCase, async: false
+  use Supavisor.DataCase, async: true
   use ExUnitProperties
 
   @subject Supavisor.Monitoring.PromEx
-
-  @tenant "prom_tenant"
-
-  setup do
-    db_conf = Application.get_env(:supavisor, Repo)
-
-    {:ok, proxy} =
-      Postgrex.start_link(
-        hostname: db_conf[:hostname],
-        port: Application.get_env(:supavisor, :proxy_port_transaction),
-        database: db_conf[:database],
-        password: db_conf[:password],
-        username: db_conf[:username] <> "." <> @tenant,
-        socket_dir: nil,
-        show_sensitive_data_on_connection_error: true
-      )
-
-    assert :idle == DBConnection.status(proxy)
-
-    %{proxy: proxy, user: db_conf[:username], db_name: db_conf[:database]}
-  end
 
   describe "get_metrics/1" do
     @sources %{
