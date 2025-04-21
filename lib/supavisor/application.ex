@@ -29,7 +29,8 @@ defmodule Supavisor.Application do
         az: Application.get_env(:supavisor, :availability_zone),
         region: region,
         location: System.get_env("LOCATION_KEY") || region,
-        instance_id: System.get_env("INSTANCE_ID")
+        instance_id: System.get_env("INSTANCE_ID"),
+        short_node_id: short_node_id()
       }
 
     :ok =
@@ -118,7 +119,6 @@ defmodule Supavisor.Application do
       if @metrics_disabled do
         children
       else
-        PromEx.set_metrics_tags()
         children ++ [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner]
       end
 
@@ -142,5 +142,16 @@ defmodule Supavisor.Application do
   def config_change(changed, _new, removed) do
     SupavisorWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  @spec short_node_id() :: String.t() | nil
+  defp short_node_id do
+    with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <-
+           Application.fetch_env(:supavisor, :fly_alloc_id),
+         [short_alloc_id, _] <- String.split(fly_alloc_id, "-", parts: 2) do
+      short_alloc_id
+    else
+      _ -> nil
+    end
   end
 end
