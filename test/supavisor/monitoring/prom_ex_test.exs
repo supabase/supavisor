@@ -45,7 +45,7 @@ defmodule Supavisor.Monitoring.PromExTest do
         File.write!(file, metrics)
 
         assert {out, 0} = System.cmd(exe, [file])
-        assert {:ok, measurements} = Jason.decode(out)
+        assert {:ok, measurements} = JSON.decode(out)
 
         assert %{"metrics" => metrics} =
                  Enum.find(measurements, &(&1["name"] == "supavisor_client_joins_ok"))
@@ -73,7 +73,7 @@ defmodule Supavisor.Monitoring.PromExTest do
         File.write!(file, metrics)
 
         assert {out, 0} = System.cmd(exe, [file])
-        assert {:ok, measurements} = Jason.decode(out)
+        assert {:ok, measurements} = JSON.decode(out)
 
         assert %{"metrics" => metrics} =
                  Enum.find(measurements, &(&1["name"] == "supavisor_client_joins_ok"))
@@ -101,7 +101,7 @@ defmodule Supavisor.Monitoring.PromExTest do
         File.write!(file, metrics)
 
         assert {out, 0} = System.cmd(exe, [file])
-        assert {:ok, measurements} = Jason.decode(out)
+        assert {:ok, measurements} = JSON.decode(out)
 
         assert %{"metrics" => metrics} =
                  Enum.find(measurements, &(&1["name"] == "supavisor_client_joins_ok"))

@@ -43,8 +43,8 @@ config :logger, :console,
     :proxy
   ]
 
-# Use Jason for JSON parsing in Phoenix
-config :phoenix, :json_library, Jason
+# Use built-in JSON module for JSON parsing
+config :phoenix, :json_library, JSON
 
 config :open_api_spex, :cache_adapter, OpenApiSpex.Plug.PersistentTermCache
 
