@@ -1,4 +1,8 @@
 defmodule Supavisor.E2ECase do
+  @moduledoc """
+  End to End test cases.
+  """
+
   use ExUnit.CaseTemplate
 
   @repo Supavisor.Repo
