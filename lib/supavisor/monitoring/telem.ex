@@ -3,28 +3,22 @@ defmodule Supavisor.Monitoring.Telem do
 
   require Logger
 
-  defmacro telemetry_execute(event_name, measurements, metadata) do
-    if not Application.get_env(:supavisor, :metrics_disabled, false) do
-      quote do
-        :telemetry.execute(unquote(event_name), unquote(measurements), unquote(metadata))
-      end
-    end
-  end
+  @disabled Application.compile_env(:supavisor, :metrics_disabled, false)
 
-  defmacro network_usage_disable(do: block) do
-    if Application.get_env(:supavisor, :metrics_disabled, false) do
-      quote do
-        {:ok, %{recv_oct: 0, send_oct: 0}}
-      end
-    else
-      block
+  if @disabled do
+    defp telemetry_execute(_name, _measurements, _meta), do: :ok
+  else
+    defp telemetry_execute(event_name, measurements, metadata) do
+      :telemetry.execute(event_name, measurements, metadata)
     end
   end
 
   @spec network_usage(:client | :db, Supavisor.sock(), Supavisor.id(), map()) ::
           {:ok | :error, map()}
-  def network_usage(type, {mod, socket}, id, stats) do
-    network_usage_disable do
+  if @disabled do
+    def network_usage(_type, _sock, _id, _stats), do: {:ok, %{recv_oct: 0, send_oct: 0}}
+  else
+    def network_usage(type, {mod, socket}, id, stats) do
       mod = if mod == :ssl, do: :ssl, else: :inet
 
       case mod.getstat(socket, [:recv_oct, :send_oct]) do
