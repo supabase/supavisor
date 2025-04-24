@@ -193,5 +193,5 @@ if System.get_env("LOGS_ENGINE") == "logflare" do
   end
 
   config :logger,
-    backends: [LogflareLogger.HttpBackend]
+    backends: [:console, LogflareLogger.HttpBackend]
 end
