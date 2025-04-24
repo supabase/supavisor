@@ -148,7 +148,7 @@ if config_env() != :test do
     availability_zone: System.get_env("AVAILABILITY_ZONE"),
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
-    jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
+    jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> JSON.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port_transaction:
