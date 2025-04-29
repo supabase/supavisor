@@ -45,15 +45,6 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: metadata
 
-config :logger, :default_handler,
-  formatter:
-    {Supavisor.LogflareFormatter,
-     %{
-       metadata: metadata,
-       top_level: [:project]
-       # context: [:nodehost, :instance_id, :location, :region]
-     }}
-
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

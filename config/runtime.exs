@@ -184,6 +184,40 @@ if config_env() != :test do
     ]
 end
 
+config :logger, :default_handler,
+  formatter:
+    {Supavisor.LogflareFormatter,
+     %{
+       # metadata: metadata,
+       top_level: [:project],
+       context: [:nodehost, :instance_id, :location, :region]
+     }}
+
+if path = System.get_env("SUPAVISOR_LOG_FILE") do
+  config :logger, :default_handler,
+    config: [
+      file: to_charlist(path),
+      file_check: 1000,
+      max_no_files: 5,
+      # 8 MiB as a max file size
+      max_no_bytes: 8 * 1024 * 1024
+    ]
+end
+
+if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
+  config :logger, :default_handler,
+    formatter:
+      {Supavisor.LogflareFormatter,
+       %{
+         # metadata: metadata,
+         top_level: [:project],
+         context: [:nodehost, :instance_id, :location, :region]
+       }}
+end
+
+config :logger,
+  backends: [:console]
+
 if System.get_env("LOGS_ENGINE") == "logflare" do
   if !System.get_env("LOGFLARE_API_KEY") or !System.get_env("LOGFLARE_SOURCE_ID") do
     raise """
@@ -193,5 +227,5 @@ if System.get_env("LOGS_ENGINE") == "logflare" do
   end
 
   config :logger,
-    backends: [:console, LogflareLogger.HttpBackend]
+    backends: [LogflareLogger.HttpBackend]
 end
