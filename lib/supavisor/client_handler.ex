@@ -48,6 +48,13 @@ defmodule Supavisor.ClientHandler do
     Helpers.set_max_heap_size(90)
 
     {:ok, sock} = :ranch.handshake(ref)
+    peer_ip = Helpers.peer_ip(sock)
+    local = opts[:local] || false
+
+    Logger.metadata(
+      peer_ip: peer_ip,
+      local: local
+    )
 
     :ok =
       trans.setopts(sock,
@@ -90,9 +97,9 @@ defmodule Supavisor.ClientHandler do
       log_level: nil,
       auth: %{},
       tenant_availability_zone: nil,
-      local: opts[:local] || false,
+      local: local,
       active_count: 0,
-      peer_ip: Helpers.peer_ip(sock),
+      peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0
     }
@@ -246,9 +253,7 @@ defmodule Supavisor.ClientHandler do
           mode: mode,
           type: type,
           db_name: db_name,
-          app_name: data.app_name,
-          peer_ip: data.peer_ip,
-          local: data.local
+          app_name: data.app_name
         )
 
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
