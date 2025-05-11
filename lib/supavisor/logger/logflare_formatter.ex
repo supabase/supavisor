@@ -1,4 +1,4 @@
-defmodule Supavisor.LogflareFormatter do
+defmodule Supavisor.Logger.LogflareFormatter do
   @default_context ~w[
       application
       module
@@ -19,7 +19,7 @@ defmodule Supavisor.LogflareFormatter do
     context_keys = [Map.get(opts, :context, []) | @default_context]
     {context, meta} = Map.split(meta, context_keys)
     top_level = Map.take(meta, opts[:top_level] || [])
-    context = context |> add_vm()
+    context = add_vm(context)
 
     out =
       case format_message(msg, meta) do
@@ -45,7 +45,7 @@ defmodule Supavisor.LogflareFormatter do
     [JSON.encode_to_iodata!(out), "\n"]
   end
 
-  defp add_vm(map), do: Map.put(map, :vm, %{node: Node.self()})
+  defp add_vm(map), do: Map.put(map, :vm, %{node: node()})
 
   defp format_message({:string, msg}, _), do: {:unicode.characters_to_binary(msg), nil}
 
@@ -57,8 +57,6 @@ defmodule Supavisor.LogflareFormatter do
   end
 
   defp format_message({:report, report}, meta) do
-    dbg({report, meta})
-
     case meta[:report_cb] do
       callback when is_function(callback, 1) ->
         {msg, _} = format_message(callback.(report), meta)
@@ -115,7 +113,9 @@ defmodule Supavisor.LogflareFormatter do
     if JSON.Encoder.impl_for(struct) do
       struct
     else
-      normalize_deep(Map.from_struct(struct))
+      struct
+      |> Map.from_struct()
+      |> normalize_deep()
     end
   end
 
