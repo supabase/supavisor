@@ -184,16 +184,7 @@ if config_env() != :test do
     ]
 end
 
-config :logger, :default_handler,
-  formatter:
-    {Supavisor.LogflareFormatter,
-     %{
-       # metadata: metadata,
-       top_level: [:project],
-       context: [:nodehost, :instance_id, :location, :region]
-     }}
-
-if path = System.get_env("SUPAVISOR_LOG_FILE") do
+if path = System.get_env("SUPAVISOR_LOG_FILE_PATH") do
   config :logger, :default_handler,
     config: [
       file: to_charlist(path),
@@ -207,12 +198,37 @@ end
 if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
   config :logger, :default_handler,
     formatter:
-      {Supavisor.LogflareFormatter,
+      {Supavisor.Logger.LogflareFormatter,
        %{
          # metadata: metadata,
          top_level: [:project],
          context: [:nodehost, :instance_id, :location, :region]
        }}
+end
+
+if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
+  config :supavisor, :logger, [
+    {:handler, :access_log, :logger_std_h,
+     %{
+       level: :error,
+       formatter:
+        Logger.Formatter.new(
+          format: "$dateT$timeZ $metadata[$level] $message\n",
+          color: false,
+          metadata: [:peer_ip],
+          utc_log: true
+        ),
+       filter_default: :stop,
+       filters: [
+         exchange: {&Supavisor.Logger.Filters.filter_client_handler/2, :exchange}
+       ],
+       config: %{
+         file: to_charlist(path),
+         # Keep the file clean on each startup
+         modes: [:write]
+       }
+     }}
+  ]
 end
 
 config :logger,
