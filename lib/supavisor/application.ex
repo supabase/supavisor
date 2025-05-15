@@ -39,7 +39,7 @@ defmodule Supavisor.Application do
         Map.merge(primary_config.metadata, global_metadata)
       )
 
-    Logger.add_handlers(:supavisor)
+    :ok = Logger.add_handlers(:supavisor)
 
     :ok =
       :gen_event.swap_sup_handler(
