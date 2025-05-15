@@ -1,4 +1,13 @@
 defmodule Supavisor.Logger.LogflareFormatter do
+  @moduledoc """
+  Logs formatter module that produces JSON output that can be ingested by the Logflare.
+
+  ## Options
+
+  - `context` - keys that will be stored in `context` field of the produced
+    metadata object
+  - `top_level` - keys that should be duplicated in the top-level object
+  """
   @default_context ~w[
       application
       module
