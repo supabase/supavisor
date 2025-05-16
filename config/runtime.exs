@@ -184,6 +184,63 @@ if config_env() != :test do
     ]
 end
 
+if path = System.get_env("SUPAVISOR_LOG_FILE_PATH") do
+  config :logger, :default_handler,
+    config: [
+      file: to_charlist(path),
+      file_check: 1000,
+      max_no_files: 5,
+      # 8 MiB as a max file size
+      max_no_bytes: 8 * 1024 * 1024
+    ]
+end
+
+if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
+  config :logger, :default_handler,
+    formatter:
+      {Supavisor.Logger.LogflareFormatter,
+       %{
+         # metadata: metadata,
+         top_level: [:project],
+         context: [:nodehost, :instance_id, :location, :region]
+       }}
+end
+
+if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
+  config :supavisor, :logger, [
+    {:handler, :access_log, :logger_std_h,
+     %{
+       level: :error,
+       formatter:
+         {:logger_formatter,
+          %{
+            template: [
+              :time,
+              " ",
+              :level,
+              ": ",
+              {:peer_ip, ["ip=", :peer_ip, " "], []},
+              :msg,
+              "\n"
+            ],
+            single_line: true
+          }},
+       filter_default: :stop,
+       filters: [
+         exchange: {&Supavisor.Logger.Filters.filter_client_handler/2, :exchange}
+       ],
+       config: %{
+         file: to_charlist(path),
+         # Keep the file clean on each startup
+         modes: [:write]
+       }
+     }}
+  ]
+end
+
+config :logger,
+  backends: [:console]
+
 if System.get_env("LOGS_ENGINE") == "logflare" do
   if !System.get_env("LOGFLARE_API_KEY") or !System.get_env("LOGFLARE_SOURCE_ID") do
     raise """
