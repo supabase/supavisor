@@ -52,24 +52,19 @@ defmodule Cluster.Strategy.Postgres do
   end
 
   def handle_continue(:connect, state) do
-    with {:ok, conn} <- Postgrex.start_link(state.meta.opts.()),
-         {:ok, conn_notif} <- Postgrex.Notifications.start_link(state.meta.opts.()),
-         {_, _} <- Postgrex.Notifications.listen(conn_notif, state.config[:channel_name]) do
-      Logger.info(state.topology, "Connected to Postgres database")
+    {:ok, conn} = Postgrex.start_link(state.meta.opts.())
+    {:ok, conn_notif} = Postgrex.Notifications.start_link(state.meta.opts.())
+    {_, _} = Postgrex.Notifications.listen(conn_notif, state.config[:channel_name])
+    Logger.info(state.topology, "Connected to Postgres database")
 
-      meta = %{
-        state.meta
-        | conn: conn,
-          conn_notif: conn_notif,
-          heartbeat_ref: heartbeat(0)
-      }
+    meta = %{
+      state.meta
+      | conn: conn,
+        conn_notif: conn_notif,
+        heartbeat_ref: heartbeat(0)
+    }
 
-      {:noreply, put_in(state.meta, meta)}
-    else
-      reason ->
-        Logger.error(state.topology, "Failed to connect to Postgres: #{inspect(reason)}")
-        {:noreply, state}
-    end
+    {:noreply, put_in(state.meta, meta)}
   end
 
   def handle_info(:heartbeat, state) do
