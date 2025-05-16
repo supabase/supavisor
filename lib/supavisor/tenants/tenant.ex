@@ -10,7 +10,7 @@ defmodule Supavisor.Tenants.Tenant do
   @primary_key {:id, :binary_id, autogenerate: true}
   @schema_prefix "_supavisor"
 
-  @derive {Jason.Encoder, except: [:upstream_tls_ca, :__meta__]}
+  @derive {JSON.Encoder, except: [:upstream_tls_ca, :__meta__]}
 
   schema "tenants" do
     field(:db_host, :string)

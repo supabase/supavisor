@@ -59,6 +59,8 @@
                     "test/integration/"
                   ];
                 };
+                check-yaml.enable = true;
+                # yamlfmt.enable = true;
               };
             }
             {
@@ -117,6 +119,11 @@
             }: {
               languages.rust.enable = true;
               languages.cplusplus.enable = true;
+
+              pre-commit.hooks = {
+                clippy.enable = true;
+                rustfmt.enable = true;
+              };
 
               packages =
                 [
