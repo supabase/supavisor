@@ -580,9 +580,9 @@ defmodule Supavisor.ClientHandler do
         db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 
         {_, stats} =
-          if not data.local,
-            do: Telem.network_usage(:client, data.sock, data.id, data.stats),
-            else: {nil, data.stats}
+          if data.local,
+            do: {nil, data.stats},
+            else: Telem.network_usage(:client, data.sock, data.id, data.stats)
 
         Telem.client_query_time(data.query_start, data.id)
 
