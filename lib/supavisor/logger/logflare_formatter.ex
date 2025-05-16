@@ -1,4 +1,6 @@
 defmodule Supavisor.Logger.LogflareFormatter do
+  @behaviour :logger_formatter
+
   @moduledoc """
   Logs formatter module that produces JSON output that can be ingested by the Logflare.
 
@@ -24,6 +26,10 @@ defmodule Supavisor.Logger.LogflareFormatter do
       mfa
     ]a
 
+  @impl true
+  def check_config(_), do: :ok
+
+  @impl true
   def format(%{msg: msg, level: level, meta: meta}, opts) do
     context_keys = [Map.get(opts, :context, []) | @default_context]
     {context, meta} = Map.split(meta, context_keys)
@@ -54,8 +60,17 @@ defmodule Supavisor.Logger.LogflareFormatter do
     [JSON.encode_to_iodata!(out), "\n"]
   end
 
+  @spec add_vm(map()) :: map()
   defp add_vm(map), do: Map.put(map, :vm, %{node: node()})
 
+  @spec format_message(
+          message,
+          :logger.metadata()
+        ) :: {:unicode.chardata(), map() | nil}
+        when message:
+               {:io.format(), [term()]}
+               | {:report, :logger.report()}
+               | {:string, :unicode.chardata()}
   defp format_message({:string, msg}, _), do: {:unicode.characters_to_binary(msg), nil}
 
   defp format_message({:report, report}, %{error_logger: _, report_cb: cb} = meta)
@@ -94,16 +109,19 @@ defmodule Supavisor.Logger.LogflareFormatter do
     {msg, nil}
   end
 
+  @spec do_structured(map()) :: :unicode.chardata()
   defp do_structured(map) do
     Enum.map_join(map, " ", fn
       {key, value} -> [normalize_key(key), "=", inspect(value)]
     end)
   end
 
+  @spec normalize_key(any()) :: :unicode.chardata()
   defp normalize_key(binary) when is_binary(binary), do: binary
   defp normalize_key(atom) when is_atom(atom), do: Atom.to_string(atom)
   defp normalize_key(other), do: inspect(other)
 
+  @spec normalize_deep(any()) :: any()
   defp normalize_deep(str) when is_binary(str), do: str
   # Squeeze `nil` there for convenience
   defp normalize_deep(bool) when bool in [true, false, nil], do: bool
