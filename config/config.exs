@@ -26,22 +26,24 @@ config :supavisor, SupavisorWeb.Endpoint,
   pubsub_server: Supavisor.PubSub,
   live_view: [signing_salt: "qf3AEZ7n"]
 
+metadata = [
+  :request_id,
+  :project,
+  :user,
+  :region,
+  :instance_id,
+  :mode,
+  :type,
+  :app_name,
+  :peer_ip,
+  :local,
+  :proxy
+]
+
 # Configures Elixir's Logger
-config :logger, :console,
+config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [
-    :request_id,
-    :project,
-    :user,
-    :region,
-    :instance_id,
-    :mode,
-    :type,
-    :app_name,
-    :peer_ip,
-    :local,
-    :proxy
-  ]
+  metadata: metadata
 
 # Use built-in JSON module for JSON parsing
 config :phoenix, :json_library, JSON
