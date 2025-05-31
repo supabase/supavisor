@@ -212,12 +212,12 @@ if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
      %{
        level: :error,
        formatter:
-        Logger.Formatter.new(
-          format: "$dateT$timeZ $metadata[$level] $message\n",
-          color: false,
-          metadata: [:peer_ip],
-          utc_log: true
-        ),
+         Logger.Formatter.new(
+           format: "$dateT$timeZ $metadata[$level] $message\n",
+           color: false,
+           metadata: [:peer_ip],
+           utc_log: true
+         ),
        filter_default: :stop,
        filters: [
          exchange: {&Supavisor.Logger.Filters.filter_client_handler/2, :exchange}
