@@ -144,7 +144,7 @@ downstream_key =
   end
 
 db_socket_options =
-  if System.get_env("DB_IP_VERSION") == "ipv6",
+  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
     do: [:inet6],
     else: [:inet]
 
