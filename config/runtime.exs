@@ -143,6 +143,11 @@ downstream_key =
     end
   end
 
+db_socket_options =
+  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
+    do: [:inet6],
+    else: [:inet]
+
 if config_env() != :test do
   config :supavisor,
     availability_zone: System.get_env("AVAILABILITY_ZONE"),
@@ -173,7 +178,8 @@ if config_env() != :test do
     ],
     parameters: [
       application_name: "supavisor_meta"
-    ]
+    ],
+    socket_options: db_socket_options
 
   config :supavisor, Supavisor.Vault,
     ciphers: [
