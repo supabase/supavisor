@@ -48,6 +48,14 @@ defmodule Supavisor.ClientHandler do
     Helpers.set_max_heap_size(90)
 
     {:ok, sock} = :ranch.handshake(ref)
+    peer_ip = Helpers.peer_ip(sock)
+    local = opts[:local] || false
+
+    Logger.metadata(
+      peer_ip: peer_ip,
+      local: local,
+      state: :init
+    )
 
     :ok =
       trans.setopts(sock,
@@ -90,9 +98,9 @@ defmodule Supavisor.ClientHandler do
       log_level: nil,
       auth: %{},
       tenant_availability_zone: nil,
-      local: opts[:local] || false,
+      local: local,
       active_count: 0,
-      peer_ip: Helpers.peer_ip(sock),
+      peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0
     }
@@ -102,6 +110,7 @@ defmodule Supavisor.ClientHandler do
 
   @impl true
   def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :exchange, data) do
+    Logger.metadata(state: :exchange)
     Logger.debug("ClientHandler: Client is trying to request HTTP")
 
     HandlerHelpers.sock_send(
@@ -113,7 +122,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   # cancel request
-  def handle_event(:info, {_, _, Server.cancel_message(pid, key)}, _, _) do
+  def handle_event(:info, {_, _, Server.cancel_message(pid, key)}, state, _) do
+    Logger.metadata(state: state)
     Logger.debug("ClientHandler: Got cancel query for #{inspect({pid, key})}")
     :ok = HandlerHelpers.send_cancel_query(pid, key)
     {:stop, {:shutdown, :cancel_query}}
@@ -121,6 +131,7 @@ defmodule Supavisor.ClientHandler do
 
   # send cancel request to db
   def handle_event(:info, :cancel_query, :busy, data) do
+    Logger.metadata(state: :busy)
     key = {data.tenant, data.db_pid}
     Logger.debug("ClientHandler: Cancel query for #{inspect(key)}")
     {_pool, db_pid, _db_sock} = data.db_pid
@@ -139,6 +150,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, %{sock: sock} = data) do
+    Logger.metadata(state: :exchange)
     Logger.debug("ClientHandler: Client is trying to connect with SSL")
 
     downstream_cert = Helpers.downstream_cert()
@@ -177,11 +189,14 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {_, _, bin}, :exchange, _) when byte_size(bin) > 1024 do
+    Logger.metadata(state: :exchange)
     Logger.error("ClientHandler: Startup packet too large #{byte_size(bin)}")
     {:stop, {:shutdown, :startup_packet_too_large}}
   end
 
   def handle_event(:info, {_, _, bin}, :exchange, data) do
+    Logger.metadata(state: :exchange)
+
     case Server.decode_startup_packet(bin) do
       {:ok, hello} ->
         Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
@@ -197,7 +212,9 @@ defmodule Supavisor.ClientHandler do
            {:next_event, :internal, event}}
         else
           reason = "Invalid format for user or db_name"
+
           Logger.error("ClientHandler: #{inspect(reason)} #{inspect({user, db_name})}")
+
           Telem.client_join(:fail, tenant_or_alias)
 
           HandlerHelpers.send_error(
@@ -211,6 +228,7 @@ defmodule Supavisor.ClientHandler do
 
       {:error, error} ->
         Logger.error("ClientHandler: Client startup message error: #{inspect(error)}")
+
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :startup_packet_error}}
     end
@@ -222,6 +240,7 @@ defmodule Supavisor.ClientHandler do
         :exchange,
         %{sock: sock} = data
       ) do
+    Logger.metadata(state: :exchange)
     sni_hostname = HandlerHelpers.try_get_sni(sock)
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
@@ -246,9 +265,7 @@ defmodule Supavisor.ClientHandler do
           mode: mode,
           type: type,
           db_name: db_name,
-          app_name: data.app_name,
-          peer_ip: data.peer_ip,
-          local: data.local
+          app_name: data.app_name
         )
 
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
@@ -313,9 +330,10 @@ defmodule Supavisor.ClientHandler do
   def handle_event(
         :internal,
         {:handle, {method, secrets}, info},
-        _,
+        state,
         %{sock: sock} = data
       ) do
+    Logger.metadata(state: state)
     Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(method)}")
 
     case handle_exchange(sock, {method, secrets}) do
@@ -382,7 +400,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, :subscribe, _, data) do
+  def handle_event(:internal, :subscribe, state, data) do
+    Logger.metadata(state: state)
     Logger.debug("ClientHandler: Subscribe to tenant #{inspect(data.id)}")
 
     with {:ok, sup} <-
@@ -453,7 +472,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, :connect_db, _, data) do
+  def handle_event(:internal, :connect_db, state, data) do
+    Logger.metadata(state: state)
     Logger.debug("ClientHandler: Trying to connect to DB")
 
     args = %{
@@ -474,7 +494,8 @@ defmodule Supavisor.ClientHandler do
     {:keep_state, %{data | db_pid: {nil, db_pid, db_sock}, mode: :proxy}}
   end
 
-  def handle_event(:internal, {:greetings, ps}, _, %{sock: sock} = data) do
+  def handle_event(:internal, {:greetings, ps}, state, %{sock: sock} = data) do
+    Logger.metadata(state: state)
     {header, <<pid::32, key::32>> = payload} = Server.backend_key_data()
     msg = [ps, [header, payload], Server.ready_for_query()]
     :ok = HandlerHelpers.listen_cancel_query(pid, key)
@@ -483,10 +504,14 @@ defmodule Supavisor.ClientHandler do
     {:next_state, :idle, data, handle_actions(data)}
   end
 
-  def handle_event(:timeout, :subscribe, _, _),
-    do: {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+  def handle_event(:timeout, :subscribe, state, _) do
+    Logger.metadata(state: state)
+    {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+  end
 
-  def handle_event(:timeout, :wait_ps, _, data) do
+  def handle_event(:timeout, :wait_ps, state, data) do
+    Logger.metadata(state: state)
+
     Logger.error(
       "ClientHandler: Wait parameter status timeout, send default #{inspect(data.ps)}}"
     )
@@ -495,12 +520,14 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
-  def handle_event(:timeout, :idle_terminate, _, data) do
+  def handle_event(:timeout, :idle_terminate, state, data) do
+    Logger.metadata(state: state)
     Logger.warning("ClientHandler: Terminate an idle connection by #{data.idle_timeout} timeout")
     {:stop, {:shutdown, :idle_terminate}}
   end
 
-  def handle_event(:timeout, :heartbeat_check, _, data) do
+  def handle_event(:timeout, :heartbeat_check, state, data) do
+    Logger.metadata(state: state)
     Logger.debug("ClientHandler: Send heartbeat to client")
     HandlerHelpers.sock_send(data.sock, Server.application_name())
     {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
@@ -508,6 +535,8 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(kind, {proto, socket, msg}, state, data)
       when proto in @proto and is_binary(msg) do
+    Logger.metadata(state: state)
+
     with {:next_state, next_state, new_data, actions} <- handle_data(kind, msg, state, data) do
       new_actions =
         actions
@@ -524,28 +553,34 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {:parameter_status, :updated}, _, _) do
+  def handle_event(:info, {:parameter_status, :updated}, state, _) do
+    Logger.metadata(state: state)
     Logger.warning("ClientHandler: Parameter status is updated")
     {:stop, {:shutdown, :parameter_status_updated}}
   end
 
-  def handle_event(:info, {:parameter_status, ps}, :exchange, _),
-    do: {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
+  def handle_event(:info, {:parameter_status, ps}, :exchange, _) do
+    Logger.metadata(state: :exchange)
+    {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
+  end
 
   def handle_event(:info, {:ssl_error, sock, reason}, _, %{sock: {_, sock}}) do
+    Logger.metadata(state: :exchange)
     Logger.error("ClientHandler: TLS error #{inspect(reason)}")
     :keep_state_and_data
   end
 
   # client closed connection
-  def handle_event(_, {closed, _}, _, data)
+  def handle_event(_, {closed, _}, state, data)
       when closed in [:tcp_closed, :ssl_closed] do
+    Logger.metadata(state: state)
     Logger.debug("ClientHandler: #{closed} socket closed for #{inspect(data.tenant)}")
     {:stop, {:shutdown, :socket_closed}}
   end
 
   # linked DbHandler went down
-  def handle_event(:info, {:EXIT, db_pid, reason}, _, data) do
+  def handle_event(:info, {:EXIT, db_pid, reason}, state, data) do
+    Logger.metadata(state: state)
     Logger.error("ClientHandler: DbHandler #{inspect(db_pid)} exited #{inspect(reason)}")
     HandlerHelpers.sock_send(data.sock, Server.error_message("XX000", "DbHandler exited"))
     {:stop, {:shutdown, :db_handler_exit}}
@@ -553,6 +588,8 @@ defmodule Supavisor.ClientHandler do
 
   # pool's manager went down
   def handle_event(:info, {:DOWN, ref, _, _, reason}, state, %{manager: ref} = data) do
+    Logger.metadata(state: state)
+
     Logger.error(
       "ClientHandler: Manager #{inspect(data.manager)} went down #{inspect(reason)} state #{inspect(state)}"
     )
@@ -564,13 +601,16 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {:disconnect, reason}, _, _data) do
+  def handle_event(:info, {:disconnect, reason}, state, _data) do
+    Logger.metadata(state: state)
     Logger.warning("ClientHandler: Disconnected due to #{inspect(reason)}")
     {:stop, {:shutdown, {:disconnect, reason}}}
   end
 
   # emulate handle_cast
   def handle_event(:cast, {:db_status, status, bin}, :busy, data) do
+    Logger.metadata(state: :busy)
+
     case status do
       :ready_for_query ->
         Logger.debug("ClientHandler: Client is ready")
@@ -606,14 +646,17 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {sock_error, _sock, msg}, _state, _data)
+  def handle_event(:info, {sock_error, _sock, msg}, state, _data)
       when sock_error in [:tcp_error, :ssl_error] do
+    Logger.metadata(state: state)
     Logger.error("ClientHandler: Socket error: #{inspect(msg)}")
 
     {:stop, {:shutdown, {:socket_error, msg}}}
   end
 
-  def handle_event(type, content, _state, _data) do
+  def handle_event(type, content, state, _data) do
+    Logger.metadata(state: state)
+
     msg = [
       {"type", type},
       {"content", content}
@@ -627,9 +670,11 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def terminate(
         {:timeout, {_, _, [_, {:checkout, _, _}, _]}},
-        _,
+        state,
         data
       ) do
+    Logger.metadata(state: state)
+
     msg =
       case data.mode do
         :session ->
@@ -644,7 +689,9 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
-  def terminate(reason, _state, %{db_pid: {_, pid, _}}) do
+  def terminate(reason, state, %{db_pid: {_, pid, _}}) do
+    Logger.metadata(state: state)
+
     db_info =
       with {:ok, {state, mode} = resp} <- DbHandler.get_state_and_mode(pid) do
         if state == :busy or mode == :session, do: DbHandler.stop(pid)
@@ -658,7 +705,8 @@ defmodule Supavisor.ClientHandler do
     :ok
   end
 
-  def terminate(reason, _state, _data) do
+  def terminate(reason, state, _data) do
+    Logger.metadata(state: state)
     Logger.debug("ClientHandler: socket closed with reason #{inspect(reason)}")
     :ok
   end
