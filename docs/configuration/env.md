@@ -22,7 +22,7 @@ This document provides a categorized list of all environment variables used in S
 | ----------------------------- | ------------------------------- | ------------- | -------- |
 | `PROXY_PORT_TRANSACTION`      | Transaction pool port           | `6543`        | No       |
 | `PROXY_PORT_SESSION`          | Session pool port               | `5432`        | No       |
-| `PROXY_PORT`                  | Default pool port               | `5412`        | No       |
+| `PROXY_PORT`                  | Internal proxy port             | `5412`        | No       |
 | `RECONNECT_ON_DB_CLOSE`       | Enable reconnection on close    | `false`       | No       |
 | `RECONNECT_RETRIES`           | Number of reconnection attempts | `5`           | No       |
 | `SUBSCRIBE_RETRIES`           | Number of subscription retries  | `20`          | No       |
