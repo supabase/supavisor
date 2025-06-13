@@ -10,4 +10,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustler = "0.36.1"
-pg_query = "5.1.0"
+pg_query = "6.1.0"
