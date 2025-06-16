@@ -4,17 +4,21 @@ defmodule SupavisorWeb.TenantController do
 
   require Logger
 
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.{Tenants, Repo}
+  alias Supavisor.{
+    Helpers,
+    Repo,
+    Tenants
+  }
+
   alias Tenants.Tenant, as: TenantModel
 
   alias SupavisorWeb.OpenApiSchemas.{
-    Tenant,
-    TenantList,
-    TenantCreate,
-    NotFound,
     Created,
-    Empty
+    Empty,
+    NotFound,
+    Tenant,
+    TenantCreate,
+    TenantList
   }
 
   action_fallback(SupavisorWeb.FallbackController)
@@ -89,12 +93,12 @@ defmodule SupavisorWeb.TenantController do
     }
   )
 
-  # conver cert to pem format
+  # convert cert to pem format
   def update(conn, %{
         "external_id" => id,
         "tenant" => %{"upstream_tls_ca" => "-----BEGIN" <> _ = upstream_tls_ca} = tenant_params
       }) do
-    case H.cert_to_bin(upstream_tls_ca) do
+    case Helpers.cert_to_bin(upstream_tls_ca) do
       {:ok, bin} ->
         update(conn, %{
           "external_id" => id,
@@ -111,8 +115,10 @@ defmodule SupavisorWeb.TenantController do
   end
 
   def update(conn, %{"external_id" => id, "tenant" => params}) do
-    Logger.info("Delete cache dist #{id}: #{inspect(Supavisor.del_all_cache_dist(id))}")
-    cert = H.upstream_cert(params["upstream_tls_ca"])
+    cleanup_result = Supavisor.del_all_cache_dist(id)
+    Logger.info("Delete cache dist #{id}: #{inspect(cleanup_result)}")
+
+    cert = Helpers.upstream_cert(params["upstream_tls_ca"])
 
     if params["upstream_ssl"] && params["upstream_verify"] == "peer" && !cert do
       conn
@@ -123,7 +129,7 @@ defmodule SupavisorWeb.TenantController do
     else
       case Tenants.get_tenant_by_external_id(id) do
         nil ->
-          case H.check_creds_get_ver(params) do
+          case Helpers.check_creds_get_ver(params) do
             {:error, reason} ->
               conn
               |> put_status(400)

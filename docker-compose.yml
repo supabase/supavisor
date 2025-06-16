@@ -8,13 +8,13 @@ services:
       - "6432:5432"
     volumes:
       - ./dev/postgres:/docker-entrypoint-initdb.d/
-      # Uncomment to set MD5 authentication method on unitialized databases
+      # Uncomment to set MD5 authentication method on uninitialized databases
       # - ./dev/postgres/md5/etc/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_prepared_transactions=2000
     environment:
       POSTGRES_HOST: /var/run/postgresql
       POSTGRES_PASSWORD: postgres
-      # Uncomment to set MD5 authentication method on unitialized databases
+      # Uncomment to set MD5 authentication method on uninitialized databases
       # POSTGRES_INITDB_ARGS: --auth-host=md5
   supavisor:
     build: .

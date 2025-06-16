@@ -24,7 +24,7 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
         {parsed[:from], parsed[:to]}
       end
 
-    IO.puts("Generating appup from #{from_vsn} to #{to_vsn}...\n")
+    Mix.shell().info("Generating appup from #{from_vsn} to #{to_vsn}...\n")
 
     rel_dir = Path.join([File.cwd!(), "_build", "#{Mix.env()}", "rel", "supavisor"])
     lib_path = Path.join(rel_dir, "lib")
@@ -36,11 +36,11 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
 
     case Appup.make(:supavisor, from_vsn, to_vsn, path_from, path_to, transforms) do
       {:ok, appup} ->
-        IO.puts("Writing appup to #{appup_path}")
+        Mix.shell().info("Writing appup to #{appup_path}")
 
         case File.write(appup_path, :io_lib.format("~p.", [appup]), [:utf8]) do
           :ok ->
-            IO.puts("Appup:\n#{File.read!(appup_path)}")
+            Mix.shell().info("Appup:\n#{File.read!(appup_path)}")
 
           {:error, reason} ->
             Mix.raise("Failed to write appup file: #{reason}")

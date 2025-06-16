@@ -2,7 +2,7 @@
 
 # Supavisor - Postgres connection pooler
 
-- [Overview](#overiew)
+- [Overview](#overview)
 - [Motivation](#motivation)
 - [Architecture](#architecture)
 - [Docs](#docs)
@@ -77,6 +77,7 @@ supported ([todo](#future-work)).
 ## Docs
 
 - [Installation and usage](https://supabase.github.io/supavisor/development/installation/)
+- [Environment Variables Documentation](https://supabase.github.io/supavisor/configuration/env/)
 - [Metrics](https://supabase.github.io/supavisor/monitoring/metrics/)
 
 ## Features

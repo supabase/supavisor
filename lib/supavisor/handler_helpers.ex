@@ -2,38 +2,34 @@ defmodule Supavisor.HandlerHelpers do
   @moduledoc false
 
   alias Phoenix.PubSub
-  alias Supavisor, as: S
-  alias Supavisor.Protocol.Server
 
-  @spec sock_send(S.sock(), iodata()) :: :ok | {:error, term()}
+  require Supavisor.Protocol.Server, as: Server
+
+  @spec sock_send(Supavisor.sock(), iodata()) :: :ok | {:error, term()}
   def sock_send({mod, sock}, data) do
     mod.send(sock, data)
   end
 
-  @spec sock_close(nil | S.sock()) :: :ok | {:error, term()}
+  @spec sock_close(Supavisor.sock() | nil | {any(), nil}) :: :ok | {:error, term()}
   def sock_close(nil), do: :ok
+  def sock_close({_, nil}), do: :ok
 
-  def sock_close({mod, sock}) do
-    mod.close(sock)
-  end
+  def sock_close({mod, sock}), do: mod.close(sock)
 
-  @spec setopts(S.sock(), term()) :: :ok | {:error, term()}
+  @spec setopts(Supavisor.sock(), term()) :: :ok | {:error, term()}
   def setopts({mod, sock}, opts) do
     mod = if mod == :gen_tcp, do: :inet, else: mod
     mod.setopts(sock, opts)
   end
 
-  @spec activate(S.sock()) :: :ok | {:error, term}
-  def activate({:gen_tcp, sock}) do
-    :inet.setopts(sock, active: true)
-  end
+  @spec active_once(Supavisor.sock()) :: :ok | {:error, term}
+  def active_once(sock), do: setopts(sock, active: :once)
 
-  def activate({:ssl, sock}) do
-    :ssl.setopts(sock, active: true)
-  end
+  @spec activate(Supavisor.sock()) :: :ok | {:error, term}
+  def activate(sock), do: setopts(sock, active: true)
 
-  @spec try_ssl_handshake(S.tcp_sock(), boolean) ::
-          {:ok, S.sock()} | {:error, term()}
+  @spec try_ssl_handshake(Supavisor.tcp_sock(), boolean) ::
+          {:ok, Supavisor.sock()} | {:error, term()}
   def try_ssl_handshake(sock, true) do
     case sock_send(sock, Server.ssl_request()) do
       :ok -> ssl_recv(sock)
@@ -43,7 +39,7 @@ defmodule Supavisor.HandlerHelpers do
 
   def try_ssl_handshake(sock, false), do: {:ok, sock}
 
-  @spec ssl_recv(S.tcp_sock()) :: {:ok, S.ssl_sock()} | {:error, term}
+  @spec ssl_recv(Supavisor.tcp_sock()) :: {:ok, Supavisor.ssl_sock()} | {:error, term}
   def ssl_recv({:gen_tcp, sock} = s) do
     case :gen_tcp.recv(sock, 1, 15_000) do
       {:ok, <<?S>>} -> ssl_connect(s)
@@ -52,8 +48,8 @@ defmodule Supavisor.HandlerHelpers do
     end
   end
 
-  @spec ssl_connect(S.tcp_sock(), pos_integer) ::
-          {:ok, S.ssl_sock()} | {:error, term}
+  @spec ssl_connect(Supavisor.tcp_sock(), pos_integer) ::
+          {:ok, Supavisor.ssl_sock()} | {:error, term}
   def ssl_connect({:gen_tcp, sock}, timeout \\ 5000) do
     opts = [verify: :verify_none]
 
@@ -63,13 +59,13 @@ defmodule Supavisor.HandlerHelpers do
     end
   end
 
-  @spec send_error(S.sock(), String.t(), String.t()) :: :ok | {:error, term()}
+  @spec send_error(Supavisor.sock(), String.t(), String.t()) :: :ok | {:error, term()}
   def send_error(sock, code, message) do
     data = Server.error_message(code, message)
     sock_send(sock, data)
   end
 
-  @spec try_get_sni(S.sock()) :: String.t() | nil
+  @spec try_get_sni(Supavisor.sock()) :: String.t() | nil
   def try_get_sni({:ssl, sock}) do
     case :ssl.connection_information(sock, [:sni_hostname]) do
       {:ok, [sni_hostname: sni]} -> List.to_string(sni)
@@ -106,12 +102,12 @@ defmodule Supavisor.HandlerHelpers do
     end
   end
 
-  @spec send_cancel_query(non_neg_integer, non_neg_integer) :: :ok | {:errr, term}
-  def send_cancel_query(pid, key) do
+  @spec send_cancel_query(non_neg_integer, non_neg_integer, term) :: :ok | {:errr, term}
+  def send_cancel_query(pid, key, msg \\ :cancel_query) do
     PubSub.broadcast(
       Supavisor.PubSub,
       "cancel_req:#{pid}_#{key}",
-      :cancel_query
+      msg
     )
   end
 
@@ -155,7 +151,7 @@ defmodule Supavisor.HandlerHelpers do
   @spec filter_cidrs(list(), :inet.ip_address() | any()) :: list()
   def filter_cidrs(allow_list, addr) when is_list(allow_list) and is_tuple(addr) do
     for range <- allow_list,
-        range |> InetCidr.parse() |> InetCidr.contains?(addr) do
+        range |> InetCidr.parse_cidr!() |> InetCidr.contains?(addr) do
       range
     end
   end
@@ -164,7 +160,7 @@ defmodule Supavisor.HandlerHelpers do
     []
   end
 
-  @spec addr_from_sock(S.sock()) :: {:ok, :inet.ip_address()} | :error
+  @spec addr_from_sock(Supavisor.sock()) :: {:ok, :inet.ip_address()} | :error
   def addr_from_sock({:gen_tcp, port}) do
     case :inet.peername(port) do
       {:ok, {:local, _}} ->

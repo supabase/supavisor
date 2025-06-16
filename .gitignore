@@ -37,3 +37,6 @@ burrito_out/*
 supavisor-*.tar.gz
 
 priv/native/*
+*.bggg
+/.pre-commit-config.yaml
+*.coverdata

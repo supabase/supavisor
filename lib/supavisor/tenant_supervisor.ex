@@ -2,7 +2,17 @@ defmodule Supavisor.TenantSupervisor do
   @moduledoc false
   use Supervisor
 
+  require Logger
   alias Supavisor.Manager
+  alias Supavisor.SecretChecker
+
+  def start_link(%{replicas: [%{mode: mode} = single]} = args)
+      when mode in [:transaction, :session] do
+    {:ok, meta} = Supavisor.start_local_server(single)
+    Logger.info("Starting ranch instance #{inspect(meta)} for #{inspect(args.id)}")
+    name = {:via, :syn, {:tenants, args.id, meta}}
+    Supervisor.start_link(__MODULE__, args, name: name)
+  end
 
   def start_link(args) do
     name = {:via, :syn, {:tenants, args.id}}
@@ -24,10 +34,10 @@ defmodule Supavisor.TenantSupervisor do
         }
       end)
 
-    children = [{Manager, args} | pools]
+    children = [{Manager, args}, {SecretChecker, args} | pools]
 
-    {{type, tenant}, user, mode, db_name} = args.id
-    map_id = %{user: user, mode: mode, type: type, db_name: db_name}
+    {{type, tenant}, user, mode, db_name, search_path} = args.id
+    map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
 
     Supervisor.init(children,
@@ -47,15 +57,6 @@ defmodule Supavisor.TenantSupervisor do
 
   @spec pool_spec(tuple, map) :: Keyword.t()
   defp pool_spec(id, args) do
-    # {size, overflow} =
-    #   case args.mode do
-    #     :session ->
-    #       {1, args.pool_size}
-
-    #     :transaction ->
-    #       if args.pool_size < 10, do: {args.pool_size, 0}, else: {10, args.pool_size - 10}
-    #   end
-
     {size, overflow} = {1, args.pool_size}
 
     [

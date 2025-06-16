@@ -1,7 +1,7 @@
 import Config
 
 require Logger
-alias Supavisor.Helpers, as: H
+alias Supavisor.Helpers
 
 secret_key_base =
   if config_env() in [:dev, :test] do
@@ -78,15 +78,16 @@ topologies =
     %Version{major: maj, minor: min} =
       Application.spec(:supavisor, :vsn) |> List.to_string() |> Version.parse!()
 
-    region = System.get_env("REGION") |> String.replace("-", "_")
+    region =
+      Enum.find_value(~W[CLUSTER_ID LOCATION_ID REGION], &System.get_env/1)
+      |> String.replace("-", "_")
 
     postgres = [
       strategy: Cluster.Strategy.Postgres,
       config: [
         url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
         heartbeat_interval: 5_000,
-        channel_name: "supavisor_#{region}_#{maj}_#{min}",
-        channel_name_partisan: "supavisor_partisan_#{region}_#{maj}_#{min}"
+        channel_name: "supavisor_#{region}_#{maj}_#{min}"
       ]
     ]
 
@@ -102,7 +103,7 @@ config :libcluster,
 upstream_ca =
   if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
     File.read!(path)
-    |> H.cert_to_bin()
+    |> Helpers.cert_to_bin()
     |> case do
       {:ok, bin} ->
         Logger.info("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH",
@@ -142,30 +143,43 @@ downstream_key =
     end
   end
 
+db_socket_options =
+  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
+    do: [:inet6],
+    else: [:inet]
+
 if config_env() != :test do
   config :supavisor,
+    availability_zone: System.get_env("AVAILABILITY_ZONE"),
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
-    jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> Jason.decode!(),
+    jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> JSON.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
+    proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,
     reconnect_on_db_close: System.get_env("RECONNECT_ON_DB_CLOSE") == "true",
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
-    metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(",")
+    metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
+    node_host: System.get_env("NODE_IP", "127.0.0.1"),
+    local_proxy_multiplier: System.get_env("LOCAL_PROXY_MULTIPLIER", "20") |> String.to_integer()
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
     pool_size: System.get_env("DB_POOL_SIZE", "25") |> String.to_integer(),
+    ssl_opts: [
+      verify: :verify_none
+    ],
     parameters: [
       application_name: "supavisor_meta"
-    ]
+    ],
+    socket_options: db_socket_options
 
   config :supavisor, Supavisor.Vault,
     ciphers: [
@@ -174,24 +188,57 @@ if config_env() != :test do
         tag: "AES.GCM.V1", key: System.get_env("VAULT_ENC_KEY")
       }
     ]
-
-  config :partisan,
-    # Which overlay to use
-    peer_service_manager: :partisan_pluggable_peer_service_manager,
-    listen_addrs: [
-      {
-        System.get_env("PARTISAN_PEER_IP", "127.0.0.1"),
-        String.to_integer(System.get_env("PARTISAN_PEER_PORT", "20100"))
-      }
-    ],
-    channels: [
-      data: %{parallelism: System.get_env("PARTISAN_PARALLELISM", "5") |> String.to_integer()}
-    ],
-    # Encoding for pid(), reference() and names
-    pid_encoding: false,
-    ref_encoding: false,
-    remote_ref_format: :improper_list
 end
+
+if path = System.get_env("SUPAVISOR_LOG_FILE_PATH") do
+  config :logger, :default_handler,
+    config: [
+      file: to_charlist(path),
+      file_check: 1000,
+      max_no_files: 5,
+      # 8 MiB as a max file size
+      max_no_bytes: 8 * 1024 * 1024
+    ]
+end
+
+if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
+  config :logger, :default_handler,
+    formatter:
+      {Supavisor.Logger.LogflareFormatter,
+       %{
+         # metadata: metadata,
+         top_level: [:project],
+         context: [:nodehost, :instance_id, :location, :region]
+       }}
+end
+
+if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
+  config :supavisor, :logger, [
+    {:handler, :access_log, :logger_std_h,
+     %{
+       level: :error,
+       formatter:
+         Logger.Formatter.new(
+           format: "$dateT$timeZ $metadata[$level] $message\n",
+           color: false,
+           metadata: [:peer_ip],
+           utc_log: true
+         ),
+       filter_default: :stop,
+       filters: [
+         exchange: {&Supavisor.Logger.Filters.filter_client_handler/2, :exchange}
+       ],
+       config: %{
+         file: to_charlist(path),
+         # Keep the file clean on each startup
+         modes: [:write]
+       }
+     }}
+  ]
+end
+
+config :logger,
+  backends: [:console]
 
 if System.get_env("LOGS_ENGINE") == "logflare" do
   if !System.get_env("LOGFLARE_API_KEY") or !System.get_env("LOGFLARE_SOURCE_ID") do

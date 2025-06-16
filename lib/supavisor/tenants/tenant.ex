@@ -10,7 +10,7 @@ defmodule Supavisor.Tenants.Tenant do
   @primary_key {:id, :binary_id, autogenerate: true}
   @schema_prefix "_supavisor"
 
-  @derive {Jason.Encoder, except: [:upstream_tls_ca, :__meta__]}
+  @derive {JSON.Encoder, except: [:upstream_tls_ca, :__meta__]}
 
   schema "tenants" do
     field(:db_host, :string)
@@ -31,6 +31,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:client_idle_timeout, :integer, default: 0)
     field(:client_heartbeat_interval, :integer, default: 60)
     field(:allow_list, {:array, :string}, default: ["0.0.0.0/0", "::/0"])
+    field(:availability_zone, :string)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -63,7 +64,8 @@ defmodule Supavisor.Tenants.Tenant do
       :default_max_clients,
       :client_idle_timeout,
       :client_heartbeat_interval,
-      :allow_list
+      :allow_list,
+      :availability_zone
     ])
     |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")
     |> check_constraint(:upstream_verify, name: :upstream_constraints, prefix: "_supavisor")
@@ -121,12 +123,6 @@ defmodule Supavisor.Tenants.Tenant do
   end
 
   defp valid_range?(range) do
-    try do
-      InetCidr.parse(range)
-      true
-    rescue
-      _e ->
-        false
-    end
+    match?({:ok, _}, InetCidr.parse_cidr(range))
   end
 end

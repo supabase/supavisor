@@ -30,10 +30,14 @@ defmodule Supavisor.Helpers do
       ssl_opts =
         if upstream_ssl? and params["upstream_verify"] == "peer" do
           [
-            {:verify, :verify_peer},
-            {:cacerts, [upstream_cert(params["upstream_tls_ca"])]},
-            {:server_name_indication, String.to_charlist(params["db_host"])},
-            {:customize_hostname_check, [{:match_fun, fn _, _ -> true end}]}
+            verify: :verify_peer,
+            cacerts: [upstream_cert(params["upstream_tls_ca"])],
+            server_name_indication: String.to_charlist(params["db_host"]),
+            customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+          ]
+        else
+          [
+            verify: :verify_none
           ]
         end
 
@@ -50,14 +54,16 @@ defmodule Supavisor.Helpers do
           ],
           queue_target: 1_000,
           queue_interval: 5_000,
-          ssl_opts: ssl_opts || []
+          ssl_opts: ssl_opts
         )
 
       check =
         Postgrex.query(conn, "select version()", [])
         |> case do
           {:ok, %{rows: [[version]]}} ->
-            if !params["require_user"] do
+            if params["require_user"] do
+              {:cont, {:ok, version}}
+            else
               case get_user_secret(conn, params["auth_query"], user["db_user"]) do
                 {:ok, _} ->
                   {:halt, {:ok, version}}
@@ -65,8 +71,6 @@ defmodule Supavisor.Helpers do
                 {:error, reason} ->
                   {:halt, {:error, reason}}
               end
-            else
-              {:cont, {:ok, version}}
             end
 
           {:error, reason} ->
@@ -85,29 +89,26 @@ defmodule Supavisor.Helpers do
     end
   end
 
-  @spec get_user_secret(pid(), String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
-  def get_user_secret(conn, auth_query, user) do
-    try do
-      Postgrex.query!(conn, auth_query, [user])
-    catch
-      _error, reason ->
-        {:error, "Authentication query failed: #{inspect(reason)}"}
-    end
-    |> case do
-      %{columns: [_, _], rows: [[^user, secret]]} ->
-        parse_secret(secret, user)
+  @spec get_user_secret(pid(), String.t() | nil, String.t()) ::
+          {:ok, map()} | {:error, String.t()}
+  def get_user_secret(_conn, nil, _user), do: {:error, "No auth_query specified"}
 
-      %{columns: [_, _], rows: []} ->
-        {:error,
-         "There is no user '#{user}' in the database. Please create it or change the user in the config"}
+  def get_user_secret(conn, auth_query, user) when is_binary(auth_query) do
+    Postgrex.query!(conn, auth_query, [user])
+  catch
+    _error, reason ->
+      {:error, "Authentication query failed: #{inspect(reason)}"}
+  else
+    %{columns: [_, _], rows: [[^user, secret]]} ->
+      parse_secret(secret, user)
 
-      %{columns: colums} ->
-        {:error,
-         "Authentification query returned wrong format. Should be two columns: user and secret, but got: #{inspect(colums)}"}
+    %{columns: [_, _], rows: []} ->
+      {:error,
+       "There is no user '#{user}' in the database. Please create it or change the user in the config"}
 
-      {:error, reason} ->
-        {:error, reason}
-    end
+    %{columns: columns} ->
+      {:error,
+       "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
   end
 
   @spec parse_secret(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
@@ -201,6 +202,7 @@ defmodule Supavisor.Helpers do
   """
   @spec detect_ip_version(String.t()) :: :inet | :inet6
   def detect_ip_version(host) when is_binary(host) do
+    Logger.info("Detecting IP version for #{host}")
     host = String.to_charlist(host)
 
     case :inet.gethostbyname(host) do
@@ -231,12 +233,12 @@ defmodule Supavisor.Helpers do
   end
 
   @spec downstream_cert() :: Path.t() | nil
-  def downstream_cert() do
+  def downstream_cert do
     Application.get_env(:supavisor, :global_downstream_cert)
   end
 
   @spec downstream_key() :: Path.t() | nil
-  def downstream_key() do
+  def downstream_key do
     Application.get_env(:supavisor, :global_downstream_key)
   end
 
@@ -327,14 +329,12 @@ defmodule Supavisor.Helpers do
 
   @spec rpc(Node.t(), module(), atom(), [any()], non_neg_integer()) :: {:error, any()} | any()
   def rpc(node, module, function, args, timeout \\ 15_000) do
-    try do
-      :erpc.call(node, module, function, args, timeout)
-    catch
-      kind, reason -> {:error, {:badrpc, {kind, reason}}}
-    else
-      {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
-      result -> result
-    end
+    :erpc.call(node, module, function, args, timeout)
+  catch
+    kind, reason -> {:error, {:badrpc, {kind, reason}}}
+  else
+    {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
+    result -> result
   end
 
   @doc """
@@ -350,11 +350,32 @@ defmodule Supavisor.Helpers do
     Process.flag(:max_heap_size, %{size: max_heap_words})
   end
 
-  @spec set_log_level(atom()) :: :ok
-  def set_log_level(nil), do: :ok
-
-  def set_log_level(level) when is_atom(level) do
+  @spec set_log_level(atom()) :: :ok | nil
+  def set_log_level(level) when level in [:debug, :info, :notice, :warning, :error] do
     Logger.notice("Setting log level to #{inspect(level)}")
     Logger.put_process_level(self(), level)
+  end
+
+  def set_log_level(_), do: nil
+
+  @spec peer_ip(:gen_tcp.socket()) :: String.t()
+  def peer_ip(socket) do
+    case :inet.peername(socket) do
+      {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
+      _error -> "undefined"
+    end
+  end
+
+  @spec controlling_process(Supavisor.sock(), pid) :: :ok | {:error, any()}
+  def controlling_process({mod, socket}, pid),
+    do: mod.controlling_process(socket, pid)
+
+  # This is the value of `NAMEDATALEN` set when compiling PostgreSQL. By default
+  # we use default Postgres value of `64`
+  @max_length Application.compile_env(:supabase, :namedatalen, 64) - 1
+
+  @spec validate_name(String.t()) :: boolean()
+  def validate_name(name) do
+    byte_size(name) in 1..@max_length and String.printable?(name)
   end
 end

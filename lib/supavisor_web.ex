@@ -32,37 +32,10 @@ defmodule SupavisorWeb do
         root: "lib/supavisor_web/templates",
         namespace: SupavisorWeb
 
-      # Import convenience functions from controllers
-      import Phoenix.Controller,
-        only: [get_flash: 1, get_flash: 2, view_module: 1, view_template: 1]
+      # Import basic rendering functionality (render, render_layout, etc)
+      import Phoenix.View
 
-      # Include shared imports and aliases for views
-      unquote(view_helpers())
-    end
-  end
-
-  def live_view do
-    quote do
-      use Phoenix.LiveView,
-        layout: {SupavisorWeb.LayoutView, "live.html"}
-
-      unquote(view_helpers())
-    end
-  end
-
-  def live_component do
-    quote do
-      use Phoenix.LiveComponent
-
-      unquote(view_helpers())
-    end
-  end
-
-  def component do
-    quote do
-      use Phoenix.Component
-
-      unquote(view_helpers())
+      import SupavisorWeb.ErrorHelpers
     end
   end
 
@@ -79,22 +52,6 @@ defmodule SupavisorWeb do
   def channel do
     quote do
       use Phoenix.Channel
-    end
-  end
-
-  defp view_helpers do
-    quote do
-      # Use all HTML functionality (forms, tags, etc)
-      use Phoenix.HTML
-
-      # Import LiveView and .heex helpers (live_render, live_patch, <.form>, etc)
-      import Phoenix.Component
-
-      # Import basic rendering functionality (render, render_layout, etc)
-      import Phoenix.View
-
-      import SupavisorWeb.ErrorHelpers
-      alias SupavisorWeb.Router.Helpers, as: Routes
     end
   end
 

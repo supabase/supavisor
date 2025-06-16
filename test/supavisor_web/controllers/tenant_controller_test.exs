@@ -1,14 +1,10 @@
 defmodule SupavisorWeb.TenantControllerTest do
-  use SupavisorWeb.ConnCase
+  use SupavisorWeb.ConnCase, async: false
 
   import Supavisor.TenantsFixtures
   import ExUnit.CaptureLog
-  require Logger
+
   alias Supavisor.Tenants.Tenant
-
-  @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"
-
-  @blocked_jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJibG9ja2VkIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.y-V3D1N2e8UTXc5PJzmV9cqMteq0ph2wl0yt42akQgA"
 
   @user_valid_attrs %{
     db_user_alias: "some_db_user",
@@ -45,21 +41,29 @@ defmodule SupavisorWeb.TenantControllerTest do
   setup %{conn: conn} do
     :meck.expect(Supavisor.Helpers, :check_creds_get_ver, fn _ -> {:ok, "0.0"} end)
 
+    jwt = gen_token()
+
     new_conn =
       conn
       |> put_req_header("accept", "application/json")
       |> put_req_header(
         "authorization",
-        "Bearer " <> @jwt
+        "Bearer " <> jwt
       )
+
+    blocked_jwt = gen_token("invalid")
 
     blocked_conn =
       conn
       |> put_req_header("accept", "application/json")
       |> put_req_header(
         "authorization",
-        "Bearer " <> @blocked_jwt
+        "Bearer " <> blocked_jwt
       )
+
+    on_exit(fn ->
+      :meck.unload(Supavisor.Helpers)
+    end)
 
     {:ok, conn: new_conn, blocked_conn: blocked_conn}
   end
@@ -164,5 +168,9 @@ defmodule SupavisorWeb.TenantControllerTest do
              Cachex.get(Supavisor.Cache, {:user_cache, :single, "user", external_id, nil})
 
     assert {:ok, nil} = Cachex.get(Supavisor.Cache, {:tenant_cache, external_id, nil})
+  end
+
+  defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
+    Supavisor.Jwt.Token.gen!(secret)
   end
 end
