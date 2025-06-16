@@ -12,10 +12,7 @@ subsequently should show up in your exception monitoring software.
 
 ## Does Supavisor support prepared statements?
 
-As of 1.0 Supavisor supports prepared statements. Supavisor will detect
-`prepare` statements and issue those to all database connections. All clients
-will then be able to address those prepared statements by name when issuing
-`execute` statements.
+It currently supports prepared statements only in session mode.
 
 ## Why do you route connections to a single Supavisor node when deployed as a cluster?
 
