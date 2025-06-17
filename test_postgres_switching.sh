@@ -88,11 +88,36 @@ run_test_query() {
 
     print_status "Connection URL: $psql_url"
 
-    # Query the data back
+    # Query the data back with retry logic
     print_status "Querying data from PostgreSQL $version$pooler_text:"
-    PGPASSWORD=$POSTGRES_PASSWORD psql $psql_url -c "
-        SELECT version();
-    "
+
+    local max_attempts=5
+    local attempt=1
+    local backoff=1
+
+    while [ $attempt -le $max_attempts ]; do
+        if PGPASSWORD=$POSTGRES_PASSWORD psql $psql_url -c "SELECT version();" 2>/tmp/psql_error_$$.txt; then
+            # Success, clean up temp file and return
+            rm -f /tmp/psql_error_$$.txt
+            return 0
+        else
+            # Failure, print error and retry
+            print_error "Query attempt $attempt failed. Error:"
+            cat /tmp/psql_error_$$.txt
+            rm -f /tmp/psql_error_$$.txt
+
+            if [ $attempt -lt $max_attempts ]; then
+                print_warning "Retrying in $backoff seconds..."
+                sleep $backoff
+                backoff=$((backoff * 2))  # Exponential backoff
+            fi
+
+            ((attempt++))
+        fi
+    done
+
+    print_error "Query failed after $max_attempts attempts"
+    return 1
 }
 
 # Function to cleanup containers
