@@ -553,10 +553,11 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {:parameter_status, :updated}, state, _) do
+  def handle_event(:info, {:parameter_status, {:updated, new_ps}}, state, data) do
     Logger.metadata(state: state)
     Logger.warning("ClientHandler: Parameter status is updated")
-    {:stop, {:shutdown, :parameter_status_updated}}
+    encoded_ps = Server.encode_parameter_status(new_ps)
+    {:keep_state, %{data | ps: new_ps}, {:next_event, :internal, {:greetings, encoded_ps}}}
   end
 
   def handle_event(:info, {:parameter_status, ps}, :exchange, _) do
