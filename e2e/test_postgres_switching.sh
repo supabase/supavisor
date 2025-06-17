@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Script to test switching postgres instances behind a url
+#
+# May happen in HA setups or Postgres updates
+#
 set -e
 
 # Colors for output
