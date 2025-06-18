@@ -1,6 +1,4 @@
 defmodule Supavisor.Logger.LogflareFormatter do
-  @behaviour :logger_formatter
-
   @moduledoc """
   Logs formatter module that produces JSON output that can be ingested by the Logflare.
 
@@ -10,6 +8,9 @@ defmodule Supavisor.Logger.LogflareFormatter do
     metadata object
   - `top_level` - keys that should be duplicated in the top-level object
   """
+
+  @behaviour :logger_formatter
+
   @default_context ~w[
       application
       module
@@ -26,15 +27,27 @@ defmodule Supavisor.Logger.LogflareFormatter do
       mfa
     ]a
 
+  @default_context_transformations [
+    mfa: &__MODULE__.transform_mfa/1
+  ]
+
   @impl true
   def check_config(_), do: :ok
 
   @impl true
   def format(%{msg: msg, level: level, meta: meta}, opts) do
-    context_keys = [Map.get(opts, :context, []) | @default_context]
+    context_keys = Map.get(opts, :context, []) ++ @default_context
+
+    context_transformations =
+      Map.get(opts, :context_transformations, []) ++ @default_context_transformations
+
     {context, meta} = Map.split(meta, context_keys)
     top_level = Map.take(meta, opts[:top_level] || [])
-    context = add_vm(context)
+
+    context =
+      context
+      |> add_vm()
+      |> apply_context_transformations(context_transformations)
 
     out =
       case format_message(msg, meta) do
@@ -48,16 +61,29 @@ defmodule Supavisor.Logger.LogflareFormatter do
           }
       end
 
+    metadata =
+      meta
+      |> Map.merge(%{context: context, level: level})
+      |> normalize_deep()
+
     out =
       out
       |> Map.merge(top_level)
-      |> Map.merge(%{
-        level: Atom.to_string(level),
-        metadata: normalize_deep(Map.put(meta, :context, context)),
-        timestamp: context.time
-      })
+      |> Map.merge(%{metadata: metadata, timestamp: context.time})
 
     [JSON.encode_to_iodata!(out), "\n"]
+  end
+
+  defp apply_context_transformations(context, context_transformations) do
+    Enum.reduce(context_transformations, context, fn {key, transformation}, acc ->
+      Map.update(acc, key, nil, fn value -> transformation.(value) end)
+    end)
+  end
+
+  # Logflare expects all members of an array to have the same type, hence we
+  # need arity to be a string
+  def transform_mfa({module, function, arity}) do
+    [inspect(module), to_string(function), to_string(arity)]
   end
 
   @spec add_vm(map()) :: map()

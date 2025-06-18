@@ -52,4 +52,32 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
 
     assert {:ok, _event} = JSON.decode(event)
   end
+
+  test "regression: mfa in context is a string array" do
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+
+    Logger.info("foo")
+
+    assert [event] = FakeLogger.get(pid)
+
+    assert {:ok, event} = JSON.decode(event)
+
+    assert event["metadata"]["context"]["mfa"] == [
+             inspect(__ENV__.module),
+             to_string(elem(__ENV__.function, 0)),
+             to_string(elem(__ENV__.function, 1))
+           ]
+  end
+
+  test "regression: level is inside metadata" do
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+
+    Logger.info("foo")
+
+    assert [event] = FakeLogger.get(pid)
+
+    assert {:ok, event} = JSON.decode(event)
+
+    assert event["metadata"]["level"] == "info"
+  end
 end
