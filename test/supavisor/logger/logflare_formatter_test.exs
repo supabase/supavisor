@@ -80,4 +80,22 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
 
     assert event["metadata"]["level"] == "info"
   end
+
+  test "regression: nodehost, instance_id, location and region should be top-level fields" do
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+
+    Logger.info("test message", instance_id: "123", location: "us-east-1", region: "us-east")
+
+    assert [event] = FakeLogger.get(pid)
+
+    assert {:ok,
+            %{
+              "metadata" => %{
+                "nodehost" => "nohost",
+                "instance_id" => "123",
+                "location" => "us-east-1",
+                "region" => "us-east"
+              }
+            }} = JSON.decode(event)
+  end
 end
