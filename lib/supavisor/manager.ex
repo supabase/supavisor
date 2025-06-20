@@ -93,9 +93,9 @@ defmodule Supavisor.Manager do
 
         {:error, reason} ->
           Logger.error("Parameter status error: #{inspect(reason)}")
-          new_ps = %{server_version: ps["server_version"]}
-          Tenants.update_tenant_ps(state.tenant, new_ps)
-          :updated
+          new_ps = %{"server_version" => ps["server_version"]}
+          {:ok, _} = Tenants.update_tenant_ps(state.tenant, new_ps)
+          {:updated, new_ps}
       end
 
     for pid <- state.wait_ps do
