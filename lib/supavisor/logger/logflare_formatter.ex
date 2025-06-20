@@ -46,7 +46,11 @@ defmodule Supavisor.Logger.LogflareFormatter do
 
     context =
       context
-      |> add_vm()
+      |> Map.merge(%{
+        vm: %{node: node()},
+        module: extract_module(context),
+        function: extract_function(context)
+      })
       |> apply_context_transformations(context_transformations)
 
     out =
@@ -63,7 +67,10 @@ defmodule Supavisor.Logger.LogflareFormatter do
 
     metadata =
       meta
-      |> Map.merge(%{context: context, level: level})
+      |> Map.merge(%{
+        context: context,
+        level: level
+      })
       |> normalize_deep()
 
     out =
@@ -80,14 +87,16 @@ defmodule Supavisor.Logger.LogflareFormatter do
     end)
   end
 
+  defp extract_module(%{mfa: {module, _, _}}), do: module
+  defp extract_module(_), do: nil
+  defp extract_function(%{mfa: {_, function, arity}}), do: "#{function}/#{arity}"
+  defp extract_function(_), do: nil
+
   # Logflare expects all members of an array to have the same type, hence we
   # need arity to be a string
   def transform_mfa({module, function, arity}) do
-    [inspect(module), to_string(function), to_string(arity)]
+    [to_string(module), to_string(function), to_string(arity)]
   end
-
-  @spec add_vm(map()) :: map()
-  defp add_vm(map), do: Map.put(map, :vm, %{node: node()})
 
   @spec format_message(
           message,
@@ -179,6 +188,9 @@ defmodule Supavisor.Logger.LogflareFormatter do
   defp normalize_deep(tuple) when is_tuple(tuple),
     do: tuple |> Tuple.to_list() |> Enum.map(&normalize_deep/1)
 
-  defp normalize_deep(ref) when is_reference(ref) or is_pid(ref), do: inspect(ref)
+  defp normalize_deep(pid) when is_pid(pid),
+    do: pid |> :erlang.pid_to_list() |> to_string()
+
+  defp normalize_deep(ref) when is_reference(ref), do: inspect(ref)
   defp normalize_deep(func) when is_function(func), do: inspect(func)
 end
