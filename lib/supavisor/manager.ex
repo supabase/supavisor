@@ -135,7 +135,7 @@ defmodule Supavisor.Manager do
     System.system_time(:second)
   end
 
-  @spec maybe_update_parameter_status(binary, map, map) :: {:ok, Tenants.Tenant.t()}
+  @spec maybe_update_parameter_status(binary, map, map) :: :ok
   defp maybe_update_parameter_status(tenant, parameter_status, default_parameter_status) do
     parameter_status
     |> Enum.reject(fn {key, new_value} ->
