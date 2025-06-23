@@ -138,8 +138,11 @@ defmodule Supavisor.Manager do
   @spec maybe_update_parameter_status(binary, map, map) :: :ok
   defp maybe_update_parameter_status(tenant, parameter_status, default_parameter_status) do
     parameter_status
-    |> Enum.reject(fn {key, new_value} ->
-      default_parameter_status[key] == new_value
+    |> Enum.filter(fn {key, new_value} ->
+      case default_parameter_status do
+        %{^key => value} when value != new_value -> true
+        _ -> false
+      end
     end)
     |> case do
       [] ->
