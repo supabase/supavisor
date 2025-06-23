@@ -208,7 +208,7 @@ if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
        %{
          # metadata: metadata,
          top_level: [:project],
-         context: [:nodehost, :instance_id, :location, :region]
+         context: []
        }}
 end
 
