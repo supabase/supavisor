@@ -83,23 +83,11 @@ defmodule Supavisor.Manager do
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
-    def_ps = state.default_parameter_status
     encoded_ps = Server.encode_parameter_status(ps)
-
-    message =
-      case check_parameter_status(ps, def_ps) do
-        :ok ->
-          encoded_ps
-
-        {:error, reason} ->
-          Logger.error("Parameter status error: #{inspect(reason)}")
-          new_ps = %{server_version: ps["server_version"]}
-          Tenants.update_tenant_ps(state.tenant, new_ps)
-          :updated
-      end
+    maybe_update_parameter_status(state.tenant, ps, state.default_parameter_status)
 
     for pid <- state.wait_ps do
-      send(pid, {:parameter_status, message})
+      send(pid, {:parameter_status, encoded_ps})
     end
 
     {:reply, :ok, %{state | parameter_status: encoded_ps, wait_ps: []}}
@@ -147,16 +135,27 @@ defmodule Supavisor.Manager do
     System.system_time(:second)
   end
 
-  @spec check_parameter_status(map, map) :: :ok | {:error, String.t()}
-  defp check_parameter_status(ps, def_ps) do
-    Enum.find_value(ps, :ok, fn {key, new_value} ->
-      case def_ps do
-        %{^key => old_value} when old_value != new_value ->
-          {:error, "Parameter #{key} changed from #{old_value} to #{new_value}"}
-
-        _ ->
-          nil
+  @spec maybe_update_parameter_status(binary, map, map) :: :ok
+  defp maybe_update_parameter_status(tenant, parameter_status, default_parameter_status) do
+    parameter_status
+    |> Enum.filter(fn {key, new_value} ->
+      case default_parameter_status do
+        %{^key => value} when value != new_value -> true
+        _ -> false
       end
     end)
+    |> case do
+      [] ->
+        :ok
+
+      changed_parameters ->
+        Logger.warning("Changed parameters: #{inspect(changed_parameters)}")
+
+        # TODO: should we update all? Previously we only updated server version
+        changed_parameters = Map.new(changed_parameters)
+        Tenants.update_tenant_ps(tenant, %{server_version: changed_parameters["server_version"]})
+
+        :ok
+    end
   end
 end
