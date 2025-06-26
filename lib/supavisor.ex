@@ -427,10 +427,14 @@ defmodule Supavisor do
     handler = Supavisor.ClientHandler
     args = Map.put(args, :local, true)
 
-    with {:ok, pid} <- :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do
-      host = Application.get_env(:supavisor, :node_host)
-      {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
-    end
+    pid =
+      case :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do
+        {:ok, pid} -> pid
+        {:error, {:already_started, pid}} -> pid
+      end
+
+    host = Application.get_env(:supavisor, :node_host)
+    {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
   end
 
   @spec count_pools(String.t()) :: non_neg_integer()
