@@ -67,7 +67,7 @@ defmodule Supavisor.Integration.ExternalTest do
       [
         {"PGMODE", ctx.mode},
         {"PGDATABASE", ctx.db},
-        {"PGHOST", "localhost"},
+        {"PGHOST", "127.0.0.1"},
         {"PGPORT", to_string(port(ctx.mode))},
         {"PGUSER", ctx.user},
         {"PGPASS", "postgres"},
