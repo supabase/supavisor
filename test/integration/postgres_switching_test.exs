@@ -3,8 +3,7 @@ defmodule Supavisor.Integration.PostgresSwitchingTest do
 
   alias Supavisor.Jwt.Token
 
-  @moduletag integration: true
-  @moduletag docker: true
+  @moduletag integration_docker: true
 
   @postgres_port 7432
   @postgres_user "postgres"
