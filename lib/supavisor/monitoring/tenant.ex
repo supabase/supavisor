@@ -15,7 +15,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     [
       concurrent_connections(poll_rate),
       concurrent_proxy_connections(poll_rate),
-      concurrent_tenants(poll_rate)
+      concurrent_tenants(poll_rate),
+      client_connections_age(poll_rate)
     ]
   end
 
@@ -32,6 +33,25 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     @moduledoc false
     use Peep.Buckets.Custom,
       buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+  end
+
+  defmodule ClientConnectionAgeBuckets do
+    use Peep.Buckets.Custom,
+      buckets: [
+        500,
+        1_000,
+        5_000,
+        10_000,
+        60_000,
+        300_000,
+        1_800_000,
+        7_200_000,
+        28_800_000,
+        86_400_000,
+        259_200_000,
+        604_800_000,
+        2_592_000_000
+      ]
   end
 
   defp system_metrics do
@@ -220,6 +240,60 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
         search_path: search_path
       }
     )
+  end
+
+  defp client_connections_age(poll_rate) do
+    Polling.build(
+      :supavisor_client_connections_age,
+      poll_rate,
+      {__MODULE__, :execute_client_connections_age, []},
+      [
+        distribution(
+          [:supavisor, :client, :connection, :lifetime],
+          event_name: [:supavisor, :client, :connection, :lifetime],
+          measurement: :lifetime,
+          description: "How long the client connection has been alive.",
+          tags: @tags,
+          unit: {:native, :millisecond},
+          reporter_options: [
+            peep_bucket_calculator: ClientConnectionAgeBuckets
+          ]
+        )
+      ]
+    )
+  end
+
+  def execute_client_connections_age do
+    read_time = System.monotonic_time()
+
+    Supavisor.Registry.TenantClients
+    |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.each(&emit_client_connection_age(&1, read_time))
+  end
+
+  def emit_client_connection_age(
+        {{{type, tenant}, user, mode, db_name, search_path}, meta},
+        read_time
+      ) do
+    # soft-release backwards compatibility: old client connections may not have it
+    case meta[:started_at] do
+      nil ->
+        :noop
+
+      started_at ->
+        :telemetry.execute(
+          [:supavisor, :client, :connection, :lifetime],
+          %{lifetime: read_time - started_at},
+          %{
+            tenant: tenant,
+            user: user,
+            mode: mode,
+            type: type,
+            db_name: db_name,
+            search_path: search_path
+          }
+        )
+    end
   end
 
   defp concurrent_proxy_connections(poll_rate) do

@@ -420,7 +420,7 @@ defmodule Supavisor.ClientHandler do
       db_pid = db_checkout(:both, :on_connect, data)
       data = %{data | manager: manager_ref, db_pid: db_pid, idle_timeout: opts.idle_timeout}
 
-      Registry.register(@clients_registry, data.id, [])
+      Registry.register(@clients_registry, data.id, started_at: System.monotonic_time())
 
       next =
         if opts.ps == [],
