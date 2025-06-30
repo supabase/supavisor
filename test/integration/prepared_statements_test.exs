@@ -5,7 +5,6 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   @tenant "proxy_tenant1"
 
-  @moduletag :failing
   @moduletag prepared_statements: true
 
   setup do
