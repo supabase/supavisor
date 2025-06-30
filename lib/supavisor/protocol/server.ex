@@ -151,28 +151,28 @@ defmodule Supavisor.Protocol.Server do
     end)
   end
 
-  @spec application_name() :: binary()
+  @spec application_name :: binary()
   def application_name, do: @application_name
 
-  @spec terminate_message() :: binary()
-  def terminate_message(), do: @terminate_message
+  @spec terminate_message :: binary()
+  def terminate_message, do: @terminate_message
 
-  @spec scram_request() :: iodata()
+  @spec scram_request :: iodata()
   def scram_request, do: @scram_request
 
-  @spec flush() :: binary()
+  @spec flush :: binary()
   def flush, do: @flush
 
-  @spec sync() :: binary()
+  @spec sync :: binary()
   def sync, do: @sync
 
-  @spec authentication_ok() :: binary()
+  @spec authentication_ok :: binary()
   def authentication_ok, do: @authentication_ok
 
-  @spec ready_for_query() :: binary()
+  @spec ready_for_query :: binary()
   def ready_for_query, do: @ready_for_query
 
-  @spec ssl_request() :: binary()
+  @spec ssl_request :: binary()
   def ssl_request, do: @ssl_request
 
   # Internal functions
