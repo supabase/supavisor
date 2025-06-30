@@ -16,7 +16,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       concurrent_connections(poll_rate),
       concurrent_proxy_connections(poll_rate),
       concurrent_tenants(poll_rate),
-      client_connections_age(poll_rate)
+      client_connections_lifetime(poll_rate)
     ]
   end
 
@@ -35,7 +35,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
   end
 
-  defmodule ClientConnectionAgeBuckets do
+  defmodule ClientConnectionLifetimeBuckets do
     @moduledoc false
 
     use Peep.Buckets.Custom,
@@ -244,11 +244,11 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  defp client_connections_age(poll_rate) do
+  defp client_connections_lifetime(poll_rate) do
     Polling.build(
-      :supavisor_client_connections_age,
+      :supavisor_client_connections_lifetime,
       poll_rate,
-      {__MODULE__, :execute_client_connections_age, []},
+      {__MODULE__, :execute_client_connections_lifetime, []},
       [
         distribution(
           [:supavisor, :client, :connection, :lifetime],
@@ -258,22 +258,22 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags,
           unit: {:native, :millisecond},
           reporter_options: [
-            peep_bucket_calculator: ClientConnectionAgeBuckets
+            peep_bucket_calculator: ClientConnectionLifetimeBuckets
           ]
         )
       ]
     )
   end
 
-  def execute_client_connections_age do
+  def execute_client_connections_lifetime do
     read_time = System.monotonic_time()
 
     Supavisor.Registry.TenantClients
     |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
-    |> Enum.each(&emit_client_connection_age(&1, read_time))
+    |> Enum.each(&emit_client_connection_lifetime(&1, read_time))
   end
 
-  def emit_client_connection_age(
+  def emit_client_connection_lifetime(
         {{{type, tenant}, user, mode, db_name, search_path}, meta},
         read_time
       ) do
