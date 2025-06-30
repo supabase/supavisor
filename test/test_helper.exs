@@ -21,7 +21,8 @@ ExUnit.start(
   capture_log: logs,
   exclude: [
     flaky: true,
-    integration: true
+    integration: true,
+    integration_docker: true
   ]
 )
 
