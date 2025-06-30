@@ -36,6 +36,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   defmodule ClientConnectionAgeBuckets do
+    @moduledoc false
+
     use Peep.Buckets.Custom,
       buckets: [
         500,
