@@ -22,7 +22,7 @@ ExUnit.start(
   exclude: [
     flaky: true,
     integration: true,
-    docker: true
+    integration_docker: true
   ]
 )
 
