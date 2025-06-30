@@ -1,6 +1,8 @@
 defmodule Supavisor.Integration.PostgresSwitchingTest do
   use SupavisorWeb.ConnCase, async: false
 
+  alias Supavisor.Jwt.Token
+
   @moduletag integration: true
   @moduletag docker: true
 
@@ -142,7 +144,7 @@ defmodule Supavisor.Integration.PostgresSwitchingTest do
     :ok
   end
 
-  defp test_connection() do
+  defp test_connection do
     proxy_port = Application.fetch_env!(:supavisor, :proxy_port_transaction)
 
     connection_opts = [
@@ -175,6 +177,6 @@ defmodule Supavisor.Integration.PostgresSwitchingTest do
 
   defp gen_token do
     secret = Application.fetch_env!(:supavisor, :api_jwt_secret)
-    Supavisor.Jwt.Token.gen!(secret)
+    Token.gen!(secret)
   end
 end
