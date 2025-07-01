@@ -3,7 +3,7 @@ defmodule Supavisor.HealthTest do
 
   alias Supavisor.Health
 
-  describe "health_check?/1" do
+  describe "health_check/1" do
     test "returns :ok when all health checks pass" do
       assert :ok = Health.health_check()
     end

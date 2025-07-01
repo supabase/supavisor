@@ -60,21 +60,11 @@ defmodule Supavisor.Health do
       nodes ->
         # If **any** other node returns replies within 500ms, we are good.
         Enum.any?(nodes, fn node ->
-          start_time = System.monotonic_time(:millisecond)
-
-          status =
-            try do
-              :ok = :erpc.call(node, fn -> :ok end, 5_000)
-            catch
-              _, _ -> :error
-            end
-
-          end_time = System.monotonic_time(:millisecond)
-          latency_ms = end_time - start_time
-
-          case status do
-            :error -> false
-            :ok -> latency_ms <= 500
+          try do
+            :ok = :erpc.call(node, fn -> :ok end, 500)
+            true
+          catch
+            _, _ -> false
           end
         end)
     end
