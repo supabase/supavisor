@@ -15,7 +15,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     [
       concurrent_connections(poll_rate),
       concurrent_proxy_connections(poll_rate),
-      concurrent_tenants(poll_rate)
+      concurrent_tenants(poll_rate),
+      client_connections_lifetime(poll_rate)
     ]
   end
 
@@ -32,6 +33,40 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     @moduledoc false
     use Peep.Buckets.Custom,
       buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+  end
+
+  defmodule ClientConnectionLifetimeBuckets do
+    @moduledoc false
+
+    use Peep.Buckets.Custom,
+      buckets: [
+        # 0.5 seconds
+        500,
+        # 1 second
+        1_000,
+        # 5 seconds
+        5_000,
+        # 20 seconds
+        20_000,
+        # 1 minute
+        60_000,
+        # 5 minutes
+        300_000,
+        # 30 minutes
+        1_800_000,
+        # 2 hours
+        7_200_000,
+        # 8 hours
+        28_800_000,
+        # 1 day
+        86_400_000,
+        # 3 days
+        259_200_000,
+        # 1 week
+        604_800_000,
+        # 30 days
+        2_592_000_000
+      ]
   end
 
   defp system_metrics do
@@ -220,6 +255,62 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
         search_path: search_path
       }
     )
+  end
+
+  defp client_connections_lifetime(poll_rate) do
+    Polling.build(
+      :supavisor_client_connections_lifetime,
+      poll_rate,
+      {__MODULE__, :execute_client_connections_lifetime, []},
+      [
+        distribution(
+          [:supavisor, :client, :connection, :lifetime, :ms],
+          event_name: [:supavisor, :client, :connection, :lifetime],
+          measurement: :lifetime,
+          description: "How long the client connection has been alive.",
+          tags: @tags,
+          unit: {:native, :millisecond},
+          reporter_options: [
+            peep_bucket_calculator: ClientConnectionLifetimeBuckets
+          ]
+        )
+      ]
+    )
+  end
+
+  @spec execute_client_connections_lifetime() :: :ok
+  def execute_client_connections_lifetime do
+    read_time = System.monotonic_time()
+
+    Supavisor.Registry.TenantClients
+    |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.each(&emit_client_connection_lifetime(&1, read_time))
+  end
+
+  @spec emit_client_connection_lifetime({Supavisor.id(), keyword()}, integer()) :: :ok | :noop
+  def emit_client_connection_lifetime(
+        {{{type, tenant}, user, mode, db_name, search_path}, meta},
+        read_time
+      ) do
+    # soft-release backwards compatibility: old client connections may not have it
+    case meta[:started_at] do
+      nil ->
+        :noop
+
+      started_at ->
+        :telemetry.execute(
+          [:supavisor, :client, :connection, :lifetime],
+          %{lifetime: read_time - started_at},
+          %{
+            tenant: tenant,
+            user: user,
+            mode: mode,
+            type: type,
+            db_name: db_name,
+            search_path: search_path
+          }
+        )
+    end
   end
 
   defp concurrent_proxy_connections(poll_rate) do
