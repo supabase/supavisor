@@ -4,11 +4,13 @@ defmodule Supavisor.ErlSysMon do
   """
 
   use GenServer
+  alias Supavisor.Helpers
 
   require Logger
 
   def start_link(args) do
-    GenServer.start_link(__MODULE__, args, name: __MODULE__)
+    name = args[:name] || __MODULE__
+    GenServer.start_link(__MODULE__, args, name: name)
   end
 
   def init(_args) do
@@ -16,7 +18,8 @@ defmodule Supavisor.ErlSysMon do
       :busy_dist_port,
       :busy_port,
       {:long_gc, 250},
-      {:long_schedule, 100}
+      {:long_schedule, 100},
+      {:large_heap, Helpers.mb_to_words(25)}
     ])
 
     {:ok, []}
