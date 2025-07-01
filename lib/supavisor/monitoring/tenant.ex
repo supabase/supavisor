@@ -40,18 +40,31 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
     use Peep.Buckets.Custom,
       buckets: [
+        # 0.5 seconds
         500,
+        # 1 second
         1_000,
+        # 5 seconds
         5_000,
-        10_000,
+        # 20 seconds
+        20_000,
+        # 1 minute
         60_000,
+        # 5 minutes
         300_000,
+        # 30 minutes
         1_800_000,
+        # 2 hours
         7_200_000,
+        # 8 hours
         28_800_000,
+        # 1 day
         86_400_000,
+        # 3 days
         259_200_000,
+        # 1 week
         604_800_000,
+        # 30 days
         2_592_000_000
       ]
   end
@@ -251,7 +264,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       {__MODULE__, :execute_client_connections_lifetime, []},
       [
         distribution(
-          [:supavisor, :client, :connection, :lifetime],
+          [:supavisor, :client, :connection, :lifetime, :ms],
           event_name: [:supavisor, :client, :connection, :lifetime],
           measurement: :lifetime,
           description: "How long the client connection has been alive.",
@@ -265,6 +278,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
+  @spec execute_client_connections_lifetime() :: :ok
   def execute_client_connections_lifetime do
     read_time = System.monotonic_time()
 
@@ -273,6 +287,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     |> Enum.each(&emit_client_connection_lifetime(&1, read_time))
   end
 
+  @spec emit_client_connection_lifetime(Supavisor.id(), integer()) :: :ok | :noop
   def emit_client_connection_lifetime(
         {{{type, tenant}, user, mode, db_name, search_path}, meta},
         read_time
