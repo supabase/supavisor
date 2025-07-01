@@ -209,11 +209,18 @@ defmodule SupavisorWeb.TenantController do
     summary: "Health check",
     parameters: [],
     responses: %{
-      204 => Empty.response()
+      204 => Empty.response(),
+      503 => Empty.response()
     }
   )
 
   def health(conn, _) do
-    send_resp(conn, 204, "")
+    case Supavisor.Health.health_check() do
+      :ok ->
+        send_resp(conn, 204, "")
+
+      {:error, :failed_checks, _failed_checks} ->
+        send_resp(conn, 503, "")
+    end
   end
 end
