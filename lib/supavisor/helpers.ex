@@ -378,4 +378,18 @@ defmodule Supavisor.Helpers do
   def validate_name(name) do
     byte_size(name) in 1..@max_length and String.printable?(name)
   end
+
+  @doc """
+  Converts megabytes to Erlang words.
+
+  ## Examples
+
+      iex> Supavisor.Helpers.mb_to_words(1)
+      131_072
+
+      iex> Supavisor.Helpers.mb_to_words(1.5)
+      196_608
+  """
+  @spec mb_to_words(number()) :: pos_integer()
+  def mb_to_words(mb), do: round(mb * 1_048_576 / :erlang.system_info(:wordsize))
 end
