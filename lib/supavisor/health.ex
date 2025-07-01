@@ -73,17 +73,15 @@ defmodule Supavisor.Health do
   @doc false
   @spec database_reachable?() :: boolean()
   def database_reachable? do
-    try do
-      case Supavisor.Repo.query("SELECT 1") do
-        {:ok, %Postgrex.Result{rows: [[1]]}} ->
-          true
+    case Supavisor.Repo.query("SELECT 1") do
+      {:ok, %Postgrex.Result{rows: [[1]]}} ->
+        true
 
-        _ ->
-          false
-      end
-    catch
-      _, _ -> false
+      _ ->
+        false
     end
+  catch
+    _, _ -> false
   end
 
   @doc false
