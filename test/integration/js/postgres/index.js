@@ -1,4 +1,4 @@
-import { t, nt, ot } from './test.js' // eslint-disable-line
+import { t, nt, ot } from '../shared/test.js' // eslint-disable-line
 import net from 'node:net'
 import fs from 'node:fs'
 import crypto from 'node:crypto'

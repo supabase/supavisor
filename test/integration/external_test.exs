@@ -25,6 +25,20 @@ defmodule Supavisor.Integration.ExternalTest do
     end
   end
 
+  describe "neondatabase/serverless.js" do
+    @describetag library: "serverless.js", suite: "js"
+
+    @tag runtime: "node", mode: "session"
+    test "Node session", ctx do
+      assert_run(ctx, ~w[neon_serverless/index.js])
+    end
+
+    @tag runtime: "node", mode: "transaction"
+    test "Node transaction", ctx do
+      assert_run(ctx, ~w[neon_serverless/index.js])
+    end
+  end
+
   describe "Postgres.js" do
     @describetag library: "postgres.js", suite: "js"
 
@@ -65,9 +79,10 @@ defmodule Supavisor.Integration.ExternalTest do
 
     env =
       [
+        # {"NODE_DEBUG", "*"},
         {"PGMODE", ctx.mode},
         {"PGDATABASE", ctx.db},
-        {"PGHOST", "localhost"},
+        {"PGHOST", "127.0.0.1"},
         {"PGPORT", to_string(port(ctx.mode))},
         {"PGUSER", ctx.user},
         {"PGPASS", "postgres"},

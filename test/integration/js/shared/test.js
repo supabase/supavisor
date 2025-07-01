@@ -83,4 +83,3 @@ function exit() {
 
   if (!success || only || ignored) { process.exit(1) } else { process.exit(0) }
 }
-
