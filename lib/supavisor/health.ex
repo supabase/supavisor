@@ -58,8 +58,7 @@ defmodule Supavisor.Health do
         true
 
       nodes ->
-        # If **any** other node returns :ok or replies within 500ms,
-        # we are good.
+        # If **any** other node returns replies within 500ms, we are good.
         Enum.any?(nodes, fn node ->
           start_time = System.monotonic_time(:millisecond)
 
