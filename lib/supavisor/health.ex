@@ -20,7 +20,7 @@ defmodule Supavisor.Health do
   @doc """
   The main API for checking the health of a Supavisor node.
   """
-  @spec health_check([Keyword.t()]) :: :ok | {:error, :failed_checks, [atom()]}
+  @spec health_check(Keyword.t()) :: :ok | {:error, :failed_checks, [atom()]}
   def health_check(checks \\ @checks) do
     successful_checks =
       @task_supervisor
