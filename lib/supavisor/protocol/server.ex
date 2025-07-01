@@ -16,6 +16,8 @@ defmodule Supavisor.Protocol.Server do
   @msg_cancel_header <<16::32, 1234::16, 5678::16>>
   @application_name <<?S, 31::32, "application_name", 0, "Supavisor", 0>>
   @terminate_message <<?X, 4::32>>
+  @flush <<?H, 4::integer-32>>
+  @sync <<?S, 4::integer-32>>
 
   defmodule Pkt do
     @moduledoc "Representing a packet structure with tag, length, and payload fields."
@@ -34,45 +36,157 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  @spec decode(iodata()) :: [Pkt.t()] | []
-  def decode(data) do
-    decode(data, [])
+  @spec decode(iodata()) :: [Pkt.t()]
+  def decode(data), do: decode(data, [])
+
+  @spec decode_pkt(binary()) :: {:ok, Pkt.t(), binary()} | {:error, :bad_packet}
+  def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
+    payload_len = pkt_len - 4
+
+    case rest do
+      <<bin_payload::binary-size(payload_len), rest2::binary>> ->
+        tag = tag(char)
+        payload = decode_payload(tag, bin_payload)
+        {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
+
+      _ ->
+        {:error, :bad_packet}
+    end
   end
 
-  def decode(data, acc) when byte_size(data) >= @pkt_header_size do
+  def decode_pkt(_), do: {:error, :bad_packet}
+
+  @spec decode_string(binary()) :: {:ok, binary(), binary()} | {:error, :not_null_terminated}
+  def decode_string(bin) do
+    case :binary.match(bin, <<0>>) do
+      :nomatch ->
+        {:error, :not_null_terminated}
+
+      {pos, 1} ->
+        {string, <<0, rest::binary>>} = :erlang.split_binary(bin, pos)
+        {:ok, string, rest}
+    end
+  end
+
+  @spec md5_request(<<_::32>>) :: iodata()
+  def md5_request(salt), do: [<<?R, 12::32, 5::32>>, salt]
+
+  @spec exchange_first_message(binary, binary | boolean, pos_integer) :: binary
+  def exchange_first_message(nonce, salt \\ false, iterations \\ 4096) do
+    server_nonce =
+      16
+      |> :pgo_scram.get_nonce()
+      |> Base.encode64()
+
+    secret = if salt, do: salt, else: server_nonce
+    "r=#{nonce <> server_nonce},s=#{secret},i=#{iterations}"
+  end
+
+  @spec exchange_message(:first | :final, binary()) :: iodata()
+  def exchange_message(type, message) do
+    code =
+      case type do
+        :first -> 11
+        :final -> 12
+      end
+
+    [<<?R, byte_size(message) + 8::32, code::32>>, message]
+  end
+
+  @spec error_message(binary(), binary()) :: iodata()
+  def error_message(code, value) do
+    message = ["SFATAL", 0, "VFATAL", 0, "C", code, 0, "M", value, 0, 0]
+    [<<?E, IO.iodata_length(message) + 4::32>>, message]
+  end
+
+  @spec encode_error_message(list()) :: iodata()
+  def encode_error_message(message) when is_list(message) do
+    message = Enum.join(message, <<0>>) <> <<0, 0>>
+    [<<?E, byte_size(message) + 4::32>>, message]
+  end
+
+  @spec encode_parameter_status(map) :: iodata()
+  def encode_parameter_status(ps) do
+    for {key, value} <- ps do
+      encode_pkt(:parameter_status, key, value)
+    end
+  end
+
+  @spec encode_pkt(:parameter_status, binary, binary) :: iodata()
+  def encode_pkt(:parameter_status, key, value) do
+    payload = [key, <<0>>, value, <<0>>]
+    len = IO.iodata_length(payload) + 4
+    [<<?S, len::integer-32>>, payload]
+  end
+
+  @spec backend_key_data() :: {iodata(), binary}
+  def backend_key_data do
+    pid = System.unique_integer([:positive, :monotonic])
+    key = :crypto.strong_rand_bytes(4)
+    payload = <<pid::integer-32, key::binary>>
+    len = IO.iodata_length(payload) + 4
+    {<<?K, len::32>>, payload}
+  end
+
+  @spec decode_startup_packet(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
+  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
+    with {:ok, payload} <- decode_startup_packet_payload(rest) do
+      pkt = %{
+        len: len,
+        payload: payload,
+        tag: :startup
+      }
+
+      {:ok, pkt}
+    end
+  end
+
+  def decode_startup_packet(_), do: {:error, :bad_startup_payload}
+
+  @spec has_read_only_error?(list()) :: boolean
+  def has_read_only_error?(pkts) do
+    Enum.any?(pkts, fn
+      %{payload: ["SERROR", "VERROR", "C25006" | _]} -> true
+      _ -> false
+    end)
+  end
+
+  @spec application_name :: binary()
+  def application_name, do: @application_name
+
+  @spec terminate_message :: binary()
+  def terminate_message, do: @terminate_message
+
+  @spec scram_request :: iodata()
+  def scram_request, do: @scram_request
+
+  @spec flush :: binary()
+  def flush, do: @flush
+
+  @spec sync :: binary()
+  def sync, do: @sync
+
+  @spec authentication_ok :: binary()
+  def authentication_ok, do: @authentication_ok
+
+  @spec ready_for_query :: binary()
+  def ready_for_query, do: @ready_for_query
+
+  @spec ssl_request :: binary()
+  def ssl_request, do: @ssl_request
+
+  # Internal functions
+
+  @spec decode(binary(), list()) :: [Pkt.t()]
+  defp decode(data, acc) when byte_size(data) >= @pkt_header_size do
     {:ok, pkt, rest} = decode_pkt(data)
     decode(rest, [pkt | acc])
   end
 
-  def decode(_, acc) do
-    Enum.reverse(acc)
-  end
+  defp decode(_, acc), do: Enum.reverse(acc)
 
-  def packet(tag, pkt_len, payload) do
-    %Pkt{
-      tag: tag,
-      len: pkt_len + 1,
-      payload: decode_payload(tag, payload)
-    }
-  end
-
-  def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>, decode_payload \\ true) do
-    tag = tag(char)
-    payload_len = pkt_len - 4
-
-    <<bin_payload::binary-size(payload_len), rest2::binary>> = rest
-
-    payload =
-      if decode_payload do
-        decode_payload(tag, bin_payload)
-      else
-        nil
-      end
-
-    {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
-  end
-
-  def tag(char) do
+  @spec tag(char()) :: atom()
+  defp tag(char) do
     case char do
       ?R -> :authentication
       ?K -> :backend_key_data
@@ -102,7 +216,9 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def decode_payload(:authentication, payload) do
+  @spec decode_payload(:authentication, binary()) ::
+          atom() | {atom(), binary()} | {:undefined, any()}
+  defp decode_payload(:authentication, payload) do
     case payload do
       <<0::integer-32>> ->
         :authentication_ok
@@ -142,50 +258,52 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def decode_payload(:parameter_status, payload) do
+  @spec decode_payload(:parameter_status, binary()) :: {binary(), binary()} | :undefined
+  defp decode_payload(:parameter_status, payload) do
     case String.split(payload, <<0>>, trim: true) do
       [k, v] -> {k, v}
       _ -> :undefined
     end
   end
 
-  def decode_payload(:backend_key_data, <<pid::integer-32, key::integer-32>>) do
-    %{pid: pid, key: key}
-  end
+  @spec decode_payload(:backend_key_data, binary()) :: %{pid: pos_integer(), key: binary()}
+  defp decode_payload(:backend_key_data, <<pid::integer-32, key::integer-32>>),
+    do: %{pid: pid, key: key}
 
-  def decode_payload(:ready_for_query, payload) do
+  @spec decode_payload(:ready_for_query, binary()) :: :idle | :transaction | :error
+  defp decode_payload(:ready_for_query, payload) do
     case payload do
-      <<"I">> -> :idle
-      <<"T">> -> :transaction
-      <<"E">> -> :error
+      "I" -> :idle
+      "T" -> :transaction
+      "E" -> :error
     end
   end
 
-  def decode_payload(:parse_complete, "") do
-    :parse_complete
-  end
+  @spec decode_payload(:parse_complete, binary()) :: :parse_complete
+  defp decode_payload(:parse_complete, ""), do: :parse_complete
 
-  def decode_payload(:parameter_description, <<count::integer-16, rest::binary>>) do
-    {count, decode_parameter_description(rest, [])}
-  end
+  @spec decode_payload(:parameter_description, binary()) :: {pos_integer(), list()}
+  defp decode_payload(:parameter_description, <<count::integer-16, rest::binary>>),
+    do: {count, decode_parameter_description(rest, [])}
 
-  def decode_payload(:row_description, <<count::integer-16, rest::binary>>) do
-    decode_row_description(count, rest, [])
-  end
+  @spec decode_payload(:row_description, binary()) :: list()
+  defp decode_payload(:row_description, <<count::integer-16, rest::binary>>),
+    do: decode_row_description(count, rest, [])
 
-  def decode_payload(:data_row, _payload) do
-    nil
-  end
+  @spec decode_payload(:data_row, binary()) :: nil
+  defp decode_payload(:data_row, _payload), do: nil
 
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
-  def decode_payload(:error_response, payload) do
-    :binary.split(payload, <<0>>, [:global, :trim_all])
-  end
+  @spec decode_payload(:error_response, binary()) :: [binary()]
+  defp decode_payload(:error_response, payload),
+    do: String.split(payload, <<0>>, trim: true)
 
-  def decode_payload(
-        :password_message,
-        <<"SCRAM-SHA-256", 0, _::32, channel::binary-3, bin::binary>>
-      ) do
+  @spec decode_payload(:password_message, binary()) ::
+          {:scram_sha_256, map()} | {:md5, binary()} | :undefined
+  defp decode_payload(
+         :password_message,
+         <<"SCRAM-SHA-256", 0, _::32, channel::binary-3, bin::binary>>
+       ) do
     case kv_to_map(bin) do
       {:ok, map} ->
         channel =
@@ -201,26 +319,26 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def decode_payload(:password_message, "md5" <> _ = bin) do
+  defp decode_payload(:password_message, "md5" <> _ = bin) do
     case :binary.split(bin, <<0>>) do
       [digest, ""] -> {:md5, digest}
       _ -> :undefined
     end
   end
 
-  def decode_payload(:password_message, bin) do
+  @spec decode_payload(:password_message, binary()) ::
+          {:first_msg_response, map()} | :undefined
+  defp decode_payload(:password_message, bin) do
     case kv_to_map(bin) do
       {:ok, map} -> {:first_msg_response, map}
       {:error, _} -> :undefined
     end
   end
 
-  def decode_payload(_, _) do
-    :undefined
-  end
+  defp decode_payload(_, _), do: :undefined
 
-  @spec kv_to_map(String.t()) :: {:ok, map()} | {:error, String.t()}
-  def kv_to_map(bin) do
+  @spec kv_to_map(binary()) :: {:ok, map()} | {:error, String.t()}
+  defp kv_to_map(bin) do
     Regex.scan(~r/(\w+)=([^,]*)/, bin)
     |> Map.new(fn [_, k, v] -> {k, v} end)
     |> case do
@@ -229,181 +347,50 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def decode_row_description(0, "", acc), do: Enum.reverse(acc)
+  @spec decode_row_description(non_neg_integer(), binary(), list()) :: [map()] | {:error, :decode}
+  defp decode_row_description(0, "", acc), do: Enum.reverse(acc)
 
-  def decode_row_description(count, rest, acc) do
-    case decode_string(rest) do
-      {:ok, field_name,
-       <<table_oid::integer-32, attr_num::integer-16, data_type_oid::integer-32,
-         data_type_size::integer-16, type_modifier::integer-32, format_code::integer-16,
-         tail::binary>>} ->
-        case decode_format_code(format_code) do
-          {:ok, format} ->
-            field = %{
-              name: field_name,
-              type_info: PgType.type(data_type_oid),
-              table_oid: table_oid,
-              attr_number: attr_num,
-              data_type_oid: data_type_oid,
-              data_type_size: data_type_size,
-              type_modifier: type_modifier,
-              format: format
-            }
+  defp decode_row_description(count, rest, acc) do
+    with {:ok, field_name,
+          <<table_oid::integer-32, attr_num::integer-16, data_type_oid::integer-32,
+            data_type_size::integer-16, type_modifier::integer-32, format_code::integer-16,
+            tail::binary>>} <- decode_string(rest),
+         {:ok, format} <- decode_format_code(format_code) do
+      field = %{
+        name: field_name,
+        type_info: PgType.type(data_type_oid),
+        table_oid: table_oid,
+        attr_number: attr_num,
+        data_type_oid: data_type_oid,
+        data_type_size: data_type_size,
+        type_modifier: type_modifier,
+        format: format
+      }
 
-            decode_row_description(count - 1, tail, [field | acc])
-        end
-
-      _ ->
-        {:error, :decode}
+      decode_row_description(count - 1, tail, [field | acc])
+    else
+      _ -> {:error, :decode}
     end
   end
 
-  def decode_format_code(0) do
-    {:ok, :text}
-  end
-
-  def decode_format_code(1) do
-    {:ok, :binary}
-  end
-
-  def decode_format_code(_) do
-    {:error, :unknown_format_code}
-  end
-
-  def decode_string(bin) do
-    case :binary.match(bin, <<0>>) do
-      :nomatch ->
-        {:error, :not_null_terminated}
-
-      {pos, 1} ->
-        {string, <<0, rest::binary>>} = :erlang.split_binary(bin, pos)
-        {:ok, string, rest}
+  @spec decode_format_code(0 | 1) :: {:ok, :text | :binary} | {:error, :unknown_format_code}
+  defp decode_format_code(code) do
+    case code do
+      0 -> {:ok, :text}
+      1 -> {:ok, :binary}
+      _ -> {:error, :unknown_format_code}
     end
   end
 
-  @spec scram_request() :: iodata
-  def scram_request do
-    @scram_request
-  end
+  @spec decode_parameter_description(binary(), list()) :: [pos_integer()]
+  defp decode_parameter_description("", acc), do: Enum.reverse(acc)
 
-  @spec md5_request(<<_::32>>) :: iodata
-  def md5_request(salt) do
-    [<<?R, 12::32, 5::32>>, salt]
-  end
-
-  @spec exchange_first_message(binary, binary | boolean, pos_integer) :: binary
-  def exchange_first_message(nonce, salt \\ false, iterations \\ 4096) do
-    secret =
-      if salt do
-        salt
-      else
-        :pgo_scram.get_nonce(16) |> Base.encode64()
-      end
-
-    server_nonce = :pgo_scram.get_nonce(16) |> Base.encode64()
-    "r=#{nonce <> server_nonce},s=#{secret},i=#{iterations}"
-  end
-
-  @spec exchange_message(:first | :final, binary()) :: iodata()
-  def exchange_message(type, message) do
-    code =
-      case type do
-        :first ->
-          11
-
-        :final ->
-          12
-      end
-
-    [<<?R, byte_size(message) + 8::32, code::32>>, message]
-  end
-
-  @spec error_message(binary(), binary()) :: iodata()
-  def error_message(code, value) do
-    message = ["SFATAL", 0, "VFATAL", 0, "C", code, 0, "M", value, 0, 0]
-    [<<?E, IO.iodata_length(message) + 4::32>>, message]
-  end
-
-  @spec encode_error_message(list()) :: iodata()
-  def encode_error_message(message) when is_list(message) do
-    message = Enum.join(message, <<0>>) <> <<0, 0>>
-    [<<?E, byte_size(message) + 4::32>>, message]
-  end
-
-  def decode_parameter_description("", acc), do: Enum.reverse(acc)
-
-  def decode_parameter_description(<<oid::integer-32, rest::binary>>, acc) do
-    decode_parameter_description(rest, [oid | acc])
-  end
-
-  def flush do
-    <<?H, 4::integer-32>>
-  end
-
-  def sync do
-    <<?S, 4::integer-32>>
-  end
-
-  def encode(query) do
-    payload = [[], <<0>>, query, <<0>>, <<0, 0>>, []]
-    payload_len = IO.iodata_length(payload) + 4
-    [<<?P, payload_len::integer-32>>, payload]
-  end
-
-  def test_extended_query do
-    [
-      encode("select * from todos where id = 40;"),
-      [<<68, 0, 0, 0, 6, 83>>, [], <<0>>],
-      flush()
-    ]
-  end
-
-  def select_1_response do
-    <<84, 0, 0, 0, 33, 0, 1, 63, 99, 111, 108, 117, 109, 110, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      23, 0, 4, 255, 255, 255, 255, 0, 0, 68, 0, 0, 0, 11, 0, 1, 0, 0, 0, 1, 49, 67, 0, 0, 0, 13,
-      83, 69, 76, 69, 67, 84, 32, 49, 0, 90, 0, 0, 0, 5, 73>>
-  end
-
-  def authentication_ok do
-    @authentication_ok
-  end
-
-  @spec encode_parameter_status(map) :: iodata()
-  def encode_parameter_status(ps) do
-    for {key, value} <- ps do
-      encode_pkt(:parameter_status, key, value)
-    end
-  end
-
-  @spec encode_pkt(:parameter_status, binary, binary) :: iodata()
-  def encode_pkt(:parameter_status, key, value) do
-    payload = [key, <<0>>, value, <<0>>]
-    len = IO.iodata_length(payload) + 4
-    [<<?S, len::integer-32>>, payload]
-  end
-
-  @spec backend_key_data() :: {iodata(), binary}
-  def backend_key_data do
-    pid = System.unique_integer([:positive, :monotonic])
-    key = :crypto.strong_rand_bytes(4)
-    payload = <<pid::integer-32, key::binary>>
-    len = IO.iodata_length(payload) + 4
-    {<<?K, len::32>>, payload}
-  end
-
-  @spec ready_for_query() :: binary()
-  def ready_for_query do
-    @ready_for_query
-  end
-
-  # SSLRequest message
-  @spec ssl_request() :: binary()
-  def ssl_request do
-    @ssl_request
-  end
+  defp decode_parameter_description(<<oid::integer-32, rest::binary>>, acc),
+    do: decode_parameter_description(rest, [oid | acc])
 
   # The startup packet payload is a list of key/value pairs, separated by null bytes
-  def decode_startup_packet_payload(payload) do
+  @spec decode_startup_packet_payload(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
+  defp decode_startup_packet_payload(payload) do
     fields = String.split(payload, <<0>>, trim: true)
 
     # If the number of fields is odd, then the payload is malformed
@@ -421,58 +408,9 @@ defmodule Supavisor.Protocol.Server do
 
       # We only do light validation on the fields in the payload. The only field we use at the
       # moment is `user`. If that's missing, this is a bad payload.
-      if Map.has_key?(map, "user") do
-        {:ok, map}
-      else
-        {:error, :bad_startup_payload}
-      end
+      if Map.has_key?(map, "user"),
+        do: {:ok, map},
+        else: {:error, :bad_startup_payload}
     end
   end
-
-  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
-    with {:ok, payload} <- decode_startup_packet_payload(rest) do
-      pkt = %{
-        len: len,
-        payload: payload,
-        tag: :startup
-      }
-
-      {:ok, pkt}
-    end
-  end
-
-  def decode_startup_packet(_) do
-    {:error, :bad_startup_payload}
-  end
-
-  def encode_startup_packet(payload) do
-    bin =
-      Enum.reduce(payload, "", fn
-        # remove options
-        {"options", _}, acc ->
-          acc
-
-        {"application_name" = k, v}, acc ->
-          <<k::binary, 0, v::binary, " via Supavisor", 0>> <> acc
-
-        {k, v}, acc ->
-          <<k::binary, 0, v::binary, 0>> <> acc
-      end)
-
-    <<byte_size(bin) + 9::32, 0, 3, 0, 0, bin::binary, 0>>
-  end
-
-  @spec has_read_only_error?(list) :: boolean
-  def has_read_only_error?(pkts) do
-    Enum.any?(pkts, fn
-      %{payload: ["SERROR", "VERROR", "C25006" | _]} -> true
-      _ -> false
-    end)
-  end
-
-  @spec application_name() :: binary
-  def application_name, do: @application_name
-
-  @spec terminate_message() :: binary
-  def terminate_message(), do: @terminate_message
 end
