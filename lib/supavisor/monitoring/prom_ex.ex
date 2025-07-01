@@ -10,7 +10,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   alias Peep.Storage
   alias PromEx.Plugins
-  alias Supavisor.PromEx.Plugins.{OsMon, Tenant}
+  alias Supavisor.PromEx.Plugins.{Cluster, OsMon, Tenant}
   alias Telemetry.Metrics
 
   defmodule Store do
@@ -65,7 +65,8 @@ defmodule Supavisor.Monitoring.PromEx do
 
       # Custom PromEx metrics plugins
       {OsMon, poll_rate: poll_rate},
-      {Tenant, poll_rate: poll_rate}
+      {Tenant, poll_rate: poll_rate},
+      {Cluster, poll_rate: poll_rate}
     ]
   end
 
