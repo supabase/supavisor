@@ -46,6 +46,10 @@ defmodule SupavisorWeb.WsProxy do
     {[{:binary, bin}], state}
   end
 
+  def websocket_info({:tcp_closed, socket}, %{socket: socket}) do
+    {:stop, :normal}
+  end
+
   def websocket_info(msg, state) do
     Logger.error("Undefined websocket_info msg: #{inspect(msg, pretty: true)}")
     {:ok, state}
