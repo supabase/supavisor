@@ -2,6 +2,8 @@
 
 # Supavisor - Postgres connection pooler
 
+[![Coverage Status](https://coveralls.io/repos/github/supabase/supavisor/badge.svg?branch=main)](https://coveralls.io/github/supabase/supavisor?branch=main)
+
 - [Overview](#overview)
 - [Motivation](#motivation)
 - [Architecture](#architecture)
