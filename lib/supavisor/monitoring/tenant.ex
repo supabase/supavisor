@@ -287,7 +287,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     |> Enum.each(&emit_client_connection_lifetime(&1, read_time))
   end
 
-  @spec emit_client_connection_lifetime(Supavisor.id(), integer()) :: :ok | :noop
+  @spec emit_client_connection_lifetime({Supavisor.id(), keyword()}, integer()) :: :ok | :noop
   def emit_client_connection_lifetime(
         {{{type, tenant}, user, mode, db_name, search_path}, meta},
         read_time
