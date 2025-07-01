@@ -19,6 +19,7 @@ defmodule Supavisor.ErlSysMon do
       :busy_port,
       {:long_gc, 250},
       {:long_schedule, 100},
+      {:long_message_queue, {0, 1_000}},
       {:large_heap, Helpers.mb_to_words(25)}
     ])
 

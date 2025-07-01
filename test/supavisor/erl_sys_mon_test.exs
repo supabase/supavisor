@@ -15,6 +15,7 @@ defmodule Supavisor.ErlSysMonTest do
       :busy_port,
       {:long_gc, 250},
       {:long_schedule, 100},
+      {:long_message_queue, {0, 1_000}},
       {:large_heap, 3_276_800}
     ]
     |> Enum.each(&assert &1 in settings)
