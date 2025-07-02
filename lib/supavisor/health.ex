@@ -65,15 +65,13 @@ defmodule Supavisor.Health do
         # If **any** other node returns replies within the timeout, we are good.
         nodes
         |> Enum.zip(results)
-        |> Enum.reduce(false, fn {node, result}, acc ->
-          case result do
-            {:ok, _} ->
-              true
+        |> Enum.reduce(false, fn
+          {_node, {:ok, _}}, _acc ->
+            true
 
-            error ->
-              Logger.warning("Failed :erpc call to #{inspect(node)} with #{inspect(error)}")
-              acc
-          end
+          {node, error}, acc ->
+            Logger.warning("Failed :erpc call to #{inspect(node)} with #{inspect(error)}")
+            acc
         end)
     end
   end
