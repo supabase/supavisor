@@ -153,6 +153,27 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "health endpoint" do
+    test "returns 204 when all health checks pass", %{conn: conn} do
+      conn = get(conn, Routes.tenant_path(conn, :health))
+      assert response(conn, 204) == ""
+    end
+
+    test "returns 503 with failed checks when health checks fail", %{conn: conn} do
+      :meck.expect(Supavisor.Health, :database_reachable?, fn -> false end)
+      on_exit(fn -> :meck.unload(Supavisor.Health) end)
+
+      conn = get(conn, Routes.tenant_path(conn, :health))
+
+      assert conn.status == 503
+      response_body = json_response(conn, 503)
+
+      assert response_body["status"] == "unhealthy"
+      assert response_body["failed_checks"] == ["database_reachable"]
+      assert {:ok, _datetime, _offset} = DateTime.from_iso8601(response_body["timestamp"])
+    end
+  end
+
   defp create_tenant(_) do
     tenant = tenant_fixture()
     %{tenant: tenant}
