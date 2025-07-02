@@ -16,6 +16,7 @@ defmodule SupavisorWeb.TenantController do
     Created,
     Empty,
     NotFound,
+    ServiceUnavailable,
     Tenant,
     TenantCreate,
     TenantList
@@ -210,7 +211,7 @@ defmodule SupavisorWeb.TenantController do
     parameters: [],
     responses: %{
       204 => Empty.response(),
-      503 => Empty.response()
+      503 => ServiceUnavailable.response()
     }
   )
 
@@ -219,8 +220,16 @@ defmodule SupavisorWeb.TenantController do
       :ok ->
         send_resp(conn, 204, "")
 
-      {:error, :failed_checks, _failed_checks} ->
-        send_resp(conn, 503, "")
+      {:error, :failed_checks, failed_checks} ->
+        response = %{
+          status: "unhealthy",
+          timestamp: DateTime.utc_now() |> DateTime.to_iso8601(),
+          failed_checks: Enum.map(failed_checks, &Atom.to_string/1)
+        }
+
+        conn
+        |> put_status(503)
+        |> json(response)
     end
   end
 end

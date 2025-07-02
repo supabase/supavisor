@@ -210,4 +210,32 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     def response, do: {"Not found", "application/json", __MODULE__}
   end
+
+  defmodule ServiceUnavailable do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        status: %Schema{
+          type: :string,
+          description: "Supavisor health status",
+          default: "unhealthy"
+        },
+        timestamp: %Schema{
+          type: :string,
+          format: :date_time,
+          description: "Timestamp of the health check"
+        },
+        failed_checks: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description: "List of failed health check names"
+        }
+      }
+    })
+
+    def response, do: {"Service Unavailable", "application/json", __MODULE__}
+  end
 end
