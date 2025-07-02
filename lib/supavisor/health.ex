@@ -53,20 +53,21 @@ defmodule Supavisor.Health do
       [] ->
         true
 
-      # Results with a single clustered node may be too volatile to be considered
+      # Results with a single clustered node are too volatile to be considered
+      # and can cause false positives. For example, if we have only two nodes
+      # (A and B), and B is bad, A would get flagged as unhealthy.
       [_] ->
         true
 
       nodes ->
         # If **any** other node returns replies within 500ms, we are good.
-        Enum.any?(nodes, fn node ->
-          try do
-            :ok = :erpc.call(node, fn -> :ok end, 500)
-            true
-          catch
-            _, _ -> false
-          end
-        end)
+        try do
+          nodes
+          |> :erpc.multicall(fn -> :ok end, 500)
+          |> Enum.any?(&match?({:ok, _}, &1))
+        catch
+          _, _ -> false
+        end
     end
   end
 
