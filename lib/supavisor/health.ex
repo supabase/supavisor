@@ -60,10 +60,11 @@ defmodule Supavisor.Health do
         true
 
       nodes ->
-        # If **any** other node returns replies within the timeout, we are good.
         results = :erpc.multicall(nodes, fn -> :ok end, acceptable_erpc_latency)
 
-        Enum.zip(nodes, results)
+        # If **any** other node returns replies within the timeout, we are good.
+        nodes
+        |> Enum.zip(results)
         |> Enum.reduce(false, fn {node, result}, acc ->
           case result do
             {:ok, _} ->
