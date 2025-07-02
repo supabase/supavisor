@@ -159,7 +159,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert response(conn, 204) == ""
     end
 
-    test "returns 503 with failed checks when both health checks fail", %{conn: conn} do
+    test "returns 503 with failed checks when health checks fail", %{conn: conn} do
       :meck.expect(Supavisor.Health, :database_reachable?, fn -> false end)
       on_exit(fn -> :meck.unload(Supavisor.Health) end)
 
