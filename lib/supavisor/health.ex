@@ -11,7 +11,7 @@ defmodule Supavisor.Health do
   require Logger
 
   @checks [
-    acceptable_erpc_latencies: {__MODULE__, :acceptable_erpc_latencies?, []},
+    acceptable_erpc_latencies: {__MODULE__, :acceptable_erpc_latencies?, [500]},
     database_reachable: {__MODULE__, :database_reachable?, []}
   ]
 
@@ -47,8 +47,8 @@ defmodule Supavisor.Health do
   end
 
   @doc false
-  @spec acceptable_erpc_latencies?() :: boolean()
-  def acceptable_erpc_latencies? do
+  @spec acceptable_erpc_latencies?(non_neg_integer()) :: boolean()
+  def acceptable_erpc_latencies?(acceptable_erpc_latency) do
     case Node.list() do
       [] ->
         true
@@ -60,14 +60,20 @@ defmodule Supavisor.Health do
         true
 
       nodes ->
-        # If **any** other node returns replies within 500ms, we are good.
-        try do
-          nodes
-          |> :erpc.multicall(fn -> :ok end, 500)
-          |> Enum.any?(&match?({:ok, _}, &1))
-        catch
-          _, _ -> false
-        end
+        # If **any** other node returns replies within the timeout, we are good.
+        results = :erpc.multicall(nodes, fn -> :ok end, acceptable_erpc_latency)
+
+        Enum.zip(nodes, results)
+        |> Enum.reduce(false, fn {node, result}, acc ->
+          case result do
+            {:ok, _} ->
+              true
+
+            error ->
+              Logger.warning("Failed :erpc call to #{inspect(node)} with #{inspect(error)}")
+              acc
+          end
+        end)
     end
   end
 
