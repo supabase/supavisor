@@ -153,7 +153,12 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {:tcp, _, <<_::64>>}, :exchange, %{sock: sock} = data) do
+  def handle_event(
+        :info,
+        {:tcp, _, Server.ssl_request_message()},
+        :exchange,
+        %{sock: sock} = data
+      ) do
     Logger.metadata(state: :exchange)
     Logger.debug("ClientHandler: Client is trying to connect with SSL")
 

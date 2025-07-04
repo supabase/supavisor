@@ -36,6 +36,8 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
+  defmacro ssl_request_message, do: @ssl_request
+
   @spec decode(iodata()) :: [Pkt.t()]
   def decode(data), do: decode(data, [])
 
