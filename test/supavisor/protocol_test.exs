@@ -123,7 +123,7 @@ defmodule Supavisor.ProtocolTest do
   end
 
   test "ssl_request_message/0" do
-    assert @subject.ssl_request_message == <<0, 0, 0, 8, 4, 210, 22, 47>>
+    assert @subject.ssl_request_message() == <<0, 0, 0, 8, 4, 210, 22, 47>>
   end
 
   test "decode_pkt/1 with invalid packets" do
