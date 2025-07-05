@@ -8,6 +8,9 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
+  alias Supavisor.Protocol.Client.Pkt, as: ClientPkt
+  alias Supavisor.Protocol.Server.Pkt, as: ServerPkt
+
   alias Supavisor.{
     ClientHandler,
     HandlerHelpers,
@@ -33,6 +36,11 @@ defmodule Supavisor.DbHandler do
 
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
+
+  @spec handle_prepared_statement_pkt(pid, term()) :: :ok
+  def handle_prepared_statement_pkt(pid, pkt) do
+    :gen_statem.call(pid, {:handle_prepared_statement, pkt})
+  end
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
@@ -73,6 +81,9 @@ defmodule Supavisor.DbHandler do
         server_proof: nil,
         stats: %{},
         client_stats: %{},
+        prepared_statements: MapSet.new(),
+        pending_bin: "",
+        intercept_parse_resps: 0,
         mode: args.mode,
         replica_type: args.replica_type,
         reply: nil,
@@ -158,7 +169,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
-    dec_pkt = Server.decode(bin)
+    {:ok, dec_pkt, _} = Server.decode(bin)
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     resp = Enum.reduce(dec_pkt, %{}, &handle_auth_pkts(&1, &2, data))
@@ -224,7 +235,7 @@ defmodule Supavisor.DbHandler do
     if buff != [] do
       Logger.debug("DbHandler: Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
       buff = Enum.reverse(buff)
-      :ok = sock_send(data.sock, buff)
+      :ok = HandlerHelpers.sock_send(data.sock, buff)
     end
 
     {:next_state, :busy, %{data | buffer: []}}
@@ -240,7 +251,7 @@ defmodule Supavisor.DbHandler do
       )
 
       buff = Enum.reverse(buff)
-      :ok = sock_send(data.sock, buff)
+      :ok = HandlerHelpers.sock_send(data.sock, buff)
     end
 
     {:keep_state, %{data | anon_buffer: []}}
@@ -260,7 +271,8 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
       when proto in @proto do
     Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
-    pkts = Server.decode(bin)
+    {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
+    data = %{data | pending_bin: rest}
 
     resp =
       cond do
@@ -286,7 +298,7 @@ defmodule Supavisor.DbHandler do
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
     else
-      :keep_state_and_data
+      {:keep_state, data}
     end
   end
 
@@ -294,8 +306,10 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller, reply: nil} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
+    {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
+    data = %{data | pending_bin: rest}
 
-    if String.ends_with?(bin, Server.ready_for_query()) do
+    if ready_for_query = Enum.find(pkts, fn pkt -> pkt.tag == :ready_for_query end) do
       HandlerHelpers.activate(data.sock)
 
       {_, stats} =
@@ -307,10 +321,11 @@ defmodule Supavisor.DbHandler do
       # after which it will unlink the direct db connection process from itself.
       data =
         if data.mode == :transaction do
-          ClientHandler.db_status(data.caller, :ready_for_query, bin)
+          data = intercept_or_send_pkts(pkts, data)
+          ClientHandler.db_status(data.caller, :ready_for_query, ready_for_query.bin)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
-          HandlerHelpers.sock_send(data.client_sock, bin)
+          data = intercept_or_send_pkts(pkts, data)
 
           {_, client_stats} =
             if data.proxy,
@@ -325,16 +340,63 @@ defmodule Supavisor.DbHandler do
       if data.active_count > @switch_active_count,
         do: HandlerHelpers.active_once(data.sock)
 
-      HandlerHelpers.sock_send(data.client_sock, bin)
+      data = intercept_or_send_pkts(pkts, data)
       {:keep_state, %{data | active_count: data.active_count + 1}}
     end
   end
 
-  def handle_event(:info, {:handle_ps, payload, bin}, _state, data) do
-    Logger.notice("DbHandler: Apply prepare statement change #{inspect(payload)}")
+  # If the prepared statement exists for us, it exists for the server, so we just send the
+  # bind to the socket. If it doesn't, we must send the parse pkt first.
+  #
+  # If we received a bind without a parse, we need to intercept the parse response, otherwise,
+  # the client will receive an unexpected message.
+  def handle_event(
+        {:call, from},
+        {:handle_prepared_statement,
+         %ClientPkt{tag: :bind_message, payload: %{parse_pkt: parse_pkt}} = pkt},
+        _state,
+        data
+      ) do
+    stmt_name = pkt.payload.str_name
+    new_ps? = stmt_name not in data.prepared_statements
 
-    {:keep_state, %{data | anon_buffer: [bin | data.anon_buffer]},
-     {:next_event, :internal, :check_anon_buffer}}
+    data =
+      if new_ps? do
+        HandlerHelpers.sock_send(data.sock, [parse_pkt.bin, pkt.bin])
+
+        %{
+          data
+          | intercept_parse_resps: data.intercept_parse_resps + 1,
+            prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
+        }
+      else
+        HandlerHelpers.sock_send(data.sock, pkt.bin)
+        data
+      end
+
+    {:keep_state, data, {:reply, from, :ok}}
+  end
+
+  def handle_event(
+        {:call, from},
+        {:handle_prepared_statement, %ClientPkt{tag: :close_message} = pkt},
+        _state,
+        data
+      ) do
+    :ok = HandlerHelpers.sock_send(data.sock, pkt.bin)
+    {:keep_state_and_data, {:reply, from, :ok}}
+  end
+
+  # TODO: potentially ignore, send parse response to client
+  def handle_event(
+        {:call, from},
+        {:handle_prepared_statement, %ClientPkt{tag: :parse_message} = pkt},
+        _state,
+        data
+      ) do
+    :ok = HandlerHelpers.sock_send(data.sock, pkt.bin)
+    prepared_statements = MapSet.put(data.prepared_statements, pkt.payload.str_name)
+    {:keep_state, %{data | prepared_statements: prepared_statements}, {:reply, from, :ok}}
   end
 
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
@@ -372,7 +434,7 @@ defmodule Supavisor.DbHandler do
     end
 
     if state == :busy or data.mode == :session do
-      sock_send(data.sock, Server.terminate_message())
+      HandlerHelpers.sock_send(data.sock, Server.terminate_message())
       :gen_tcp.close(elem(data.sock, 1))
       {:stop, {:client_handler_down, data.mode}}
     else
@@ -423,7 +485,7 @@ defmodule Supavisor.DbHandler do
 
   @spec try_ssl_handshake(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.sock()} | {:error, term()}
   defp try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
-    case sock_send(sock, Server.ssl_request()) do
+    case HandlerHelpers.sock_send(sock, Server.ssl_request()) do
       :ok -> ssl_recv(sock, auth)
       error -> error
     end
@@ -482,12 +544,7 @@ defmodule Supavisor.DbHandler do
         ] ++ if(search_path, do: [{"options", "--search_path=#{search_path}"}], else: [])
       )
 
-    sock_send(sock, msg)
-  end
-
-  @spec sock_send(Supavisor.sock(), iodata) :: :ok | {:error, term}
-  defp sock_send({mod, sock}, data) do
-    mod.send(sock, data)
+    HandlerHelpers.sock_send(sock, msg)
   end
 
   @spec activate(Supavisor.sock()) :: :ok | {:error, term}
@@ -694,4 +751,33 @@ defmodule Supavisor.DbHandler do
 
   def reconnect_timeout(_),
     do: @reconnect_timeout
+
+  @spec intercept_or_send_pkts([ServerPkt.t()], map()) :: map()
+  defp intercept_or_send_pkts(pkts, data) do
+    {packets_to_send, updated_data} =
+      Enum.reduce(pkts, {[], data}, fn pkt, {acc_bins, data} ->
+        case {pkt, data.intercept_parse_resps} do
+          {%ServerPkt{tag: :parse_complete}, intercept_count} when intercept_count > 0 ->
+            {acc_bins, %{data | intercept_parse_resps: intercept_count - 1}}
+
+          {%ServerPkt{tag: :ready_for_query}, _} ->
+            # We filter ready_for_query on transaction mode because it's sent separately
+            # to the client handler
+            if data.mode == :transaction do
+              {acc_bins, data}
+            else
+              {[pkt.bin | acc_bins], data}
+            end
+
+          _ ->
+            {[pkt.bin | acc_bins], data}
+        end
+      end)
+
+    if packets_to_send != [] do
+      HandlerHelpers.sock_send(data.client_sock, Enum.reverse(packets_to_send))
+    end
+
+    updated_data
+  end
 end

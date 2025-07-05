@@ -26,6 +26,8 @@ defmodule Supavisor.ClientHandler do
     Tenants
   }
 
+  alias Supavisor.Protocol.PreparedStatements
+  alias Supavisor.Protocol.Client.Pkt, as: ClientPkt
   require Supavisor.Protocol.Server, as: Server
 
   @impl true
@@ -102,7 +104,8 @@ defmodule Supavisor.ClientHandler do
       active_count: 0,
       peer_ip: peer_ip,
       app_name: nil,
-      subscribe_retries: 0
+      subscribe_retries: 0,
+      prepared_statements: %{}
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -420,6 +423,7 @@ defmodule Supavisor.ClientHandler do
            ),
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       manager_ref = Process.monitor(opts.workers.manager)
+
       data = Map.merge(data, opts.workers)
       db_pid = db_checkout(:both, :on_connect, data)
       data = %{data | manager: manager_ref, db_pid: db_pid, idle_timeout: opts.idle_timeout}
@@ -537,8 +541,7 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
   end
 
-  def handle_event(kind, {proto, socket, msg}, state, data)
-      when proto in @proto and is_binary(msg) do
+  def handle_event(kind, {proto, socket, msg}, state, data) when proto in @proto do
     Logger.metadata(state: state)
 
     with {:next_state, next_state, new_data, actions} <- handle_data(kind, msg, state, data) do
@@ -548,6 +551,9 @@ defmodule Supavisor.ClientHandler do
         |> Enum.map(fn
           {:next_event, type, bin} when is_binary(bin) ->
             {:next_event, type, {proto, socket, bin}}
+
+          {:next_event, type, pkts} when is_list(pkts) ->
+            {:next_event, type, {proto, socket, pkts}}
 
           other ->
             other
@@ -1075,10 +1081,16 @@ defmodule Supavisor.ClientHandler do
   defp handle_data(:info, bin, :idle, %{pool: pid} = data) when is_pid(pid) do
     Logger.debug("ClientHandler: Receive query #{inspect(bin)}")
     db_pid = db_checkout(:both, :on_query, data)
-    handle_prepared_statements(db_pid, bin, data)
 
-    {:next_state, :busy, %{data | db_pid: db_pid, query_start: System.monotonic_time()},
-     {:next_event, :internal, bin}}
+    {:ok, bin_or_pkts, prepared_statements, _rest} = handle_prepared_statements(db_pid, bin, data)
+
+    {:next_state, :busy,
+     %{
+       data
+       | prepared_statements: prepared_statements,
+         db_pid: db_pid,
+         query_start: System.monotonic_time()
+     }, {:next_event, :internal, bin_or_pkts}}
   end
 
   defp handle_data(:info, bin, _, %{mode: :proxy} = data) do
@@ -1133,33 +1145,27 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec handle_prepared_statements({pid, pid, Supavisor.sock()}, binary, map) :: :ok | nil
-  defp handle_prepared_statements({_, pid, _}, bin, %{mode: :transaction} = data) do
-    with {:ok, payload} <- Client.get_payload(bin),
-         {:ok, statements} <- Supavisor.PgParser.statements(payload),
-         true <- statements in [["PrepareStmt"], ["DeallocateStmt"]] do
-      Logger.info("ClientHandler: Handle prepared statement #{inspect(payload)}")
+  @spec handle_prepared_statements({pid, pid, Supavisor.sock()}, binary, map) ::
+          {:ok, [ClientPkt.t()] | binary, map, binary}
+  defp handle_prepared_statements(
+         {_, _pid, _},
+         bin,
+         %{mode: :transaction} = data
+       ) do
+    stmts = data.prepared_statements
 
-      GenServer.call(data.pool, :get_all_workers)
-      |> Enum.each(fn
-        {_, ^pid, _, [Supavisor.DbHandler]} ->
-          Logger.debug("ClientHandler: Linked DbHandler #{inspect(pid)}")
-          nil
+    {:ok, pkts, rest} = Client.decode(bin)
 
-        {_, pool_proc, _, [Supavisor.DbHandler]} ->
-          Logger.debug(
-            "ClientHandler: Sending prepared statement change #{inspect(payload)} to #{inspect(pool_proc)}"
-          )
-
-          send(pool_proc, {:handle_ps, payload, bin})
+    {stmts, pkts} =
+      Enum.reduce(pkts, {stmts, []}, fn pkt, {stmts, pkts} ->
+        {stmts, pkt} = PreparedStatements.handle_pkt(stmts, pkt)
+        {stmts, [pkt | pkts]}
       end)
-    else
-      error ->
-        Logger.debug("ClientHandler: Skip prepared statement #{inspect(error)}")
-    end
+
+    {:ok, Enum.reverse(pkts), stmts, rest}
   end
 
-  defp handle_prepared_statements(_, _, _), do: nil
+  defp handle_prepared_statements(_, bin, data), do: {:ok, bin, data.prepared_statements, ""}
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
@@ -1195,8 +1201,8 @@ defmodule Supavisor.ClientHandler do
 
   def maybe_change_log(_), do: :ok
 
-  @spec sock_send_maybe_active_once(binary(), map()) :: :ok | {:error, term()}
-  def sock_send_maybe_active_once(bin, data) do
+  @spec sock_send_maybe_active_once(binary() | [Pkt.t()], map()) :: :ok | {:error, term()}
+  def sock_send_maybe_active_once(bin, data) when is_binary(bin) do
     Logger.debug("ClientHandler: Send maybe active once")
     active_count = data.active_count
 
@@ -1206,6 +1212,36 @@ defmodule Supavisor.ClientHandler do
     end
 
     HandlerHelpers.sock_send(elem(data.db_pid, 2), bin)
+  end
+
+  # TODO: we can probably optimize this if we:
+  # - chunk all non-prepared statements messages in an iolist before sending it
+  # - potentially chunk prepared statements messages too
+  # e.g.:
+  # [msg1, msg2, msg3, parse, bind, sync, msg4, ms5] could be:
+  # sock:send([msg1, msg2, msg3])
+  # db_handler:call([parse, bind, sync])
+  # sock:send([msg4, msg5])
+  # Since we are using nodelay: true, this probably should give us a bit more
+  # thoughtput at a small price in processing
+  def sock_send_maybe_active_once(pkts, data) do
+    {_pool, db_handler, db_sock} = data.db_pid
+    active_count = data.active_count
+
+    if active_count > @switch_active_count do
+      Logger.debug("ClientHandler: Activate socket #{inspect(active_count)}")
+      HandlerHelpers.active_once(data.sock)
+    end
+
+    Enum.each(pkts, fn pkt ->
+      case pkt do
+        %ClientPkt{tag: tag} when tag in [:close_message, :bind_message, :parse_message] ->
+          Supavisor.DbHandler.handle_prepared_statement_pkt(db_handler, pkt)
+
+        %ClientPkt{bin: bin} ->
+          HandlerHelpers.sock_send(db_sock, bin)
+      end
+    end)
   end
 
   @spec timeout_subscribe_or_terminate(map()) :: :gen_statem.handle_event_result()

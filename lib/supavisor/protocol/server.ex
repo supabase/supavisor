@@ -20,13 +20,19 @@ defmodule Supavisor.Protocol.Server do
   @sync <<?S, 4::integer-32>>
 
   defmodule Pkt do
-    @moduledoc "Representing a packet structure with tag, length, and payload fields."
-    defstruct([:tag, :len, :payload])
+    @moduledoc """
+    Represents a packet structure with tag, length, and payload fields.
+
+    The original binary can be found on the bin field.
+    """
+
+    defstruct([:tag, :len, :payload, :bin])
 
     @type t :: %Pkt{
             tag: atom,
             len: integer,
-            payload: any
+            payload: any,
+            bin: binary
           }
   end
 
@@ -36,8 +42,23 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  @spec decode(iodata()) :: [Pkt.t()]
+  @spec decode(iodata()) :: {:ok, [Pkt.t()], rest :: binary()}
   def decode(data), do: decode(data, [])
+
+  # @spec decode_pkt(binary()) :: {:ok, Pkt.t(), binary()} | {:error, :bad_packet}
+  # def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
+  #  payload_len = pkt_len - 4
+
+  #  case rest do
+  #    <<bin_payload::binary-size(payload_len), rest2::binary>> ->
+  #      tag = tag(char)
+  #      payload = decode_payload(tag, bin_payload)
+  #      {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
+
+  #    _ ->
+  #      {:error, :incomplete}
+  #  end
+  # end
 
   @spec decode_pkt(binary()) :: {:ok, Pkt.t(), binary()} | {:error, :bad_packet}
   def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
@@ -47,11 +68,23 @@ defmodule Supavisor.Protocol.Server do
       <<bin_payload::binary-size(payload_len), rest2::binary>> ->
         tag = tag(char)
         payload = decode_payload(tag, bin_payload)
-        {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
+
+        pkt = %Pkt{
+          tag: tag,
+          len: pkt_len + 1,
+          payload: payload,
+          bin: <<char, pkt_len::32, bin_payload::binary>>
+        }
+
+        {:ok, pkt, rest2}
 
       _ ->
-        {:error, :bad_packet}
+        {:error, :incomplete}
     end
+  end
+
+  def decode_pkt(<<_char::integer-8, _pkt_len::integer-32, _rest>>) do
+    {:error, :incomplete}
   end
 
   def decode_pkt(_), do: {:error, :bad_packet}
@@ -177,13 +210,24 @@ defmodule Supavisor.Protocol.Server do
 
   # Internal functions
 
-  @spec decode(binary(), list()) :: [Pkt.t()]
+  @spec decode(binary(), list()) :: {:ok, [Pkt.t()], rest :: binary()}
   defp decode(data, acc) when byte_size(data) >= @pkt_header_size do
-    {:ok, pkt, rest} = decode_pkt(data)
-    decode(rest, [pkt | acc])
+    case decode_pkt(data) do
+      {:ok, pkt, rest} ->
+        decode(rest, [pkt | acc])
+
+      # This generally means that the packet was incomplete
+      #
+      # TODO: Maybe we need to handle other reasons too
+      {:error, :incomplete} ->
+        {:ok, Enum.reverse(acc), data}
+
+      {:error, :bad_packet} ->
+        raise "bad packet: #{inspect(data)}"
+    end
   end
 
-  defp decode(_, acc), do: Enum.reverse(acc)
+  defp decode(data, acc), do: {:ok, Enum.reverse(acc), data}
 
   @spec tag(char()) :: atom()
   defp tag(char) do
