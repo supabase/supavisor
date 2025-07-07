@@ -41,6 +41,8 @@ defmodule Supavisor.Protocol.Server do
       <<unquote(@msg_cancel_header)::binary, unquote(pid)::32, unquote(key)::32>>
     end
   end
+  
+  defmacro ssl_request_message, do: @ssl_request
 
   @spec decode(iodata()) :: {:ok, [Pkt.t()], rest :: binary()}
   def decode(data), do: decode(data, [])
