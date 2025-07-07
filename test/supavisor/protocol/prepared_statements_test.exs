@@ -1,9 +1,9 @@
 defmodule Supavisor.Protocol.PreparedStatementsTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.Protocol.Client
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
-  alias Supavisor.Protocol.Client
 
   setup do
     client_statements = %{}

@@ -23,11 +23,12 @@ defmodule Supavisor.ClientHandler do
     Helpers,
     Monitoring.Telem,
     Protocol.Client,
+    Protocol.PreparedStatements,
     Tenants
   }
 
-  alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.Client.Pkt, as: ClientPkt
+
   require Supavisor.Protocol.Server, as: Server
 
   @impl true
