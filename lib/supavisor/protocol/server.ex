@@ -45,22 +45,8 @@ defmodule Supavisor.Protocol.Server do
   @spec decode(iodata()) :: {:ok, [Pkt.t()], rest :: binary()}
   def decode(data), do: decode(data, [])
 
-  # @spec decode_pkt(binary()) :: {:ok, Pkt.t(), binary()} | {:error, :bad_packet}
-  # def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
-  #  payload_len = pkt_len - 4
-
-  #  case rest do
-  #    <<bin_payload::binary-size(payload_len), rest2::binary>> ->
-  #      tag = tag(char)
-  #      payload = decode_payload(tag, bin_payload)
-  #      {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
-
-  #    _ ->
-  #      {:error, :incomplete}
-  #  end
-  # end
-
-  @spec decode_pkt(binary()) :: {:ok, Pkt.t(), binary()} | {:error, :bad_packet}
+  @spec decode_pkt(binary()) ::
+          {:ok, Pkt.t(), binary()} | {:error, :bad_packet} | {:error, :incomplete}
   def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
     payload_len = pkt_len - 4
 

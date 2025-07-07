@@ -29,7 +29,7 @@ defmodule Supavisor.ProtocolTest do
                     117, 116, 104, 46, 99, 0, 76, 51, 51, 53, 0, 82, 97, 117, 116, 104, 95, 102,
                     97, 105, 108, 101, 100, 0, 0>>
 
-  @read_only_bin <<69, 0, 0, 0, 35, 83, 69, 82, 82, 79, 82, 0, 86, 69, 82, 82, 79, 82, 0, 67, 50,
+  @read_only_bin <<69, 0, 0, 0, 37, 83, 69, 82, 82, 79, 82, 0, 86, 69, 82, 82, 79, 82, 0, 67, 50,
                    53, 48, 48, 54, 0, 77, 114, 101, 97, 100, 32, 111, 110, 108, 121, 0, 0>>
 
   test "encode_parameter_status/1" do
@@ -56,34 +56,37 @@ defmodule Supavisor.ProtocolTest do
     {header, payload} = @subject.backend_key_data()
     len = byte_size(payload) + 4
 
-    assert [
-             %@subject.Pkt{
-               tag: :backend_key_data,
-               len: 13,
-               payload: %{pid: _, key: _}
-             }
-           ] = @subject.decode([header, payload] |> IO.iodata_to_binary())
+    assert {:ok,
+            [
+              %@subject.Pkt{
+                tag: :backend_key_data,
+                len: 13,
+                payload: %{pid: _, key: _}
+              }
+            ], ""} = @subject.decode([header, payload] |> IO.iodata_to_binary())
 
     assert header == <<?K, len::32>>
     assert byte_size(payload) == 8
   end
 
   test "decode_payload for error_response" do
-    assert @subject.decode(@auth_bin_error) == [
-             %Supavisor.Protocol.Server.Pkt{
-               tag: :error_response,
-               len: 112,
-               payload: [
-                 "SFATAL",
-                 "VFATAL",
-                 "C28P01",
-                 "Mpassword authentication failed for user \"test_wrong_user\"",
-                 "Fauth.c",
-                 "L335",
-                 "Rauth_failed"
-               ]
-             }
-           ]
+    assert {:ok,
+            [
+              %Supavisor.Protocol.Server.Pkt{
+                tag: :error_response,
+                len: 112,
+                bin: @auth_bin_error,
+                payload: [
+                  "SFATAL",
+                  "VFATAL",
+                  "C28P01",
+                  "Mpassword authentication failed for user \"test_wrong_user\"",
+                  "Fauth.c",
+                  "L335",
+                  "Rauth_failed"
+                ]
+              }
+            ], ""} = @subject.decode(@auth_bin_error)
   end
 
   test "cancel_message/2" do
@@ -124,7 +127,7 @@ defmodule Supavisor.ProtocolTest do
 
   test "decode_pkt/1 with invalid packets" do
     assert @subject.decode_pkt(<<>>) == {:error, :bad_packet}
-    assert @subject.decode_pkt(<<82, 0, 0, 0, 8, 0, 0>>) == {:error, :bad_packet}
+    assert @subject.decode_pkt(<<82, 0, 0, 0, 8, 0, 0>>) == {:error, :incomplete}
   end
 
   test "decode_pkt/1 with valid packet" do
@@ -231,8 +234,8 @@ defmodule Supavisor.ProtocolTest do
   end
 
   test "has_read_only_error?/1" do
-    read_only_pkts = @subject.decode(@read_only_bin)
-    auth_error_pkts = @subject.decode(@auth_bin_error)
+    {:ok, read_only_pkts, ""} = @subject.decode(@read_only_bin)
+    {:ok, auth_error_pkts, ""} = @subject.decode(@auth_bin_error)
 
     assert @subject.has_read_only_error?(read_only_pkts) == true
     assert @subject.has_read_only_error?(auth_error_pkts ++ read_only_pkts) == true
