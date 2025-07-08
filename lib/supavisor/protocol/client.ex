@@ -101,9 +101,9 @@ defmodule Supavisor.Protocol.Client do
       ?S -> :sync_message
       ?X -> :termination_message
       ?C -> :close_message
-      ?d -> :copy_data_message
-      ?c -> :copy_done_message
-      ?f -> :copy_fail_message
+      ?d -> :copy_data
+      ?c -> :copy_done
+      ?f -> :copy_fail
       _ -> nil
     end
   end
