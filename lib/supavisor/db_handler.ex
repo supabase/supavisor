@@ -309,7 +309,9 @@ defmodule Supavisor.DbHandler do
     {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
     data = %{data | pending_bin: rest}
 
-    if ready_for_query = Enum.find(pkts, fn pkt -> pkt.tag == :ready_for_query end) do
+    last_packet = List.last(pkts)
+
+    if transaction_complete_pkt?(last_packet) do
       HandlerHelpers.activate(data.sock)
 
       {_, stats} =
@@ -322,7 +324,7 @@ defmodule Supavisor.DbHandler do
       data =
         if data.mode == :transaction do
           data = intercept_or_send_pkts(pkts, data)
-          ClientHandler.db_status(data.caller, :ready_for_query, ready_for_query.bin)
+          ClientHandler.db_status(data.caller, :ready_for_query, last_packet.bin)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
           data = intercept_or_send_pkts(pkts, data)
@@ -352,16 +354,16 @@ defmodule Supavisor.DbHandler do
   # the client will receive an unexpected message.
   def handle_event(
         {:call, from},
-        {:handle_prepared_statement,
-         %ClientPkt{tag: :bind_message, payload: %{parse_pkt: parse_pkt}} = pkt},
+        {:handle_prepared_statement, %ClientPkt{tag: :bind_message} = pkt},
         _state,
         data
       ) do
     stmt_name = pkt.payload.str_name
     new_ps? = stmt_name not in data.prepared_statements
+    parse_pkt = pkt.payload[:parse_pkt]
 
     data =
-      if new_ps? do
+      if new_ps? and parse_pkt do
         HandlerHelpers.sock_send(data.sock, [parse_pkt.bin, pkt.bin])
 
         %{
@@ -762,8 +764,8 @@ defmodule Supavisor.DbHandler do
 
           {%ServerPkt{tag: :ready_for_query}, _} ->
             # We filter ready_for_query on transaction mode because it's sent separately
-            # to the client handler
-            if data.mode == :transaction do
+            # to the client handler. TODO: should we always filter it?
+            if data.mode == :transaction and transaction_complete_pkt?(pkt) do
               {acc_bins, data}
             else
               {[pkt.bin | acc_bins], data}
@@ -780,4 +782,7 @@ defmodule Supavisor.DbHandler do
 
     updated_data
   end
+
+  defp transaction_complete_pkt?(%ServerPkt{tag: :ready_for_query, payload: :idle}), do: true
+  defp transaction_complete_pkt?(_), do: false
 end

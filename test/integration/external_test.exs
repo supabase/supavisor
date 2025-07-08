@@ -1,9 +1,11 @@
 defmodule Supavisor.Integration.ExternalTest do
   use Supavisor.E2ECase, async: false
 
-  @moduletag integration: true
+  @moduletag integration: true, timeout: 120_000
 
   setup_all do
+    Logger.configure(level: :error)
+
     npm =
       get_tool("yarn") || get_tool("npm") || get_tool("bun") ||
         raise "Cannot find neither Yarn nor NPM"
@@ -74,6 +76,20 @@ defmodule Supavisor.Integration.ExternalTest do
     # end
   end
 
+  describe "Prisma" do
+    @describetag library: "prisma", suite: "js"
+
+    @tag runtime: "node", mode: "session"
+    test "Node session", ctx do
+      assert_run(ctx, ~w[prisma/index.js])
+    end
+
+    @tag runtime: "node", mode: "transaction"
+    test "Node transaction", ctx do
+      assert_run(ctx, ~w[prisma/index.js])
+    end
+  end
+
   defp assert_run(ctx, args, opts \\ []) do
     suite = suite(ctx.suite)
 
@@ -92,8 +108,8 @@ defmodule Supavisor.Integration.ExternalTest do
     assert {output, code} =
              System.cmd(ctx.runtime, args,
                env: env,
-               cd: suite,
-               stderr_to_stdout: true
+               cd: suite
+               # stderr_to_stdout: true
              )
 
     assert code == 0, output

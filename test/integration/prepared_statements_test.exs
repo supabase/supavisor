@@ -27,6 +27,28 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     {:ok, %{conns: conns}}
   end
 
+  test "prepare unnamed", %{conns: [conn | _]} do
+    query =
+      Postgrex.prepare!(conn, "", """
+      SELECT schemaname, tablename, tableowner, hasindexes
+      FROM pg_tables
+      WHERE schemaname = $1
+      ORDER BY tablename;
+      """)
+
+    assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["public"])
+
+    query =
+      Postgrex.prepare!(conn, "", """
+      SELECT schemaname, tablename, tableowner, hasindexes
+      FROM pg_tables
+      WHERE schemaname = $1
+      ORDER BY tablename;
+      """)
+
+    assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["private"])
+  end
+
   test "prepare once, run twice (concurrent processes)", %{conns: conns} do
     test_pid = self()
     process_count = 200

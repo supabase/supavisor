@@ -106,7 +106,8 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0,
-      prepared_statements: %{}
+      prepared_statements: %{},
+      pending: ""
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -1088,13 +1089,15 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler: Receive query #{inspect(bin)}")
     db_pid = db_checkout(:both, :on_query, data)
 
-    {:ok, bin_or_pkts, prepared_statements, _rest} = handle_prepared_statements(db_pid, bin, data)
+    {:ok, bin_or_pkts, prepared_statements, rest} =
+      handle_prepared_statements(db_pid, <<data.pending::binary, bin::binary>>, data)
 
     {:next_state, :busy,
      %{
        data
        | prepared_statements: prepared_statements,
          db_pid: db_pid,
+         pending: rest,
          query_start: System.monotonic_time()
      }, {:next_event, :internal, bin_or_pkts}}
   end
@@ -1132,12 +1135,31 @@ defmodule Supavisor.ClientHandler do
   end
 
   # forward query to db
-  defp handle_data(_, bin, :busy, data) do
-    Logger.debug("ClientHandler: Forward query to db #{inspect(bin)} #{inspect(data.db_pid)}")
+  defp handle_data(_, data_to_send, :busy, data) do
+    Logger.debug(
+      "ClientHandler: Forward query to db #{inspect(data_to_send)} #{inspect(data.db_pid)}"
+    )
 
-    case sock_send_maybe_active_once(bin, data) do
+    {:ok, bin_or_pkts, prepared_statements, rest} =
+      if is_binary(data_to_send) do
+        handle_prepared_statements(
+          data.db_pid,
+          <<data.pending::binary, data_to_send::binary>>,
+          data
+        )
+      else
+        {:ok, data_to_send, data.prepared_statements, data.pending}
+      end
+
+    case sock_send_maybe_active_once(bin_or_pkts, data) do
       :ok ->
-        {:keep_state, %{data | active_count: data.active_count + 1}}
+        {:keep_state,
+         %{
+           data
+           | prepared_statements: prepared_statements,
+             pending: rest,
+             active_count: data.active_count + 1
+         }}
 
       error ->
         Logger.error("ClientHandler: error while sending query: #{inspect(error)}")
