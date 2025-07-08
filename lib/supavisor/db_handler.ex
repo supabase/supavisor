@@ -37,9 +37,9 @@ defmodule Supavisor.DbHandler do
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
 
-  @spec handle_prepared_statement_pkt(pid, term()) :: :ok
-  def handle_prepared_statement_pkt(pid, pkt) do
-    :gen_statem.call(pid, {:handle_prepared_statement, pkt})
+  @spec handle_prepared_statement_pkt(pid, [term]) :: :ok
+  def handle_prepared_statement_pkts(pid, pkts) do
+    :gen_statem.call(pid, {:handle_ps_pkts, pkts})
   end
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
@@ -347,46 +347,20 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  # If the prepared statement exists for us, it exists for the server, so we just send the
-  # bind to the socket. If it doesn't, we must send the parse pkt first.
-  #
-  # If we received a bind without a parse, we need to intercept the parse response, otherwise,
-  # the client will receive an unexpected message.
   def handle_event(
         {:call, from},
-        {:handle_prepared_statement, %ClientPkt{tag: :bind_message} = pkt},
+        {:handle_ps_pkts, pkts},
         _state,
         data
       ) do
-    stmt_name = pkt.payload.str_name
-    new_ps? = stmt_name not in data.prepared_statements
-    parse_pkt = pkt.payload[:parse_pkt]
+    {iodata, data} =
+      Enum.reduce(pkts, {[], data}, fn pkt, {iodata, data} ->
+        handle_prepared_statement_pkt(pkt, {iodata, data})
+      end)
 
-    data =
-      if new_ps? and parse_pkt do
-        HandlerHelpers.sock_send(data.sock, [parse_pkt.bin, pkt.bin])
-
-        %{
-          data
-          | intercept_parse_resps: data.intercept_parse_resps + 1,
-            prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
-        }
-      else
-        HandlerHelpers.sock_send(data.sock, pkt.bin)
-        data
-      end
+    :ok = HandlerHelpers.sock_send(data.sock, Enum.reverse(iodata))
 
     {:keep_state, data, {:reply, from, :ok}}
-  end
-
-  def handle_event(
-        {:call, from},
-        {:handle_prepared_statement, %ClientPkt{tag: :close_message} = pkt},
-        _state,
-        data
-      ) do
-    :ok = HandlerHelpers.sock_send(data.sock, pkt.bin)
-    {:keep_state_and_data, {:reply, from, :ok}}
   end
 
   # TODO: potentially ignore, send parse response to client
@@ -785,4 +759,38 @@ defmodule Supavisor.DbHandler do
 
   defp transaction_complete_pkt?(%ServerPkt{tag: :ready_for_query, payload: :idle}), do: true
   defp transaction_complete_pkt?(_), do: false
+
+  # If the prepared statement exists for us, it exists for the server, so we just send the
+  # bind to the socket. If it doesn't, we must send the parse pkt first.
+  #
+  # If we received a bind without a parse, we need to intercept the parse response, otherwise,
+  # the client will receive an unexpected message.
+  @spec handle_prepared_statement_pkt(map(), {iodata(), map()}) :: {iodata(), map()}
+  defp handle_prepared_statement_pkt(%{tag: :bind_message} = pkt, {iodata, data}) do
+    stmt_name = pkt.payload.str_name
+    new_ps? = stmt_name not in data.prepared_statements
+    parse_pkt = pkt.payload[:parse_pkt]
+
+    if new_ps? and parse_pkt do
+      new_data = %{
+        data
+        | intercept_parse_resps: data.intercept_parse_resps + 1,
+          prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
+      }
+
+      {[[parse_pkt.bin, pkt.bin] | iodata], new_data}
+    else
+      {[pkt.bin | iodata], data}
+    end
+  end
+
+  defp handle_prepared_statement_pkt(%{tag: :close_message} = pkt, {iodata, data}) do
+    {[pkt.bin | iodata], data}
+  end
+
+  # TODO: potentially ignore, send parse response to client
+  defp handle_prepared_statement_pkt(%ClientPkt{tag: :parse_message} = pkt, {iodata, data}) do
+    prepared_statements = MapSet.put(data.prepared_statements, pkt.payload.str_name)
+    {[pkt.bin | iodata], %{data | prepared_statements: prepared_statements}}
+  end
 end

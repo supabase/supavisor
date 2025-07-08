@@ -1242,16 +1242,7 @@ defmodule Supavisor.ClientHandler do
     HandlerHelpers.sock_send(elem(data.db_pid, 2), bin)
   end
 
-  # TODO: we can probably optimize this if we:
-  # - chunk all non-prepared statements messages in an iolist before sending it
-  # - potentially chunk prepared statements messages too
-  # e.g.:
-  # [msg1, msg2, msg3, parse, bind, sync, msg4, ms5] could be:
-  # sock:send([msg1, msg2, msg3])
-  # db_handler:call([parse, bind, sync])
-  # sock:send([msg4, msg5])
-  # Since we are using nodelay: true, this probably should give us a bit more
-  # thoughtput at a small price in processing
+  # Chunking to ensure we send bigger packets
   def sock_send_maybe_active_once(pkts, data) do
     {_pool, db_handler, db_sock} = data.db_pid
     active_count = data.active_count
@@ -1261,13 +1252,25 @@ defmodule Supavisor.ClientHandler do
       HandlerHelpers.active_once(data.sock)
     end
 
-    Enum.each(pkts, fn pkt ->
+    pkts
+    |> Enum.chunk_by(fn pkt ->
       case pkt do
         %ClientPkt{tag: tag} when tag in [:close_message, :bind_message, :parse_message] ->
-          Supavisor.DbHandler.handle_prepared_statement_pkt(db_handler, pkt)
+          :prepared
 
-        %ClientPkt{bin: bin} ->
-          HandlerHelpers.sock_send(db_sock, bin)
+        %ClientPkt{} ->
+          :regular
+      end
+    end)
+    |> Enum.each(fn chunk ->
+      case chunk do
+        [%ClientPkt{tag: tag} | _] = prepared_pkts
+        when tag in [:close_message, :bind_message, :parse_message] ->
+          Supavisor.DbHandler.handle_prepared_statement_pkts(db_handler, prepared_pkts)
+
+        regular_pkts ->
+          bins = Enum.map(regular_pkts, fn %ClientPkt{bin: bin} -> bin end)
+          HandlerHelpers.sock_send(db_sock, bins)
       end
     end)
   end
