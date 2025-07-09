@@ -1229,7 +1229,7 @@ defmodule Supavisor.ClientHandler do
 
   def maybe_change_log(_), do: :ok
 
-  @spec sock_send_maybe_active_once(binary() | [Pkt.t()], map()) :: :ok | {:error, term()}
+  @spec sock_send_maybe_active_once(binary() | [ClientPkt.t()], map()) :: :ok | {:error, term()}
   def sock_send_maybe_active_once(bin, data) when is_binary(bin) do
     Logger.debug("ClientHandler: Send maybe active once")
     active_count = data.active_count

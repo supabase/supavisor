@@ -785,10 +785,14 @@ defmodule Supavisor.DbHandler do
   end
 
   defp handle_prepared_statement_pkt(%{tag: :close_message} = pkt, {iodata, data}) do
-    {[pkt.bin | iodata], data}
+    {[pkt.bin | iodata],
+     %{data | prepared_statements: MapSet.delete(data.prepared_statements, pkt.payload.str_name)}}
   end
 
   # TODO: potentially ignore, send parse response to client
+  #
+  # We only need to do that if we stop generating unique id per statement, and instead do
+  # fixed ids.
   defp handle_prepared_statement_pkt(%ClientPkt{tag: :parse_message} = pkt, {iodata, data}) do
     prepared_statements = MapSet.put(data.prepared_statements, pkt.payload.str_name)
     {[pkt.bin | iodata], %{data | prepared_statements: prepared_statements}}

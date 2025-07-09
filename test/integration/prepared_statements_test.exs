@@ -7,6 +7,13 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   @moduletag integration: true
 
+  @sample_query """
+  SELECT schemaname, tablename, tableowner, hasindexes
+  FROM pg_tables
+  WHERE schemaname = $1
+  ORDER BY tablename;
+  """
+
   setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
@@ -28,24 +35,10 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   end
 
   test "prepare unnamed", %{conns: [conn | _]} do
-    query =
-      Postgrex.prepare!(conn, "", """
-      SELECT schemaname, tablename, tableowner, hasindexes
-      FROM pg_tables
-      WHERE schemaname = $1
-      ORDER BY tablename;
-      """)
-
+    query = Postgrex.prepare!(conn, "", @sample_query)
     assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["public"])
 
-    query =
-      Postgrex.prepare!(conn, "", """
-      SELECT schemaname, tablename, tableowner, hasindexes
-      FROM pg_tables
-      WHERE schemaname = $1
-      ORDER BY tablename;
-      """)
-
+    query = Postgrex.prepare!(conn, "", @sample_query)
     assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["private"])
   end
 
@@ -66,13 +59,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
             :q1 -> :ok
           end
 
-          query =
-            Postgrex.prepare!(conn, name, """
-            SELECT schemaname, tablename, tableowner, hasindexes
-            FROM pg_tables
-            WHERE schemaname = $1
-            ORDER BY tablename;
-            """)
+          query = Postgrex.prepare!(conn, name, @sample_query)
 
           assert {:ok, q1, %{rows: _}} =
                    Postgrex.execute(conn, query, ["public"])
