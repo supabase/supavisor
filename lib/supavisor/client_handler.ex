@@ -1065,7 +1065,7 @@ defmodule Supavisor.ClientHandler do
     # without checking out a direct connection. If there is a linked db_pid,
     # we will forward the message to it
     if data.db_pid != nil,
-      do: :ok = sock_send_maybe_active_once(msg, data),
+      do: :ok = sock_send_binary_maybe_active_once(msg, data),
       else: :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
 
     {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
@@ -1073,14 +1073,14 @@ defmodule Supavisor.ClientHandler do
 
   defp handle_data(:info, <<?S, 4::32, _::binary>> = msg, _, data) do
     Logger.debug("ClientHandler: Receive sync while not idle")
-    :ok = sock_send_maybe_active_once(msg, data)
+    :ok = sock_send_binary_maybe_active_once(msg, data)
     {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
   end
 
   # handle Flush message
   defp handle_data(:info, <<?H, 4::32, _::binary>> = msg, _, data) do
     Logger.debug("ClientHandler: Receive flush while not idle")
-    :ok = sock_send_maybe_active_once(msg, data)
+    :ok = sock_send_binary_maybe_active_once(msg, data)
     {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
   end
 
@@ -1089,17 +1089,12 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler: Receive query #{inspect(bin)}")
     db_pid = db_checkout(:both, :on_query, data)
 
-    {:ok, bin_or_pkts, prepared_statements, rest} =
-      handle_prepared_statements(db_pid, <<data.pending::binary, bin::binary>>, data)
-
     {:next_state, :busy,
      %{
        data
-       | prepared_statements: prepared_statements,
-         db_pid: db_pid,
-         pending: rest,
+       | db_pid: db_pid,
          query_start: System.monotonic_time()
-     }, {:next_event, :internal, bin_or_pkts}}
+     }, {:next_event, :internal, bin}}
   end
 
   defp handle_data(:info, bin, _, %{mode: :proxy} = data) do
@@ -1141,15 +1136,10 @@ defmodule Supavisor.ClientHandler do
     )
 
     {:ok, bin_or_pkts, prepared_statements, rest} =
-      if is_binary(data_to_send) do
-        handle_prepared_statements(
-          data.db_pid,
-          <<data.pending::binary, data_to_send::binary>>,
-          data
-        )
-      else
-        {:ok, data_to_send, data.prepared_statements, data.pending}
-      end
+      handle_client_pkts(
+        <<data.pending::binary, data_to_send::binary>>,
+        data
+      )
 
     case sock_send_maybe_active_once(bin_or_pkts, data) do
       :ok ->
@@ -1173,16 +1163,13 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec handle_prepared_statements({pid, pid, Supavisor.sock()}, binary, map) ::
-          {:ok, [ClientPkt.t()] | binary, map, binary}
-  defp handle_prepared_statements(
-         {_, _pid, _},
+  @spec handle_client_pkts(binary, map) :: {:ok, [ClientPkt.t()] | binary, map, binary}
+  defp handle_client_pkts(
          bin,
          %{mode: :transaction} = data
        ) do
     stmts = data.prepared_statements
-
-    {:ok, pkts, rest} = Client.decode(bin)
+    {pkts, rest} = Client.split_pkts(bin)
 
     {stmts, pkts} =
       Enum.reduce(pkts, {stmts, []}, fn pkt, {stmts, pkts} ->
@@ -1193,7 +1180,7 @@ defmodule Supavisor.ClientHandler do
     {:ok, Enum.reverse(pkts), stmts, rest}
   end
 
-  defp handle_prepared_statements(_, bin, data), do: {:ok, bin, data.prepared_statements, ""}
+  defp handle_client_pkts(bin, data), do: {:ok, bin, data.prepared_statements, data.pending}
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
@@ -1229,8 +1216,16 @@ defmodule Supavisor.ClientHandler do
 
   def maybe_change_log(_), do: :ok
 
-  @spec sock_send_maybe_active_once(binary() | [ClientPkt.t()], map()) :: :ok | {:error, term()}
-  def sock_send_maybe_active_once(bin, data) when is_binary(bin) do
+  defp sock_send_maybe_active_once(bin, data) when is_binary(bin) do
+    sock_send_binary_maybe_active_once(bin, data)
+  end
+
+  defp sock_send_maybe_active_once(pkts, data) when is_list(pkts) do
+    sock_send_pkts_maybe_active_once(pkts, data)
+  end
+
+  @spec sock_send_binary_maybe_active_once(binary(), map()) :: :ok | {:error, term()}
+  defp sock_send_binary_maybe_active_once(bin, data) when is_binary(bin) do
     Logger.debug("ClientHandler: Send maybe active once")
     active_count = data.active_count
 
@@ -1243,7 +1238,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   # Chunking to ensure we send bigger packets
-  def sock_send_maybe_active_once(pkts, data) do
+  @spec sock_send_pkts_maybe_active_once(binary(), map()) :: :ok | {:error, term()}
+  defp sock_send_pkts_maybe_active_once(pkts, data) do
     {_pool, db_handler, db_sock} = data.db_pid
     active_count = data.active_count
 
@@ -1253,24 +1249,18 @@ defmodule Supavisor.ClientHandler do
     end
 
     pkts
-    |> Enum.chunk_by(fn pkt ->
-      case pkt do
-        %ClientPkt{tag: tag} when tag in [:close_message, :bind_message, :parse_message] ->
-          :prepared
-
-        %ClientPkt{} ->
-          :regular
-      end
-    end)
-    |> Enum.each(fn chunk ->
+    |> Enum.chunk_by(&is_tuple/1)
+    |> Enum.reduce_while(:ok, fn chunk, _acc ->
       case chunk do
-        [%ClientPkt{tag: tag} | _] = prepared_pkts
-        when tag in [:close_message, :bind_message, :parse_message] ->
+        [t | _] = prepared_pkts when is_tuple(t) ->
           Supavisor.DbHandler.handle_prepared_statement_pkts(db_handler, prepared_pkts)
 
-        regular_pkts ->
-          bins = Enum.map(regular_pkts, fn %ClientPkt{bin: bin} -> bin end)
+        bins ->
           HandlerHelpers.sock_send(db_sock, bins)
+      end
+      |> case do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
       end
     end)
   end

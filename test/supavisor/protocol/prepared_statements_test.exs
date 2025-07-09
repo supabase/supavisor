@@ -1,7 +1,6 @@
-defmodule Supavisor.Protocol.PreparedStatementsTest do
+defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
   use ExUnit.Case, async: true
 
-  alias Supavisor.Protocol.Client
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
 
@@ -15,42 +14,38 @@ defmodule Supavisor.Protocol.PreparedStatementsTest do
     test "unnamed prepared statements are passed through unchanged", %{
       client_statements: client_statements
     } do
-      original_bin = <<80, 0, 0, 0, 16, 0, 115, 101, 108, 101, 99, 116, 32, 49, 0, 0, 0>>
-      {:ok, [pkt], _} = Client.decode(original_bin)
+      original_bin = <<?P, 16::32, 0, 115, 101, 108, 101, 99, 116, 32, 49, 0, 0, 0>>
 
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should return unchanged
       assert new_client_statements == client_statements
-      assert result_pkt == pkt
-      assert result_pkt.bin == original_bin
-      assert result_pkt.payload.str_name == ""
+      assert result == original_bin
     end
 
     test "close message updates statement name and binary" do
-      parse_pkt = %{tag: :parse_message, payload: %{str_name: "server_stmt"}}
+      parse_pkt =
+        <<?P, 25::32, 115, 101, 114, 118, 101, 114, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101,
+          99, 116, 32, 49, 0, 0, 0>>
+
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = %{"test_stmt" => prepared_statement}
 
       # Close message for prepared statement
-      original_bin = <<67, 0, 0, 0, 15, 83, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
-      {:ok, [pkt], _} = Client.decode(original_bin)
+      original_bin = <<?C, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
 
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should remove from client_statements
       assert new_client_statements == %{}
 
-      # Should update the packet
-      assert result_pkt.tag == :close_message
-      assert result_pkt.payload.str_name == "server_stmt"
-      assert result_pkt.payload.char == "S"
+      # Should return close_pkt tuple with statement name
+      assert {:close_pkt, "server_stmt", result_bin} = result
 
-      # Verify binary can be decoded
-      {:ok, [decoded_pkt], _} = Client.decode(result_pkt.bin)
-      assert decoded_pkt == result_pkt
+      # Verify the result binary has the correct format
+      assert <<?C, _len::32, ?S, "server_stmt", 0>> = result_bin
     end
 
     test "parse message generates new server-side name", %{
@@ -58,13 +53,11 @@ defmodule Supavisor.Protocol.PreparedStatementsTest do
     } do
       # Parse message with named statement
       original_bin =
-        <<80, 0, 0, 0, 25, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101, 99,
-          116, 32, 49, 0, 0, 0>>
+        <<?P, 25::32, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101, 99, 116,
+          32, 49, 0, 0, 0>>
 
-      {:ok, [pkt], _} = Client.decode(original_bin)
-
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should add mapping to client_statements
       assert map_size(new_client_statements) == 1
@@ -73,86 +66,80 @@ defmodule Supavisor.Protocol.PreparedStatementsTest do
       prepared_statement = Map.get(new_client_statements, "test_stmt")
       assert %PreparedStatement{} = prepared_statement
       assert String.starts_with?(prepared_statement.name, "supavisor_")
-      assert prepared_statement.parse_pkt == result_pkt
 
-      # Should update the packet
-      assert result_pkt.tag == :parse_message
-      assert result_pkt.payload.str_name == prepared_statement.name
+      # Should return parse_pkt tuple with statement name
+      assert {:parse_pkt, server_name, result_bin} = result
+      assert server_name == prepared_statement.name
 
-      # Verify binary can be decoded
-      {:ok, [decoded_pkt], _} = Client.decode(result_pkt.bin)
-      assert decoded_pkt == result_pkt
+      # Verify the result binary has the correct format
+      assert <<?P, _len::32, ^server_name::binary-size(byte_size(prepared_statement.name)), 0,
+               "select 1", 0, 0, 0>> = result_bin
+
+      assert prepared_statement.parse_pkt == result_bin
     end
 
     test "bind message updates statement name" do
-      parse_pkt = %{tag: :parse_message, payload: %{str_name: "server_stmt"}}
+      parse_pkt =
+        <<?P, 25::32, 115, 101, 114, 118, 101, 114, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101,
+          99, 116, 32, 49, 0, 0, 0>>
+
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = %{"test_stmt" => prepared_statement}
 
       # Bind message referencing prepared statement
       original_bin =
-        <<66, 0, 0, 0, 21, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
+        <<?B, 21::32, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
 
-      {:ok, [pkt], _} = Client.decode(original_bin)
-
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
       assert new_client_statements == client_statements
 
-      # Should update the packet
-      assert result_pkt.tag == :bind_message
-      assert result_pkt.payload.str_name == "server_stmt"
-      assert result_pkt.payload.parse_pkt == parse_pkt
+      # Should return bind_pkt tuple with statement name
+      assert {:bind_pkt, "server_stmt", result_bin, returned_parse_pkt} = result
+      assert returned_parse_pkt == parse_pkt
 
-      # Verify binary can be decoded
-      {:ok, [decoded_pkt], _} = Client.decode(result_pkt.bin)
-      assert decoded_pkt == Map.update!(result_pkt, :payload, &Map.delete(&1, :parse_pkt))
+      # Verify the result binary has the correct format
+      assert <<?B, _len::32, 0, "server_stmt", 0, 0, 0, 0, 0, 0, 0>> = result_bin
     end
 
     test "describe message updates statement name" do
-      parse_pkt = %{tag: :parse_message, payload: %{str_name: "server_stmt"}}
+      parse_pkt =
+        <<?P, 25::32, 115, 101, 114, 118, 101, 114, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101,
+          99, 116, 32, 49, 0, 0, 0>>
+
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = %{"test_stmt" => prepared_statement}
 
       # Describe message for prepared statement
-      original_bin = <<68, 0, 0, 0, 15, 83, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
-      {:ok, [pkt], _} = Client.decode(original_bin)
+      original_bin = <<?D, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
 
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
       assert new_client_statements == client_statements
 
-      # Should update the packet
-      assert result_pkt.tag == :describe_message
-      assert result_pkt.payload.str_name == "server_stmt"
+      # Should return describe_pkt tuple with statement name
+      assert {:describe_pkt, "server_stmt", result_bin} = result
 
-      # Verify binary can be decoded
-      {:ok, [decoded_pkt], _} = Client.decode(result_pkt.bin)
-      assert decoded_pkt == result_pkt
+      # Verify the result binary has the correct format
+      assert <<?D, _len::32, ?S, "server_stmt", 0>> = result_bin
     end
 
     test "passthrough for message types we ignore", %{
       client_statements: client_statements
     } do
       # Execute message (should pass through)
-      original_bin = <<69, 0, 0, 0, 9, 0, 0, 0, 0, 200>>
-      {:ok, [pkt], _} = Client.decode(original_bin)
+      original_bin = <<?E, 9::32, 0, 0, 0, 0, 200>>
 
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should return unchanged
       assert new_client_statements == client_statements
-      assert result_pkt == pkt
-      assert result_pkt.bin == original_bin
-
-      # Verify binary can be decoded
-      {:ok, [decoded_pkt], _} = Client.decode(result_pkt.bin)
-      assert decoded_pkt == result_pkt
+      assert result == original_bin
     end
 
     test "bind message with unknown statement name" do
@@ -160,46 +147,38 @@ defmodule Supavisor.Protocol.PreparedStatementsTest do
 
       # Bind message referencing unknown statement
       original_bin =
-        <<66, 0, 0, 0, 21, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
+        <<?B, 21::32, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
 
-      {:ok, [pkt], _} = Client.decode(original_bin)
-
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
       assert new_client_statements == client_statements
 
-      # Should update the packet with nil server name
-      assert result_pkt.tag == :bind_message
-      assert result_pkt.payload.str_name == ""
-      assert result_pkt.payload.parse_pkt == nil
+      # Should return bind_pkt tuple with empty statement name and nil parse_pkt
+      assert {:bind_pkt, "", result_bin, nil} = result
 
-      # Verify binary can be decoded
-      {:ok, [decoded_pkt], _} = Client.decode(result_pkt.bin)
-      assert decoded_pkt == Map.update!(result_pkt, :payload, &Map.delete(&1, :parse_pkt))
+      # Verify the result binary has the correct format (empty statement name)
+      assert <<?B, _len::32, 0, 0, 0, 0, 0, 0, 0, 0>> = result_bin
     end
 
     test "describe message with unknown statement name" do
       client_statements = %{}
 
       # Describe message for unknown statement
-      original_bin = <<68, 0, 0, 0, 15, 83, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
-      {:ok, [pkt], _} = Client.decode(original_bin)
+      original_bin = <<?D, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
 
-      {new_client_statements, result_pkt} =
-        PreparedStatements.handle_pkt(client_statements, pkt)
+      {new_client_statements, result} =
+        PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
       assert new_client_statements == client_statements
 
-      # Should update the packet with nil server name
-      assert result_pkt.tag == :describe_message
-      assert result_pkt.payload.str_name == ""
+      # Should return describe_pkt tuple with empty statement name
+      assert {:describe_pkt, "", result_bin} = result
 
-      # Verify binary can be decoded
-      {:ok, [decoded_pkt], _} = Client.decode(result_pkt.bin)
-      assert decoded_pkt == result_pkt
+      # Verify the result binary has the correct format (empty statement name)
+      assert <<?D, _len::32, ?S, 0>> = result_bin
     end
   end
 end

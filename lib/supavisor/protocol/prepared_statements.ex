@@ -1,30 +1,100 @@
 defmodule Supavisor.Protocol.PreparedStatements do
   @moduledoc """
-  This module handles prepared statements through the extended query protocol
-  for the client handler
+  Handles prepared statement binary packet transformations.
   """
 
-  alias Supavisor.Protocol.Client.Pkt
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
 
-  # Unnamed prepared statements are sent untouched
-  def handle_pkt(
-        client_statements,
-        %Pkt{payload: %{str_name: ""}} = pkt
-      ) do
-    {client_statements, pkt}
+  @type statement_map() :: %{String.t() => PreparedStatement.t()}
+
+  @type statement_name() :: String.t()
+
+  @type pkt() :: binary()
+
+  @type handled_pkt() ::
+          {:parse_pkt, statement_name(), pkt()}
+          | {:bind_pkt, statement_name(), bind_pkt :: pkt(), parse_pkt :: pkt()}
+          | {:close_pkt, statement_name(), pkt()}
+          | pkt()
+
+  @doc """
+  Handles prepared statement packets and returns appropriate tuples for packets
+  that need special treatment according to the protocol.
+  """
+  @spec handle_pkt(statement_map(), pkt()) :: {statement_map(), handled_pkt()}
+  def handle_pkt(client_statements, binary) do
+    case binary do
+      # Parse message (P)
+      <<?P, len::32, rest::binary>> ->
+        handle_parse_message(client_statements, binary, len, rest)
+
+      # Bind message (B)
+      <<?B, len::32, rest::binary>> ->
+        handle_bind_message(client_statements, len, rest)
+
+      # Close message (C)
+      <<?C, len::32, ?S, rest::binary>> ->
+        handle_close_message(client_statements, len, rest)
+
+      # Describe message (D)
+      <<?D, len::32, ?S, rest::binary>> ->
+        handle_describe_message(client_statements, len, rest)
+
+      # All other messages pass through unchanged
+      _ ->
+        {client_statements, binary}
+    end
   end
 
-  def handle_pkt(
-        client_statements,
-        %Pkt{tag: :close_message, payload: %{char: "S"}} = pkt
-      ) do
-    client_side_name = pkt.payload.str_name
+  defp handle_parse_message(client_statements, original_bin, len, rest) do
+    case extract_null_terminated_string(rest) do
+      # Unnamed prepared statement - pass through unchanged
+      {"", _} ->
+        {client_statements, original_bin}
 
-    # If the prepared statement doesn't exist, no need to clean
-    # (some clients send this before preparing any statement)
-    {prepared_statement, client_statements} =
-      Map.pop(client_statements, client_side_name)
+      # Named prepared statement - generate server-side name
+      {client_side_name, remaining} ->
+        server_side_name = "supavisor_#{System.unique_integer()}"
+
+        new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+        new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
+
+        prepared_statement = %PreparedStatement{
+          name: server_side_name,
+          parse_pkt: new_bin
+        }
+
+        new_client_statements = Map.put(client_statements, client_side_name, prepared_statement)
+        {new_client_statements, {:parse_pkt, server_side_name, new_bin}}
+    end
+  end
+
+  defp handle_bind_message(client_statements, len, rest) do
+    {_portal_name, after_portal} = extract_null_terminated_string(rest)
+    {client_side_name, packet_after_client_name} = extract_null_terminated_string(after_portal)
+
+    case Map.get(client_statements, client_side_name) do
+      %PreparedStatement{name: server_side_name, parse_pkt: parse_pkt} ->
+        new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+
+        new_bin =
+          <<?B, new_len::32, 0, server_side_name::binary, 0, packet_after_client_name::binary>>
+
+        {client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}
+
+      nil ->
+        # Unknown statement name - use empty string
+        # This probably should be an error. Need to double check it.
+        new_len = len + (0 - byte_size(client_side_name))
+        new_bin = <<?B, new_len::32, 0, 0, packet_after_client_name::binary>>
+        {client_statements, {:bind_pkt, "", new_bin, nil}}
+    end
+  end
+
+  defp handle_close_message(client_statements, len, rest) do
+    {client_side_name, _} = extract_null_terminated_string(rest)
+
+    {prepared_statement, new_client_statements} = Map.pop(client_statements, client_side_name)
 
     server_side_name =
       case prepared_statement do
@@ -32,133 +102,31 @@ defmodule Supavisor.Protocol.PreparedStatements do
         nil -> "supavisor_none"
       end
 
-    len = new_len(pkt, client_side_name, server_side_name)
+    new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+    new_bin = <<?C, new_len::32, ?S, server_side_name::binary, 0>>
 
-    new_bin =
-      <<?C, len::32, ?S, server_side_name::binary, 0>>
-
-    updated_payload = %{pkt.payload | str_name: server_side_name}
-
-    updated_pkt = %{
-      pkt
-      | bin: new_bin,
-        len: len + 1,
-        payload: updated_payload
-    }
-
-    {client_statements, updated_pkt}
+    {new_client_statements, {:close_pkt, server_side_name, new_bin}}
   end
 
-  def handle_pkt(client_statements, %Pkt{tag: :parse_message} = pkt) do
-    %{str_name: client_side_name} = pkt.payload
-
-    # TODO: if we generate a "per query" key here, we can reduce the number
-    # of duplicate prepared statements. We can achieve that with pg_parser, but
-    # lets do it as a future improvement
-    server_side_name = "supavisor_#{System.unique_integer()}"
-
-    <<_type, _len::32, _statement_name::binary-size(byte_size(client_side_name)), 0,
-      query_and_params::binary>> = pkt.bin
-
-    len = new_len(pkt, client_side_name, server_side_name)
-
-    new_bin =
-      <<?P, len::32, server_side_name::binary, 0, query_and_params::binary>>
-
-    updated_payload = %{pkt.payload | str_name: server_side_name}
-
-    updated_pkt = %{
-      pkt
-      | bin: new_bin,
-        len: len + 1,
-        payload: updated_payload
-    }
-
-    prepared_statement = %PreparedStatement{
-      name: server_side_name,
-      parse_pkt: updated_pkt
-    }
-
-    {Map.put(client_statements, client_side_name, prepared_statement), updated_pkt}
-  end
-
-  def handle_pkt(
-        client_statements,
-        %Pkt{tag: :bind_message} = pkt
-      ) do
-    %{str_name: client_side_name} = pkt.payload
-    prepared_statement = Map.get(client_statements, client_side_name)
-
-    <<_type, _len::32, rest::binary>> = pkt.bin
-    [_, rest] = :binary.split(rest, <<0>>)
-    [_, packet_after_server_side_name] = :binary.split(rest, <<0>>)
-
-    # TODO: should return error to client when the name is not known
-    {server_side_name, parse_pkt} =
-      case prepared_statement do
-        %PreparedStatement{name: name, parse_pkt: parse_pkt} -> {name, parse_pkt}
-        nil -> {"", nil}
-      end
-
-    len = new_len(pkt, client_side_name, server_side_name)
-
-    new_bin =
-      <<
-        ?B,
-        len::32,
-        0,
-        server_side_name::binary,
-        0,
-        packet_after_server_side_name::binary
-      >>
-
-    updated_payload =
-      pkt.payload
-      |> Map.put(:str_name, server_side_name)
-      |> Map.put(:parse_pkt, parse_pkt)
-
-    updated_pkt = %{
-      pkt
-      | bin: new_bin,
-        len: len + 1,
-        payload: updated_payload
-    }
-
-    {client_statements, updated_pkt}
-  end
-
-  def handle_pkt(client_statements, %Pkt{tag: :describe_message} = pkt) do
-    client_side_name = pkt.payload.str_name
-    prepared_statement = Map.get(client_statements, client_side_name)
+  defp handle_describe_message(client_statements, len, rest) do
+    {client_side_name, _} = extract_null_terminated_string(rest)
 
     server_side_name =
-      case prepared_statement do
+      case Map.get(client_statements, client_side_name) do
         %PreparedStatement{name: name} -> name
         nil -> ""
       end
 
-    len = new_len(pkt, client_side_name, server_side_name)
+    new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+    new_bin = <<?D, new_len::32, ?S, server_side_name::binary, 0>>
 
-    new_bin =
-      <<?D, len::32, ?S, server_side_name::binary, 0>>
-
-    updated_payload = %{pkt.payload | str_name: server_side_name}
-
-    updated_pkt = %{
-      pkt
-      | bin: new_bin,
-        len: len + 1,
-        payload: updated_payload
-    }
-
-    {client_statements, updated_pkt}
+    {client_statements, {:describe_pkt, server_side_name, new_bin}}
   end
 
-  def handle_pkt(client_statements, pkt) do
-    {client_statements, pkt}
-  end
-
-  defp new_len(pkt, old_name, new_name) do
-    pkt.len + (byte_size(new_name) - byte_size(old_name)) - 1
+  defp extract_null_terminated_string(binary) do
+    case :binary.split(binary, <<0>>) do
+      [string, rest] -> {string, rest}
+      [string] -> {string, <<>>}
+    end
   end
 end

@@ -1,12 +1,12 @@
 defmodule Supavisor.Protocol.PreparedStatements.PreparedStatement do
   @moduledoc """
-  Represents a prepared statement.
+  Represents a prepared statement
   """
 
   defstruct [:parse_pkt, :name]
 
   @type t() :: %__MODULE__{
-          parse_pkt: Supavisor.Protocol.Client.Pkt.t(),
+          parse_pkt: binary(),
           name: String.t()
         }
 end

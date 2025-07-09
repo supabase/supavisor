@@ -8,7 +8,6 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
-  alias Supavisor.Protocol.Client.Pkt, as: ClientPkt
   alias Supavisor.Protocol.Server.Pkt, as: ServerPkt
 
   alias Supavisor.{
@@ -347,12 +346,7 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(
-        {:call, from},
-        {:handle_ps_pkts, pkts},
-        _state,
-        data
-      ) do
+  def handle_event({:call, from}, {:handle_ps_pkts, pkts}, _state, data) do
     {iodata, data} =
       Enum.reduce(pkts, {[], data}, fn pkt, {iodata, data} ->
         handle_prepared_statement_pkt(pkt, {iodata, data})
@@ -361,18 +355,6 @@ defmodule Supavisor.DbHandler do
     :ok = HandlerHelpers.sock_send(data.sock, Enum.reverse(iodata))
 
     {:keep_state, data, {:reply, from, :ok}}
-  end
-
-  # TODO: potentially ignore, send parse response to client
-  def handle_event(
-        {:call, from},
-        {:handle_prepared_statement, %ClientPkt{tag: :parse_message} = pkt},
-        _state,
-        data
-      ) do
-    :ok = HandlerHelpers.sock_send(data.sock, pkt.bin)
-    prepared_statements = MapSet.put(data.prepared_statements, pkt.payload.str_name)
-    {:keep_state, %{data | prepared_statements: prepared_statements}, {:reply, from, :ok}}
   end
 
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
@@ -766,10 +748,8 @@ defmodule Supavisor.DbHandler do
   # If we received a bind without a parse, we need to intercept the parse response, otherwise,
   # the client will receive an unexpected message.
   @spec handle_prepared_statement_pkt(map(), {iodata(), map()}) :: {iodata(), map()}
-  defp handle_prepared_statement_pkt(%{tag: :bind_message} = pkt, {iodata, data}) do
-    stmt_name = pkt.payload.str_name
+  defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
     new_ps? = stmt_name not in data.prepared_statements
-    parse_pkt = pkt.payload[:parse_pkt]
 
     if new_ps? and parse_pkt do
       new_data = %{
@@ -778,23 +758,27 @@ defmodule Supavisor.DbHandler do
           prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
       }
 
-      {[[parse_pkt.bin, pkt.bin] | iodata], new_data}
+      {[[parse_pkt, pkt] | iodata], new_data}
     else
-      {[pkt.bin | iodata], data}
+      {[pkt | iodata], data}
     end
   end
 
-  defp handle_prepared_statement_pkt(%{tag: :close_message} = pkt, {iodata, data}) do
-    {[pkt.bin | iodata],
-     %{data | prepared_statements: MapSet.delete(data.prepared_statements, pkt.payload.str_name)}}
+  defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, {iodata, data}) do
+    {[pkt | iodata],
+     %{data | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name)}}
+  end
+
+  defp handle_prepared_statement_pkt({:describe_pkt, _stmt_name, pkt}, {iodata, data}) do
+    {[pkt | iodata], data}
   end
 
   # TODO: potentially ignore, send parse response to client
   #
   # We only need to do that if we stop generating unique id per statement, and instead do
   # fixed ids.
-  defp handle_prepared_statement_pkt(%ClientPkt{tag: :parse_message} = pkt, {iodata, data}) do
-    prepared_statements = MapSet.put(data.prepared_statements, pkt.payload.str_name)
-    {[pkt.bin | iodata], %{data | prepared_statements: prepared_statements}}
+  defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
+    prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
+    {[pkt | iodata], %{data | prepared_statements: prepared_statements}}
   end
 end
