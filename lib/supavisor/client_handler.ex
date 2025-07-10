@@ -1133,35 +1133,45 @@ defmodule Supavisor.ClientHandler do
       "ClientHandler: Forward query to db #{inspect(data_to_send)} #{inspect(data.db_pid)}"
     )
 
-    {:ok, bin_or_pkts, prepared_statements, rest} =
-      handle_client_pkts(
-        <<data.pending::binary, data_to_send::binary>>,
-        data
-      )
+    case handle_client_pkts(<<data.pending::binary, data_to_send::binary>>, data) do
+      {:ok, bin_or_pkts, prepared_statements, rest} ->
+        case sock_send_maybe_active_once(bin_or_pkts, data) do
+          :ok ->
+            {:keep_state,
+             %{
+               data
+               | prepared_statements: prepared_statements,
+                 pending: rest,
+                 active_count: data.active_count + 1
+             }}
 
-    case sock_send_maybe_active_once(bin_or_pkts, data) do
-      :ok ->
-        {:keep_state,
-         %{
-           data
-           | prepared_statements: prepared_statements,
-             pending: rest,
-             active_count: data.active_count + 1
-         }}
+          error ->
+            Logger.error("ClientHandler: error while sending query: #{inspect(error)}")
 
-      error ->
-        Logger.error("ClientHandler: error while sending query: #{inspect(error)}")
+            HandlerHelpers.sock_send(
+              data.sock,
+              Server.error_message("XX000", "Error while sending query")
+            )
+
+            {:stop, {:shutdown, :send_query_error}}
+        end
+
+      {:error, :max_prepared_statements} ->
+        message_text =
+          "Max prepared statements limit reached. Limit is #{PreparedStatements.limit()} per connection"
 
         HandlerHelpers.sock_send(
           data.sock,
-          Server.error_message("XX000", "Error while sending query")
+          Server.error_message("XX000", message_text)
         )
 
-        {:stop, {:shutdown, :send_query_error}}
+        {:stop, {:shutdown, :max_prepared_statements}}
     end
   end
 
-  @spec handle_client_pkts(binary, map) :: {:ok, [ClientPkt.t()] | binary, map, binary}
+  @spec handle_client_pkts(binary, map) ::
+          {:ok, [ClientPkt.t()] | binary, map, binary}
+          | {:error, :max_prepared_statements}
   defp handle_client_pkts(
          bin,
          %{mode: :transaction} = data
@@ -1169,13 +1179,23 @@ defmodule Supavisor.ClientHandler do
     stmts = data.prepared_statements
     {pkts, rest} = Client.split_pkts(bin)
 
-    {stmts, pkts} =
-      Enum.reduce(pkts, {stmts, []}, fn pkt, {stmts, pkts} ->
-        {stmts, pkt} = PreparedStatements.handle_pkt(stmts, pkt)
-        {stmts, [pkt | pkts]}
-      end)
+    pkts
+    |> Enum.reduce_while({:ok, stmts, []}, fn pkt, {:ok, stmts, pkts} ->
+      case PreparedStatements.handle_pkt(stmts, pkt) do
+        {:ok, stmts, pkt} ->
+          {:cont, {:ok, stmts, [pkt | pkts]}}
 
-    {:ok, Enum.reverse(pkts), stmts, rest}
+        error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, stmts, pkts} ->
+        {:ok, Enum.reverse(pkts), stmts, rest}
+
+      {:error, :max_prepared_statements} ->
+        {:error, :max_prepared_statements}
+    end
   end
 
   defp handle_client_pkts(bin, data), do: {:ok, bin, data.prepared_statements, data.pending}

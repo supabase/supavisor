@@ -15,6 +15,8 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   """
 
   setup do
+    Logger.configure(level: :error)
+
     db_conf = Application.get_env(:supavisor, Repo)
 
     conns =
@@ -40,6 +42,19 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     query = Postgrex.prepare!(conn, "", @sample_query)
     assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["private"])
+  end
+
+  test "prepared statement limit", %{conns: [conn | _]} do
+    limit = Supavisor.Protocol.PreparedStatements.limit()
+
+    for i <- 0..(limit - 1) do
+      query = Postgrex.prepare!(conn, "q_#{i}", @sample_query)
+      assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["public"])
+    end
+
+    assert_raise Postgrex.Error, ~r/Max prepared statements limit reached/, fn ->
+      Postgrex.prepare!(conn, "q_err", @sample_query)
+    end
   end
 
   test "prepare once, run twice (concurrent processes)", %{conns: conns} do

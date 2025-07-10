@@ -17,11 +17,20 @@ defmodule Supavisor.Protocol.PreparedStatements do
           | {:close_pkt, statement_name(), pkt()}
           | pkt()
 
+  @limit 200
+
+  @doc """
+  Upper limit of prepared statements
+  """
+  def limit, do: @limit
+
   @doc """
   Handles prepared statement packets and returns appropriate tuples for packets
   that need special treatment according to the protocol.
   """
-  @spec handle_pkt(statement_map(), pkt()) :: {statement_map(), handled_pkt()}
+  @spec handle_pkt(statement_map(), pkt()) ::
+          {:ok, statement_map(), handled_pkt()}
+          | {:error, :max_prepared_statements}
   def handle_pkt(client_statements, binary) do
     case binary do
       # Parse message (P)
@@ -42,7 +51,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
       # All other messages pass through unchanged
       _ ->
-        {client_statements, binary}
+        {:ok, client_statements, binary}
     end
   end
 
@@ -50,22 +59,26 @@ defmodule Supavisor.Protocol.PreparedStatements do
     case extract_null_terminated_string(rest) do
       # Unnamed prepared statement - pass through unchanged
       {"", _} ->
-        {client_statements, original_bin}
+        {:ok, client_statements, original_bin}
 
       # Named prepared statement - generate server-side name
       {client_side_name, remaining} ->
-        server_side_name = "supavisor_#{System.unique_integer()}"
+        if map_size(client_statements) >= @limit do
+          {:error, :max_prepared_statements}
+        else
+          server_side_name = "supavisor_#{System.unique_integer()}"
 
-        new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
-        new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
+          new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+          new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
 
-        prepared_statement = %PreparedStatement{
-          name: server_side_name,
-          parse_pkt: new_bin
-        }
+          prepared_statement = %PreparedStatement{
+            name: server_side_name,
+            parse_pkt: new_bin
+          }
 
-        new_client_statements = Map.put(client_statements, client_side_name, prepared_statement)
-        {new_client_statements, {:parse_pkt, server_side_name, new_bin}}
+          new_client_statements = Map.put(client_statements, client_side_name, prepared_statement)
+          {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
+        end
     end
   end
 
@@ -80,14 +93,14 @@ defmodule Supavisor.Protocol.PreparedStatements do
         new_bin =
           <<?B, new_len::32, 0, server_side_name::binary, 0, packet_after_client_name::binary>>
 
-        {client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}
+        {:ok, client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}
 
       nil ->
         # Unknown statement name - use empty string
         # This probably should be an error. Need to double check it.
         new_len = len + (0 - byte_size(client_side_name))
         new_bin = <<?B, new_len::32, 0, 0, packet_after_client_name::binary>>
-        {client_statements, {:bind_pkt, "", new_bin, nil}}
+        {:ok, client_statements, {:bind_pkt, "", new_bin, nil}}
     end
   end
 
@@ -105,7 +118,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
     new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
     new_bin = <<?C, new_len::32, ?S, server_side_name::binary, 0>>
 
-    {new_client_statements, {:close_pkt, server_side_name, new_bin}}
+    {:ok, new_client_statements, {:close_pkt, server_side_name, new_bin}}
   end
 
   defp handle_describe_message(client_statements, len, rest) do
@@ -120,7 +133,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
     new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
     new_bin = <<?D, new_len::32, ?S, server_side_name::binary, 0>>
 
-    {client_statements, {:describe_pkt, server_side_name, new_bin}}
+    {:ok, client_statements, {:describe_pkt, server_side_name, new_bin}}
   end
 
   defp extract_null_terminated_string(binary) do
