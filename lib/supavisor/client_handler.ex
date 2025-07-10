@@ -40,8 +40,8 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def callback_mode, do: [:handle_event_function]
 
-  @spec db_status(pid(), :ready_for_query | :read_sql_error, binary()) :: :ok
-  def db_status(pid, status, bin), do: :gen_statem.cast(pid, {:db_status, status, bin})
+  @spec db_status(pid(), :ready_for_query | :read_sql_error) :: :ok
+  def db_status(pid, status), do: :gen_statem.cast(pid, {:db_status, status})
 
   @impl true
   def init(_), do: :ignore
@@ -619,14 +619,12 @@ defmodule Supavisor.ClientHandler do
   end
 
   # emulate handle_cast
-  def handle_event(:cast, {:db_status, status, bin}, :busy, data) do
+  def handle_event(:cast, {:db_status, status}, :busy, data) do
     Logger.metadata(state: :busy)
 
     case status do
       :ready_for_query ->
         Logger.debug("ClientHandler: Client is ready")
-
-        :ok = HandlerHelpers.sock_send(data.sock, bin)
 
         db_pid = handle_db_pid(data.mode, data.pool, data.db_pid)
 

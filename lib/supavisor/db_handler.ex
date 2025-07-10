@@ -293,7 +293,8 @@ defmodule Supavisor.DbHandler do
       end
 
     if resp != :continue do
-      :ok = ClientHandler.db_status(data.caller, resp, bin)
+      HandlerHelpers.sock_send(data.client_sock, bin)
+      :ok = ClientHandler.db_status(data.caller, resp)
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
     else
@@ -323,7 +324,7 @@ defmodule Supavisor.DbHandler do
       data =
         if data.mode == :transaction do
           data = intercept_or_send_pkts(pkts, data)
-          ClientHandler.db_status(data.caller, :ready_for_query, last_packet.bin)
+          ClientHandler.db_status(data.caller, :ready_for_query)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
           data = intercept_or_send_pkts(pkts, data)
@@ -717,15 +718,6 @@ defmodule Supavisor.DbHandler do
         case {pkt, data.intercept_parse_resps} do
           {%ServerPkt{tag: :parse_complete}, intercept_count} when intercept_count > 0 ->
             {acc_bins, %{data | intercept_parse_resps: intercept_count - 1}}
-
-          {%ServerPkt{tag: :ready_for_query}, _} ->
-            # We filter ready_for_query on transaction mode because it's sent separately
-            # to the client handler. TODO: should we always filter it?
-            if data.mode == :transaction and transaction_complete_pkt?(pkt) do
-              {acc_bins, data}
-            else
-              {[pkt.bin | acc_bins], data}
-            end
 
           _ ->
             {[pkt.bin | acc_bins], data}
