@@ -17,7 +17,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
           | {:close_pkt, statement_name(), pkt()}
           | pkt()
 
-  @client_limit 200
+  @client_limit 100
   @backend_limit 200
 
   @doc """
