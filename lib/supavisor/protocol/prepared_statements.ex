@@ -50,6 +50,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
   @spec handle_pkt(statement_map(), pkt()) ::
           {:ok, statement_map(), handled_pkt()}
           | {:error, :max_prepared_statements}
+          | {:error, :prepared_statement_on_simple_query}
   def handle_pkt(client_statements, binary) do
     case binary do
       # Parse message (P)
@@ -67,6 +68,10 @@ defmodule Supavisor.Protocol.PreparedStatements do
       # Describe message (D)
       <<?D, len::32, ?S, rest::binary>> ->
         handle_describe_message(client_statements, len, rest)
+
+      # Query message (Q)
+      <<?Q, len::32, rest::binary>> ->
+        handle_simple_query_message(client_statements, binary, len, rest)
 
       # All other messages pass through unchanged
       _ ->
@@ -153,6 +158,17 @@ defmodule Supavisor.Protocol.PreparedStatements do
     new_bin = <<?D, new_len::32, ?S, server_side_name::binary, 0>>
 
     {:ok, client_statements, {:describe_pkt, server_side_name, new_bin}}
+  end
+
+  defp handle_simple_query_message(client_statements, binary, _len, rest) do
+    case rest do
+      "PREPARE" <> _ ->
+        IO.inspect(String.trim(rest, <<0>>), label: :r)
+        {:error, :prepared_statement_on_simple_query}
+
+      _ ->
+        {:ok, client_statements, binary}
+    end
   end
 
   defp extract_null_terminated_string(binary) do

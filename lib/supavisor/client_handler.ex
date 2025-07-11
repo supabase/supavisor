@@ -1164,12 +1164,24 @@ defmodule Supavisor.ClientHandler do
         )
 
         {:stop, {:shutdown, :max_prepared_statements}}
+
+      {:error, :prepared_statement_on_simple_query} ->
+        message_text = "Supavisor only supports PREPARE/EXECUTE using the Extended Query Protocol"
+
+        # Because this is simple query protocol, we need to send ready_for_query after the error,
+        HandlerHelpers.sock_send(
+          data.sock,
+          [Server.error_message("XX000", message_text), Server.ready_for_query()]
+        )
+
+        {:stop, {:shutdown, :prepared_statement_on_simple_query}}
     end
   end
 
   @spec handle_client_pkts(binary, map) ::
           {:ok, [PreparedStatements.handled_pkt()] | binary, map, binary}
           | {:error, :max_prepared_statements}
+          | {:error, :prepared_statement_on_simple_query}
   defp handle_client_pkts(
          bin,
          %{mode: :transaction} = data
@@ -1191,8 +1203,8 @@ defmodule Supavisor.ClientHandler do
       {:ok, stmts, pkts} ->
         {:ok, Enum.reverse(pkts), stmts, rest}
 
-      {:error, :max_prepared_statements} ->
-        {:error, :max_prepared_statements}
+      error ->
+        error
     end
   end
 

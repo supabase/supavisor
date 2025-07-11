@@ -3,6 +3,8 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   require Logger
 
+  alias Supavisor.Protocol.PreparedStatements
+
   @tenant "proxy_tenant1"
 
   @moduletag integration: true
@@ -14,28 +16,24 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   ORDER BY tablename;
   """
 
-  alias Supavisor.Protocol.PreparedStatements
-
   setup do
-    Logger.configure(level: :error)
-
     db_conf = Application.get_env(:supavisor, Repo)
+
+    conn_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_transaction),
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> @tenant
+    ]
 
     conns =
       for _i <- 1..10 do
-        {:ok, conn} =
-          Postgrex.start_link(
-            hostname: db_conf[:hostname],
-            port: Application.get_env(:supavisor, :proxy_port_transaction),
-            database: db_conf[:database],
-            password: db_conf[:password],
-            username: db_conf[:username] <> "." <> @tenant
-          )
-
+        {:ok, conn} = Postgrex.start_link(conn_opts)
         conn
       end
 
-    {:ok, %{conns: conns}}
+    {:ok, %{conns: conns, conn_opts: conn_opts}}
   end
 
   test "prepare unnamed", %{conns: [conn | _]} do
@@ -137,5 +135,14 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     for _ <- 1..process_count do
       assert_receive :done, 1000
     end
+  end
+
+  test "prepared statements error on simple query protocol", %{conn_opts: conn_opts} do
+    {:ok, conn} = start_supervised({SingleConnection, conn_opts})
+
+    expected_message = "Supavisor only supports PREPARE/EXECUTE using the Extended Query Protocol"
+
+    {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
+      SingleConnection.query(conn, "PREPARE q0 AS SELECT $1")
   end
 end
