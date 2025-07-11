@@ -22,6 +22,7 @@ defmodule Supavisor.ClientHandler do
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
+    Protocol,
     Protocol.Client,
     Protocol.PreparedStatements,
     Tenants
@@ -1187,7 +1188,7 @@ defmodule Supavisor.ClientHandler do
          %{mode: :transaction} = data
        ) do
     stmts = data.prepared_statements
-    {pkts, rest} = Client.split_pkts(bin)
+    {pkts, rest} = Protocol.split_pkts(bin)
 
     pkts
     |> Enum.reduce_while({:ok, stmts, []}, fn pkt, {:ok, stmts, pkts} ->

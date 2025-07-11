@@ -4,8 +4,6 @@ defmodule Supavisor.Integration.ExternalTest do
   @moduletag integration: true, timeout: 120_000
 
   setup_all do
-    Logger.configure(level: :error)
-
     npm =
       get_tool("yarn") || get_tool("npm") || get_tool("bun") ||
         raise "Cannot find neither Yarn nor NPM"

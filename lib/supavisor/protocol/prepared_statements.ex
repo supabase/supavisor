@@ -163,7 +163,6 @@ defmodule Supavisor.Protocol.PreparedStatements do
   defp handle_simple_query_message(client_statements, binary, _len, rest) do
     case rest do
       "PREPARE" <> _ ->
-        IO.inspect(String.trim(rest, <<0>>), label: :r)
         {:error, :prepared_statement_on_simple_query}
 
       _ ->

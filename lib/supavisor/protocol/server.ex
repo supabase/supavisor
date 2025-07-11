@@ -44,6 +44,18 @@ defmodule Supavisor.Protocol.Server do
 
   defmacro ssl_request_message, do: @ssl_request
 
+  defmacro parse_complete_msg_shape do
+    quote do
+      <<?1, _::binary>>
+    end
+  end
+
+  defmacro close_complete_msg_shape do
+    quote do
+      <<?3, _::binary>>
+    end
+  end
+
   @spec decode(iodata()) :: {:ok, [Pkt.t()], rest :: binary()}
   def decode(data), do: decode(data, [])
 

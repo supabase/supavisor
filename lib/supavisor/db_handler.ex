@@ -4,12 +4,12 @@ defmodule Supavisor.DbHandler do
   It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
   """
 
-  require Logger
-
   @behaviour :gen_statem
 
+  require Logger
+  require Supavisor.Protocol.Server, as: Server
+
   alias Supavisor.Protocol.PreparedStatements
-  alias Supavisor.Protocol.Server.Pkt, as: ServerPkt
 
   alias Supavisor.{
     ClientHandler,
@@ -310,7 +310,7 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller, reply: nil} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
-    {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
+    {pkts, rest} = Supavisor.Protocol.split_pkts(<<data.pending_bin::binary, bin::binary>>)
     data = %{data | pending_bin: rest}
 
     last_packet = List.last(pkts)
@@ -725,25 +725,25 @@ defmodule Supavisor.DbHandler do
   def reconnect_timeout(_),
     do: @reconnect_timeout
 
-  @spec intercept_or_send_pkts([ServerPkt.t()], map()) :: map()
+  @spec intercept_or_send_pkts([binary()], map()) :: map()
   defp intercept_or_send_pkts(pkts, data) do
     {packets_to_send, updated_data} =
       Enum.reduce(pkts, {[], data}, fn pkt, {acc_bins, data} ->
         case {pkt, data} do
-          {%ServerPkt{tag: :parse_complete}, %{expected_parse_resps: n}} when n > 0 ->
-            {[pkt.bin | acc_bins], %{data | expected_parse_resps: n - 1}}
+          {Server.parse_complete_msg_shape(), %{expected_parse_resps: n}} when n > 0 ->
+            {[pkt | acc_bins], %{data | expected_parse_resps: n - 1}}
 
-          {%ServerPkt{tag: :parse_complete}, %{intercept_parse_resps: n}} when n > 0 ->
+          {Server.parse_complete_msg_shape(), %{intercept_parse_resps: n}} when n > 0 ->
             {acc_bins, %{data | intercept_parse_resps: n - 1}}
 
-          {%ServerPkt{tag: :close_complete}, %{expected_close_resps: n}} when n > 0 ->
-            {[pkt.bin | acc_bins], %{data | expected_close_resps: n - 1}}
+          {Server.close_complete_msg_shape(), %{expected_close_resps: n}} when n > 0 ->
+            {[pkt | acc_bins], %{data | expected_close_resps: n - 1}}
 
-          {%ServerPkt{tag: :close_complete}, %{intercept_close_resps: n}} when n > 0 ->
+          {Server.close_complete_msg_shape(), %{intercept_close_resps: n}} when n > 0 ->
             {acc_bins, %{data | intercept_close_resps: n - 1}}
 
           _ ->
-            {[pkt.bin | acc_bins], data}
+            {[pkt | acc_bins], data}
         end
       end)
 
@@ -754,7 +754,7 @@ defmodule Supavisor.DbHandler do
     updated_data
   end
 
-  defp transaction_complete_pkt?(%ServerPkt{tag: :ready_for_query, payload: :idle}), do: true
+  defp transaction_complete_pkt?(<<?Z, 5::32, ?I>>), do: true
   defp transaction_complete_pkt?(_), do: false
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
