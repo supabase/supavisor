@@ -16,7 +16,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     } do
       original_bin = <<?P, 16::32, 0, 115, 101, 108, 101, 99, 116, 32, 49, 0, 0, 0>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should return unchanged
@@ -35,7 +35,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       # Close message for prepared statement
       original_bin = <<?C, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should remove from client_statements
@@ -56,7 +56,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
         <<?P, 25::32, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101, 99, 116,
           32, 49, 0, 0, 0>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should add mapping to client_statements
@@ -90,7 +90,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       original_bin =
         <<?B, 21::32, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
@@ -115,7 +115,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       # Describe message for prepared statement
       original_bin = <<?D, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
@@ -134,7 +134,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       # Execute message (should pass through)
       original_bin = <<?E, 9::32, 0, 0, 0, 0, 200>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should return unchanged
@@ -149,7 +149,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       original_bin =
         <<?B, 21::32, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
@@ -168,7 +168,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       # Describe message for unknown statement
       original_bin = <<?D, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
 
-      {new_client_statements, result} =
+      {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
 
       # Should not change client_statements
@@ -179,6 +179,20 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
 
       # Verify the result binary has the correct format (empty statement name)
       assert <<?D, _len::32, ?S, 0>> = result_bin
+    end
+
+    test "parse message returns error when client limit is reached" do
+      client_statements =
+        for i <- 1..PreparedStatements.client_limit(), into: %{} do
+          {"stmt_#{i}", %PreparedStatement{name: "server_stmt_#{i}", parse_pkt: <<>>}}
+        end
+
+      bin =
+        <<?P, 25::32, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101, 99, 116,
+          32, 49, 0, 0, 0>>
+
+      assert {:error, :max_prepared_statements} =
+               PreparedStatements.handle_pkt(client_statements, bin)
     end
   end
 end
