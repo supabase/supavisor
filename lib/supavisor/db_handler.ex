@@ -37,7 +37,7 @@ defmodule Supavisor.DbHandler do
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
 
-  @spec handle_prepared_statement_pkts(pid, [PreparedStatements.pkt()]) :: :ok
+  @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
   def handle_prepared_statement_pkts(pid, pkts) do
     :gen_statem.call(pid, {:handle_ps_pkts, pkts})
   end

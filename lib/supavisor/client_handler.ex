@@ -1168,7 +1168,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec handle_client_pkts(binary, map) ::
-          {:ok, [PreparedStatements.pkt()] | binary, map, binary}
+          {:ok, [PreparedStatements.handled_pkt()] | binary, map, binary}
           | {:error, :max_prepared_statements}
   defp handle_client_pkts(
          bin,
@@ -1254,7 +1254,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   # Chunking to ensure we send bigger packets
-  @spec sock_send_pkts_maybe_active_once([PreparedStatements.pkt()], map()) ::
+  @spec sock_send_pkts_maybe_active_once([PreparedStatements.handled_pkt()], map()) ::
           :ok | {:error, term()}
   defp sock_send_pkts_maybe_active_once(pkts, data) do
     {_pool, db_handler, db_sock} = data.db_pid
