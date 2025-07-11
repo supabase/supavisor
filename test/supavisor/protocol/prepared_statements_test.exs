@@ -14,7 +14,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     test "unnamed prepared statements are passed through unchanged", %{
       client_statements: client_statements
     } do
-      original_bin = <<?P, 16::32, 0, 115, 101, 108, 101, 99, 116, 32, 49, 0, 0, 0>>
+      original_bin = <<?P, 16::32, 0, "select 1", 0, 0, 0>>
 
       {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
@@ -26,14 +26,13 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
 
     test "close message updates statement name and binary" do
       parse_pkt =
-        <<?P, 25::32, 115, 101, 114, 118, 101, 114, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101,
-          99, 116, 32, 49, 0, 0, 0>>
+        <<?P, 25::32, "server_stmt", 0, "select 1", 0, 0, 0>>
 
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = %{"test_stmt" => prepared_statement}
 
       # Close message for prepared statement
-      original_bin = <<?C, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
+      original_bin = <<?C, 15::32, ?S, "test_stmt", 0>>
 
       {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
@@ -53,8 +52,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     } do
       # Parse message with named statement
       original_bin =
-        <<?P, 25::32, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101, 99, 116,
-          32, 49, 0, 0, 0>>
+        <<?P, 25::32, "test_stmt", 0, "select 1", 0, 0, 0>>
 
       {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
@@ -80,15 +78,14 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
 
     test "bind message updates statement name" do
       parse_pkt =
-        <<?P, 25::32, 115, 101, 114, 118, 101, 114, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101,
-          99, 116, 32, 49, 0, 0, 0>>
+        <<?P, 25::32, "server_stmt", 0, "select 1", 0, 0, 0>>
 
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = %{"test_stmt" => prepared_statement}
 
       # Bind message referencing prepared statement
       original_bin =
-        <<?B, 21::32, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
+        <<?B, 21::32, 0, "test_stmt", 0, 0, 0, 0, 0, 0, 0>>
 
       {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
@@ -106,14 +103,13 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
 
     test "describe message updates statement name" do
       parse_pkt =
-        <<?P, 25::32, 115, 101, 114, 118, 101, 114, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101,
-          99, 116, 32, 49, 0, 0, 0>>
+        <<?P, 25::32, "server_stmt", 0, "select 1", 0, 0, 0>>
 
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = %{"test_stmt" => prepared_statement}
 
       # Describe message for prepared statement
-      original_bin = <<?D, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
+      original_bin = <<?D, 15::32, ?S, "test_stmt", 0>>
 
       {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
@@ -147,7 +143,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
 
       # Bind message referencing unknown statement
       original_bin =
-        <<?B, 21::32, 0, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 0, 0, 0, 0, 0, 0>>
+        <<?B, 21::32, 0, "test_stmt", 0, 0, 0, 0, 0, 0, 0>>
 
       {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
@@ -166,7 +162,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       client_statements = %{}
 
       # Describe message for unknown statement
-      original_bin = <<?D, 15::32, ?S, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0>>
+      original_bin = <<?D, 15::32, ?S, "test_stmt", 0>>
 
       {:ok, new_client_statements, result} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
@@ -188,8 +184,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
         end
 
       bin =
-        <<?P, 25::32, 116, 101, 115, 116, 95, 115, 116, 109, 116, 0, 115, 101, 108, 101, 99, 116,
-          32, 49, 0, 0, 0>>
+        <<?P, 25::32, "test_stmt", 0, "select 1", 0, 0, 0>>
 
       assert {:error, :max_prepared_statements} =
                PreparedStatements.handle_pkt(client_statements, bin)
