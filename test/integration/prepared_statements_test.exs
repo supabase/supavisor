@@ -14,6 +14,8 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   ORDER BY tablename;
   """
 
+  alias Supavisor.Protocol.PreparedStatements
+
   setup do
     Logger.configure(level: :error)
 
@@ -45,7 +47,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   end
 
   test "prepared statement limit (client)", %{conns: [conn | _]} do
-    limit = Supavisor.Protocol.PreparedStatements.client_limit()
+    limit = PreparedStatements.client_limit()
 
     for i <- 0..(limit - 1) do
       query = Postgrex.prepare!(conn, "q_#{i}", @sample_query)
@@ -59,7 +61,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   test "prepared statement soft limit (backend)", %{conns: conns} do
     test_pid = self()
-    limit = Supavisor.Protocol.PreparedStatements.client_limit()
+    limit = PreparedStatements.client_limit()
 
     for conn <- conns, i <- 0..(limit - 1) do
       query = Postgrex.prepare!(conn, "q_#{i}", @sample_query)
@@ -85,7 +87,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     for _c <- conns do
       assert_receive {pid, count}
-      assert count <= Supavisor.Protocol.PreparedStatements.backend_limit()
+      assert count <= PreparedStatements.backend_limit()
       send(pid, :end)
     end
   end
