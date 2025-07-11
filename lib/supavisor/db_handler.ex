@@ -328,9 +328,9 @@ defmodule Supavisor.DbHandler do
       data =
         if data.mode == :transaction do
           # for some reason, if we send the data **before** doing the `ready_for_query` cast,
-          # we get a rare race condition that causes msgs to be sent to the wrong socket
-          data = intercept_or_send_pkts(pkts, data)
+          # we get race condition that sometimes causes msgs to be sent to the wrong socket
           ClientHandler.db_status(data.caller, :ready_for_query)
+          data = intercept_or_send_pkts(pkts, data)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
           data = intercept_or_send_pkts(pkts, data)
