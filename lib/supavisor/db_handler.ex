@@ -792,10 +792,8 @@ defmodule Supavisor.DbHandler do
     {[pkt | iodata], data}
   end
 
-  # TODO: potentially ignore, send parse response to client
-  #
-  # We only need to do that if we stop generating unique id per statement, and instead do
-  # fixed ids.
+  # If we stop generating unique id per statement, and instead do deterministic ids,
+  # we need to potentially drop parse pkts and return a parse response
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
     prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
 

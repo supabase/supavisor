@@ -204,9 +204,6 @@ defmodule Supavisor.Protocol.Server do
       {:ok, pkt, rest} ->
         decode(rest, [pkt | acc])
 
-      # This generally means that the packet was incomplete
-      #
-      # TODO: Maybe we need to handle other reasons too
       {:error, :incomplete} ->
         {:ok, Enum.reverse(acc), data}
 
