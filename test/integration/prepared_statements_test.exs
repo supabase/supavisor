@@ -44,8 +44,8 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["private"])
   end
 
-  test "prepared statement limit", %{conns: [conn | _]} do
-    limit = Supavisor.Protocol.PreparedStatements.limit()
+  test "prepared statement limit (client)", %{conns: [conn | _]} do
+    limit = Supavisor.Protocol.PreparedStatements.client_limit()
 
     for i <- 0..(limit - 1) do
       query = Postgrex.prepare!(conn, "q_#{i}", @sample_query)
@@ -54,6 +54,39 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     assert_raise Postgrex.Error, ~r/Max prepared statements limit reached/, fn ->
       Postgrex.prepare!(conn, "q_err", @sample_query)
+    end
+  end
+
+  test "prepared statement soft limit (backend)", %{conns: conns} do
+    test_pid = self()
+    limit = Supavisor.Protocol.PreparedStatements.client_limit()
+
+    for conn <- conns, i <- 0..(limit - 1) do
+      query = Postgrex.prepare!(conn, "q_#{i}", @sample_query)
+      assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["public"])
+    end
+
+    # trick: to ensure we check all backends, we start a transaction for each,
+    # so we don't get the same connection twice
+    for conn <- conns do
+      spawn_link(fn ->
+        Postgrex.transaction(conn, fn conn ->
+          assert %{rows: [[count]]} =
+                   Postgrex.query!(conn, "SELECT COUNT(*) FROM pg_prepared_statements", [])
+
+          send(test_pid, {self(), count})
+
+          receive do
+            :end -> :ok
+          end
+        end)
+      end)
+    end
+
+    for _c <- conns do
+      assert_receive {pid, count}
+      assert count <= Supavisor.Protocol.PreparedStatements.backend_limit()
+      send(pid, :end)
     end
   end
 

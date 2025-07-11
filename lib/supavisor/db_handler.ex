@@ -8,6 +8,7 @@ defmodule Supavisor.DbHandler do
 
   @behaviour :gen_statem
 
+  alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.Server.Pkt, as: ServerPkt
 
   alias Supavisor.{
@@ -83,6 +84,9 @@ defmodule Supavisor.DbHandler do
         prepared_statements: MapSet.new(),
         pending_bin: "",
         intercept_parse_resps: 0,
+        intercept_close_resps: 0,
+        expected_parse_resps: 0,
+        expected_close_resps: 0,
         mode: args.mode,
         replica_type: args.replica_type,
         reply: nil,
@@ -323,6 +327,8 @@ defmodule Supavisor.DbHandler do
       # after which it will unlink the direct db connection process from itself.
       data =
         if data.mode == :transaction do
+          # for some reason, if we send the data **before** doing the `ready_for_query` cast,
+          # we get a rare race condition that causes msgs to be sent to the wrong socket
           data = intercept_or_send_pkts(pkts, data)
           ClientHandler.db_status(data.caller, :ready_for_query)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
@@ -353,7 +359,15 @@ defmodule Supavisor.DbHandler do
         handle_prepared_statement_pkt(pkt, {iodata, data})
       end)
 
-    :ok = HandlerHelpers.sock_send(data.sock, Enum.reverse(iodata))
+    {close_pkts, close_count, prepared_statements} = remove_exceeding(data.prepared_statements)
+
+    :ok = HandlerHelpers.sock_send(data.sock, Enum.reverse([close_pkts | iodata]))
+
+    data = %{
+      data
+      | intercept_close_resps: data.intercept_close_resps + close_count,
+        prepared_statements: prepared_statements
+    }
 
     {:keep_state, data, {:reply, from, :ok}}
   end
@@ -715,9 +729,18 @@ defmodule Supavisor.DbHandler do
   defp intercept_or_send_pkts(pkts, data) do
     {packets_to_send, updated_data} =
       Enum.reduce(pkts, {[], data}, fn pkt, {acc_bins, data} ->
-        case {pkt, data.intercept_parse_resps} do
-          {%ServerPkt{tag: :parse_complete}, intercept_count} when intercept_count > 0 ->
-            {acc_bins, %{data | intercept_parse_resps: intercept_count - 1}}
+        case {pkt, data} do
+          {%ServerPkt{tag: :parse_complete}, %{expected_parse_resps: n}} when n > 0 ->
+            {[pkt.bin | acc_bins], %{data | expected_parse_resps: n - 1}}
+
+          {%ServerPkt{tag: :parse_complete}, %{intercept_parse_resps: n}} when n > 0 ->
+            {acc_bins, %{data | intercept_parse_resps: n - 1}}
+
+          {%ServerPkt{tag: :close_complete}, %{expected_close_resps: n}} when n > 0 ->
+            {[pkt.bin | acc_bins], %{data | expected_close_resps: n - 1}}
+
+          {%ServerPkt{tag: :close_complete}, %{intercept_close_resps: n}} when n > 0 ->
+            {acc_bins, %{data | intercept_close_resps: n - 1}}
 
           _ ->
             {[pkt.bin | acc_bins], data}
@@ -758,7 +781,11 @@ defmodule Supavisor.DbHandler do
 
   defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, {iodata, data}) do
     {[pkt | iodata],
-     %{data | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name)}}
+     %{
+       data
+       | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name),
+         expected_close_resps: data.expected_close_resps + 1
+     }}
   end
 
   defp handle_prepared_statement_pkt({:describe_pkt, _stmt_name, pkt}, {iodata, data}) do
@@ -771,6 +798,27 @@ defmodule Supavisor.DbHandler do
   # fixed ids.
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
     prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
-    {[pkt | iodata], %{data | prepared_statements: prepared_statements}}
+
+    {[pkt | iodata],
+     %{
+       data
+       | prepared_statements: prepared_statements,
+         expected_parse_resps: data.expected_parse_resps + 1
+     }}
+  end
+
+  defp remove_exceeding(prepared_statements) do
+    limit = PreparedStatements.backend_limit()
+
+    if MapSet.size(prepared_statements) >= limit do
+      count = div(limit, 5)
+      to_remove = Enum.take_random(prepared_statements, count) |> MapSet.new()
+      close_pkts = Enum.map(to_remove, &PreparedStatements.build_close_pkt/1)
+      prepared_statements = MapSet.difference(prepared_statements, to_remove)
+
+      {close_pkts, count, prepared_statements}
+    else
+      {[], 0, prepared_statements}
+    end
   end
 end

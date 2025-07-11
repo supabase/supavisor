@@ -17,12 +17,31 @@ defmodule Supavisor.Protocol.PreparedStatements do
           | {:close_pkt, statement_name(), pkt()}
           | pkt()
 
-  @limit 200
+  @client_limit 200
+  @backend_limit 200
 
   @doc """
-  Upper limit of prepared statements
+  Upper limit of prepared statements from the client
   """
-  def limit, do: @limit
+  @spec client_limit() :: pos_integer()
+  def client_limit, do: @client_limit
+
+  @doc """
+  Upper limit of prepared statements backend-side.
+
+  Should rotate prepared statements to avoid surpassing it.
+  """
+  @spec backend_limit() :: pos_integer()
+  def backend_limit, do: @backend_limit
+
+  @doc """
+  Receives a statement name and returns a close packet for it
+  """
+  @spec build_close_pkt(statement_name) :: pkt()
+  def build_close_pkt(statement_name) do
+    len = byte_size(statement_name)
+    <<?C, len + 6::32, ?S, statement_name::binary, 0>>
+  end
 
   @doc """
   Handles prepared statement packets and returns appropriate tuples for packets
@@ -63,7 +82,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
       # Named prepared statement - generate server-side name
       {client_side_name, remaining} ->
-        if map_size(client_statements) >= @limit do
+        if map_size(client_statements) >= @client_limit do
           {:error, :max_prepared_statements}
         else
           server_side_name = "supavisor_#{System.unique_integer()}"

@@ -1158,7 +1158,7 @@ defmodule Supavisor.ClientHandler do
 
       {:error, :max_prepared_statements} ->
         message_text =
-          "Max prepared statements limit reached. Limit is #{PreparedStatements.limit()} per connection"
+          "Max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"
 
         HandlerHelpers.sock_send(
           data.sock,
