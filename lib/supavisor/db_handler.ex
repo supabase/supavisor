@@ -37,7 +37,7 @@ defmodule Supavisor.DbHandler do
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
 
-  @spec handle_prepared_statement_pkt(pid, [term]) :: :ok
+  @spec handle_prepared_statement_pkts(pid, [PreparedStatements.pkt()]) :: :ok
   def handle_prepared_statement_pkts(pid, pkts) do
     :gen_statem.call(pid, {:handle_ps_pkts, pkts})
   end
@@ -762,7 +762,6 @@ defmodule Supavisor.DbHandler do
   #
   # If we received a bind without a parse, we need to intercept the parse response, otherwise,
   # the client will receive an unexpected message.
-  @spec handle_prepared_statement_pkt(map(), {iodata(), map()}) :: {iodata(), map()}
   defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
     new_ps? = stmt_name not in data.prepared_statements
 

@@ -27,8 +27,6 @@ defmodule Supavisor.ClientHandler do
     Tenants
   }
 
-  alias Supavisor.Protocol.Client.Pkt, as: ClientPkt
-
   require Supavisor.Protocol.Server, as: Server
 
   @impl true
@@ -1170,7 +1168,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec handle_client_pkts(binary, map) ::
-          {:ok, [ClientPkt.t()] | binary, map, binary}
+          {:ok, [PreparedStatements.pkt()] | binary, map, binary}
           | {:error, :max_prepared_statements}
   defp handle_client_pkts(
          bin,
@@ -1256,7 +1254,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   # Chunking to ensure we send bigger packets
-  @spec sock_send_pkts_maybe_active_once(binary(), map()) :: :ok | {:error, term()}
+  @spec sock_send_pkts_maybe_active_once([PreparedStatements.pkt()], map()) ::
+          :ok | {:error, term()}
   defp sock_send_pkts_maybe_active_once(pkts, data) do
     {_pool, db_handler, db_sock} = data.db_pid
     active_count = data.active_count
