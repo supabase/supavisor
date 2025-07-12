@@ -1161,8 +1161,8 @@ defmodule Supavisor.ClientHandler do
           {:ok, [PreparedStatements.handled_pkt()] | binary, map, binary}
           | {:error, :max_prepared_statements}
           | {:error, :prepared_statement_on_simple_query}
-          | {:error, :duplicate_prepared_statement, PreparedStatement.statement_name()}
-          | {:error, :prepared_statement_not_found, PreparedStatement.statement_name()}
+          | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
+          | {:error, :prepared_statement_not_found, PreparedStatements.statement_name()}
   defp handle_client_pkts(
          bin,
          %{mode: :transaction} = data
