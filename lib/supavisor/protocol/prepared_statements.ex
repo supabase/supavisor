@@ -51,6 +51,8 @@ defmodule Supavisor.Protocol.PreparedStatements do
           {:ok, statement_map(), handled_pkt()}
           | {:error, :max_prepared_statements}
           | {:error, :prepared_statement_on_simple_query}
+          | {:error, :duplicate_prepared_statement, statement_name()}
+          | {:error, :prepared_statement_not_found, statement_name()}
   def handle_pkt(client_statements, binary) do
     case binary do
       # Parse message (P)
@@ -81,27 +83,33 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
   defp handle_parse_message(client_statements, original_bin, len, rest) do
     case extract_null_terminated_string(rest) do
-      # Unnamed prepared statement - pass through unchanged
+      # Unnamed prepared statements are passed through unchanged
       {"", _} ->
         {:ok, client_statements, original_bin}
 
-      # Named prepared statement - generate server-side name
       {client_side_name, remaining} ->
-        if map_size(client_statements) >= @client_limit do
-          {:error, :max_prepared_statements}
-        else
-          server_side_name = "supavisor_#{System.unique_integer()}"
+        cond do
+          map_size(client_statements) >= @client_limit ->
+            {:error, :max_prepared_statements}
 
-          new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
-          new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
+          Map.get(client_statements, client_side_name) ->
+            {:error, :duplicate_prepared_statement, client_side_name}
 
-          prepared_statement = %PreparedStatement{
-            name: server_side_name,
-            parse_pkt: new_bin
-          }
+          true ->
+            server_side_name = "supavisor_#{System.unique_integer()}"
 
-          new_client_statements = Map.put(client_statements, client_side_name, prepared_statement)
-          {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
+            new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+            new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
+
+            prepared_statement = %PreparedStatement{
+              name: server_side_name,
+              parse_pkt: new_bin
+            }
+
+            new_client_statements =
+              Map.put(client_statements, client_side_name, prepared_statement)
+
+            {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
         end
     end
   end

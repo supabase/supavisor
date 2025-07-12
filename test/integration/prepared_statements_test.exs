@@ -52,7 +52,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
       assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["public"])
     end
 
-    assert_raise Postgrex.Error, ~r/Max prepared statements limit reached/, fn ->
+    assert_raise Postgrex.Error, ~r/max prepared statements limit reached/, fn ->
       Postgrex.prepare!(conn, "q_err", @sample_query)
     end
   end

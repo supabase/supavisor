@@ -145,17 +145,8 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       original_bin =
         <<?B, 21::32, 0, "test_stmt", 0, 0, 0, 0, 0, 0, 0>>
 
-      {:ok, new_client_statements, result} =
+      {:error, :prepared_statement_not_found} =
         PreparedStatements.handle_pkt(client_statements, original_bin)
-
-      # Should not change client_statements
-      assert new_client_statements == client_statements
-
-      # Should return bind_pkt tuple with empty statement name and nil parse_pkt
-      assert {:bind_pkt, "", result_bin, nil} = result
-
-      # Verify the result binary has the correct format (empty statement name)
-      assert <<?B, _len::32, 0, 0, 0, 0, 0, 0, 0, 0>> = result_bin
     end
 
     test "describe message with unknown statement name" do
@@ -187,6 +178,17 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
         <<?P, 25::32, "test_stmt", 0, "select 1", 0, 0, 0>>
 
       assert {:error, :max_prepared_statements} =
+               PreparedStatements.handle_pkt(client_statements, bin)
+    end
+
+    test "parse message returns error for duplicate PS" do
+      client_statements =
+        %{"stmt" => %PreparedStatement{name: "server_stmt", parse_pkt: <<>>}}
+
+      bin =
+        <<?P, 25::32, "stmt", 0, "select 1", 0, 0, 0>>
+
+      assert {:error, :duplicate_prepared_statement, "stmt"} =
                PreparedStatements.handle_pkt(client_statements, bin)
     end
   end

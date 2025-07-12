@@ -1152,28 +1152,8 @@ defmodule Supavisor.ClientHandler do
             {:stop, {:shutdown, :send_query_error}}
         end
 
-      {:error, :max_prepared_statements} ->
-        message_text =
-          "Max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"
-
-        HandlerHelpers.sock_send(
-          data.sock,
-          Server.error_message("XX000", message_text)
-        )
-
-        {:stop, {:shutdown, :max_prepared_statements}}
-
-      {:error, :prepared_statement_on_simple_query} ->
-        message_text =
-          "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
-
-        # Because this is simple query protocol, we need to send ready_for_query after the error,
-        HandlerHelpers.sock_send(
-          data.sock,
-          [Server.error_message("XX000", message_text), Server.ready_for_query()]
-        )
-
-        {:stop, {:shutdown, :prepared_statement_on_simple_query}}
+      error ->
+        handle_error(data.sock, error)
     end
   end
 
@@ -1181,6 +1161,8 @@ defmodule Supavisor.ClientHandler do
           {:ok, [PreparedStatements.handled_pkt()] | binary, map, binary}
           | {:error, :max_prepared_statements}
           | {:error, :prepared_statement_on_simple_query}
+          | {:error, :duplicate_prepared_statement, PreparedStatement.statement_name()}
+          | {:error, :prepared_statement_not_found, PreparedStatement.statement_name()}
   defp handle_client_pkts(
          bin,
          %{mode: :transaction} = data
@@ -1310,5 +1292,45 @@ defmodule Supavisor.ClientHandler do
   def reset_active_count(data) do
     HandlerHelpers.activate(data.sock)
     0
+  end
+
+  defp handle_error(sock, error) do
+    message = error_message(error)
+
+    case error do
+      {:error, :prepared_statement_on_simple_query} ->
+        HandlerHelpers.sock_send(
+          sock,
+          [message, Server.ready_for_query()]
+        )
+
+      _ ->
+        HandlerHelpers.sock_send(sock, message)
+    end
+
+    {:stop, {:shutdown, elem(error, 1)}}
+  end
+
+  defp error_message({:error, :max_prepared_statements}) do
+    message_text =
+      "max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"
+
+    Server.error_message("XX000", message_text)
+  end
+
+  defp error_message({:error, :prepared_statement_not_found, name}) do
+    message_text = "prepared statement #{inspect(name)} does not exist"
+    Server.error_message("26000", message_text)
+  end
+
+  defp error_message({:error, :duplicate_prepared_statement, name}) do
+    Server.error_message("42P05", "prepared statement #{inspect(name)} already exists")
+  end
+
+  defp error_message({:error, :prepared_statement_on_simple_query}) do
+    message_text =
+      "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
+
+    Server.error_message("XX000", message_text)
   end
 end
