@@ -59,7 +59,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
       # Bind message (B)
       <<?B, len::32, rest::binary>> ->
-        handle_bind_message(client_statements, len, rest)
+        handle_bind_message(client_statements, binary, len, rest)
 
       # Close message (C)
       <<?C, len::32, ?S, rest::binary>> ->
@@ -106,25 +106,27 @@ defmodule Supavisor.Protocol.PreparedStatements do
     end
   end
 
-  defp handle_bind_message(client_statements, len, rest) do
+  defp handle_bind_message(client_statements, bin, len, rest) do
     {_portal_name, after_portal} = extract_null_terminated_string(rest)
-    {client_side_name, packet_after_client_name} = extract_null_terminated_string(after_portal)
 
-    case Map.get(client_statements, client_side_name) do
-      %PreparedStatement{name: server_side_name, parse_pkt: parse_pkt} ->
-        new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+    case extract_null_terminated_string(after_portal) do
+      {"", _} ->
+        {:ok, client_statements, bin}
 
-        new_bin =
-          <<?B, new_len::32, 0, server_side_name::binary, 0, packet_after_client_name::binary>>
+      {client_side_name, packet_after_client_name} ->
+        case Map.get(client_statements, client_side_name) do
+          %PreparedStatement{name: server_side_name, parse_pkt: parse_pkt} ->
+            new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
 
-        {:ok, client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}
+            new_bin =
+              <<?B, new_len::32, 0, server_side_name::binary, 0,
+                packet_after_client_name::binary>>
 
-      nil ->
-        # Unknown statement name - use empty string
-        # This probably should be an error. Need to double check it.
-        new_len = len - byte_size(client_side_name)
-        new_bin = <<?B, new_len::32, 0, 0, packet_after_client_name::binary>>
-        {:ok, client_statements, {:bind_pkt, "", new_bin, nil}}
+            {:ok, client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}
+
+          nil ->
+            {:error, :prepared_statement_not_found}
+        end
     end
   end
 
