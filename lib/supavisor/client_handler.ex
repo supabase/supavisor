@@ -555,12 +555,8 @@ defmodule Supavisor.ClientHandler do
         actions
         |> List.wrap()
         |> Enum.map(fn
-          {:next_event, type, bin} when is_binary(bin) ->
-            {:next_event, type, {proto, socket, bin}}
-
-          {:next_event, type, pkts} when is_list(pkts) ->
-            {:next_event, type, {proto, socket, pkts}}
-
+          {:next_event, type, bin_or_pkts} when is_binary(bin_or_pkts) or is_list(bin_or_pkts) ->
+            {:next_event, type, {proto, socket, bin_or_pkts}}
           other ->
             other
         end)
