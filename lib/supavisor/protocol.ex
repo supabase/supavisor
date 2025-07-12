@@ -1,4 +1,8 @@
 defmodule Supavisor.Protocol do
+  @moduledoc """
+  Protocol helpers, useful for both backend and frontend messages
+  """
+
   @doc """
   Alternative to decode/1 that returns the binaries without decoding them
   """
