@@ -354,10 +354,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, _state, data) do
-    {iodata, data} =
-      Enum.reduce(pkts, {[], data}, fn pkt, {iodata, data} ->
-        handle_prepared_statement_pkt(pkt, {iodata, data})
-      end)
+    {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
     {close_pkts, close_count, prepared_statements} = remove_exceeding(data.prepared_statements)
 

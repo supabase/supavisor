@@ -557,6 +557,7 @@ defmodule Supavisor.ClientHandler do
         |> Enum.map(fn
           {:next_event, type, bin_or_pkts} when is_binary(bin_or_pkts) or is_list(bin_or_pkts) ->
             {:next_event, type, {proto, socket, bin_or_pkts}}
+
           other ->
             other
         end)
@@ -1163,7 +1164,8 @@ defmodule Supavisor.ClientHandler do
         {:stop, {:shutdown, :max_prepared_statements}}
 
       {:error, :prepared_statement_on_simple_query} ->
-        message_text = "Supavisor only supports PREPARE/EXECUTE using the Extended Query Protocol"
+        message_text =
+          "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
 
         # Because this is simple query protocol, we need to send ready_for_query after the error,
         HandlerHelpers.sock_send(

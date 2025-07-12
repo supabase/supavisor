@@ -83,10 +83,6 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  def decode_pkt(<<_char::integer-8, _pkt_len::integer-32, _rest>>) do
-    {:error, :incomplete}
-  end
-
   def decode_pkt(_), do: {:error, :bad_packet}
 
   @spec decode_string(binary()) :: {:ok, binary(), binary()} | {:error, :not_null_terminated}
