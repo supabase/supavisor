@@ -122,7 +122,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
       nil ->
         # Unknown statement name - use empty string
         # This probably should be an error. Need to double check it.
-        new_len = len + (0 - byte_size(client_side_name))
+        new_len = len - byte_size(client_side_name)
         new_bin = <<?B, new_len::32, 0, 0, packet_after_client_name::binary>>
         {:ok, client_statements, {:bind_pkt, "", new_bin, nil}}
     end
