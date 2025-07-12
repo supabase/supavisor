@@ -39,7 +39,7 @@ defmodule Supavisor.DbHandler do
 
   @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
   def handle_prepared_statement_pkts(pid, pkts) do
-    :gen_statem.call(pid, {:handle_ps_pkts, pkts})
+    :gen_statem.call(pid, {:handle_ps_pkts, pkts}, 15_000)
   end
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
