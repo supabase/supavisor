@@ -83,6 +83,7 @@ defmodule Supavisor.DbHandler do
         client_stats: %{},
         prepared_statements: MapSet.new(),
         pending_bin: "",
+        inject_parse_resps: 0,
         intercept_parse_resps: 0,
         intercept_close_resps: 0,
         expected_parse_resps: 0,
@@ -727,17 +728,21 @@ defmodule Supavisor.DbHandler do
     {packets_to_send, updated_data} =
       Enum.reduce(pkts, {[], data}, fn pkt, {acc_bins, data} ->
         case {pkt, data} do
-          {Server.parse_complete_msg_shape(), %{expected_parse_resps: n}} when n > 0 ->
+          {Server.parse_complete_message(), %{expected_parse_resps: n}} when n > 0 ->
             {[pkt | acc_bins], %{data | expected_parse_resps: n - 1}}
 
-          {Server.parse_complete_msg_shape(), %{intercept_parse_resps: n}} when n > 0 ->
+          {Server.parse_complete_message(), %{intercept_parse_resps: n}} when n > 0 ->
             {acc_bins, %{data | intercept_parse_resps: n - 1}}
 
-          {Server.close_complete_msg_shape(), %{expected_close_resps: n}} when n > 0 ->
+          {Server.close_complete_message(), %{expected_close_resps: n}} when n > 0 ->
             {[pkt | acc_bins], %{data | expected_close_resps: n - 1}}
 
-          {Server.close_complete_msg_shape(), %{intercept_close_resps: n}} when n > 0 ->
+          {Server.close_complete_message(), %{intercept_close_resps: n}} when n > 0 ->
             {acc_bins, %{data | intercept_close_resps: n - 1}}
+
+          {Server.parameter_description_message_shape(), %{inject_parse_resps: n}} when n > 0 ->
+            {[[Server.parse_complete_message(), pkt] | acc_bins],
+             %{data | inject_parse_resps: n - 1}}
 
           _ ->
             {[pkt | acc_bins], data}
@@ -791,14 +796,18 @@ defmodule Supavisor.DbHandler do
   # If we stop generating unique id per statement, and instead do deterministic ids,
   # we need to potentially drop parse pkts and return a parse response
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
-    prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
+    if stmt_name not in data.prepared_statements do
+      prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
 
-    {[pkt | iodata],
-     %{
-       data
-       | prepared_statements: prepared_statements,
-         expected_parse_resps: data.expected_parse_resps + 1
-     }}
+      {[pkt | iodata],
+       %{
+         data
+         | prepared_statements: prepared_statements,
+           expected_parse_resps: data.expected_parse_resps + 1
+       }}
+    else
+      {iodata, %{data | inject_parse_resps: data.inject_parse_resps + 1}}
+    end
   end
 
   defp remove_exceeding(prepared_statements) do

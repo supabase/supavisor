@@ -16,6 +16,9 @@ defmodule Supavisor.Protocol.Server do
   @msg_cancel_header <<16::32, 1234::16, 5678::16>>
   @application_name <<?S, 31::32, "application_name", 0, "Supavisor", 0>>
   @terminate_message <<?X, 4::32>>
+  @parse_complete_message <<?1, 4::32>>
+  @bind_complete_message <<?2, 4::32>>
+  @close_complete_message <<?3, 4::32>>
   @flush <<?H, 4::integer-32>>
   @sync <<?S, 4::integer-32>>
 
@@ -43,16 +46,13 @@ defmodule Supavisor.Protocol.Server do
   end
 
   defmacro ssl_request_message, do: @ssl_request
+  defmacro parse_complete_message, do: @parse_complete_message
+  defmacro bind_complete_message, do: @bind_complete_message
+  defmacro close_complete_message, do: @close_complete_message
 
-  defmacro parse_complete_msg_shape do
+  defmacro parameter_description_message_shape do
     quote do
-      <<?1, _::binary>>
-    end
-  end
-
-  defmacro close_complete_msg_shape do
-    quote do
-      <<?3, _::binary>>
+      <<?t, _rest::binary>>
     end
   end
 

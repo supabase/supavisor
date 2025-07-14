@@ -96,7 +96,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
             {:error, :duplicate_prepared_statement, client_side_name}
 
           true ->
-            server_side_name = "supavisor_#{System.unique_integer()}"
+            server_side_name = gen_server_side_name(rest)
 
             new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
             new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
@@ -185,5 +185,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
       [string, rest] -> {string, rest}
       [string] -> {string, <<>>}
     end
+  end
+
+  defp gen_server_side_name(binary) do
+    {_name, rest} = extract_null_terminated_string(binary)
+    {query, _rest} = extract_null_terminated_string(rest)
+
+    "supavisor_#{:erlang.phash2(query)}"
   end
 end
