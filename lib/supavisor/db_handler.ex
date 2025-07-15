@@ -786,9 +786,9 @@ defmodule Supavisor.DbHandler do
   # If we received a bind without a parse, we need to intercept the parse response, otherwise,
   # the client will receive an unexpected message.
   defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
-    new_ps? = stmt_name not in data.prepared_statements
-
-    if new_ps? and parse_pkt do
+    if stmt_name in data.prepared_statements do
+      {[pkt | iodata], data}
+    else
       new_data = %{
         data
         | action_queue: :queue.in({:intercept, :parse}, data.action_queue),
@@ -796,8 +796,6 @@ defmodule Supavisor.DbHandler do
       }
 
       {[[parse_pkt, pkt] | iodata], new_data}
-    else
-      {[pkt | iodata], data}
     end
   end
 
