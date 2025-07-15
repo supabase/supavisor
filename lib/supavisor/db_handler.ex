@@ -817,7 +817,9 @@ defmodule Supavisor.DbHandler do
   # If we stop generating unique id per statement, and instead do deterministic ids,
   # we need to potentially drop parse pkts and return a parse response
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
-    if stmt_name not in data.prepared_statements do
+    if stmt_name in data.prepared_statements do
+      {iodata, %{data | action_queue: :queue.in({:inject, :parse}, data.action_queue)}}
+    else
       prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
 
       {[pkt | iodata],
@@ -826,8 +828,6 @@ defmodule Supavisor.DbHandler do
          | prepared_statements: prepared_statements,
            action_queue: :queue.in({:forward, :parse}, data.action_queue)
        }}
-    else
-      {iodata, %{data | action_queue: :queue.in({:inject, :parse}, data.action_queue)}}
     end
   end
 
