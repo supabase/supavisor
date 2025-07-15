@@ -57,6 +57,21 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     end
   end
 
+  test "prepared statement memory limit (client)", %{conns: [conn | _]} do
+    # Create large queries until we hit the memory limit
+    # Each query is roughly 120KB, so we need 9 to hit the 1MB limit
+    for i <- 1..8 do
+      large_query = generate_large_query()
+      Postgrex.prepare!(conn, "large_q_#{i}", large_query)
+    end
+
+    # Verify we can't create another large query after hitting memory limit
+    assert_raise Postgrex.Error, ~r/max prepared statements memory limit reached/, fn ->
+      large_query = generate_large_query()
+      Postgrex.prepare!(conn, "memory_q_err", large_query)
+    end
+  end
+
   test "prepared statement soft limit (backend)", %{conns: conns} do
     test_pid = self()
     limit = PreparedStatements.client_limit()
@@ -160,6 +175,23 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
       SingleConnection.query(conn, "PREPARE q0 AS SELECT $1")
+  end
+
+  defp generate_large_query do
+    large_array =
+      List.duplicate(
+        "'very_long_string_to_consume_memory_in_the_statement_storage'",
+        2000
+      )
+      |> Enum.join(", ")
+
+    """
+    SELECT schemaname, tablename, tableowner, hasindexes
+    FROM pg_tables
+    WHERE tablename IN (#{large_array})
+    OR schemaname = 'public'
+    ORDER BY tablename;
+    """
   end
 
   defp query_with_index(i) do

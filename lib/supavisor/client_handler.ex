@@ -105,7 +105,7 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0,
-      prepared_statements: %{},
+      prepared_statements: PreparedStatements.Storage.new(),
       pending: ""
     }
 
@@ -1314,6 +1314,15 @@ defmodule Supavisor.ClientHandler do
   defp error_message({:error, :max_prepared_statements}) do
     message_text =
       "max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"
+
+    Server.error_message("XX000", message_text)
+  end
+
+  defp error_message({:error, :max_prepared_statements_memory}) do
+    limit_mb = PreparedStatements.client_memory_limit() / 1_000_000
+
+    message_text =
+      "max prepared statements memory limit reached. Limit: #{limit_mb}MB per connection"
 
     Server.error_message("XX000", message_text)
   end

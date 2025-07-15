@@ -4,8 +4,9 @@ defmodule Supavisor.Protocol.PreparedStatements do
   """
 
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
+  alias Supavisor.Protocol.PreparedStatements.Storage
 
-  @type statement_map() :: %{String.t() => PreparedStatement.t()}
+  @type statement_map() :: Storage.t()
 
   @type statement_name() :: String.t()
 
@@ -19,6 +20,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
   @client_limit 100
   @backend_limit 200
+  @client_memory_limit 1_000_000
 
   @doc """
   Upper limit of prepared statements from the client
@@ -33,6 +35,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
   """
   @spec backend_limit() :: pos_integer()
   def backend_limit, do: @backend_limit
+
+  @doc """
+  Upper limit of prepared statements memory from the client in bytes
+  """
+  @spec client_memory_limit() :: pos_integer()
+  def client_memory_limit, do: @client_memory_limit
 
   @doc """
   Receives a statement name and returns a close packet for it
@@ -50,6 +58,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
   @spec handle_pkt(statement_map(), pkt()) ::
           {:ok, statement_map(), handled_pkt()}
           | {:error, :max_prepared_statements}
+          | {:error, :max_prepared_statements_memory}
           | {:error, :prepared_statement_on_simple_query}
           | {:error, :duplicate_prepared_statement, statement_name()}
           | {:error, :prepared_statement_not_found, statement_name()}
@@ -89,10 +98,13 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
       {client_side_name, remaining} ->
         cond do
-          map_size(client_statements) >= @client_limit ->
+          Storage.statement_count(client_statements) >= @client_limit ->
             {:error, :max_prepared_statements}
 
-          Map.get(client_statements, client_side_name) ->
+          Storage.statement_memory(client_statements) > @client_memory_limit ->
+            {:error, :max_prepared_statements_memory}
+
+          Storage.get(client_statements, client_side_name) ->
             {:error, :duplicate_prepared_statement, client_side_name}
 
           true ->
@@ -107,7 +119,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
             }
 
             new_client_statements =
-              Map.put(client_statements, client_side_name, prepared_statement)
+              Storage.put(client_statements, client_side_name, prepared_statement)
 
             {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
         end
@@ -122,7 +134,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
         {:ok, client_statements, bin}
 
       {client_side_name, packet_after_client_name} ->
-        case Map.get(client_statements, client_side_name) do
+        case Storage.get(client_statements, client_side_name) do
           %PreparedStatement{name: server_side_name, parse_pkt: parse_pkt} ->
             new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
 
@@ -141,7 +153,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
   defp handle_close_message(client_statements, len, rest) do
     {client_side_name, _} = extract_null_terminated_string(rest)
 
-    {prepared_statement, new_client_statements} = Map.pop(client_statements, client_side_name)
+    {prepared_statement, new_client_statements} = Storage.pop(client_statements, client_side_name)
 
     server_side_name =
       case prepared_statement do
@@ -159,7 +171,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
     {client_side_name, _} = extract_null_terminated_string(rest)
 
     server_side_name =
-      case Map.get(client_statements, client_side_name) do
+      case Storage.get(client_statements, client_side_name) do
         %PreparedStatement{name: name} -> name
         nil -> ""
       end
