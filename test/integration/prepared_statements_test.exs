@@ -85,7 +85,6 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     for _c <- conns do
       assert_receive {pid, count}
-      IO.inspect(count, label: :c)
       assert count <= PreparedStatements.backend_limit()
       send(pid, :end)
     end

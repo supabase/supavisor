@@ -191,6 +191,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
     {_name, rest} = extract_null_terminated_string(binary)
     {query, _rest} = extract_null_terminated_string(rest)
 
-    "supavisor_#{:erlang.phash2(query)}"
+    fingerprint =
+      case Supavisor.PgParser.fingerprint(query) do
+        {:ok, fingerprint} -> fingerprint
+        {:error, _} -> System.unique_integer()
+      end
+
+    "supavisor_#{fingerprint}"
   end
 end
