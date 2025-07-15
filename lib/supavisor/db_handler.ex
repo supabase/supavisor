@@ -83,11 +83,7 @@ defmodule Supavisor.DbHandler do
         client_stats: %{},
         prepared_statements: MapSet.new(),
         pending_bin: "",
-        inject_parse_resps: 0,
-        intercept_parse_resps: 0,
-        intercept_close_resps: 0,
-        expected_parse_resps: 0,
-        expected_close_resps: 0,
+        action_queue: :queue.new(),
         mode: args.mode,
         replica_type: args.replica_type,
         reply: nil,
@@ -357,13 +353,16 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, _state, data) do
     {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
-    {close_pkts, close_count, prepared_statements} = remove_exceeding(data.prepared_statements)
+    {close_pkts, prepared_statements} = remove_exceeding(data.prepared_statements)
 
     :ok = HandlerHelpers.sock_send(data.sock, Enum.reverse([close_pkts | iodata]))
 
     data = %{
       data
-      | intercept_close_resps: data.intercept_close_resps + close_count,
+      | action_queue:
+          Enum.reduce(close_pkts, data.action_queue, fn _, queue ->
+            :queue.in({:intercept, :close}, queue)
+          end),
         prepared_statements: prepared_statements
     }
 
@@ -725,35 +724,62 @@ defmodule Supavisor.DbHandler do
 
   @spec intercept_or_send_pkts([binary()], map()) :: map()
   defp intercept_or_send_pkts(pkts, data) do
-    {packets_to_send, updated_data} =
-      Enum.reduce(pkts, {[], data}, fn pkt, {acc_bins, data} ->
-        case {pkt, data} do
-          {Server.parse_complete_message(), %{expected_parse_resps: n}} when n > 0 ->
-            {[pkt | acc_bins], %{data | expected_parse_resps: n - 1}}
-
-          {Server.parse_complete_message(), %{intercept_parse_resps: n}} when n > 0 ->
-            {acc_bins, %{data | intercept_parse_resps: n - 1}}
-
-          {Server.close_complete_message(), %{expected_close_resps: n}} when n > 0 ->
-            {[pkt | acc_bins], %{data | expected_close_resps: n - 1}}
-
-          {Server.close_complete_message(), %{intercept_close_resps: n}} when n > 0 ->
-            {acc_bins, %{data | intercept_close_resps: n - 1}}
-
-          {Server.parameter_description_message_shape(), %{inject_parse_resps: n}} when n > 0 ->
-            {[[Server.parse_complete_message(), pkt] | acc_bins],
-             %{data | inject_parse_resps: n - 1}}
-
-          _ ->
-            {[pkt | acc_bins], data}
-        end
-      end)
+    {packets_to_send, updated_data} = handle_server_message(pkts, [], data)
 
     if packets_to_send != [] do
       HandlerHelpers.sock_send(data.client_sock, Enum.reverse(packets_to_send))
     end
 
     updated_data
+  end
+
+  defp handle_server_message([Server.parse_complete_message() = msg | rest], acc_bins, data) do
+    {acc_bins, data} = maybe_inject(data, acc_bins)
+
+    case :queue.out(data.action_queue) do
+      {{:value, {:forward, :parse}}, q2} ->
+        handle_server_message(rest, [msg | acc_bins], %{data | action_queue: q2})
+
+      {{:value, {:intercept, :parse}}, q2} ->
+        handle_server_message(rest, acc_bins, %{data | action_queue: q2})
+
+      _other ->
+        handle_server_message(rest, [msg | acc_bins], data)
+    end
+  end
+
+  defp handle_server_message([Server.close_complete_message() = msg | rest], acc_bins, data) do
+    {acc_bins, data} = maybe_inject(data, acc_bins)
+
+    case :queue.out(data.action_queue) do
+      {{:value, {:forward, :close}}, q2} ->
+        handle_server_message(rest, [msg | acc_bins], %{data | action_queue: q2})
+
+      {{:value, {:intercept, :close}}, q2} ->
+        handle_server_message(rest, acc_bins, %{data | action_queue: q2})
+
+      _other ->
+        handle_server_message(rest, [msg | acc_bins], data)
+    end
+  end
+
+  defp handle_server_message([msg | rest], acc_bins, data) do
+    {acc_bins, data} = maybe_inject(data, acc_bins)
+    handle_server_message(rest, [msg | acc_bins], data)
+  end
+
+  defp handle_server_message([], acc_bins, data) do
+    maybe_inject(data, acc_bins)
+  end
+
+  defp maybe_inject(data, acc_bins) do
+    case :queue.out(data.action_queue) do
+      {{:value, {:inject, :parse}}, q2} ->
+        {[Server.parse_complete_message() | acc_bins], %{data | action_queue: q2}}
+
+      _other ->
+        {acc_bins, data}
+    end
   end
 
   defp transaction_complete_pkt?(<<?Z, 5::32, ?I>>), do: true
@@ -770,7 +796,7 @@ defmodule Supavisor.DbHandler do
     if new_ps? and parse_pkt do
       new_data = %{
         data
-        | intercept_parse_resps: data.intercept_parse_resps + 1,
+        | action_queue: :queue.in({:intercept, :parse}, data.action_queue),
           prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
       }
 
@@ -785,7 +811,7 @@ defmodule Supavisor.DbHandler do
      %{
        data
        | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name),
-         expected_close_resps: data.expected_close_resps + 1
+         action_queue: :queue.in({:forward, :close}, data.action_queue)
      }}
   end
 
@@ -803,10 +829,10 @@ defmodule Supavisor.DbHandler do
        %{
          data
          | prepared_statements: prepared_statements,
-           expected_parse_resps: data.expected_parse_resps + 1
+           action_queue: :queue.in({:forward, :parse}, data.action_queue)
        }}
     else
-      {iodata, %{data | inject_parse_resps: data.inject_parse_resps + 1}}
+      {iodata, %{data | action_queue: :queue.in({:inject, :parse}, data.action_queue)}}
     end
   end
 
@@ -819,9 +845,9 @@ defmodule Supavisor.DbHandler do
       close_pkts = Enum.map(to_remove, &PreparedStatements.build_close_pkt/1)
       prepared_statements = MapSet.difference(prepared_statements, to_remove)
 
-      {close_pkts, count, prepared_statements}
+      {close_pkts, prepared_statements}
     else
-      {[], 0, prepared_statements}
+      {[], prepared_statements}
     end
   end
 end

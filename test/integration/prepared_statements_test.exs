@@ -61,8 +61,8 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     test_pid = self()
     limit = PreparedStatements.client_limit()
 
-    for conn <- conns, i <- 0..(limit - 1) do
-      query = Postgrex.prepare!(conn, "q_#{i}", @sample_query)
+    for {conn, i} <- Enum.with_index(conns, 1), j <- 1..limit do
+      query = Postgrex.prepare!(conn, "q_#{i * j}", query_with_index(i * j))
       assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["public"])
     end
 
@@ -85,6 +85,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     for _c <- conns do
       assert_receive {pid, count}
+      IO.inspect(count, label: :c)
       assert count <= PreparedStatements.backend_limit()
       send(pid, :end)
     end
@@ -137,6 +138,21 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     end
   end
 
+  # In this scenario, client 1 prepares the statement. When client 2 tries to prepare it
+  # again and get routed to the same backend connection (which already has it prepared),
+  # it should work transparently for the client, as if it was prepared by client 2.
+  test "prepared on client connection 1, then later on 2", %{conns: [c1, c2 | _]} do
+    {:ok, q1} = Postgrex.prepare(c1, "prepared_statement", @sample_query)
+    assert {:ok, _, _} = Postgrex.execute(c1, q1, ["public"])
+
+    # We need to give some time to ensure that the same backend connection is back
+    # in the pool (we use LIFO)
+    :timer.sleep(20)
+
+    {:ok, q2} = Postgrex.prepare(c2, "prepared_statement", @sample_query)
+    assert {:ok, _, _} = Postgrex.execute(c2, q2, ["private"])
+  end
+
   test "prepared statements error on simple query protocol", %{conn_opts: conn_opts} do
     {:ok, conn} = start_supervised({SingleConnection, conn_opts})
 
@@ -145,5 +161,15 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
       SingleConnection.query(conn, "PREPARE q0 AS SELECT $1")
+  end
+
+  defp query_with_index(i) do
+    """
+    SELECT schemaname, tablename, tableowner, hasindexes
+    FROM pg_tables
+    WHERE schemaname = $1
+    AND #{i} > 0
+    ORDER BY tablename;
+    """
   end
 end
