@@ -726,7 +726,7 @@ defmodule Supavisor.DbHandler do
   defp handle_server_messages(pkts, data) do
     {packets_to_send, updated_data} = process_messages(pkts, [], data)
 
-    unless packets_to_send == [] do
+    if packets_to_send != [] do
       HandlerHelpers.sock_send(data.client_sock, Enum.reverse(packets_to_send))
     end
 
