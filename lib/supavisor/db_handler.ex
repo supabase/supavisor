@@ -327,10 +327,10 @@ defmodule Supavisor.DbHandler do
           # for some reason, if we send the data **before** doing the `ready_for_query` cast,
           # we get race condition that sometimes causes msgs to be sent to the wrong socket
           ClientHandler.db_status(data.caller, :ready_for_query)
-          data = intercept_or_send_pkts(pkts, data)
+          data = handle_server_messages(pkts, data)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
-          data = intercept_or_send_pkts(pkts, data)
+          data = handle_server_messages(pkts, data)
 
           {_, client_stats} =
             if data.proxy,
@@ -345,7 +345,7 @@ defmodule Supavisor.DbHandler do
       if data.active_count > @switch_active_count,
         do: HandlerHelpers.active_once(data.sock)
 
-      data = intercept_or_send_pkts(pkts, data)
+      data = handle_server_messages(pkts, data)
       {:keep_state, %{data | active_count: data.active_count + 1}}
     end
   end
@@ -722,54 +722,49 @@ defmodule Supavisor.DbHandler do
   def reconnect_timeout(_),
     do: @reconnect_timeout
 
-  @spec intercept_or_send_pkts([binary()], map()) :: map()
-  defp intercept_or_send_pkts(pkts, data) do
-    {packets_to_send, updated_data} = handle_server_message(pkts, [], data)
+  @spec handle_server_messages([binary()], map()) :: map()
+  defp handle_server_messages(pkts, data) do
+    {packets_to_send, updated_data} = process_messages(pkts, [], data)
 
-    if packets_to_send != [] do
+    unless packets_to_send == [] do
       HandlerHelpers.sock_send(data.client_sock, Enum.reverse(packets_to_send))
     end
 
     updated_data
   end
 
-  defp handle_server_message([Server.parse_complete_message() = msg | rest], acc_bins, data) do
+  defp process_messages([msg | rest], acc_bins, data) do
     {acc_bins, data} = maybe_inject(data, acc_bins)
 
-    case :queue.out(data.action_queue) do
-      {{:value, {:forward, :parse}}, q2} ->
-        handle_server_message(rest, [msg | acc_bins], %{data | action_queue: q2})
+    case msg do
+      Server.parse_complete_message() ->
+        {acc_bins, data} = maybe_filter_message(msg, acc_bins, data, :parse)
+        process_messages(rest, acc_bins, data)
 
-      {{:value, {:intercept, :parse}}, q2} ->
-        handle_server_message(rest, acc_bins, %{data | action_queue: q2})
+      Server.close_complete_message() ->
+        {acc_bins, data} = maybe_filter_message(msg, acc_bins, data, :close)
+        process_messages(rest, acc_bins, data)
 
       _other ->
-        handle_server_message(rest, [msg | acc_bins], data)
+        process_messages(rest, [msg | acc_bins], data)
     end
   end
 
-  defp handle_server_message([Server.close_complete_message() = msg | rest], acc_bins, data) do
-    {acc_bins, data} = maybe_inject(data, acc_bins)
-
-    case :queue.out(data.action_queue) do
-      {{:value, {:forward, :close}}, q2} ->
-        handle_server_message(rest, [msg | acc_bins], %{data | action_queue: q2})
-
-      {{:value, {:intercept, :close}}, q2} ->
-        handle_server_message(rest, acc_bins, %{data | action_queue: q2})
-
-      _other ->
-        handle_server_message(rest, [msg | acc_bins], data)
-    end
-  end
-
-  defp handle_server_message([msg | rest], acc_bins, data) do
-    {acc_bins, data} = maybe_inject(data, acc_bins)
-    handle_server_message(rest, [msg | acc_bins], data)
-  end
-
-  defp handle_server_message([], acc_bins, data) do
+  defp process_messages([], acc_bins, data) do
     maybe_inject(data, acc_bins)
+  end
+
+  defp maybe_filter_message(msg, acc_bins, data, action_type) do
+    case :queue.out(data.action_queue) do
+      {{:value, {:forward, ^action_type}}, updated_queue} ->
+        {[msg | acc_bins], %{data | action_queue: updated_queue}}
+
+      {{:value, {:intercept, ^action_type}}, updated_queue} ->
+        {acc_bins, %{data | action_queue: updated_queue}}
+
+      _other ->
+        {[msg | acc_bins], data}
+    end
   end
 
   defp maybe_inject(data, acc_bins) do
