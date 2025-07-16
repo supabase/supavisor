@@ -73,7 +73,7 @@ defmodule Supavisor do
       pool: get_local_pool(id)
     }
 
-    if Map.values(workers) |> Enum.member?(nil) do
+    if nil in Map.values(workers) do
       Logger.error("Could not get workers for tenant #{inspect(id)}")
       {:error, :worker_not_found}
     else
@@ -427,10 +427,22 @@ defmodule Supavisor do
     handler = Supavisor.ClientHandler
     args = Map.put(args, :local, true)
 
-    with {:ok, pid} <- :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do
-      host = Application.get_env(:supavisor, :node_host)
-      {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
-    end
+    pid =
+      case :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do
+        {:ok, pid} ->
+          pid
+
+        {:error, {:already_started, pid}} ->
+          if node(pid) == Node.self() do
+            pid
+          else
+            :ranch.stop_listener(args.id)
+            raise "unexpected node #{inspect(node(pid))}, try again"
+          end
+      end
+
+    host = Application.get_env(:supavisor, :node_host)
+    {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
   end
 
   @spec count_pools(String.t()) :: non_neg_integer()
