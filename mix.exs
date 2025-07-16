@@ -53,7 +53,7 @@ defmodule Supavisor.MixProject do
       {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_poller, "~> 1.0"},
       {:peep, "~> 3.1",
-       github: "hauleth/peep", ref: "94dd35d2c98a858ef20983f2b3da2ab112a07238", override: true},
+       github: "rkallos/peep", ref: "7eee3a64e0d4762684afde0d0706d826075422fc", override: true},
       {:jason, "~> 1.2"},
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
