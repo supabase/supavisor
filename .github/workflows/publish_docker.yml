@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - hotfix-v2.1.4
     paths:
       - ".github/workflows/publish_docker.yml"
       - "VERSION"

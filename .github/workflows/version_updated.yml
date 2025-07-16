@@ -3,7 +3,8 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
     branches:
-      - 'main'
+      - "main"
+      - "hotfix-v2.1.4"
 jobs:
   version_updated:
     name: Bump version
@@ -15,10 +16,10 @@ jobs:
         id: verify_changed_files
         with:
           files: |
-             VERSION
+            VERSION
       - name: Fail Unless Versions Updated
         id: fail_unless_changed
         if: steps.verify_changed_files.outputs.any_changed == 'false'
         run: |
-              echo "::error ::Please update the VERSION file"
-              exit 1
+          echo "::error ::Please update the VERSION file"
+          exit 1
