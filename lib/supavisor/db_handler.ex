@@ -404,7 +404,7 @@ defmodule Supavisor.DbHandler do
     end
 
     HandlerHelpers.sock_send(data.sock, Server.terminate_message())
-    :gen_tcp.close(elem(data.sock, 1))
+    HandlerHelpers.sock_close(data.sock)
     {:stop, {:client_handler_down, data.mode}}
   end
 
