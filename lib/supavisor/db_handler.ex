@@ -396,20 +396,16 @@ defmodule Supavisor.DbHandler do
   end
 
   # linked client_handler went down
-  def handle_event(_, {:EXIT, pid, reason}, state, data) do
+  def handle_event(_, {:EXIT, pid, reason}, _state, data) do
     if reason != :normal do
       Logger.error(
         "DbHandler: ClientHandler #{inspect(pid)} went down with reason #{inspect(reason)}"
       )
     end
 
-    if state == :busy or data.mode == :session do
-      HandlerHelpers.sock_send(data.sock, Server.terminate_message())
-      :gen_tcp.close(elem(data.sock, 1))
-      {:stop, {:client_handler_down, data.mode}}
-    else
-      {:keep_state, %{data | caller: nil, buffer: []}}
-    end
+    HandlerHelpers.sock_send(data.sock, Server.terminate_message())
+    :gen_tcp.close(elem(data.sock, 1))
+    {:stop, {:client_handler_down, data.mode}}
   end
 
   def handle_event({:call, from}, :get_state_and_mode, state, data) do
