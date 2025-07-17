@@ -120,15 +120,47 @@ defmodule Supavisor.MixProject do
   end
 
   defp upgrade(release) do
-    from = System.get_env("UPGRADE_FROM")
+    from = System.get_env("UPGRADE_FROM", "")
 
-    if from && from != "" do
+    if from != "" do
       vsn = release.version
       path = Path.join([release.path, "releases", "supavisor-#{vsn}.rel"])
       rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))
-
-      Mix.Task.run("supavisor.gen.appup", ["--from=" <> from, "--to=" <> vsn])
       :ok = File.write!(path, rel_content)
+
+      # If appups directory exists manually, don't run the tasks, and instead
+      # use the existing appups.
+      appups_path = Path.join(["relups", "#{from}-#{vsn}", "appups"])
+
+      if appups_path do
+        IO.puts("Using existing appups from #{appups_path}")
+
+        appups_path
+        |> File.ls!()
+        |> Enum.each(fn appup ->
+          [app, version] =
+            appup
+            |> String.trim_trailing(".appup")
+            |> String.split("-")
+
+          file_path = Path.join(appups_path, appup)
+
+          destination =
+            Path.join([
+              release.path,
+              "lib",
+              "#{app}-#{version}",
+              "ebin",
+              "#{app}.appup"
+            ])
+
+          IO.puts("Copying #{file_path} to #{destination}")
+          File.copy(file_path, destination)
+        end)
+      else
+        Mix.Task.run("supavisor.gen.appup", ["--from=" <> from, "--to=" <> vsn])
+      end
+
       Mix.Task.run("supavisor.gen.relup", ["--from=" <> from, "--to=" <> vsn])
     end
 
