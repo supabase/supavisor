@@ -134,7 +134,7 @@ defmodule Supavisor.MixProject do
       rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))
       :ok = File.write!(path, rel_content)
 
-      # If appups directory exists manually, don't run the tasks, and instead
+      # If appups directory exist, don't run the task to generate, and instead
       # use the existing appups.
       appups_path = Path.join(["relups", "#{from}-#{vsn}", "appups"])
 
