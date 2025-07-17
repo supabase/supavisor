@@ -154,7 +154,10 @@ defmodule Supavisor.HotUpgrade do
   end
 
   def reinit_manual_metrics do
-    PromEx.ManualMetricsManager.refresh_metrics(PromEx.Plugins.Application)
+    spawn(fn ->
+      :timer.sleep(60_000)
+      PromEx.ManualMetricsManager.refresh_metrics(PromEx.Plugins.Application)
+    end)
   end
 
   @spec enc(term) :: fun
