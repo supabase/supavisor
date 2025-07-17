@@ -94,6 +94,7 @@ defmodule Supavisor.HotUpgrade do
   def reint_funs do
     reinit_pool_args()
     reinit_auth_query()
+    reinit_manual_metrics()
   end
 
   def reinit_pool_args do
@@ -150,6 +151,10 @@ defmodule Supavisor.HotUpgrade do
           Logger.debug("Skipping:#{inspect(key)} #{inspect(other)}")
       end
     end)
+  end
+
+  def reinit_manual_metrics do
+    PromEx.ManualMetricsManager.refresh_metrics(PromEx.Plugins.Application)
   end
 
   @spec enc(term) :: fun
