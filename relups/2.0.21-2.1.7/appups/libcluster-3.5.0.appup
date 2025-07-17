@@ -1,0 +1,15 @@
+{"3.5.0",
+ [{"3.3.3",
+   [{load_module,'Elixir.Cluster.Strategy',[]},
+    {load_module,'Elixir.Cluster.Strategy.Gossip',[]},
+    {load_module,'Elixir.Cluster.Strategy.LocalEpmd',[]},
+    {load_module,'Elixir.Cluster.Strategy.Rancher',[]},
+    {load_module,'Elixir.Cluster.Strategy.Kubernetes',[]}
+    ]}],
+ [{"3.3.3",
+   [{load_module,'Elixir.Cluster.Strategy',[]},
+    {load_module,'Elixir.Cluster.Strategy.Gossip',[]},
+    {load_module,'Elixir.Cluster.Strategy.LocalEpmd',[]},
+    {load_module,'Elixir.Cluster.Strategy.Rancher',[]},
+    {load_module,'Elixir.Cluster.Strategy.Kubernetes',[]}
+   ]}]}.

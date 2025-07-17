@@ -1,0 +1,19 @@
+{"1.1.0",
+ [{"1.0.0",
+   [{load_module,'Elixir.Telemetry.Metrics',[]},
+    {load_module,'Elixir.Telemetry.Metrics.ConsoleReporter',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Counter',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Distribution',[]},
+    {load_module,'Elixir.Telemetry.Metrics.LastValue',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Sum',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Summary',[]}
+    ]}],
+ [{"1.0.0",
+    [{load_module,'Elixir.Telemetry.Metrics',[]},
+    {load_module,'Elixir.Telemetry.Metrics.ConsoleReporter',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Counter',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Distribution',[]},
+    {load_module,'Elixir.Telemetry.Metrics.LastValue',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Sum',[]},
+    {load_module,'Elixir.Telemetry.Metrics.Summary',[]}
+   ]}]}.
