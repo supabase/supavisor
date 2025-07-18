@@ -40,7 +40,7 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
     lib_path = Path.join(rel_dir, "lib")
     path_from = Path.join(lib_path, "#{app}-#{from_vsn}")
     path_to = Path.join(lib_path, "#{app}-#{to_vsn}")
-    appup_path = appup_path(app, parsed[:path], path_to)
+    appup_path = appup_path(app, parsed[:path], path_to, to_vsn)
 
     transforms =
       case app do
@@ -65,12 +65,12 @@ defmodule Mix.Tasks.Supavisor.Gen.Appup do
     end
   end
 
-  defp appup_path(app, nil, path_to), do: Path.join([path_to, "ebin", "#{app}.appup"])
+  defp appup_path(app, nil, path_to, _to_vsn), do: Path.join([path_to, "ebin", "#{app}.appup"])
 
-  defp appup_path(app, path, _path_to) do
+  defp appup_path(app, path, _path_to, to_vsn) do
     cond do
       File.dir?(path) ->
-        Path.join(path, "#{app}.appup")
+        Path.join(path, "#{app}-#{to_vsn}.appup")
 
       File.exists?(Path.dirname(path)) ->
         path
