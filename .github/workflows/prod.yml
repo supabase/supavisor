@@ -55,7 +55,7 @@ jobs:
           mix deps.get
       - name: Clean up old release
         run: |
-          rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
+          rm -rf ./_build/${{ env.MIX_ENV }}/lib/
           rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
           rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
       - name: Make upgrade release
