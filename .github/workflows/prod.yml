@@ -73,11 +73,7 @@ jobs:
           rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
           rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
       - name: Make upgrade release
-        run: |
-          cat mix.lock
-          cat deps/libcluster/mix.exs
-          cat _build/prod/lib/libcluster/ebin/libcluster.app
-          RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
+        run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Create tarball
         run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
 #      - name: configure aws credentials - production
