@@ -6,6 +6,7 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   use PromEx.Plugin
   require Logger
 
+  @event_memory [:prom_ex, :plugin, :osmon, :memory]
   @event_ram_usage [:prom_ex, :plugin, :osmon, :ram_usage]
   @event_cpu_util [:prom_ex, :plugin, :osmon, :cpu_util]
   @event_cpu_la [:prom_ex, :plugin, :osmon, :cpu_avg1]
@@ -31,6 +32,48 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
           event_name: @event_ram_usage,
           description: "The total percentage usage of operative memory.",
           measurement: :ram
+        ),
+        last_value(
+          @prefix ++ [:osmon, :memory, :available],
+          event_name: @event_memory,
+          description: "The total available memory in the operating system",
+          unit: :bytes,
+          measurement: :available
+        ),
+        last_value(
+          @prefix ++ [:osmon, :memory, :buffered],
+          event_name: @event_memory,
+          description: "The buffered memory in the operating system",
+          unit: :bytes,
+          measurement: :buffered
+        ),
+        last_value(
+          @prefix ++ [:osmon, :memory, :cached],
+          event_name: @event_memory,
+          description: "The cached memory in the operating system",
+          unit: :bytes,
+          measurement: :cached
+        ),
+        last_value(
+          @prefix ++ [:osmon, :memory, :free],
+          event_name: @event_memory,
+          description: "The free memory in the operating system",
+          unit: :bytes,
+          measurement: :free
+        ),
+        last_value(
+          @prefix ++ [:osmon, :memory, :total],
+          event_name: @event_memory,
+          description: "The total memory in the operating system",
+          unit: :bytes,
+          measurement: :total
+        ),
+        last_value(
+          @prefix ++ [:osmon, :memory, :system_total],
+          event_name: @event_memory,
+          description: "The total system memory",
+          unit: :bytes,
+          measurement: :system_total
         ),
         last_value(
           @prefix ++ [:osmon, :cpu_util],
@@ -62,6 +105,7 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   end
 
   def execute_metrics do
+    execute_metrics(@event_memory, memory())
     execute_metrics(@event_ram_usage, %{ram: ram_usage()})
     execute_metrics(@event_cpu_util, %{cpu: cpu_util()})
     execute_metrics(@event_cpu_la, cpu_la())
@@ -75,6 +119,20 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   def ram_usage do
     mem = :memsup.get_system_memory_data()
     100 - mem[:free_memory] / mem[:total_memory] * 100
+  end
+
+  @spec memory() :: map()
+  def memory do
+    data = :memsup.get_system_memory_data()
+
+    %{
+      available: data[:available_memory],
+      buffered: data[:buffered_memory],
+      cached: data[:cached_memory],
+      free: data[:free_memory],
+      total: data[:total_memory],
+      system_total: data[:system_total_memory]
+    }
   end
 
   @spec cpu_la() :: %{avg1: float(), avg5: float(), avg15: float()}
