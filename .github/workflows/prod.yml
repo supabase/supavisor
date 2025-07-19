@@ -39,6 +39,13 @@ jobs:
         run: git fetch --tags origin
       - name: Checkout RELEASE_FROM
         run: git checkout v${{ env.RELEASE_FROM }}
+      - name: Cache Mix
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
       - name: Install dependencies
         run: |
           mix local.hex --force
@@ -48,6 +55,13 @@ jobs:
         run: mix release supavisor
       - name: Checkout RELEASE_TO
         run: git checkout v${{ env.RELEASE_TO }}
+      - name: Cache Mix
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
       - name: Install dependencies
         run: |
           mix local.hex --force
@@ -63,7 +77,6 @@ jobs:
           cat mix.lock
           cat deps/libcluster/mix.exs
           cat _build/prod/lib/libcluster/ebin/libcluster.app
-          mix compile
           RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Create tarball
         run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
