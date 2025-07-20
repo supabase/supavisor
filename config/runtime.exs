@@ -159,7 +159,6 @@ if config_env() != :test do
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
-    proxy_port_internal: System.get_env("PROXY_PORT_INTERNAL", "5413") |> String.to_integer(),
     proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
