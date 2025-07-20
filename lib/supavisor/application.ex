@@ -48,15 +48,21 @@ defmodule Supavisor.Application do
         {Supavisor.SignalHandler, []}
       )
 
-    proxy_ports = [
-      {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction, Supavisor.ClientHandler},
-      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
-       Supavisor.ClientHandler},
-      {:pg_proxy, Application.get_env(:supavisor, :proxy_port), :proxy, Supavisor.ClientHandler}
-    ]
+    proxy_ports =
+      [
+        {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
+         %{mode: :transaction, local: false}, Supavisor.ClientHandler},
+        {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
+         %{mode: :session, local: false}, Supavisor.ClientHandler},
+        {{:pg_proxy_internal, :session}, 0, %{mode: :session, local: true},
+         Supavisor.ClientHandler},
+        {{:pg_proxy_internal, :transaction}, 0, %{mode: :transaction, local: true},
+         Supavisor.ClientHandler},
+        {:pg_proxy, Application.get_env(:supavisor, :proxy_port), %{mode: :proxy, local: false},
+         Supavisor.ClientHandler}
+      ]
 
-    for {key, port, mode, handler} <- proxy_ports do
+    for {key, port, opts, handler} <- proxy_ports do
       case :ranch.start_listener(
              key,
              :ranch_tcp,
@@ -66,10 +72,10 @@ defmodule Supavisor.Application do
                socket_opts: [port: port, keepalive: true]
              },
              handler,
-             %{mode: mode}
+             opts
            ) do
         {:ok, _pid} ->
-          Logger.notice("Proxy started #{mode} on port #{port}")
+          Logger.notice("Proxy started #{opts.mode}(local=#{opts.local}) on port #{port}")
 
         error ->
           Logger.error("Proxy on #{port} not started because of #{inspect(error)}")
