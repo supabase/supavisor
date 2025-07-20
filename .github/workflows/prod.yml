@@ -76,12 +76,12 @@ jobs:
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Create tarball
         run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
-#      - name: configure aws credentials - production
-#        uses: aws-actions/configure-aws-credentials@v4
-#        with:
-#          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
-#          aws-region: "us-east-1"
-#      - name: Deploy to S3
-#        shell: bash
-#        run: aws s3 sync ./_build/${{ env.MIX_ENV }} ${{ secrets.TARBALLS_PATH_PROD }} --exclude '*' --include '*tar.gz'
-#
+      - name: configure aws credentials - production
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: "us-east-1"
+      - name: Deploy to S3
+        shell: bash
+        run: aws s3 sync ./_build/${{ env.MIX_ENV }} ${{ secrets.TARBALLS_PATH_PROD }} --exclude '*' --include '*tar.gz'
+
