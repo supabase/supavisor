@@ -20,7 +20,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
   @client_limit 100
   @backend_limit 200
-  @client_memory_limit 1_000_000
+  @client_memory_limit_bytes 1_000_000
 
   @doc """
   Upper limit of prepared statements from the client
@@ -39,8 +39,8 @@ defmodule Supavisor.Protocol.PreparedStatements do
   @doc """
   Upper limit of prepared statements memory from the client in bytes
   """
-  @spec client_memory_limit() :: pos_integer()
-  def client_memory_limit, do: @client_memory_limit
+  @spec client_memory_limit_bytes() :: pos_integer()
+  def client_memory_limit_bytes, do: @client_memory_limit_bytes
 
   @doc """
   Receives a statement name and returns a close packet for it
@@ -101,7 +101,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
           Storage.statement_count(client_statements) >= @client_limit ->
             {:error, :max_prepared_statements}
 
-          Storage.statement_memory(client_statements) > @client_memory_limit ->
+          Storage.statement_memory(client_statements) > @client_memory_limit_bytes ->
             {:error, :max_prepared_statements_memory}
 
           Storage.get(client_statements, client_side_name) ->

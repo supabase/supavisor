@@ -353,7 +353,7 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, _state, data) do
     {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
-    {close_pkts, prepared_statements} = remove_exceeding(data.prepared_statements)
+    {close_pkts, prepared_statements} = evict_exceeding(data)
 
     :ok = HandlerHelpers.sock_send(data.sock, Enum.reverse([close_pkts | iodata]))
 
@@ -825,7 +825,7 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  defp remove_exceeding(prepared_statements) do
+  defp evict_exceeding(%{prepared_statements: prepared_statements, id: id}) do
     limit = PreparedStatements.backend_limit()
 
     if MapSet.size(prepared_statements) >= limit do
@@ -833,6 +833,7 @@ defmodule Supavisor.DbHandler do
       to_remove = Enum.take_random(prepared_statements, count) |> MapSet.new()
       close_pkts = Enum.map(to_remove, &PreparedStatements.build_close_pkt/1)
       prepared_statements = MapSet.difference(prepared_statements, to_remove)
+      Telem.prepared_statements_evicted(count, id)
 
       {close_pkts, prepared_statements}
     else

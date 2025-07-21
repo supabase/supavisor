@@ -26,7 +26,7 @@ defmodule Supavisor.Protocol.PreparedStatements.Storage do
     Map.get(statements, statement_name)
   end
 
-  @spec pop(t(), PreparedStatements.statement_name()) :: {PreparedStatement.t(), t()}
+  @spec pop(t(), PreparedStatements.statement_name()) :: {PreparedStatement.t() | nil, t()}
   def pop({size, statements}, statement_name) do
     {statement, new_statements} = Map.pop(statements, statement_name)
     new_size = size - PreparedStatement.size(statement)

@@ -1160,6 +1160,7 @@ defmodule Supavisor.ClientHandler do
   @spec handle_client_pkts(binary, map) ::
           {:ok, [PreparedStatements.handled_pkt()] | binary, map, binary}
           | {:error, :max_prepared_statements}
+          | {:error, :max_prepared_statements_memory}
           | {:error, :prepared_statement_on_simple_query}
           | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
           | {:error, :prepared_statement_not_found, PreparedStatements.statement_name()}
@@ -1319,7 +1320,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp error_message({:error, :max_prepared_statements_memory}) do
-    limit_mb = PreparedStatements.client_memory_limit() / 1_000_000
+    limit_mb = PreparedStatements.client_memory_limit_bytes() / 1_000_000
 
     message_text =
       "max prepared statements memory limit reached. Limit: #{limit_mb}MB per connection"
