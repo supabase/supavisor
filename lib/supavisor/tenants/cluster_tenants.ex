@@ -1,8 +1,12 @@
 defmodule Supavisor.Tenants.ClusterTenants do
+  @moduledoc false
+
   use Ecto.Schema
+
   import Ecto.Changeset
-  alias Supavisor.Tenants.Tenant
+
   alias Supavisor.Tenants.Cluster
+  alias Supavisor.Tenants.Tenant
 
   @type t :: %__MODULE__{}
 

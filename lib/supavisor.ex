@@ -1,38 +1,45 @@
 defmodule Supavisor do
   @moduledoc false
+
   require Logger
-  import Cachex.Spec
-  alias Supavisor.Helpers, as: H
-  alias Supavisor.Tenants, as: T
-  alias Supavisor.Manager
+
+  alias Supavisor.{
+    Helpers,
+    Manager,
+    Tenants
+  }
 
   @type sock :: tcp_sock() | ssl_sock()
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: {:password | :auth_query, fun()}
-  @type mode :: :transaction | :session | :native
-  @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t()}
+  @type mode :: :transaction | :session | :native | :proxy
+  @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t(), String.t() | nil}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
   @registry Supavisor.Registry.Tenants
+  @max_pools Application.compile_env(:supavisor, :max_pools, 20)
 
   @spec start_dist(id, secrets, keyword()) :: {:ok, pid()} | {:error, any()}
   def start_dist(id, secrets, options \\ []) do
-    options = Keyword.validate!(options, log_level: nil, force_node: false)
+    options =
+      Keyword.validate!(options, log_level: nil, force_node: false, availability_zone: nil)
+
     log_level = Keyword.fetch!(options, :log_level)
     force_node = Keyword.fetch!(options, :force_node)
+    availability_zone = Keyword.fetch!(options, :availability_zone)
 
     case get_global_sup(id) do
       nil ->
-        node = if force_node, do: force_node, else: determine_node(id)
+        node = if force_node, do: force_node, else: determine_node(id, availability_zone)
 
         if node == node() do
           Logger.debug("Starting local pool for #{inspect(id)}")
-          start_local_pool(id, secrets, log_level)
+          try_start_local_pool(id, secrets, log_level)
         else
           Logger.debug("Starting remote pool for #{inspect(id)}")
-          H.rpc(node, __MODULE__, :start_local_pool, [id, secrets, log_level])
+          Helpers.rpc(node, __MODULE__, :try_start_local_pool, [id, secrets, log_level])
         end
 
       pid ->
@@ -44,7 +51,7 @@ defmodule Supavisor do
   def start(id, secrets) do
     case get_global_sup(id) do
       nil ->
-        start_local_pool(id, secrets)
+        try_start_local_pool(id, secrets, nil)
 
       pid ->
         {:ok, pid}
@@ -66,7 +73,7 @@ defmodule Supavisor do
       pool: get_local_pool(id)
     }
 
-    if Map.values(workers) |> Enum.member?(nil) do
+    if nil in Map.values(workers) do
       Logger.error("Could not get workers for tenant #{inspect(id)}")
       {:error, :worker_not_found}
     else
@@ -75,13 +82,10 @@ defmodule Supavisor do
   end
 
   @spec subscribe_local(pid, id) :: {:ok, subscribe_opts} | {:error, any()}
-  def(subscribe_local(pid, id)) do
+  def subscribe_local(pid, id) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
       {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
-    else
-      error ->
-        error
     end
   end
 
@@ -92,16 +96,7 @@ defmodule Supavisor do
     if node() == dest_node do
       subscribe_local(pid, id)
     else
-      try do
-        # TODO: tests for different cases
-        :erpc.call(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
-        |> case do
-          {:EXIT, _} = badrpc -> {:error, {:badrpc, badrpc}}
-          result -> result
-        end
-      catch
-        kind, reason -> {:error, {:badrpc, {kind, reason}}}
-      end
+      Helpers.rpc(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
     end
   end
 
@@ -138,8 +133,7 @@ defmodule Supavisor do
   end
 
   def terminate_global(tenant) do
-    [node() | Node.list()]
-    |> :erpc.multicall(Supavisor, :dirty_terminate, [tenant], 60_000)
+    :erpc.multicall([node() | Node.list()], Supavisor, :dirty_terminate, [tenant], 60_000)
   end
 
   @spec del_all_cache(String.t(), String.t()) :: [map()]
@@ -157,6 +151,7 @@ defmodule Supavisor do
       {:secrets, ^tenant, ^user} = key, acc -> del.(key, acc)
       {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
       {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
+      {:pool_config_cache, ^tenant, ^user} = key, acc -> del.(key, acc)
       _, acc -> acc
     end)
   end
@@ -170,17 +165,25 @@ defmodule Supavisor do
       [%{inspect(key) => inspect(result)} | acc]
     end
 
-    Supavisor.Cache
-    |> Cachex.stream!()
-    |> Enum.reduce([], fn entry(key: key), acc ->
-      case key do
-        {:metrics, ^tenant} -> del.(key, acc)
-        {:secrets, ^tenant, _} -> del.(key, acc)
-        {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
-        {:tenant_cache, ^tenant, _} -> del.(key, acc)
-        _ -> acc
-      end
-    end)
+    :ets.foldl(
+      fn
+        {:entry, key, _, _, _result}, acc ->
+          case key do
+            {:metrics, ^tenant} -> del.(key, acc)
+            {:secrets, ^tenant, _} -> del.(key, acc)
+            {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
+            {:tenant_cache, ^tenant, _} -> del.(key, acc)
+            {:pool_config_cache, ^tenant, _} -> del.(key, acc)
+            _ -> acc
+          end
+
+        other, acc ->
+          Logger.error("Unknown key: #{inspect(other)}")
+          acc
+      end,
+      [],
+      Supavisor.Cache
+    )
   end
 
   @spec del_all_cache_dist(String.t(), pos_integer()) :: [map()]
@@ -219,8 +222,9 @@ defmodule Supavisor do
     end
   end
 
-  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t()) :: id
-  def id(tenant, user, port_mode, user_mode, db_name) do
+  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t(), String.t() | nil) ::
+          id
+  def id(tenant, user, port_mode, user_mode, db_name, search_path) do
     # temporary hack
     mode =
       if port_mode == :transaction do
@@ -229,42 +233,72 @@ defmodule Supavisor do
         port_mode
       end
 
-    {tenant, user, mode, db_name}
+    {tenant, user, mode, db_name, search_path}
   end
 
   @spec tenant(id) :: String.t()
-  def tenant({{_, tenant}, _, _, _}), do: tenant
+  def tenant({{_, tenant}, _, _, _, _}), do: tenant
 
   @spec mode(id) :: atom()
-  def mode({_, _, mode, _}), do: mode
+  def mode({_, _, mode, _, _}), do: mode
 
-  @spec determine_node(id) :: Node.t()
-  def determine_node(id) do
+  @spec search_path(id) :: String.t() | nil
+  def search_path({_, _, _, _, search_path}), do: search_path
+
+  @spec determine_node(id, String.t() | nil) :: Node.t()
+  def determine_node(id, availability_zone) do
     tenant_id = tenant(id)
-    nodes = [node() | Node.list()] |> Enum.sort()
+
+    # If the AWS zone group is empty, we will use all nodes.
+    # If the AWS zone group exists with the same zone, we will use nodes from this group.
+    #   :syn.members(:availability_zone, "1c")
+    #   [{#PID<0.381.0>, [node: :"node1@127.0.0.1"]}]
+    nodes =
+      with zone when is_binary(zone) <- availability_zone,
+           zone_nodes when zone_nodes != [] <- :syn.members(:availability_zone, zone) do
+        zone_nodes
+        |> Enum.map(fn {_, [node: node]} -> node end)
+      else
+        _ -> [node() | Node.list()]
+      end
+
     index = :erlang.phash2(tenant_id, length(nodes))
-    Enum.at(nodes, index)
+
+    nodes
+    |> Enum.sort()
+    |> Enum.at(index)
+  end
+
+  @spec try_start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
+  def try_start_local_pool(id, secrets, log_level) do
+    if count_pools(tenant(id)) < @max_pools,
+      do: start_local_pool(id, secrets, log_level),
+      else: {:error, :max_pools_reached}
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
-  def start_local_pool({{type, tenant}, _user, _mode, _db_name} = id, secrets, log_level \\ nil) do
-    Logger.debug("Starting pool(s) for #{inspect(id)}")
+  def start_local_pool(
+        {{type, tenant}, _user, _mode, _db_name, _search_path} = id,
+        secrets,
+        log_level \\ nil
+      ) do
+    Logger.info("Starting pool(s) for #{inspect(id)}")
 
     user = elem(secrets, 1).().alias
 
     case type do
-      :single -> T.get_pool_config(tenant, user)
-      :cluster -> T.get_cluster_config(tenant, user)
+      :single -> Tenants.get_pool_config_cache(tenant, user)
+      :cluster -> Tenants.get_cluster_config(tenant, user)
     end
     |> case do
       [_ | _] = replicas ->
         opts =
           Enum.map(replicas, fn replica ->
             case replica do
-              %T.ClusterTenants{tenant: tenant, type: type} ->
+              %Tenants.ClusterTenants{tenant: tenant, type: type} ->
                 Map.put(tenant, :replica_type, type)
 
-              %T.Tenant{} = tenant ->
+              %Tenants.Tenant{} = tenant ->
                 Map.put(tenant, :replica_type, :write)
             end
             |> supervisor_args(id, secrets, log_level)
@@ -290,7 +324,7 @@ defmodule Supavisor do
 
   defp supervisor_args(
          tenant_record,
-         {tenant, user, mode, db_name} = id,
+         {tenant, user, mode, db_name, _search_path} = id,
          {method, secrets},
          log_level
        ) do
@@ -298,17 +332,20 @@ defmodule Supavisor do
       db_host: db_host,
       db_port: db_port,
       db_database: db_database,
+      auth_query: auth_query,
       default_parameter_status: ps,
       ip_version: ip_ver,
       default_pool_size: def_pool_size,
       default_max_clients: def_max_clients,
       client_idle_timeout: client_idle_timeout,
       replica_type: replica_type,
+      sni_hostname: sni_hostname,
       users: [
         %{
           db_user: db_user,
           db_password: db_pass,
           pool_size: pool_size,
+          db_user_alias: alias,
           # mode_type: mode_type,
           max_clients: max_clients
         }
@@ -324,15 +361,18 @@ defmodule Supavisor do
 
     auth = %{
       host: String.to_charlist(db_host),
+      sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
       user: db_user,
+      alias: alias,
+      auth_query: auth_query,
       database: if(db_name != nil, do: db_name, else: db_database),
       password: fn -> db_pass end,
       application_name: "Supavisor",
-      ip_version: H.ip_version(ip_ver, db_host),
+      ip_version: Helpers.ip_version(ip_ver, db_host),
       upstream_ssl: tenant_record.upstream_ssl,
       upstream_verify: tenant_record.upstream_verify,
-      upstream_tls_ca: H.upstream_cert(tenant_record.upstream_tls_ca),
+      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
       require_user: tenant_record.require_user,
       method: method,
       secrets: secrets
@@ -361,4 +401,43 @@ defmodule Supavisor do
       pid -> Manager.set_parameter_status(pid, ps)
     end
   end
+
+  @spec get_pool_ranch(id) :: {:ok, map()} | {:error, :not_found}
+  def get_pool_ranch(id) do
+    case :syn.lookup(:tenants, id) do
+      {_sup_pid, %{port: _port, host: _host} = meta} -> {:ok, meta}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @spec start_local_server(map()) :: {:ok, map()} | {:error, any()}
+  def start_local_server(%{max_clients: max_clients} = args) do
+    # max_clients=-1 is used for testing the maximum allowed clients in ProxyTest
+    {acceptors, max_clients} =
+      if max_clients > 0,
+        do: {ceil(max_clients / 100), max_clients},
+        else: {1, 100}
+
+    opts = %{
+      max_connections: max_clients * Application.get_env(:supavisor, :local_proxy_multiplier),
+      num_acceptors: max(acceptors, 10),
+      socket_opts: [port: 0, keepalive: true]
+    }
+
+    handler = Supavisor.ClientHandler
+    args = Map.put(args, :local, true)
+
+    pid =
+      case :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do
+        {:ok, pid} -> pid
+        {:error, {:already_started, pid}} -> pid
+      end
+
+    host = Application.get_env(:supavisor, :node_host)
+    {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
+  end
+
+  @spec count_pools(String.t()) :: non_neg_integer()
+  def count_pools(tenant),
+    do: Registry.count_match(Supavisor.Registry.TenantSups, tenant, :_)
 end

@@ -12,7 +12,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       type: :object,
       properties: %{
         id: %Schema{type: :string, format: :binary_id, readOnly: true},
-        tenant_external_id: %Schema{type: :string, description: "External Teanant ID"},
+        tenant_external_id: %Schema{type: :string, description: "External Tenant ID"},
         db_user_alias: %Schema{type: :string, description: "Database user alias"},
         db_user: %Schema{type: :string, description: "Database user"},
         db_password: %Schema{type: :string, description: "Database password"},
@@ -28,10 +28,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
       },
       required: [
-        :db_host,
-        :db_port,
         :db_user,
-        :db_database,
         :db_password,
         :pool_size
       ],
@@ -51,7 +48,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       }
     })
 
-    def response(), do: {"User Response", "application/json", __MODULE__}
+    def response, do: {"User Response", "application/json", __MODULE__}
   end
 
   defmodule Tenant do
@@ -114,7 +111,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       }
     })
 
-    def response(), do: {"Tenant Response", "application/json", __MODULE__}
+    def response, do: {"Tenant Response", "application/json", __MODULE__}
   end
 
   defmodule TenantList do
@@ -122,7 +119,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
 
     OpenApiSpex.schema(%{type: :array, items: Tenant})
-    def response(), do: {"Tenant List Response", "application/json", __MODULE__}
+    def response, do: {"Tenant List Response", "application/json", __MODULE__}
   end
 
   defmodule TenantCreate do
@@ -190,7 +187,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       required: [:tenant]
     })
 
-    def params(), do: {"Tenant Create Params", "application/json", __MODULE__}
+    def params, do: {"Tenant Create Params", "application/json", __MODULE__}
   end
 
   defmodule Created do
@@ -203,7 +200,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
-    def response(), do: {"", "text/plain", __MODULE__}
+    def response, do: {"", "application/json", __MODULE__}
   end
 
   defmodule NotFound do
@@ -211,6 +208,34 @@ defmodule SupavisorWeb.OpenApiSchemas do
     require OpenApiSpex
     OpenApiSpex.schema(%{})
 
-    def response(), do: {"Not found", "text/plain", __MODULE__}
+    def response, do: {"Not found", "application/json", __MODULE__}
+  end
+
+  defmodule ServiceUnavailable do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        status: %Schema{
+          type: :string,
+          description: "Supavisor health status",
+          default: "unhealthy"
+        },
+        timestamp: %Schema{
+          type: :string,
+          format: :date_time,
+          description: "Timestamp of the health check"
+        },
+        failed_checks: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description: "List of failed health check names"
+        }
+      }
+    })
+
+    def response, do: {"Service Unavailable", "application/json", __MODULE__}
   end
 end

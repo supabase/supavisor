@@ -4,21 +4,42 @@ defmodule Supavisor.Application do
   @moduledoc false
 
   use Application
+
   require Logger
+
   alias Supavisor.Monitoring.PromEx
+
+  @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
 
   @impl true
   def start(_type, _args) do
     primary_config = :logger.get_primary_config()
 
+    host =
+      case node() |> Atom.to_string() |> String.split("@") do
+        [_, host] -> host
+        _ -> nil
+      end
+
+    region = Application.get_env(:supavisor, :region)
+
+    global_metadata =
+      %{
+        nodehost: host,
+        az: Application.get_env(:supavisor, :availability_zone),
+        region: region,
+        location: System.get_env("LOCATION_KEY") || region,
+        instance_id: System.get_env("INSTANCE_ID"),
+        short_node_id: short_node_id()
+      }
+
     :ok =
       :logger.set_primary_config(
         :metadata,
-        Enum.into(
-          [region: System.get_env("REGION"), instance_id: System.get_env("INSTANCE_ID")],
-          primary_config.metadata
-        )
+        Map.merge(primary_config.metadata, global_metadata)
       )
+
+    :ok = Logger.add_handlers(:supavisor)
 
     :ok =
       :gen_event.swap_sup_handler(
@@ -29,41 +50,56 @@ defmodule Supavisor.Application do
 
     proxy_ports = [
       {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction},
-      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session}
+       :transaction, Supavisor.ClientHandler},
+      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
+       Supavisor.ClientHandler},
+      {:pg_proxy, Application.get_env(:supavisor, :proxy_port), :proxy, Supavisor.ClientHandler}
     ]
 
-    for {key, port, mode} <- proxy_ports do
-      :ranch.start_listener(
-        key,
-        :ranch_tcp,
-        %{
-          max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "25000"),
-          num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-          socket_opts: [port: port, keepalive: true]
-        },
-        Supavisor.ClientHandler,
-        %{mode: mode}
-      )
-      |> then(&"Proxy started #{mode} on port #{port}, result: #{inspect(&1)}")
-      |> Logger.warning()
+    for {key, port, mode, handler} <- proxy_ports do
+      case :ranch.start_listener(
+             key,
+             :ranch_tcp,
+             %{
+               max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "75000"),
+               num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+               socket_opts: [port: port, keepalive: true]
+             },
+             handler,
+             %{mode: mode}
+           ) do
+        {:ok, _pid} ->
+          Logger.notice("Proxy started #{mode} on port #{port}")
+
+        error ->
+          Logger.error("Proxy on #{port} not started because of #{inspect(error)}")
+      end
     end
 
     :syn.set_event_handler(Supavisor.SynHandler)
-    :syn.add_node_to_scopes([:tenants])
+    :syn.add_node_to_scopes([:tenants, :availability_zone])
 
-    PromEx.set_metrics_tags()
+    :syn.join(:availability_zone, Application.get_env(:supavisor, :availability_zone), self(),
+      node: node()
+    )
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
       Supavisor.ErlSysMon,
-      PromEx,
+      Supavisor.Health,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
       {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
-      {Registry, keys: :duplicate, name: Supavisor.Registry.TenantClients},
+      {Registry,
+       keys: :duplicate,
+       name: Supavisor.Registry.TenantClients,
+       partitions: System.schedulers_online()},
+      {Registry,
+       keys: :duplicate,
+       name: Supavisor.Registry.TenantProxyClients,
+       partitions: System.schedulers_online()},
       {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
       Supavisor.Repo,
       # Start the Telemetry supervisor
@@ -75,10 +111,19 @@ defmodule Supavisor.Application do
         child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
       },
       Supavisor.Vault,
-      Supavisor.TenantsMetrics,
+
       # Start the Endpoint (http/https)
       SupavisorWeb.Endpoint
     ]
+
+    Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
+
+    children =
+      if @metrics_disabled do
+        children
+      else
+        children ++ [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner]
+      end
 
     # start Cachex only if the node uses names, this is necessary for test setup
     children =
@@ -100,5 +145,16 @@ defmodule Supavisor.Application do
   def config_change(changed, _new, removed) do
     SupavisorWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  @spec short_node_id() :: String.t() | nil
+  defp short_node_id do
+    with {:ok, fly_alloc_id} when is_binary(fly_alloc_id) <-
+           Application.fetch_env(:supavisor, :fly_alloc_id),
+         [short_alloc_id, _] <- String.split(fly_alloc_id, "-", parts: 2) do
+      short_alloc_id
+    else
+      _ -> nil
+    end
   end
 end

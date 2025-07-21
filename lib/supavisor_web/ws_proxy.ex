@@ -46,6 +46,10 @@ defmodule SupavisorWeb.WsProxy do
     {[{:binary, bin}], state}
   end
 
+  def websocket_info({:tcp_closed, socket}, %{socket: socket}) do
+    {:stop, :normal}
+  end
+
   def websocket_info(msg, state) do
     Logger.error("Undefined websocket_info msg: #{inspect(msg, pretty: true)}")
     {:ok, state}
@@ -59,8 +63,8 @@ defmodule SupavisorWeb.WsProxy do
   def filter_pass_pkt(bin), do: bin
 
   @spec connect_local() :: {:ok, port()} | {:error, term()}
-  defp connect_local() do
+  defp connect_local do
     proxy_port = Application.fetch_env!(:supavisor, :proxy_port_transaction)
-    :gen_tcp.connect('localhost', proxy_port, [:binary, packet: :raw, active: true])
+    :gen_tcp.connect(~c"localhost", proxy_port, [:binary, packet: :raw, active: true])
   end
 end

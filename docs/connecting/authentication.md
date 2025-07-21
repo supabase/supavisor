@@ -1,16 +1,20 @@
-When a client connection is established Supavisor needs to verify the credentials of the connection.
+When a client connection is established Supavisor needs to verify the
+credentials of the connection.
 
-Credential verificiation is done either via `user` records or an `auth_query`.
+Credential verification is done either via `user` records or an `auth_query`.
 
 ## Tenant User Record
 
-If no `auth_query` exists on the `tenant` record credentials will be looked up from a `user` and verified against the client connection string credentials.
+If no `auth_query` exists on the `tenant` record credentials will be looked up
+from a `user` and verified against the client connection string credentials.
 
 There must be one or more `user` records for a `tenant` where `is_manager` is `false`.
 
 ## Authentication Query
 
-If the `user` in the client connection is not found for a `tenant` it will use the `user` where `is_manager` is `true` and the `auth_query` on the `tenant` to return matching credentials from the tenant database.
+If the `user` in the client connection is not found for a `tenant` it will use
+the `user` where `is_manager` is `true` and the `auth_query` on the `tenant` to
+return matching credentials from the tenant database.
 
 A simple `auth_query` can be:
 
@@ -43,7 +47,8 @@ REVOKE ALL ON FUNCTION supavisor.get_auth(p_usename TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION supavisor.get_auth(p_usename TEXT) TO supavisor;
 ```
 
-Update the `auth_query` on the `tenant` and it will use this query to match against client connection credentials.
+Update the `auth_query` on the `tenant` and it will use this query to match
+against client connection credentials.
 
 ```sql
 SELECT * FROM supavisor.get_auth($1)

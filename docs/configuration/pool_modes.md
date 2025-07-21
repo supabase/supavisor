@@ -1,4 +1,5 @@
-Configure the `mode_type` on the `user` to set how Supavisor connection pools will behave.
+Configure the `mode_type` on the `user` to set how Supavisor connection pools
+will behave.
 
 The `mode_type` can be one of:
 
@@ -8,11 +9,13 @@ The `mode_type` can be one of:
 
 ## Transaction Mode
 
-`transaction` mode assigns a connection to a client for the duration of a single transaction.
+`transaction` mode assigns a connection to a client for the duration of a single
+transaction.
 
 ## Session Mode
 
-`session` mode assigns a connection to a client for the duration of the client connection.
+`session` mode assigns a connection to a client for the duration of the client
+connection.
 
 ## Native Mode
 

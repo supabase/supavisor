@@ -1,7 +1,8 @@
 defmodule SupavisorWeb.ClusterView do
   use SupavisorWeb, :view
-  alias SupavisorWeb.ClusterView
+
   alias SupavisorWeb.ClusterTenantsView
+  alias SupavisorWeb.ClusterView
 
   def render("index.json", %{clusters: clusters}) do
     %{data: render_many(clusters, ClusterView, "cluster.json")}

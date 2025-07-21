@@ -3,11 +3,13 @@ defmodule Supavisor.SynHandlerTest do
   import ExUnit.CaptureLog
   require Logger
   alias Ecto.Adapters.SQL.Sandbox
+  alias Supavisor.Support.Cluster
 
-  @id {{:single, "syn_tenant"}, "postgres", :session, "postgres"}
+  @id {{:single, "syn_tenant"}, "postgres", :session, "postgres", nil}
 
+  @tag cluster: true
   test "resolving conflict" do
-    node2 = :"secondary@127.0.0.1"
+    {:ok, _pid, node2} = Cluster.start_node()
 
     secret = %{alias: "postgres"}
     auth_secret = {:password, fn -> secret end}
@@ -16,7 +18,7 @@ defmodule Supavisor.SynHandlerTest do
     assert pid2 == Supavisor.get_global_sup(@id)
     assert node(pid2) == node2
     true = Node.disconnect(node2)
-    Process.sleep(500)
+    Process.sleep(1000)
 
     assert nil == Supavisor.get_global_sup(@id)
     {:ok, pid1} = Supavisor.start(@id, auth_secret)
@@ -28,7 +30,7 @@ defmodule Supavisor.SynHandlerTest do
 
     msg = "Resolving syn_tenant conflict, stop local pid"
 
-    assert capture_log(fn -> Logger.warn(msg) end) =~
+    assert capture_log(fn -> Logger.warning(msg) end) =~
              msg
 
     assert pid2 == Supavisor.get_global_sup(@id)

@@ -18,9 +18,9 @@ defmodule Cluster.Strategy.Postgres do
 
   @vsn "1.1.49"
 
-  alias Cluster.Strategy
   alias Cluster.Logger
-  alias Postgrex, as: P
+  alias Cluster.Strategy
+  alias Postgrex
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
@@ -33,12 +33,12 @@ defmodule Cluster.Strategy.Postgres do
       Ecto.Repo.Supervisor.parse_url(state.config[:url])
       |> Keyword.put_new(:parameters, application_name: "cluster_node_#{node()}")
       |> Keyword.put_new(:auto_reconnect, true)
+      |> Keyword.put_new(:ssl_opts, verify: :verify_none)
 
     new_config =
       state.config
       |> Keyword.put_new(:heartbeat_interval, 5_000)
       |> Keyword.put_new(:channel_name, "cluster")
-      |> Keyword.put_new(:channel_name_partisan, "cluster_partisan")
       |> Keyword.delete(:url)
 
     meta = %{
@@ -52,10 +52,9 @@ defmodule Cluster.Strategy.Postgres do
   end
 
   def handle_continue(:connect, state) do
-    with {:ok, conn} <- P.start_link(state.meta.opts.()),
-         {:ok, conn_notif} <- P.Notifications.start_link(state.meta.opts.()),
-         {_, _} <- P.Notifications.listen(conn_notif, state.config[:channel_name]),
-         {_, _} <- P.Notifications.listen(conn_notif, state.config[:channel_name_partisan]) do
+    with {:ok, conn} <- Postgrex.start_link(state.meta.opts.()),
+         {:ok, conn_notif} <- Postgrex.Notifications.start_link(state.meta.opts.()),
+         {_, _} <- Postgrex.Notifications.listen(conn_notif, state.config[:channel_name]) do
       Logger.info(state.topology, "Connected to Postgres database")
 
       meta = %{
@@ -75,25 +74,16 @@ defmodule Cluster.Strategy.Postgres do
 
   def handle_info(:heartbeat, state) do
     Process.cancel_timer(state.meta.heartbeat_ref)
-    P.query(state.meta.conn, "NOTIFY #{state.config[:channel_name]}, '#{node()}'", [])
-
-    P.query(
-      state.meta.conn,
-      "NOTIFY #{state.config[:channel_name_partisan]}, '#{partisan_peer_spec_enc()}'",
-      []
-    )
-
+    Postgrex.query(state.meta.conn, "NOTIFY #{state.config[:channel_name]}, '#{node()}'", [])
     ref = heartbeat(state.config[:heartbeat_interval])
     {:noreply, put_in(state.meta.heartbeat_ref, ref)}
   end
 
   def handle_info({:notification, _, _, channel, msg}, state) do
     disterl = state.config[:channel_name]
-    partisan = state.config[:channel_name_partisan]
 
     case channel do
       ^disterl -> handle_channels(:disterl, msg, state)
-      ^partisan -> handle_channels(:partisan, msg, state)
       other -> Logger.error(state.topology, "Unknown channel: #{other}")
     end
 
@@ -105,20 +95,6 @@ defmodule Cluster.Strategy.Postgres do
     {:noreply, state}
   end
 
-  def code_change("1.1.48", state, _) do
-    Logger.info(state.topology, "Update state from 1.1.48")
-
-    partisan_channel =
-      Application.get_env(:libcluster, :topologies)
-      |> get_in([:postgres, :config, :channel_name_partisan])
-
-    new_config =
-      state.config
-      |> Keyword.put(:channel_name_partisan, partisan_channel)
-
-    {:ok, %{state | config: new_config}}
-  end
-
   def code_change(_, state, _), do: {:ok, state}
 
   ### Internal functions
@@ -127,7 +103,8 @@ defmodule Cluster.Strategy.Postgres do
     Process.send_after(self(), :heartbeat, interval)
   end
 
-  @spec handle_channels(:disterl | :partisan, String.t(), map()) :: any()
+  # sobelow_skip ["DOS.StringToAtom"]
+  @spec handle_channels(:disterl, String.t(), map()) :: any()
   def handle_channels(:disterl, msg, state) do
     node = String.to_atom(msg)
 
@@ -143,40 +120,5 @@ defmodule Cluster.Strategy.Postgres do
           Logger.error(topology, "Failed to connect to node: #{node}")
       end
     end
-  end
-
-  def handle_channels(:partisan, msg, state) do
-    spec = partisan_peer_spec_dec(msg)
-
-    if spec.name not in [:partisan.node() | :partisan.nodes()] do
-      spec = partisan_peer_spec_dec(msg)
-      topology = state.topology
-
-      Logger.debug(
-        topology,
-        "Trying to connect to partisan node: #{inspect(spec, pretty: true)}"
-      )
-
-      case :partisan_peer_service.join(spec) do
-        :ok ->
-          Logger.debug(topology, "Connected to node: #{inspect(spec, pretty: true)}")
-
-        other ->
-          Logger.error(topology, "Failed to connect to partisan node: #{other}")
-      end
-    end
-  end
-
-  @spec partisan_peer_spec_enc() :: String.t()
-  def partisan_peer_spec_enc() do
-    :partisan.node_spec()
-    |> :erlang.term_to_binary()
-    |> Base.encode64()
-  end
-
-  @spec partisan_peer_spec_dec(String.t()) :: term()
-  def partisan_peer_spec_dec(spec) do
-    Base.decode64!(spec)
-    |> :erlang.binary_to_term()
   end
 end

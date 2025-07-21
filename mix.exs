@@ -11,7 +11,14 @@ defmodule Supavisor.MixProject do
       aliases: aliases(),
       deps: deps(),
       releases: releases(),
-      dialyzer: [plt_add_apps: [:mix]]
+      dialyzer: [plt_add_apps: [:mix]],
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.html": :test,
+        "coveralls.github": :test,
+        "coveralls.lcov": :test
+      ]
     ]
   end
 
@@ -21,9 +28,13 @@ defmodule Supavisor.MixProject do
   def application do
     [
       mod: {Supavisor.Application, []},
-      extra_applications: [:logger, :runtime_tools, :os_mon, :ssl, :partisan]
+      extra_applications:
+        [:logger, :runtime_tools, :os_mon, :ssl] ++ extra_applications(Mix.env())
     ]
   end
+
+  defp extra_applications(:dev), do: [:wx, :observer]
+  defp extra_applications(_), do: []
 
   # Specifies which paths to compile per environment.
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -38,25 +49,18 @@ defmodule Supavisor.MixProject do
       {:phoenix_ecto, "~> 4.4"},
       {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
-      {:phoenix_html, "~> 3.0"},
       {:phoenix_view, "~> 2.0.2"},
-      {:phoenix_live_reload, "~> 1.2", only: :dev},
-      {:phoenix_live_view, "~> 0.18.18"},
+      {:phoenix_live_view, "~> 1.0"},
       {:phoenix_live_dashboard, "~> 0.7"},
-      {:telemetry_metrics, "~> 0.6"},
       {:telemetry_poller, "~> 1.0"},
-      {:jason, "~> 1.2"},
+      {:peep, "~> 3.4"},
       {:plug_cowboy, "~> 2.5"},
-      {:joken, "~> 2.5.0"},
-      {:cloak_ecto, "~> 1.2.0"},
-      {:meck, "~> 0.9.2", only: :test},
-      {:credo, "~> 1.6.4", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.1.0", only: [:dev], runtime: false},
-      {:benchee, "~> 1.1.0", only: :dev},
-      {:prom_ex, "~> 1.8.0"},
+      {:joken, "~> 2.6.0"},
+      {:cloak_ecto, "~> 1.3.0"},
+      {:req, "~> 0.5"},
+      {:prom_ex, "~> 1.10"},
       {:open_api_spex, "~> 3.16"},
-      {:burrito, github: "burrito-elixir/burrito"},
-      {:libcluster, "~> 3.3.1"},
+      {:libcluster, "~> 3.5"},
       {:logflare_logger_backend, github: "Logflare/logflare_logger_backend", tag: "v0.11.4"},
       {:distillery, "~> 2.1"},
       {:cachex, "~> 3.6"},
@@ -65,12 +69,27 @@ defmodule Supavisor.MixProject do
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
-      {:poolboy, git: "https://github.com/abc3/poolboy.git", tag: "v0.0.2"},
-      {:partisan, git: "https://github.com/lasp-lang/partisan.git", tag: "v5.0.0-rc.12"},
+      {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.1"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:rustler, "~> 0.29.1"}
-      # TODO: add ranch deps
+      {:rustler, "~> 0.36.1"},
+      {:ranch, "~> 2.0", override: true},
+
+      # Linting
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:sobelow, ">= 0.0.0", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
+
+      # Benchmarking and performance
+      {:benchee, "~> 1.3", only: :dev},
+      {:eflambe, "~> 0.3.1", only: :dev},
+
+      # Test utilities
+      {:excoveralls, ">= 0.0.0", only: [:dev, :test]},
+      {:stream_data, "~> 1.0", only: [:dev, :test]},
+      # Override needed due to eflambe
+      {:meck, "~> 1.0", only: [:dev, :test], override: true}
     ]
   end
 
@@ -80,17 +99,6 @@ defmodule Supavisor.MixProject do
         steps: [:assemble, &upgrade/1, :tar],
         include_erts: System.get_env("INCLUDE_ERTS", "true") == "true",
         cookie: System.get_env("RELEASE_COOKIE", Base.url_encode64(:crypto.strong_rand_bytes(30)))
-      ],
-      supavisor_bin: [
-        steps: [:assemble, &Burrito.wrap/1],
-        burrito: [
-          targets: [
-            macos_aarch64: [os: :darwin, cpu: :aarch64],
-            macos_x86_64: [os: :darwin, cpu: :x86_64],
-            linux_x86_64: [os: :linux, cpu: :x86_64],
-            linux_aarch64: [os: :linux, cpu: :aarch64]
-          ]
-        ]
       ]
     ]
   end
@@ -118,15 +126,47 @@ defmodule Supavisor.MixProject do
   end
 
   defp upgrade(release) do
-    from = System.get_env("UPGRADE_FROM")
+    from = System.get_env("UPGRADE_FROM", "")
 
-    if from && from != "" do
+    if from != "" do
       vsn = release.version
       path = Path.join([release.path, "releases", "supavisor-#{vsn}.rel"])
       rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))
-
-      Mix.Task.run("supavisor.gen.appup", ["--from=" <> from, "--to=" <> vsn])
       :ok = File.write!(path, rel_content)
+
+      # If appups directory exist, don't run the task to generate, and instead
+      # use the existing appups.
+      appups_path = Path.join(["relups", "#{from}-#{vsn}", "appups"])
+
+      if appups_path do
+        IO.puts("Using existing appups from #{appups_path}")
+
+        appups_path
+        |> File.ls!()
+        |> Enum.each(fn appup ->
+          [app, version] =
+            appup
+            |> String.trim_trailing(".appup")
+            |> String.split("-")
+
+          file_path = Path.join(appups_path, appup)
+
+          destination =
+            Path.join([
+              release.path,
+              "lib",
+              "#{app}-#{version}",
+              "ebin",
+              "#{app}.appup"
+            ])
+
+          IO.puts("Copying #{file_path} to #{destination}")
+          File.copy(file_path, destination)
+        end)
+      else
+        Mix.Task.run("supavisor.gen.appup", ["--from=" <> from, "--to=" <> vsn])
+      end
+
       Mix.Task.run("supavisor.gen.relup", ["--from=" <> from, "--to=" <> vsn])
     end
 

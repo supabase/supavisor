@@ -10,7 +10,8 @@ defmodule Supavisor.Repo.Migrations.AddDefaultPoolStrategy do
       constraint(
         "tenants",
         :default_pool_strategy_values,
-        check: "default_pool_strategy IN ('fifo', 'lifo')"
+        check: "default_pool_strategy IN ('fifo', 'lifo')",
+        prefix: "_supavisor"
       )
     )
   end

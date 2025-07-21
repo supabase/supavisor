@@ -2,22 +2,52 @@ defmodule Supavisor.SynHandler do
   @moduledoc """
   Custom defined Syn's callbacks
   """
-  require Logger
-  alias Supavisor.Monitoring.PromEx
 
+  @behaviour :syn_event_handler
+
+  require Logger
+
+  @impl true
   def on_process_unregistered(
         :tenants,
-        {{_type, _tenant}, _user, _mode, _db_name} = id,
+        {{type, tenant}, user, mode, db_name, _search_path} = id,
         _pid,
-        _meta,
+        meta,
         reason
       ) do
-    Logger.debug("Process unregistered: #{inspect(id)} #{inspect(reason)}")
+    metadata = %{
+      project: tenant,
+      user: user,
+      mode: mode,
+      db_name: db_name,
+      type: type
+    }
 
-    # remove all Prometheus metrics for the specified tenant
-    PromEx.remove_metrics(id)
+    Logger.debug("Process unregistered: #{inspect(id)} #{inspect(reason)}", metadata)
+
+    case meta do
+      %{port: port, listener: listener} ->
+        try do
+          :ranch.stop_listener(id)
+
+          Logger.notice(
+            "SynHandler: Stopped listener #{inspect(id)} on port #{inspect(port)} listener #{inspect(listener)}",
+            metadata
+          )
+        rescue
+          exception ->
+            Logger.notice(
+              "ListenerShutdownError: Failed to stop listener #{inspect(id)} #{Exception.message(exception)}",
+              metadata
+            )
+        end
+
+      _ ->
+        nil
+    end
   end
 
+  @impl true
   def resolve_registry_conflict(
         :tenants,
         id,
@@ -45,11 +75,13 @@ defmodule Supavisor.SynHandler do
           end
 
         Logger.warning(
-          "Resolving #{inspect(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
+          "SynHandler: Resolving #{inspect(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
         )
       end)
     else
-      Logger.warning("Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}")
+      Logger.warning(
+        "SynHandler: Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}"
+      )
     end
 
     keep

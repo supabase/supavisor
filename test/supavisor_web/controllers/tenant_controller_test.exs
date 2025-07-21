@@ -1,12 +1,10 @@
 defmodule SupavisorWeb.TenantControllerTest do
-  use SupavisorWeb.ConnCase
+  use SupavisorWeb.ConnCase, async: false
 
   import Supavisor.TenantsFixtures
   import ExUnit.CaptureLog
-  require Logger
-  alias Supavisor.Tenants.Tenant
 
-  @jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M"
+  alias Supavisor.Tenants.Tenant
 
   @user_valid_attrs %{
     db_user_alias: "some_db_user",
@@ -43,15 +41,31 @@ defmodule SupavisorWeb.TenantControllerTest do
   setup %{conn: conn} do
     :meck.expect(Supavisor.Helpers, :check_creds_get_ver, fn _ -> {:ok, "0.0"} end)
 
+    jwt = gen_token()
+
     new_conn =
       conn
       |> put_req_header("accept", "application/json")
       |> put_req_header(
         "authorization",
-        "Bearer " <> @jwt
+        "Bearer " <> jwt
       )
 
-    {:ok, conn: new_conn}
+    blocked_jwt = gen_token("invalid")
+
+    blocked_conn =
+      conn
+      |> put_req_header("accept", "application/json")
+      |> put_req_header(
+        "authorization",
+        "Bearer " <> blocked_jwt
+      )
+
+    on_exit(fn ->
+      :meck.unload(Supavisor.Helpers)
+    end)
+
+    {:ok, conn: new_conn, blocked_conn: blocked_conn}
   end
 
   describe "create tenant" do
@@ -63,6 +77,17 @@ defmodule SupavisorWeb.TenantControllerTest do
     test "renders errors when data is invalid", %{conn: conn} do
       conn = put(conn, Routes.tenant_path(conn, :update, "dev_tenant"), tenant: @invalid_attrs)
       assert json_response(conn, 422)["errors"] != %{}
+    end
+  end
+
+  describe "create tenant with blocked ip" do
+    test "renders tenant when data is valid", %{blocked_conn: blocked_conn} do
+      blocked_conn =
+        put(blocked_conn, Routes.tenant_path(blocked_conn, :update, "dev_tenant"),
+          tenant: @create_attrs
+        )
+
+      assert blocked_conn.status == 403
     end
   end
 
@@ -128,6 +153,27 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "health endpoint" do
+    test "returns 204 when all health checks pass", %{conn: conn} do
+      conn = get(conn, Routes.tenant_path(conn, :health))
+      assert response(conn, 204) == ""
+    end
+
+    test "returns 503 with failed checks when health checks fail", %{conn: conn} do
+      :meck.expect(Supavisor.Health, :database_reachable?, fn -> false end)
+      on_exit(fn -> :meck.unload(Supavisor.Health) end)
+
+      conn = get(conn, Routes.tenant_path(conn, :health))
+
+      assert conn.status == 503
+      response_body = json_response(conn, 503)
+
+      assert response_body["status"] == "unhealthy"
+      assert response_body["failed_checks"] == ["database_reachable"]
+      assert {:ok, _datetime, _offset} = DateTime.from_iso8601(response_body["timestamp"])
+    end
+  end
+
   defp create_tenant(_) do
     tenant = tenant_fixture()
     %{tenant: tenant}
@@ -143,5 +189,9 @@ defmodule SupavisorWeb.TenantControllerTest do
              Cachex.get(Supavisor.Cache, {:user_cache, :single, "user", external_id, nil})
 
     assert {:ok, nil} = Cachex.get(Supavisor.Cache, {:tenant_cache, external_id, nil})
+  end
+
+  defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
+    Supavisor.Jwt.Token.gen!(secret)
   end
 end

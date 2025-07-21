@@ -1,4 +1,6 @@
 defmodule Supavisor.PgParser do
+  @moduledoc false
+
   use Rustler, otp_app: :supavisor, crate: "pgparser"
 
   # When your NIF is loaded, it will override this function.
