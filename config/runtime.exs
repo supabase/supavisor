@@ -158,7 +158,7 @@ reconnect_retries =
 
 if config_env() != :test do
   config :supavisor,
-    local_server_shards: System.get_env("LOCAL_SERVER_SHARDS", "4") |> String.to_integer(),
+    local_proxy_shards: System.get_env("LOCAL_PROXY_SHARDS", "4") |> String.to_integer(),
     availability_zone: System.get_env("AVAILABILITY_ZONE"),
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),

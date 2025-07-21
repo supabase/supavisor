@@ -48,17 +48,19 @@ defmodule Supavisor.Application do
         {Supavisor.SignalHandler, []}
       )
 
-    local_server_shards = Application.fetch_env!(:supavisor, :local_server_shards)
+    shards = Application.fetch_env!(:supavisor, :local_proxy_shards)
 
-    session_shards = for shard <- 0..(local_server_shards - 1) do
-      {{:pg_proxy_internal, :session, shard}, 0, %{mode: :session, local: true, shard: shard},
-       Supavisor.ClientHandler}
-    end
+    session_shards =
+      for shard <- 0..(shards - 1) do
+        {{:pg_proxy_internal, :session, shard}, 0, %{mode: :session, local: true, shard: shard},
+         Supavisor.ClientHandler}
+      end
 
-    transaction_shards = for shard <- 0..(local_server_shards - 1) do
-      {{:pg_proxy_internal, :transaction, shard}, 0, %{mode: :transaction, local: true, shard: shard},
-       Supavisor.ClientHandler}
-    end
+    transaction_shards =
+      for shard <- 0..(shards - 1) do
+        {{:pg_proxy_internal, :transaction, shard}, 0,
+         %{mode: :transaction, local: true, shard: shard}, Supavisor.ClientHandler}
+      end
 
     proxy_ports =
       [
