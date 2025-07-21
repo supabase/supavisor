@@ -23,7 +23,6 @@ defmodule Supavisor.DbHandler do
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
-  @reconnect_retries Application.compile_env(:supavisor, :reconnect_retries)
 
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -109,12 +108,6 @@ defmodule Supavisor.DbHandler do
         active: false
       ]
 
-    maybe_reconnect_callback = fn reason ->
-      if data.reconnect_retries > @reconnect_retries and data.client_sock != nil,
-        do: {:stop, {:failed_to_connect, reason}},
-        else: {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
-    end
-
     Telem.handler_action(:db_handler, :db_connection, data.id)
 
     case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
@@ -133,12 +126,12 @@ defmodule Supavisor.DbHandler do
 
               {:error, reason} ->
                 Logger.error("DbHandler: Send startup error #{inspect(reason)}")
-                maybe_reconnect_callback.(reason)
+                maybe_reconnect(reason, data)
             end
 
           {:error, reason} ->
             Logger.error("DbHandler: Handshake error #{inspect(reason)}")
-            maybe_reconnect_callback.(reason)
+            maybe_reconnect(reason, data)
         end
 
       other ->
@@ -146,7 +139,7 @@ defmodule Supavisor.DbHandler do
           "DbHandler: Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
         )
 
-        maybe_reconnect_callback.(other)
+        maybe_reconnect(other, data)
     end
   end
 
@@ -694,4 +687,14 @@ defmodule Supavisor.DbHandler do
 
   def reconnect_timeout(_),
     do: @reconnect_timeout
+
+  defp maybe_reconnect(reason, data) do
+    max_reconnect_retries = Application.get_env(:supavisor, :reconnect_retries)
+
+    if data.reconnect_retries > max_reconnect_retries and data.client_sock != nil do
+      {:stop, {:failed_to_connect, reason}}
+    else
+      {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
+    end
+  end
 end
