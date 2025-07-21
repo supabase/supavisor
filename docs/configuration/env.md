@@ -26,7 +26,7 @@ This document provides a categorized list of all environment variables used in S
 | `PROXY_PORT_SESSION`          | Session pool port                                            | `5432`        | No       |
 | `PROXY_PORT`                  | Internal proxy port                                          | `5412`        | No       |
 | `RECONNECT_ON_DB_CLOSE`       | Enable reconnection on close                                 | `false`       | No       |
-| `RECONNECT_RETRIES`           | Number of reconnection attempts                              | `5`           | No       |
+| `RECONNECT_RETRIES`           | Number of reconnection attempts. -1 for infinity             | `5`           | No       |
 | `SUBSCRIBE_RETRIES`           | Number of subscription retries                               | `20`          | No       |
 | `SWITCH_ACTIVE_COUNT`         | Switch active connection count                               | `100`         | No       |
 | `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                                 | -             | No       |

@@ -148,6 +148,14 @@ db_socket_options =
     do: [:inet6],
     else: [:inet]
 
+reconnect_retries =
+  System.get_env("RECONNECT_RETRIES", "5")
+  |> String.to_integer()
+  |> case do
+    -1 -> :infinity
+    n -> n
+  end
+
 if config_env() != :test do
   config :supavisor,
     local_server_shards: System.get_env("LOCAL_SERVER_SHARDS", "4") |> String.to_integer(),
@@ -166,6 +174,7 @@ if config_env() != :test do
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,
     reconnect_on_db_close: System.get_env("RECONNECT_ON_DB_CLOSE") == "true",
+    reconnect_retries: reconnect_retries,
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
     node_host: System.get_env("NODE_IP", "127.0.0.1")
