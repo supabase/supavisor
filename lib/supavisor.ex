@@ -410,10 +410,12 @@ defmodule Supavisor do
     end
   end
 
-  @spec get_local_server(atom) :: map()
-  def get_local_server(mode) do
+  @spec get_local_server(id, atom) :: map()
+  def get_local_server(id, mode) do
     host = Application.get_env(:supavisor, :node_host)
-    %{host: host, port: :ranch.get_port({:pg_proxy_internal, mode})}
+    local_server_shards = Application.fetch_env!(:supavisor, :local_server_shards)
+    shard = :erlang.phash2(id, local_server_shards)
+    %{host: host, port: :ranch.get_port({:pg_proxy_internal, mode, shard})}
   end
 
   @spec count_pools(String.t()) :: non_neg_integer()
