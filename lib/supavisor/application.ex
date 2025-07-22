@@ -78,8 +78,10 @@ defmodule Supavisor.Application do
              handler,
              opts
            ) do
-        {:ok, _pid} ->
-          Logger.notice("Proxy started #{opts.mode}(local=#{opts.local}) on port #{port}")
+        {:ok, _ref} ->
+          Logger.notice(
+            "Proxy started #{opts.mode}(local=#{opts.local}) on port #{:ranch.get_port(key)}"
+          )
 
         error ->
           Logger.error("Proxy on #{port} not started because of #{inspect(error)}")
