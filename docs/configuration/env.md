@@ -100,4 +100,34 @@ This document provides a categorized list of all environment variables used in S
 | `REGION`            | Current region (falls back to `FLY_REGION` if not set)                      | -             | No       |
 | `DNS_POLL`          | DNS polling configuration for clustering                                    | -             | No       |
 | `CLUSTER_NODES`     | Comma-separated list of cluster nodes                                       | -             | No       |
-| `CLUSTER_POSTGRES`  | Enable PostgreSQL-based clustering (uses `
+| `CLUSTER_POSTGRES`  | Enable PostgreSQL-based clustering (uses `DATABASE_URL` for node discovery) | -             | No       |
+| `CLUSTER_ID`        | Cluster identifier                                                          | -             | No       |
+| `LOCATION_ID`       | Location identifier                                                         | -             | No       |
+| `LOCATION_KEY`      | Location key (falls back to region if not set)                              | -             | No       |
+| `INSTANCE_ID`       | Instance identifier                                                         | -             | No       |
+
+---
+
+## 5. Fly.io Deployment Configuration
+
+| Variable       | Description      | Default Value | Required |
+| -------------- | ---------------- | ------------- | -------- |
+| `FLY_APP_NAME` | Application name | -             | No       |
+| `FLY_REGION`   | Region           | -             | No       |
+| `FLY_ALLOC_ID` | Allocation ID    | -             | No       |
+
+## 6. Release Configuration
+
+| Variable                    | Description                                         | Default Value | Required |
+| --------------------------- | --------------------------------------------------- | ------------- | -------- |
+| `INCLUDE_ERTS`              | Whether to include ERTS in the release              | `true`        | No       |
+| `RELEASE_COOKIE`            | Release cookie for distributed Erlang               | Random value  | No       |
+| `UPGRADE_FROM`              | Version to upgrade from during hot upgrades         | -             | No       |
+| `DEBUG_LOAD_RUNTIME_CONFIG` | Load runtime config from config/runtime.exs if true | -             | No       |
+| `RELEASE_ROOT`              | Root directory of the release                       | -             | No       |
+
+## 7. Testing Configuration
+
+| Variable    | Description                  | Default Value | Required |
+| ----------- | ---------------------------- | ------------- | -------- |
+| `TEST_LOGS` | Controls test logging output | `all`         | No       |
