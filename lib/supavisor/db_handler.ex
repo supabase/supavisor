@@ -670,7 +670,8 @@ defmodule Supavisor.DbHandler do
         data.auth.secrets.().secret
       end
 
-    bin = [?p, <<IO.iodata_length(password) + 4::signed-32>>, password]
+    payload = <<password::binary, 0>>
+    bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
     :ok = HandlerHelpers.sock_send(data.sock, bin)
     :authentication_cleartext
   end
