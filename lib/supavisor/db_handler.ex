@@ -175,6 +175,9 @@ defmodule Supavisor.DbHandler do
       :authentication_md5 ->
         {:keep_state, data}
 
+      :authentication_cleartext  ->
+        {:keep_state, data}
+
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
         handle_authentication_error(data, reason)
         Logger.error("DbHandler: Auth error #{inspect(reason)}")
@@ -669,7 +672,7 @@ defmodule Supavisor.DbHandler do
 
     bin = [?p, <<IO.iodata_length(password) + 4::signed-32>>, password]
     :ok = HandlerHelpers.sock_send(data.sock, bin)
-    :authentication_cleartext_password
+    :authentication_cleartext
   end
 
   defp handle_auth_pkts(%{tag: :error_response, payload: error}, _acc, _data),

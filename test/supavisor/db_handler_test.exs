@@ -132,11 +132,11 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   describe "handle_event/4 info tcp authentication authentication_cleartext_password payload events" do
-    test "keeps state while sending the digested md5" do
+    test "keeps state while sending the cleartext password" do
       # `82` is `?R`, which identifies the payload tag as `:authentication`
-      # `0, 0, 0, 12` is the packet length
+      # `0, 0, 0, 8` is the packet length
       # `0, 0, 0, 3` is the authentication type, identified as `:authentication_cleartext_password`
-      bin = <<82, 0, 0, 0, 12, 0, 0, 0, 3>>
+      bin = <<82, 0, 0, 0, 8, 0, 0, 0, 3>>
 
       {a, b} = sockpair()
 
