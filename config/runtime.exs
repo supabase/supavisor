@@ -158,6 +158,7 @@ reconnect_retries =
 
 if config_env() != :test do
   config :supavisor,
+    local_proxy_shards: System.get_env("LOCAL_PROXY_SHARDS", "4") |> String.to_integer(),
     availability_zone: System.get_env("AVAILABILITY_ZONE"),
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
@@ -176,8 +177,7 @@ if config_env() != :test do
     reconnect_retries: reconnect_retries,
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
-    node_host: System.get_env("NODE_IP", "127.0.0.1"),
-    local_proxy_multiplier: System.get_env("LOCAL_PROXY_MULTIPLIER", "20") |> String.to_integer()
+    node_host: System.get_env("NODE_IP", "127.0.0.1")
 
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),

@@ -6,10 +6,9 @@ defmodule Supavisor.TenantSupervisor do
   alias Supavisor.Manager
   alias Supavisor.SecretChecker
 
-  def start_link(%{replicas: [%{mode: mode} = single]} = args)
+  def start_link(%{replicas: [%{mode: mode}]} = args)
       when mode in [:transaction, :session] do
-    {:ok, meta} = Supavisor.start_local_server(single)
-    Logger.info("Starting ranch instance #{inspect(meta)} for #{inspect(args.id)}")
+    meta = Supavisor.get_local_server(args.id, mode)
     name = {:via, :syn, {:tenants, args.id, meta}}
     Supervisor.start_link(__MODULE__, args, name: name)
   end
