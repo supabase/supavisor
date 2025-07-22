@@ -131,6 +131,38 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
+  describe "handle_event/4 info tcp authentication authentication_cleartext_password payload events" do
+    test "keeps state while sending the digested md5" do
+      # `82` is `?R`, which identifies the payload tag as `:authentication`
+      # `0, 0, 0, 12` is the packet length
+      # `0, 0, 0, 3` is the authentication type, identified as `:authentication_cleartext_password`
+      bin = <<82, 0, 0, 0, 12, 0, 0, 0, 3>>
+
+      {a, b} = sockpair()
+
+      content = {:tcp, b, bin}
+
+      data = %{
+        auth: %{
+          password: fn -> "some_password" end,
+          user: "some_user",
+          method: :password
+        },
+        sock: {:gen_tcp, a}
+      }
+
+      assert {:keep_state, ^data} = Db.handle_event(:info, content, :authentication, data)
+
+      assert {:ok, message} = :gen_tcp.recv(b, 0)
+
+      # client response
+      # p, identifies the payload as password message
+      # 0,0,0,9 is the payload length (length field + null terminated string)
+      # 41, 41, 41, 41, 00 is the null terminated password string
+      assert message == <<?p, byte_size(data.auth.password.())+5::integer-32, data.auth.password.(), 0>>
+    end
+  end
+
   describe "handle_event/4 info tcp authentication authentication_md5_password payload events" do
     test "keeps state while sending the digested md5" do
       # `82` is `?R`, which identifies the payload tag as `:authentication`
