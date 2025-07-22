@@ -660,7 +660,7 @@ defmodule Supavisor.DbHandler do
     :authentication_md5
   end
 
-  defp handle_auth_pkts(%{payload: {:authentication_cleartext_password}} = dec_pkt, _, data) do
+  defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     password =
