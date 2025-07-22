@@ -158,7 +158,8 @@ reconnect_retries =
 
 if config_env() != :test do
   config :supavisor,
-    local_proxy_shards: System.get_env("LOCAL_PROXY_SHARDS", "4") |> String.to_integer(),
+    session_proxy_ports: System.get_env("SESSION_PROXY_PORTS", "12100,12101,12102,12103") |> String.split(",") |> Enum.map(&String.to_integer/1),
+    transaction_proxy_ports: System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107") |> String.split(",") |> Enum.map(&String.to_integer/1),
     availability_zone: System.get_env("AVAILABILITY_ZONE"),
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
