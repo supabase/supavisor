@@ -12,39 +12,16 @@ defmodule Supavisor.SynHandler do
         :tenants,
         {{type, tenant}, user, mode, db_name, _search_path} = id,
         _pid,
-        meta,
+        _meta,
         reason
       ) do
-    metadata = %{
+    Logger.debug("Process unregistered: #{inspect(id)} #{inspect(reason)}", %{
       project: tenant,
       user: user,
       mode: mode,
       db_name: db_name,
       type: type
-    }
-
-    Logger.debug("Process unregistered: #{inspect(id)} #{inspect(reason)}", metadata)
-
-    case meta do
-      %{port: port, listener: listener} ->
-        try do
-          :ranch.stop_listener(id)
-
-          Logger.notice(
-            "SynHandler: Stopped listener #{inspect(id)} on port #{inspect(port)} listener #{inspect(listener)}",
-            metadata
-          )
-        rescue
-          exception ->
-            Logger.notice(
-              "ListenerShutdownError: Failed to stop listener #{inspect(id)} #{Exception.message(exception)}",
-              metadata
-            )
-        end
-
-      _ ->
-        nil
-    end
+    })
   end
 
   @impl true

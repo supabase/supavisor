@@ -48,15 +48,25 @@ defmodule Supavisor.Application do
         {Supavisor.SignalHandler, []}
       )
 
-    proxy_ports = [
-      {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
-       :transaction, Supavisor.ClientHandler},
-      {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session), :session,
-       Supavisor.ClientHandler},
-      {:pg_proxy, Application.get_env(:supavisor, :proxy_port), :proxy, Supavisor.ClientHandler}
-    ]
+    local_proxy_shards_count = Application.fetch_env!(:supavisor, :local_proxy_shards)
 
-    for {key, port, mode, handler} <- proxy_ports do
+    local_proxy_shards =
+      for shard <- 0..(local_proxy_shards_count - 1), mode <- [:session, :transaction] do
+        {{:pg_proxy_internal, mode, shard}, 0, %{mode: mode, local: true, shard: shard},
+         Supavisor.ClientHandler}
+      end
+
+    proxy_ports =
+      [
+        {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
+         %{mode: :transaction, local: false}, Supavisor.ClientHandler},
+        {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
+         %{mode: :session, local: false}, Supavisor.ClientHandler},
+        {:pg_proxy, Application.get_env(:supavisor, :proxy_port), %{mode: :proxy, local: false},
+         Supavisor.ClientHandler}
+      ] ++ local_proxy_shards
+
+    for {key, port, opts, handler} <- proxy_ports do
       case :ranch.start_listener(
              key,
              :ranch_tcp,
@@ -66,10 +76,12 @@ defmodule Supavisor.Application do
                socket_opts: [port: port, keepalive: true]
              },
              handler,
-             %{mode: mode}
+             opts
            ) do
-        {:ok, _pid} ->
-          Logger.notice("Proxy started #{mode} on port #{port}")
+        {:ok, _ref} ->
+          Logger.notice(
+            "Proxy started #{opts.mode}(local=#{opts.local}) on port #{:ranch.get_port(key)}"
+          )
 
         error ->
           Logger.error("Proxy on #{port} not started because of #{inspect(error)}")

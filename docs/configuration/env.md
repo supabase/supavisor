@@ -20,19 +20,19 @@ This document provides a categorized list of all environment variables used in S
 
 ## 1. Core Configuration
 
-| Variable                      | Description                                      | Default Value | Required |
-| ----------------------------- | ------------------------------------------------ | ------------- | -------- |
-| `PROXY_PORT_TRANSACTION`      | Transaction pool port                            | `6543`        | No       |
-| `PROXY_PORT_SESSION`          | Session pool port                                | `5432`        | No       |
-| `PROXY_PORT`                  | Internal proxy port                              | `5412`        | No       |
-| `RECONNECT_ON_DB_CLOSE`       | Enable reconnection on close                     | `false`       | No       |
-| `RECONNECT_RETRIES`           | Number of reconnection attempts. -1 for infinity | `5`           | No       |
-| `SUBSCRIBE_RETRIES`           | Number of subscription retries                   | `20`          | No       |
-| `SWITCH_ACTIVE_COUNT`         | Switch active connection count                   | `100`         | No       |
-| `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                     | -             | No       |
-| `GLOBAL_DOWNSTREAM_CERT_PATH` | Downstream certificate path                      | -             | No       |
-| `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                      | -             | No       |
-| `LOCAL_PROXY_MULTIPLIER`      | Local proxy multiplier value                     | `20`          | No       |
+| Variable                      | Description                                                 | Default Value | Required |
+| ----------------------------- | ----------------------------------------------------------- | ------------- | -------- |
+| `PROXY_PORT_TRANSACTION`      | Transaction pool port                                       | `6543`        | No       |
+| `PROXY_PORT_SESSION`          | Session pool port                                           | `5432`        | No       |
+| `PROXY_PORT`                  | Internal proxy port                                         | `5412`        | No       |
+| `RECONNECT_ON_DB_CLOSE`       | Enable reconnection on close                                | `false`       | No       |
+| `RECONNECT_RETRIES`           | Number of reconnection attempts. -1 for infinity            | `5`           | No       |
+| `SUBSCRIBE_RETRIES`           | Number of subscription retries                              | `20`          | No       |
+| `SWITCH_ACTIVE_COUNT`         | Switch active connection count                              | `100`         | No       |
+| `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                                | -             | No       |
+| `GLOBAL_DOWNSTREAM_CERT_PATH` | Downstream certificate path                                 | -             | No       |
+| `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                                 | -             | No       |
+| `LOCAL_PROXY_SHARDS`          | Number of local proxy shards per mode (session/transaction) | `4`           | No       |
 
 ---
 
