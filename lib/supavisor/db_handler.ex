@@ -175,7 +175,7 @@ defmodule Supavisor.DbHandler do
       :authentication_md5 ->
         {:keep_state, data}
 
-      :authentication_cleartext  ->
+      :authentication_cleartext ->
         {:keep_state, data}
 
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->

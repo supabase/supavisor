@@ -159,7 +159,8 @@ defmodule Supavisor.DbHandlerTest do
       # p, identifies the payload as password message
       # 0,0,0,9 is the payload length (length field + null terminated string)
       # 41, 41, 41, 41, 00 is the null terminated password string
-      assert message == <<?p, byte_size(data.auth.password.())+5::integer-32, data.auth.password.(), 0>>
+      assert message ==
+               <<?p, byte_size(data.auth.password.()) + 5::integer-32, data.auth.password.(), 0>>
     end
   end
 
