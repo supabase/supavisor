@@ -663,14 +663,7 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    password =
-      if data.auth.method == :password do
-        data.auth.password.()
-      else
-        data.auth.secrets.().secret
-      end
-
-    payload = <<password::binary, 0>>
+    payload = <<data.auth.password.()::binary, 0>>
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
     :ok = HandlerHelpers.sock_send(data.sock, bin)
     :authentication_cleartext
