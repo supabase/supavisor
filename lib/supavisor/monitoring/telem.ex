@@ -145,4 +145,19 @@ defmodule Supavisor.Monitoring.Telem do
       "handler_action is called with a mismatched #{inspect(handler)} #{inspect(action)} #{inspect(id)}"
     )
   end
+
+  def prepared_statements_evicted(count, {{type, tenant}, user, mode, db_name, search_path}) do
+    telemetry_execute(
+      [:supavisor, :db_handler, :prepared_statements, :evicted],
+      %{count: count},
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
+    )
+  end
 end
