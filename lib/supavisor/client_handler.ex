@@ -727,9 +727,6 @@ defmodule Supavisor.ClientHandler do
 
       {:unexpected_message, _details} ->
         Server.error_message("08P01", "protocol violation during authentication")
-
-      _ ->
-        Server.error_message("XX000", "authentication failed")
     end
   end
 
