@@ -337,6 +337,13 @@ defmodule Supavisor.Helpers do
     result -> result
   end
 
+  @spec parse_integer_list(String.t()) :: [integer()]
+  def parse_integer_list(numbers) when is_binary(numbers) do
+    numbers
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.to_integer/1)
+  end
+
   @doc """
   Sets the maximum heap size for the current process. The `max_heap_size` parameter is in megabytes.
 

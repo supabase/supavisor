@@ -1,4 +1,5 @@
 import Config
+alias Supavisor.Helpers
 
 config :supavisor,
   region: "eu",
@@ -18,8 +19,12 @@ config :supavisor,
   metrics_blocklist: [],
   node_host: System.get_env("NODE_IP", "127.0.0.1"),
   availability_zone: System.get_env("AVAILABILITY_ZONE"),
-  session_proxy_ports: System.get_env("SESSION_PROXY_PORTS", "12100,12101,12102,12103") |> String.split(",") |> Enum.map(&String.to_integer/1),
-  transaction_proxy_ports: System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107") |> String.split(",") |> Enum.map(&String.to_integer/1),
+  session_proxy_ports:
+    System.get_env("SESSION_PROXY_PORTS", "12100,12101,12102,12103")
+    |> Helpers.parse_integer_list(),
+  transaction_proxy_ports:
+    System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107")
+    |> Helpers.parse_integer_list(),
   max_pools: 5,
   reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer(),
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer()

@@ -413,10 +413,13 @@ defmodule Supavisor do
   @spec get_local_server(id, atom) :: map()
   def get_local_server(id, mode) do
     host = Application.get_env(:supavisor, :node_host)
-    ports = case mode do
-      :session -> Application.fetch_env!(:supavisor, :session_proxy_ports)
-      :transaction -> Application.fetch_env!(:supavisor, :transaction_proxy_ports)
-    end
+
+    ports =
+      case mode do
+        :session -> Application.fetch_env!(:supavisor, :session_proxy_ports)
+        :transaction -> Application.fetch_env!(:supavisor, :transaction_proxy_ports)
+      end
+
     shard = :erlang.phash2(id, length(ports))
     %{host: host, port: :ranch.get_port({:pg_proxy_internal, mode, shard})}
   end
