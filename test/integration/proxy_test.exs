@@ -61,7 +61,12 @@ defmodule Supavisor.Integration.ProxyTest do
 
     assert {:error,
             %Postgrex.Error{
-              message: "error received in SCRAM server final message: \"Wrong password\""
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"" <> _,
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
             }} = parse_uri(url) |> single_connection()
   end
 
@@ -259,7 +264,12 @@ defmodule Supavisor.Integration.ProxyTest do
 
     assert {:error,
             %Postgrex.Error{
-              message: "error received in SCRAM server final message: \"Wrong password\""
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"" <> _,
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
             }} = parse_uri(new_pass) |> single_connection()
 
     assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
