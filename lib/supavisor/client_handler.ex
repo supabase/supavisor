@@ -729,7 +729,7 @@ defmodule Supavisor.ClientHandler do
         Server.error_message("08P01", "protocol violation during authentication")
 
       _ ->
-        Server.error_message("28000", "authentication failed")
+        Server.error_message("XX000", "authentication failed")
     end
   end
 
