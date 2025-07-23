@@ -26,7 +26,6 @@ defmodule Supavisor.DbHandler do
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
-  @reconnect_retries Application.compile_env(:supavisor, :reconnect_retries)
 
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -120,12 +119,6 @@ defmodule Supavisor.DbHandler do
         active: false
       ]
 
-    maybe_reconnect_callback = fn reason ->
-      if data.reconnect_retries > @reconnect_retries and data.client_sock != nil,
-        do: {:stop, {:failed_to_connect, reason}},
-        else: {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
-    end
-
     Telem.handler_action(:db_handler, :db_connection, data.id)
 
     case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
@@ -144,12 +137,12 @@ defmodule Supavisor.DbHandler do
 
               {:error, reason} ->
                 Logger.error("DbHandler: Send startup error #{inspect(reason)}")
-                maybe_reconnect_callback.(reason)
+                maybe_reconnect(reason, data)
             end
 
           {:error, reason} ->
             Logger.error("DbHandler: Handshake error #{inspect(reason)}")
-            maybe_reconnect_callback.(reason)
+            maybe_reconnect(reason, data)
         end
 
       other ->
@@ -157,7 +150,7 @@ defmodule Supavisor.DbHandler do
           "DbHandler: Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
         )
 
-        maybe_reconnect_callback.(other)
+        maybe_reconnect(other, data)
     end
   end
 
@@ -191,6 +184,9 @@ defmodule Supavisor.DbHandler do
         :keep_state_and_data
 
       :authentication_md5 ->
+        {:keep_state, data}
+
+      :authentication_cleartext ->
         {:keep_state, data}
 
       {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
@@ -687,6 +683,15 @@ defmodule Supavisor.DbHandler do
     :authentication_md5
   end
 
+  defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
+    Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
+
+    payload = <<data.auth.password.()::binary, 0>>
+    bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
+    :ok = HandlerHelpers.sock_send(data.sock, bin)
+    :authentication_cleartext
+  end
+
   defp handle_auth_pkts(%{tag: :error_response, payload: error}, _acc, _data),
     do: {:error_response, error}
 
@@ -838,6 +843,16 @@ defmodule Supavisor.DbHandler do
       {close_pkts, prepared_statements}
     else
       {[], prepared_statements}
+    end
+  end
+
+  defp maybe_reconnect(reason, data) do
+    max_reconnect_retries = Application.get_env(:supavisor, :reconnect_retries)
+
+    if data.reconnect_retries > max_reconnect_retries and data.client_sock != nil do
+      {:stop, {:failed_to_connect, reason}}
+    else
+      {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
     end
   end
 end

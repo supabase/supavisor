@@ -410,31 +410,12 @@ defmodule Supavisor do
     end
   end
 
-  @spec start_local_server(map()) :: {:ok, map()} | {:error, any()}
-  def start_local_server(%{max_clients: max_clients} = args) do
-    # max_clients=-1 is used for testing the maximum allowed clients in ProxyTest
-    {acceptors, max_clients} =
-      if max_clients > 0,
-        do: {ceil(max_clients / 100), max_clients},
-        else: {1, 100}
-
-    opts = %{
-      max_connections: max_clients * Application.get_env(:supavisor, :local_proxy_multiplier),
-      num_acceptors: max(acceptors, 10),
-      socket_opts: [port: 0, keepalive: true]
-    }
-
-    handler = Supavisor.ClientHandler
-    args = Map.put(args, :local, true)
-
-    pid =
-      case :ranch.start_listener(args.id, :ranch_tcp, opts, handler, args) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, pid}} -> pid
-      end
-
+  @spec get_local_server(id, atom) :: map()
+  def get_local_server(id, mode) do
     host = Application.get_env(:supavisor, :node_host)
-    {:ok, %{listener: pid, host: host, port: :ranch.get_port(args.id)}}
+    local_proxy_shards = Application.fetch_env!(:supavisor, :local_proxy_shards)
+    shard = :erlang.phash2(id, local_proxy_shards)
+    %{host: host, port: :ranch.get_port({:pg_proxy_internal, mode, shard})}
   end
 
   @spec count_pools(String.t()) :: non_neg_integer()
