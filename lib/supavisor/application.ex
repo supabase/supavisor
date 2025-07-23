@@ -48,13 +48,15 @@ defmodule Supavisor.Application do
         {Supavisor.SignalHandler, []}
       )
 
-    local_proxy_shards_count = Application.fetch_env!(:supavisor, :local_proxy_shards)
+    session_shards =
+      :supavisor
+      |> Application.fetch_env!(:session_proxy_ports)
+      |> build_shards(:session)
 
-    local_proxy_shards =
-      for shard <- 0..(local_proxy_shards_count - 1), mode <- [:session, :transaction] do
-        {{:pg_proxy_internal, mode, shard}, 0, %{mode: mode, local: true, shard: shard},
-         Supavisor.ClientHandler}
-      end
+    transaction_shards =
+      :supavisor
+      |> Application.fetch_env!(:transaction_proxy_ports)
+      |> build_shards(:transaction)
 
     proxy_ports =
       [
@@ -64,7 +66,7 @@ defmodule Supavisor.Application do
          %{mode: :session, local: false}, Supavisor.ClientHandler},
         {:pg_proxy, Application.get_env(:supavisor, :proxy_port), %{mode: :proxy, local: false},
          Supavisor.ClientHandler}
-      ] ++ local_proxy_shards
+      ] ++ session_shards ++ transaction_shards
 
     for {key, port, opts, handler} <- proxy_ports do
       case :ranch.start_listener(
@@ -157,6 +159,14 @@ defmodule Supavisor.Application do
   def config_change(changed, _new, removed) do
     SupavisorWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  @spec build_shards([pos_integer()], atom()) :: term()
+  defp build_shards(ports, mode) do
+    for {port, shard} <- Enum.with_index(ports) do
+      {{:pg_proxy_internal, mode, shard}, port, %{mode: mode, local: true, shard: shard},
+       Supavisor.ClientHandler}
+    end
   end
 
   @spec short_node_id() :: String.t() | nil
