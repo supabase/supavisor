@@ -52,6 +52,14 @@ defmodule Supavisor.Support.Cluster do
             {:supavisor, :availability_zone} ->
               "ap-southeast-1c"
 
+            {:supavisor, :session_proxy_ports} ->
+              Application.get_env(:supavisor, :session_proxy_ports)
+              |> Enum.map(&(&1 + 100))
+
+            {:supavisor, :transaction_proxy_ports} ->
+              Application.get_env(:supavisor, :transaction_proxy_ports)
+              |> Enum.map(&(&1 + 100))
+
             _ ->
               val
           end
