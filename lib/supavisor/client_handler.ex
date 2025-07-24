@@ -351,8 +351,6 @@ defmodule Supavisor.ClientHandler do
           "ClientHandler: Exchange error: #{inspect(reason)} when method #{inspect(method)}"
         )
 
-        msg = postgresql_auth_error(reason, data.user)
-
         key = {:secrets_check, data.tenant, data.user}
 
         if method != :password and reason == :wrong_password and
@@ -380,6 +378,7 @@ defmodule Supavisor.ClientHandler do
           Logger.debug("ClientHandler: Cache hit for #{inspect(key)}")
         end
 
+        msg = postgres_auth_error(reason, data.user)
         HandlerHelpers.sock_send(sock, msg)
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :exchange_error}}
@@ -713,11 +712,11 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  @spec postgresql_auth_error(
+  @spec postgres_auth_error(
           :wrong_password | {:timeout, String.t()} | {:unexpected_message, term()},
           String.t()
         ) :: iodata()
-  defp postgresql_auth_error(reason, user) do
+  defp postgres_auth_error(reason, user) do
     case reason do
       :wrong_password ->
         Server.error_message("28P01", "password authentication failed for user \"#{user}\"")
