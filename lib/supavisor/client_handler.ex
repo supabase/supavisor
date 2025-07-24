@@ -351,14 +351,9 @@ defmodule Supavisor.ClientHandler do
           "ClientHandler: Exchange error: #{inspect(reason)} when method #{inspect(method)}"
         )
 
-        msg =
-          if method == :auth_query_md5,
-            do: Server.error_message("XX000", reason),
-            else: Server.exchange_message(:final, "e=#{reason}")
-
         key = {:secrets_check, data.tenant, data.user}
 
-        if method != :password and reason == "Wrong password" and
+        if method != :password and reason == :wrong_password and
              Cachex.get(Supavisor.Cache, key) == {:ok, nil} do
           case auth_secrets(info, data.user, key, 15_000) do
             {:ok, {method2, secrets2}} = value ->
@@ -383,6 +378,7 @@ defmodule Supavisor.ClientHandler do
           Logger.debug("ClientHandler: Cache hit for #{inspect(key)}")
         end
 
+        msg = postgres_auth_error(reason, data.user)
         HandlerHelpers.sock_send(sock, msg)
         Telem.client_join(:fail, data.id)
         {:stop, {:shutdown, :exchange_error}}
@@ -716,8 +712,26 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
+  @spec postgres_auth_error(
+          :wrong_password | {:timeout, String.t()} | {:unexpected_message, term()},
+          String.t()
+        ) :: iodata()
+  defp postgres_auth_error(reason, user) do
+    case reason do
+      :wrong_password ->
+        Server.error_message("28P01", "password authentication failed for user \"#{user}\"")
+
+      {:timeout, _message} ->
+        Server.error_message("08006", "connection failure during authentication")
+
+      {:unexpected_message, _details} ->
+        Server.error_message("08P01", "protocol violation during authentication")
+    end
+  end
+
   @spec handle_exchange(Supavisor.sock(), {atom(), fun()}) ::
-          {:ok, binary() | nil} | {:error, String.t()}
+          {:ok, binary() | nil}
+          | {:error, :wrong_password | {:timeout, String.t()} | {:unexpected_message, term()}}
   def handle_exchange({_, socket} = sock, {:auth_query_md5 = method, secrets}) do
     salt = :crypto.strong_rand_bytes(4)
     :ok = HandlerHelpers.sock_send(sock, Server.md5_request(salt))
@@ -775,9 +789,9 @@ defmodule Supavisor.ClientHandler do
         Server.decode_pkt(bin)
 
       other ->
-        {:error, "Unexpected message in receive_next/2 #{inspect(other)}"}
+        {:error, {:unexpected_message, other}}
     after
-      15_000 -> {:error, timeout_message}
+      15_000 -> {:error, {:timeout, timeout_message}}
     end
   end
 
@@ -790,7 +804,7 @@ defmodule Supavisor.ClientHandler do
   defp authenticate_exchange(:password, _secrets, signatures, p) do
     if p == signatures.client,
       do: {:ok, nil},
-      else: {:error, "Wrong password"}
+      else: {:error, :wrong_password}
   end
 
   defp authenticate_exchange(:auth_query, secrets, signatures, p) do
@@ -799,14 +813,14 @@ defmodule Supavisor.ClientHandler do
     if Helpers.hash(client_key) == secrets.().stored_key do
       {:ok, client_key}
     else
-      {:error, "Wrong password"}
+      {:error, :wrong_password}
     end
   end
 
   defp authenticate_exchange(:auth_query_md5, client_hash, server_hash, salt) do
     if "md5" <> Helpers.md5([server_hash, salt]) == client_hash,
       do: {:ok, nil},
-      else: {:error, "Wrong password"}
+      else: {:error, :wrong_password}
   end
 
   @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) ::
