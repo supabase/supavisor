@@ -15,6 +15,18 @@ defmodule Supavisor.Protocol.Client do
             payload: any,
             bin: binary
           }
+
+    defimpl Inspect do
+      def inspect(pkt, _opts) do
+        case pkt.bin do
+          bin when is_binary(bin) ->
+            Supavisor.Protocol.Debug.packet_to_string(bin, :frontend)
+
+          _ ->
+            "#Supavisor.Protocol.Client.Pkt<malformed>"
+        end
+      end
+    end
   end
 
   def pkt_header_size, do: @pkt_header_size

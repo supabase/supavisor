@@ -37,6 +37,18 @@ defmodule Supavisor.Protocol.Server do
             payload: any,
             bin: binary
           }
+
+    defimpl Inspect do
+      def inspect(pkt, _opts) do
+        case pkt.bin do
+          bin when is_binary(bin) ->
+            Supavisor.Protocol.Debug.packet_to_string(bin, :backend)
+
+          _ ->
+            "#Supavisor.Protocol.Server.Pkt<malformed>"
+        end
+      end
+    end
   end
 
   defmacro cancel_message(pid, key) do
