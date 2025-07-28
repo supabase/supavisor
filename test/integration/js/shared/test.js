@@ -19,7 +19,20 @@ t.timeout = (process.env.TIMEOUT || 5) | 0
 
 async function test(o, name, options, fn) {
   typeof options !== 'object' && (fn = options, options = {})
-  const line = new Error().stack.split('\n')[3].match(':([0-9]+):')[1]
+  
+  const stack = new Error().stack.split('\n')
+  let line
+  
+  for (let i = 2; i < stack.length; i++) {
+    const stackLine = stack[i]
+    if (!stackLine.includes('test.js') && !stackLine.includes('native:')) {
+      const match = stackLine.match(/:(\d+)(?::|$)/)
+      if (match) {
+        line = match[1]
+        break
+      }
+    }
+  }
 
   await 1
 

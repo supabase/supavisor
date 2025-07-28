@@ -160,6 +160,12 @@ jobs:
         with:
           node-version: 'lts/*'
           cache-dependency-path: 'test/integration/js/'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: 'v2.x'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
