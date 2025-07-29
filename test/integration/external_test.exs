@@ -52,26 +52,25 @@ defmodule Supavisor.Integration.ExternalTest do
       assert_run(ctx, ~w[postgres/index.js])
     end
 
-    # These currently do not pass
-    # @tag runtime: "bun", mode: "session"
-    # test "Bun session", ctx do
-    #   assert_run ctx, ~w[postgres/index.js], suite: "js"
-    # end
-    #
-    # @tag runtime: "bun", mode: "transaction"
-    # test "Bun transaction", ctx do
-    #   assert_run ctx, ~w[postgres/index.js], suite: "js"
-    # end
-    #
-    # @tag runtime: "deno", mode: "session"
-    # test "Deno session", ctx do
-    #   assert_run ctx, ~w[run --allow-all postgres/index.js], suite: "js"
-    # end
-    #
-    # @tag runtime: "deno", mode: "transaction"
-    # test "Deno transaction", ctx do
-    #   assert_run ctx, ~w[run --allow-all postgres/index.js], suite: "js"
-    # end
+    @tag runtime: "bun", mode: "session"
+    test "Bun session", ctx do
+      assert_run(ctx, ~w[postgres/index.js], suite: "js")
+    end
+
+    @tag runtime: "bun", mode: "transaction"
+    test "Bun transaction", ctx do
+      assert_run(ctx, ~w[postgres/index.js], suite: "js")
+    end
+
+    @tag runtime: "deno", mode: "session"
+    test "Deno session", ctx do
+      assert_run(ctx, ~w[run --allow-all postgres/index.js], suite: "js")
+    end
+
+    @tag runtime: "deno", mode: "transaction"
+    test "Deno transaction", ctx do
+      assert_run(ctx, ~w[run --allow-all postgres/index.js], suite: "js")
+    end
   end
 
   defp assert_run(ctx, args, opts \\ []) do
