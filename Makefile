@@ -56,7 +56,7 @@ db_migrate:
 	mix ecto.migrate --prefix _supavisor --log-migrator-sql
 
 db_start:
-	docker-compose -f ./docker-compose.db.yml up
+	docker-compose -f ./docker-compose.db.yml up -d
 
 db_stop:
 	docker-compose -f ./docker-compose.db.yml down --remove-orphans
@@ -76,10 +76,10 @@ pgbench_init:
 	PGPASSWORD=postgres pgbench -i -h 127.0.0.1 -p 6432 -U postgres -d postgres
 
 pgbench_short:
-	PGPASSWORD=postgres pgbench -M extended --transactions 5 --jobs 4 --client 1 -h localhost -p 6543 -U postgres.sys postgres
+	PGPASSWORD=postgres pgbench -M extended --transactions 5 --jobs 4 --client 1 -h localhost -p $(PGBENCH_PORT) -U $(PGBENCH_USER) postgres
 
 pgbench_long:
-	PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 60 -h localhost -p 7654 -U transaction.localhost postgres
+	PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 60 -h localhost -p $(PGBENCH_PORT) -U $(PGBENCH_USER) postgres
 
 pgbench:
 	PGPASSWORD="postgres" pgbench \
