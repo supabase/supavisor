@@ -130,6 +130,7 @@
                   pkgs.protobuf
                   pkgs.cargo-outdated
                   pkgs.prom2json
+                  pkgs.libclang
                 ]
                 ++ lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk; [
                   frameworks.System
@@ -141,6 +142,8 @@
                   frameworks.Security
                   libs.libDER
                 ]);
+
+              env.LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 
               # Workaround for https://github.com/rust-lang/cargo/issues/5376
               env.RUSTFLAGS = lib.mkForce (lib.optionals pkgs.stdenv.isDarwin [
