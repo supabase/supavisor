@@ -101,6 +101,9 @@ defmodule Supavisor.Protocol.Client do
       ?S -> :sync_message
       ?X -> :termination_message
       ?C -> :close_message
+      ?d -> :copy_data
+      ?c -> :copy_done
+      ?f -> :copy_fail
       _ -> nil
     end
   end
@@ -115,10 +118,8 @@ defmodule Supavisor.Protocol.Client do
   def decode_payload(:parse_message, <<0>>), do: :undefined
 
   def decode_payload(:parse_message, payload) do
-    case :binary.split(payload, <<0>>, [:global, :trim_all]) do
-      [sql] -> sql
-      message -> message
-    end
+    [str_name, sql | _] = :binary.split(payload, <<0>>, [:global])
+    %{str_name: str_name, sql: sql}
   end
 
   def decode_payload(:describe_message, <<char::binary-size(1), str_name::binary>>) do
@@ -135,9 +136,16 @@ defmodule Supavisor.Protocol.Client do
 
   def decode_payload(:termination_message, _payload), do: nil
 
-  def decode_payload(:bind_message, _payload), do: nil
+  def decode_payload(:bind_message, payload) do
+    [_portal_name, rest] = :binary.split(payload, <<0>>)
+    [statement_name, _rest] = :binary.split(rest, <<0>>)
 
-  def decode_payload(:execute_message, _payload), do: nil
+    %{str_name: statement_name}
+  end
+
+  def decode_payload(:execute_message, _payload) do
+    nil
+  end
 
   def decode_payload(_tag, ""), do: nil
 
