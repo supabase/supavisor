@@ -17,6 +17,8 @@ defmodule SupavisorWeb.ConnCase do
 
   use ExUnit.CaseTemplate
 
+  alias Supavisor.Jwt.Token
+
   using do
     quote do
       # Import conveniences for testing with connections
@@ -34,5 +36,10 @@ defmodule SupavisorWeb.ConnCase do
   setup tags do
     Supavisor.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
+  end
+
+  def gen_token do
+    secret = Application.fetch_env!(:supavisor, :api_jwt_secret)
+    Token.gen!(secret)
   end
 end

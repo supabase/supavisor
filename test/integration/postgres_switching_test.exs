@@ -1,7 +1,8 @@
 defmodule Supavisor.Integration.PostgresSwitchingTest do
   use SupavisorWeb.ConnCase, async: false
+  use Supavisor.PostgresCase, async: false
 
-  alias Supavisor.Jwt.Token
+  import Supavisor.Support.Tenants
 
   @moduletag integration_docker: true
 
@@ -13,7 +14,8 @@ defmodule Supavisor.Integration.PostgresSwitchingTest do
   @db_host "localhost"
 
   setup %{conn: conn} do
-    cleanup_containers()
+    containers = [container_name(15), container_name(16)]
+    cleanup_containers(containers)
 
     jwt = gen_token()
 
@@ -22,17 +24,19 @@ defmodule Supavisor.Integration.PostgresSwitchingTest do
       |> put_req_header("accept", "application/json")
       |> put_req_header("authorization", "Bearer " <> jwt)
 
-    on_exit(fn -> cleanup_containers() end)
+    on_exit(fn -> cleanup_containers(containers) end)
 
     {:ok, conn: conn}
   end
 
   test "PostgreSQL upgrade scenario: 15 -> 16", %{conn: conn} do
-    start_postgres_container(15)
-    create_tenant(conn)
-    assert :ok = test_connection()
+    opts = build_opts(15, @tenant_name)
 
-    stop_postgres_container(15)
+    start_postgres_container(opts)
+    create_tenant(conn, opts)
+    assert :ok = test_connection(opts)
+
+    stop_postgres_container(opts[:container_name])
 
     # Ideally, we shouldn't need to terminate the tenant manually here.
     #
@@ -43,119 +47,35 @@ defmodule Supavisor.Integration.PostgresSwitchingTest do
     #
     # Currently, if we don't terminate the tenant (or restart supavisor),
     # we get authentication errors.
-    terminate_tenant(conn)
+    terminate_tenant(conn, @tenant_name)
     Process.sleep(2000)
-    start_postgres_container(16)
 
-    assert :ok = test_connection()
+    opts = build_opts(16, @tenant_name)
+    start_postgres_container(opts)
+
+    assert :ok = test_connection(opts)
   end
 
-  defp start_postgres_container(version) do
-    container_name = container_name(version)
-
-    {_output, 0} =
-      System.cmd("docker", [
-        "run",
-        "-d",
-        "--name",
-        container_name,
-        "-e",
-        "POSTGRES_USER=#{@postgres_user}",
-        "-e",
-        "POSTGRES_PASSWORD=#{@postgres_password}",
-        "-e",
-        "POSTGRES_DB=#{@postgres_db}",
-        "-p",
-        "#{@postgres_port}:5432",
-        "postgres:#{version}"
-      ])
-
-    wait_for_postgres()
+  defp build_opts(version, external_id) do
+    Keyword.merge(postgres_container_opts(version),
+      container_name: container_name(version),
+      external_id: external_id
+    )
   end
 
-  defp wait_for_postgres(max_attempts \\ 30) do
-    wait_for_postgres(1, max_attempts)
-  end
-
-  defp wait_for_postgres(attempt, max_attempts) when attempt != max_attempts do
-    case System.cmd("pg_isready", [
-           "-h",
-           "localhost",
-           "-p",
-           to_string(@postgres_port),
-           "-U",
-           @postgres_user,
-           "-d",
-           @postgres_db
-         ]) do
-      {_, 0} ->
-        :ok
-
-      _ ->
-        Process.sleep(1000)
-        wait_for_postgres(attempt + 1, max_attempts)
-    end
-  end
-
-  defp wait_for_postgres(_attempt, max_attempts) do
-    raise "PostgreSQL failed to start within #{max_attempts} seconds"
-  end
-
-  defp stop_postgres_container(version) do
-    System.cmd("docker", ["stop", container_name(version)])
-    System.cmd("docker", ["rm", container_name(version)])
-  end
-
-  defp create_tenant(conn) do
-    tenant_attrs = %{
-      db_host: @db_host,
-      db_port: @postgres_port,
-      db_database: @postgres_db,
-      external_id: @tenant_name,
-      ip_version: "auto",
-      enforce_ssl: false,
-      require_user: false,
-      auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
-      users: [
-        %{
-          db_user: @postgres_user,
-          db_password: @postgres_password,
-          pool_size: 20,
-          mode_type: "transaction",
-          is_manager: true
-        }
-      ]
-    }
-
-    conn = put(conn, Routes.tenant_path(conn, :update, @tenant_name), tenant: tenant_attrs)
-
-    case conn.status do
-      status when status in 200..201 ->
-        :ok
-
-      _status ->
-        :ok
-    end
-  end
-
-  defp terminate_tenant(conn) do
-    _conn = get(conn, Routes.tenant_path(conn, :terminate, @tenant_name))
-    :ok
-  end
-
-  defp test_connection do
-    proxy_port = Application.fetch_env!(:supavisor, :proxy_port_transaction)
-
-    connection_opts = [
-      hostname: @db_host,
-      port: proxy_port,
-      database: @postgres_db,
-      username: "#{@postgres_user}.#{@tenant_name}",
+  defp postgres_container_opts(version) do
+    [
+      image: "postgres:#{version}",
+      port: @postgres_port,
+      user: @postgres_user,
       password: @postgres_password,
-      # This is important as otherwise Postgrex may try to reconnect in case of errors.
-      # We want to avoid that, as it hides connection errors.
-      backoff: nil
+      database: @postgres_db,
+      hostname: @db_host
     ]
+  end
+
+  defp test_connection(opts) do
+    connection_opts = connection_opts(opts)
 
     assert {:ok, conn} = Postgrex.start_link(connection_opts)
     assert {:ok, %{rows: [[_version_string]]}} = Postgrex.query(conn, "SELECT version();", [])
@@ -163,19 +83,5 @@ defmodule Supavisor.Integration.PostgresSwitchingTest do
     :ok
   end
 
-  defp container_name(version) do
-    "test_postgres_#{version}_switching"
-  end
-
-  defp cleanup_containers do
-    [15, 16]
-    |> Enum.each(fn version ->
-      System.cmd("docker", ["rm", "-f", container_name(version)], stderr_to_stdout: true)
-    end)
-  end
-
-  defp gen_token do
-    secret = Application.fetch_env!(:supavisor, :api_jwt_secret)
-    Token.gen!(secret)
-  end
+  defp container_name(version), do: "test_postgres_#{version}_switching"
 end
