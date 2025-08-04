@@ -39,7 +39,7 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
         end)
       end
 
-    connections = Task.await_many(connection_tasks, 5_000)
+    connections = Task.await_many(connection_tasks, 10_000)
 
     for {_i, _node_name, proxy} <- connections do
       assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])

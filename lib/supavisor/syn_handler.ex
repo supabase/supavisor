@@ -31,7 +31,9 @@ defmodule Supavisor.SynHandler do
         {pid1, _, time1} = remote,
         {pid2, _, time2} = local
       ) do
-    Logger.info("SynHandler: resolving #{inspect(id)} conflict: #{inspect(local)} vs #{inspect(remote)}")
+    Logger.info(
+      "SynHandler: resolving #{inspect(id)} conflict: #{inspect(local)} vs #{inspect(remote)}"
+    )
 
     {keep, stop} =
       cond do
