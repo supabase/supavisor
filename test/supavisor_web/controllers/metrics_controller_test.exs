@@ -32,8 +32,4 @@ defmodule SupavisorWeb.MetricsControllerTest do
   defp auth(conn, bearer \\ gen_token()) do
     put_req_header(conn, "authorization", "Bearer " <> bearer)
   end
-
-  defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
-    Supavisor.Jwt.Token.gen!(secret)
-  end
 end

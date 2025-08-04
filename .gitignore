@@ -41,3 +41,5 @@ priv/native/*
 /.pre-commit-config.yaml
 *.coverdata
 /tmp
+
+.devenv/

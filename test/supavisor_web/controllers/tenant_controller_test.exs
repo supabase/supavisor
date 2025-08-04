@@ -190,8 +190,4 @@ defmodule SupavisorWeb.TenantControllerTest do
 
     assert {:ok, nil} = Cachex.get(Supavisor.Cache, {:tenant_cache, external_id, nil})
   end
-
-  defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
-    Supavisor.Jwt.Token.gen!(secret)
-  end
 end
