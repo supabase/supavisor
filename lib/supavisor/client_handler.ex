@@ -741,7 +741,8 @@ defmodule Supavisor.ClientHandler do
             tag: :password_message,
             payload: {:md5, client_md5}
           }, _} <- receive_next(socket, "Timeout while waiting for the md5 exchange"),
-         {:ok, key} <- authenticate_exchange(method, client_md5, secrets.().secret, salt) do
+         {:ok, key} <-
+           authenticate_exchange(method, client_md5, secrets.().secret, salt) do
       {:ok, key}
     else
       {:error, message} -> {:error, message}

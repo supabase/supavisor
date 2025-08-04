@@ -41,6 +41,32 @@ config :supavisor, Supavisor.Repo,
   pool_size: 10,
   port: 6432
 
+config :supavisor, :test_auth_profiles,
+  "scram-sha-256":
+    {[
+       hostname: "localhost",
+       port: 6432,
+       database: "postgres",
+       username: "postgres",
+       password: "postgres"
+     ], Supavisor.Repo},
+  md5:
+    {[
+       hostname: "localhost",
+       port: 6433,
+       database: "postgres",
+       username: "postgres",
+       password: "postgres"
+     ], Supavisor.MD5Repo},
+  password:
+    {[
+       hostname: "localhost",
+       port: 6434,
+       database: "postgres",
+       username: "postgres",
+       password: "postgres"
+     ], Supavisor.PasswordRepo}
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :supavisor, SupavisorWeb.Endpoint,
