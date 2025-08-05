@@ -108,7 +108,7 @@ config :libcluster,
 upstream_ca =
   if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
     File.read!(path)
-    |> Helpers.cert_to_bin()
+    |> Supavisor.Helpers.cert_to_bin()
     |> case do
       {:ok, bin} ->
         Logger.info("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH",

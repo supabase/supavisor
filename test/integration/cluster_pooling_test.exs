@@ -26,14 +26,21 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
     connection_tasks =
       for i <- 1..10, {node_name, port} <- nodes do
         Task.async(fn ->
+          pid = self()
+
           {:ok, proxy} =
             Postgrex.start_link(
               hostname: db_conf[:hostname],
               port: port,
               database: db_conf[:database],
               password: db_conf[:password],
-              username: db_conf[:username] <> ".cluster_pool_tenant_#{i}"
+              username: db_conf[:username] <> ".cluster_pool_tenant_#{i}",
+              after_connect: fn _ -> send(pid, :connected) end
             )
+
+          receive do
+            :connected -> :ok
+          end
 
           {i, node_name, proxy}
         end)
