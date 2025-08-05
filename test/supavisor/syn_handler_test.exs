@@ -9,29 +9,25 @@ defmodule Supavisor.SynHandlerTest do
 
   @tag cluster: true
   test "resolving conflict" do
-    {:ok, _pid, node2} = Cluster.start_node()
+    {:ok, peer, node2} = Cluster.start_node_unclustered(:peer.random_name(), 1)
 
     secret = %{alias: "postgres"}
     auth_secret = {:password, fn -> secret end}
-    {:ok, pid2} = :erpc.call(node2, Supavisor.FixturesHelpers, :start_pool, [@id, secret])
-    Process.sleep(500)
-    assert pid2 == Supavisor.get_global_sup(@id)
+    {:ok, pid2} = :peer.call(peer, Supavisor.FixturesHelpers, :start_pool, [@id, secret])
+    assert :peer.call(peer, Supavisor, :get_global_sup, [@id]) == pid2
     assert node(pid2) == node2
-    true = Node.disconnect(node2)
-    Process.sleep(1000)
 
     assert nil == Supavisor.get_global_sup(@id)
     {:ok, pid1} = Supavisor.start(@id, auth_secret)
     assert pid1 == Supavisor.get_global_sup(@id)
     assert node(pid1) == node()
 
-    :pong = Node.ping(node2)
+    true = Node.connect(node2)
     Process.sleep(500)
 
     msg = "Resolving syn_tenant conflict, stop local pid"
 
-    assert capture_log(fn -> Logger.warning(msg) end) =~
-             msg
+    assert capture_log(fn -> Logger.warning(msg) end) =~ msg
 
     assert pid2 == Supavisor.get_global_sup(@id)
     assert node(pid2) == node2
