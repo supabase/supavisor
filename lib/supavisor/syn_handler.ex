@@ -28,14 +28,27 @@ defmodule Supavisor.SynHandler do
   def resolve_registry_conflict(
         :tenants,
         id,
-        {pid1, _, time1},
-        {pid2, _, time2}
+        {pid1, _, time1} = remote,
+        {pid2, _, time2} = local
       ) do
+    Logger.info(
+      "SynHandler: resolving #{inspect(id)} conflict: #{inspect(local)} vs #{inspect(remote)}"
+    )
+
     {keep, stop} =
-      if time1 < time2 do
-        {pid1, pid2}
-      else
-        {pid2, pid1}
+      cond do
+        time1 < time2 ->
+          {pid1, pid2}
+
+        time1 > time2 ->
+          {pid2, pid1}
+
+        # If the timestamp is equal, keep the pid with the lower node name
+        node(pid1) < node(pid2) ->
+          {pid1, pid2}
+
+        true ->
+          {pid2, pid1}
       end
 
     if node() == node(stop) do
