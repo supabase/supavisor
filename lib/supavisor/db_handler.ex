@@ -193,6 +193,11 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Auth error #{inspect(reason)}")
         {:stop, :invalid_password, data}
 
+      {:error_response, ["SFATAL", "VFATAL", "C28000", reason, _, _, _]} ->
+        handle_authentication_error(data, reason)
+        Logger.error("DbHandler: Auth error #{inspect(reason)}")
+        {:stop, :invalid_password, data}
+
       {:error_response, error} ->
         Logger.error("DbHandler: Error auth response #{inspect(error)}")
         {:stop, {:encode_and_forward, error}}
@@ -648,7 +653,14 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    payload = <<data.auth.password.()::binary, 0>>
+    password =
+      if data.auth.method == :password do
+        data.auth.password.()
+      else
+        data.auth.secrets.().cls_password
+      end
+
+    payload = <<password::binary, 0>>
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
     :ok = HandlerHelpers.sock_send(data.sock, bin)
     :authentication_cleartext
