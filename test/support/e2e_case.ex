@@ -27,7 +27,13 @@ defmodule Supavisor.E2ECase do
     Ecto.Adapters.SQL.Sandbox.unboxed_run(@repo, fun)
   end
 
-  def create_instance(external_id) do
+  def create_instance(external_id, config \\ %{port: 6432, hostname: "localhost"}, repo \\ @repo)
+
+  def create_instance(external_id, config, repo) when is_list(config) do
+    create_instance(external_id, Map.new(config), repo)
+  end
+
+  def create_instance(external_id, config, repo) do
     external_id =
       external_id
       |> List.wrap()
@@ -35,15 +41,15 @@ defmodule Supavisor.E2ECase do
       |> String.downcase()
 
     unboxed(fn ->
-      assert {:ok, _} = @repo.query("DROP DATABASE IF EXISTS #{external_id}")
-      assert {:ok, _} = @repo.query("CREATE DATABASE #{external_id}")
+      assert {:ok, _} = repo.query("DROP DATABASE IF EXISTS #{external_id}")
+      assert {:ok, _} = repo.query("CREATE DATABASE #{external_id}")
     end)
 
     assert {:ok, tenant} =
              Supavisor.Tenants.create_tenant(%{
                default_parameter_status: %{},
-               db_host: "localhost",
-               db_port: 6432,
+               db_host: config[:hostname],
+               db_port: config[:port],
                db_database: external_id,
                auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
                external_id: external_id,
@@ -63,10 +69,22 @@ defmodule Supavisor.E2ECase do
       _ = Supavisor.stop({{:single, external_id}, "postgres", :transaction, external_id, nil})
 
       unboxed(fn ->
-        assert {:ok, _} = @repo.query("DROP DATABASE #{external_id}")
+        assert {:ok, _} = repo.query("DROP DATABASE #{external_id}")
       end)
     end)
 
-    {:ok, %{user: "postgres.#{external_id}", db: tenant.db_database, external_id: external_id}}
+    {:ok,
+     %{
+       user: "postgres.#{external_id}",
+       db: tenant.db_database,
+       external_id: external_id,
+       auth_config: config
+     }}
+  end
+
+  def list_authentication_configs do
+    :supavisor
+    |> Application.get_env(:test_auth_profiles)
+    |> Macro.escape()
   end
 end

@@ -35,37 +35,39 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
     end
   end
 
-  describe "execute_client_connections_lifetime" do
-    setup ctx do
-      create_instance([__MODULE__, ctx.line])
-    end
+  for {key, {auth_config, repo}} <- list_authentication_configs() do
+    describe "execute_client_connections_lifetime when authentication method is #{key}" do
+      setup ctx do
+        create_instance([__MODULE__, ctx.line, unquote(key)], unquote(auth_config), unquote(repo))
+      end
 
-    test "emits event for active client connections", ctx do
-      start_supervised!(
-        {SingleConnection,
-         hostname: "localhost",
-         port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
-         database: ctx.db,
-         username: ctx.user,
-         password: "postgres"}
-      )
+      test "emits event for active client connections", ctx do
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
 
-      ref = attach_handler([:supavisor, :client, :connection, :lifetime])
-      assert :ok = Tenant.execute_client_connections_lifetime()
+        ref = attach_handler([:supavisor, :client, :connection, :lifetime])
+        assert :ok = Tenant.execute_client_connections_lifetime()
 
-      assert_receive {^ref, {[:supavisor, :client, :connection, :lifetime], measurement, meta}}
+        assert_receive {^ref, {[:supavisor, :client, :connection, :lifetime], measurement, meta}}
 
-      assert %{lifetime: lifetime} = measurement
-      assert lifetime >= 0
+        assert %{lifetime: lifetime} = measurement
+        assert lifetime >= 0
 
-      assert meta == %{
-               tenant: ctx.db,
-               user: String.split(ctx.user, ".") |> List.first(),
-               mode: :transaction,
-               type: :single,
-               db_name: ctx.db,
-               search_path: nil
-             }
+        assert meta == %{
+                 tenant: ctx.db,
+                 user: String.split(ctx.user, ".") |> List.first(),
+                 mode: :transaction,
+                 type: :single,
+                 db_name: ctx.db,
+                 search_path: nil
+               }
+      end
     end
   end
 

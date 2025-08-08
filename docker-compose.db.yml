@@ -8,15 +8,35 @@ services:
       - "6432:5432"
     volumes:
       - ./dev/postgres:/docker-entrypoint-initdb.d/
-      # Uncomment to set MD5 authentication method on uninitialized databases
-      # - ./dev/postgres/md5/etc/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf
-      # Uncomment to set password authentication method on uninitialized databases
-      # - ./dev/postgres/password/etc/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf
     command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_prepared_transactions=2000
     environment:
       POSTGRES_HOST: /var/run/postgresql
       POSTGRES_PASSWORD: postgres
-      # Uncomment to set MD5 authentication method on uninitialized databases
-      # POSTGRES_INITDB_ARGS: --auth-host=md5
-      # Uncomment to set password authentication method on uninitialized databases
-      # POSTGRES_INITDB_ARGS: --auth-host=password
+
+  db_md5:
+    image: supabase/postgres:14.1.0.106
+    container_name: supavisor-db-md5
+    ports:
+      - "6433:5432"
+    volumes:
+      - ./dev/postgres:/docker-entrypoint-initdb.d/
+      - ./dev/postgres/md5/etc/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_prepared_transactions=2000
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: --auth-host=md5
+
+  db_password:
+    image: supabase/postgres:14.1.0.106
+    container_name: supavisor-db-password
+    ports:
+      - "6434:5432"
+    volumes:
+      - ./dev/postgres:/docker-entrypoint-initdb.d/
+      - ./dev/postgres/password/etc/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_prepared_transactions=2000
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: --auth-host=password
