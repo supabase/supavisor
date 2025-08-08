@@ -324,6 +324,13 @@ defmodule Supavisor.ClientHandler do
             {:next_state, :auth_md5_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
 
+          :auth_query_jit ->
+            auth_context = Auth.create_auth_context(method, secrets, info)
+            :ok = HandlerHelpers.sock_send(sock, Server.password_request())
+
+            {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
+             {:timeout, 15_000, :auth_timeout}}
+
           _scram_method ->
             :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
             auth_context = Auth.create_auth_context(method, secrets, info)
@@ -1052,7 +1059,9 @@ defmodule Supavisor.ClientHandler do
       method: proxy_type,
       upstream_ssl: info.tenant.upstream_ssl,
       upstream_tls_ca: info.tenant.upstream_tls_ca,
-      upstream_verify: info.tenant.upstream_verify
+      upstream_verify: info.tenant.upstream_verify,
+      use_jit: info.tenant.use_jit,
+      jit_api_url: info.tenant.jit_api_url
     }
 
     %{

@@ -14,7 +14,7 @@ defmodule Supavisor.ClientHandler.Auth do
   alias Supavisor.{Helpers, Protocol.Server}
   alias Supavisor.ClientHandler.Auth.{MD5Secrets, PasswordSecrets, SASLSecrets}
 
-  @type auth_method :: :password | :auth_query | :auth_query_md5
+  @type auth_method :: :password | :auth_query | :auth_query_md5 | :auth_query_jit
   @type auth_secrets :: {auth_method(), function()}
 
   ## Secret Management
@@ -81,6 +81,57 @@ defmodule Supavisor.ClientHandler.Auth do
     if expected_hash == client_hash,
       do: {:ok, nil},
       else: {:error, :wrong_password}
+  end
+
+  def validate_credentials(:auth_query_jit, secrets, password, ip) do
+    # check if incomming password looks like PAT or a JWT
+    # otherwise handle as password,
+    secret = secrets.()
+
+    if Helpers.token_matches?(password) do
+      Logger.debug("Looks like a PAT/JWT - #{inspect(secret.jit_api_url)}")
+      rhost = ip |> :inet.ntoa() |> to_string()
+
+      case Helpers.check_user_has_jit_role(secret.jit_api_url, password, secret.user, rhost) do
+        {:ok, true} ->
+          # set a fake client_key incase upstream switches away from pam mid auth
+          {:ok, :crypto.hash(:sha256, password)}
+
+        {:ok, false} ->
+          Logger.debug("User token is valid but can't assume this role")
+          {:error, :wrong_password}
+
+        {:error, :unauthorized_or_forbidden} ->
+          {:error, :wrong_password}
+
+        {:error, _} ->
+          Logger.debug("Unexpected error while calling API")
+          {:error, :wrong_password}
+      end
+    else
+      # match against the scram-sha-256 / md5 we have from auth_query
+      case secret.digest do
+        :md5 ->
+          if Helpers.md5([password, secret.user]) == secret.secret do
+            {:ok, nil}
+          else
+            {:error, :wrong_password}
+          end
+
+        _ ->
+          salt = Base.decode64!(secret.salt)
+
+          salted_password =
+            :crypto.pbkdf2_hmac(:sha256, password, salt, secret.iterations, 32)
+
+          client_key = :crypto.mac(:hmac, :sha256, salted_password, "Client Key")
+          stored_key = :crypto.hash(:sha256, client_key)
+
+          if :crypto.hash_equals(stored_key, secret.stored_key),
+            do: {:ok, client_key},
+            else: {:error, :wrong_password}
+      end
+    end
   end
 
   ## Challenge Preparation
@@ -233,7 +284,8 @@ defmodule Supavisor.ClientHandler.Auth do
     }
   end
 
-  def create_auth_context(method, secrets, info) when method in [:password, :auth_query] do
+  def create_auth_context(method, secrets, info)
+      when method in [:password, :auth_query, :auth_query_jit] do
     %{
       method: method,
       secrets: secrets,
@@ -312,9 +364,10 @@ defmodule Supavisor.ClientHandler.Auth do
 
           with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
             auth_type =
-              case secret do
-                %MD5Secrets{} -> :auth_query_md5
-                %SASLSecrets{} -> :auth_query
+              case {tenant.use_jit, secret} do
+                {true, %PasswordSecrets{}} -> :auth_query_jit
+                {_, %MD5Secrets{}} -> :auth_query_md5
+                {_, %SASLSecrets{}} -> :auth_query
               end
 
             {:ok, {auth_type, fn -> secret end}}
