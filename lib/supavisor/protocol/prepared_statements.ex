@@ -200,15 +200,10 @@ defmodule Supavisor.Protocol.PreparedStatements do
   end
 
   defp gen_server_side_name(binary) do
-    {_name, rest} = extract_null_terminated_string(binary)
-    {query, _rest} = extract_null_terminated_string(rest)
+    hash =
+      :crypto.hash(:sha256, binary)
+      |> Base.encode64(padding: false)
 
-    fingerprint =
-      case Supavisor.PgParser.fingerprint(query) do
-        {:ok, fingerprint} -> fingerprint
-        {:error, _} -> System.unique_integer()
-      end
-
-    "supavisor_#{fingerprint}"
+    "supavisor_#{hash}"
   end
 end
