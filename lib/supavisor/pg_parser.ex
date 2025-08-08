@@ -21,4 +21,9 @@ defmodule Supavisor.PgParser do
   @spec statements(String.t()) :: {:ok, [String.t()]} | {:error, String.t()}
   def statements(query) when is_binary(query), do: statement_types(query)
   def statements(_), do: {:error, "Query must be a string"}
+
+  @spec fingerprint(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def fingerprint(_query) do
+    :erlang.nif_error(:nif_not_loaded)
+  end
 end

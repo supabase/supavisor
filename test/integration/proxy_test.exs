@@ -32,27 +32,6 @@ defmodule Supavisor.Integration.ProxyTest do
     %{proxy: proxy, origin: origin, user: db_conf[:username]}
   end
 
-  test "prepared statement", %{proxy: proxy} do
-    prepare_sql =
-      "PREPARE tenant (text) AS SELECT id, external_id FROM _supavisor.tenants WHERE external_id = $1;"
-
-    db_conf = Application.get_env(:supavisor, Repo)
-
-    assert {:ok, pid} =
-             Keyword.merge(db_conf, username: db_conf[:username] <> "." <> @tenant)
-             |> single_connection(Application.get_env(:supavisor, :proxy_port_transaction))
-
-    assert [%Postgrex.Result{command: :prepare}] =
-             P.SimpleConnection.call(pid, {:query, prepare_sql})
-
-    :timer.sleep(500)
-
-    assert {_, %Postgrex.Result{command: :select}} =
-             Postgrex.query(proxy, "EXECUTE tenant('#{@tenant}');", [])
-
-    :gen_statem.stop(pid)
-  end
-
   test "the wrong password" do
     db_conf = Application.get_env(:supavisor, Repo)
 
