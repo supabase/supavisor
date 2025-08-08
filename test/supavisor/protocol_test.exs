@@ -158,6 +158,11 @@ defmodule Supavisor.ProtocolTest do
     assert result == <<82, 0, 0, 0, 12, 0, 0, 0, 5, 1, 2, 3, 4>>
   end
 
+  test "password_request/1" do
+    result = @subject.password_request() |> IO.iodata_to_binary()
+    assert result == <<82, 0, 0, 0, 8, 0, 0, 0, 3>>
+  end
+
   test "exchange_first_message/3" do
     nonce = "^!^\"^#^$"
     salt = "RUsreCtyT2NNeUVnK0ZwWGlqckFHY01CQlE9PQ=="
@@ -397,6 +402,20 @@ defmodule Supavisor.ProtocolTest do
              @subject.decode_pkt(packet)
 
     payload = "md5abcdef"
+    packet = <<112, byte_size(payload) + 4::32, payload::binary>>
+
+    assert {:ok, %@subject.Pkt{tag: :password_message, payload: :undefined}, ""} =
+             @subject.decode_pkt(packet)
+
+    payload = "secretstring\0"
+    packet = <<112, byte_size(payload) + 4::32, payload::binary>>
+
+    assert {:ok,
+            %@subject.Pkt{tag: :password_message, payload: {:cleartext_password, "secretstring"}},
+            ""} =
+             @subject.decode_pkt(packet)
+
+    payload = "secretstring"
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
     assert {:ok, %@subject.Pkt{tag: :password_message, payload: :undefined}, ""} =
