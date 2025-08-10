@@ -13,7 +13,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
     prepared_statements: Storage.new(),
     pending_bin: <<>>,
     pkts: [],
-    in_flight_pkt: {<<>>, 0}
+    in_flight_pkt: nil
   )
 
   @type parse_state() ::
@@ -92,8 +92,8 @@ defmodule Supavisor.Protocol.PreparedStatements do
       {:ok, acc} ->
         {:ok, parse_state(acc, pkts: []), Enum.reverse(parse_state(acc, :pkts))}
 
-      {:error, reason} ->
-        {:error, reason}
+      error ->
+        error
     end
   end
 
@@ -116,11 +116,23 @@ defmodule Supavisor.Protocol.PreparedStatements do
     case binary do
       # Message is complete
       <<rest_of_message::binary-size(remaining_len), rest::binary>> ->
-        do_handle_pkts(parse_state(acc, pkts: [rest_of_message | parse_state(acc, :pkts)]), rest)
+        new_parse_state =
+          parse_state(acc,
+            pkts: [rest_of_message | parse_state(acc, :pkts)],
+            in_flight_pkt: nil
+          )
+
+        do_handle_pkts(new_parse_state, rest)
 
       # Message is incomplete, continue in flight
       rest_of_message ->
-        {:ok, parse_state(acc, in_flight_pkt: {tag, remaining_len - byte_size(rest_of_message)})}
+        new_parse_state =
+          parse_state(acc,
+            pkts: [rest_of_message | parse_state(acc, :pkts)],
+            in_flight_pkt: {tag, remaining_len - byte_size(rest_of_message)}
+          )
+
+        {:ok, new_parse_state}
     end
   end
 
@@ -147,10 +159,11 @@ defmodule Supavisor.Protocol.PreparedStatements do
         if tag in [?P, ?B, ?C, ?D, ?Q] do
           {:ok, parse_state(acc, pending_bin: bin)}
         else
+          # IO.inspect(bin, label: :got_this)
           {:ok,
            parse_state(acc,
              pkts: [bin | parse_state(acc, :pkts)],
-             in_flight_pkt: {tag, len - byte_size(bin) + 1}
+             in_flight_pkt: {tag, len + 1 - byte_size(bin)}
            )}
         end
 
@@ -234,7 +247,9 @@ defmodule Supavisor.Protocol.PreparedStatements do
   end
 
   defp handle_close_message(client_statements, len, payload) do
-    {client_side_name, _} = extract_null_terminated_string(payload)
+    # Skip the statement type byte (?S) at the beginning of payload
+    <<_type, rest::binary>> = payload
+    {client_side_name, _} = extract_null_terminated_string(rest)
 
     {prepared_statement, new_client_statements} = Storage.pop(client_statements, client_side_name)
 
@@ -251,7 +266,9 @@ defmodule Supavisor.Protocol.PreparedStatements do
   end
 
   defp handle_describe_message(client_statements, len, payload) do
-    {client_side_name, _} = extract_null_terminated_string(payload)
+    # Skip the statement type byte (?S) at the beginning of payload
+    <<_type, rest::binary>> = payload
+    {client_side_name, _} = extract_null_terminated_string(rest)
 
     server_side_name =
       case Storage.get(client_statements, client_side_name) do

@@ -1237,9 +1237,6 @@ defmodule Supavisor.ClientHandler do
     end
 
     pkts
-    |> tap(fn pkts ->
-      Enum.each(pkts, &Protocol.Debug.inspect_packet(&1, :frontend))
-    end)
     |> Enum.chunk_by(&is_tuple/1)
     |> Enum.reduce_while(:ok, fn chunk, _acc ->
       case chunk do
