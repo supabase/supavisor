@@ -6,7 +6,23 @@ defmodule Supavisor.Protocol.PreparedStatements do
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
   alias Supavisor.Protocol.PreparedStatements.Storage
 
-  @type statement_map() :: Storage.t()
+  require Record
+
+  Record.defrecord(
+    :parse_state,
+    prepared_statements: Storage.new(),
+    pending_bin: <<>>,
+    pkts: [],
+    in_flight_pkt: {<<>>, 0}
+  )
+
+  @type parse_state() ::
+          record(:parse_state,
+            prepared_statements: Storage.t(),
+            pending_bin: binary(),
+            pkts: [handled_pkt()],
+            in_flight_pkt: {tag :: binary(), remaining_len :: non_neg_integer()} | nil
+          )
 
   @type statement_name() :: String.t()
 
@@ -21,6 +37,15 @@ defmodule Supavisor.Protocol.PreparedStatements do
   @client_limit 100
   @backend_limit 200
   @client_memory_limit_bytes 1_000_000
+
+  def new_parse_state() do
+    parse_state(
+      prepared_statements: Storage.new(),
+      pending_bin: <<>>,
+      pkts: [],
+      in_flight_pkt: nil
+    )
+  end
 
   @doc """
   Upper limit of prepared statements from the client
@@ -55,46 +80,94 @@ defmodule Supavisor.Protocol.PreparedStatements do
   Handles prepared statement packets and returns appropriate tuples for packets
   that need special treatment according to the protocol.
   """
-  @spec handle_pkt(statement_map(), pkt()) ::
-          {:ok, statement_map(), handled_pkt()}
+  @spec handle_pkts(parse_state(), pkt()) ::
+          {:ok, parse_state(), [handled_pkt()]}
           | {:error, :max_prepared_statements}
           | {:error, :max_prepared_statements_memory}
           | {:error, :prepared_statement_on_simple_query}
           | {:error, :duplicate_prepared_statement, statement_name()}
           | {:error, :prepared_statement_not_found, statement_name()}
-  def handle_pkt(client_statements, binary) do
-    case binary do
-      # Parse message (P)
-      <<?P, len::32, rest::binary>> ->
-        handle_parse_message(client_statements, binary, len, rest)
+  def handle_pkts(acc, binary) do
+    case acc do
+      parse_state(in_flight_pkt: {_tag, _len}) ->
+        handle_in_flight(acc, binary)
 
-      # Bind message (B)
-      <<?B, len::32, rest::binary>> ->
-        handle_bind_message(client_statements, binary, len, rest)
+      parse_state(pending_bin: "") ->
+        handle_pkt(acc, binary)
 
-      # Close message (C)
-      <<?C, len::32, ?S, rest::binary>> ->
-        handle_close_message(client_statements, len, rest)
-
-      # Describe message (D)
-      <<?D, len::32, ?S, rest::binary>> ->
-        handle_describe_message(client_statements, len, rest)
-
-      # Query message (Q)
-      <<?Q, len::32, rest::binary>> ->
-        handle_simple_query_message(client_statements, binary, len, rest)
-
-      # All other messages pass through unchanged
-      _ ->
-        {:ok, client_statements, binary}
+      parse_state(pending_bin: pending_bin) ->
+        handle_pkt(acc, pending_bin <> binary)
     end
   end
 
-  defp handle_parse_message(client_statements, original_bin, len, rest) do
-    case extract_null_terminated_string(rest) do
+  defp handle_in_flight(acc, binary) do
+    {tag, remaining_len} = parse_state(acc, :in_flight_pkt)
+
+    case binary do
+      # Message is complete
+      <<rest_of_message::binary-size(remaining_len), rest::binary>> ->
+        handle_pkts(parse_state(acc, pkts: [rest_of_message | parse_state(acc, :pkts)]), rest)
+
+      # Message is incomplete, continue in flight
+      rest_of_message ->
+        {:ok, parse_state(acc, in_flight_pkt: {tag, remaining_len - byte_size(rest_of_message)})}
+    end
+  end
+
+  defp handle_pkt(acc, binary) do
+    case binary do
+      <<tag, len::32, payload::binary-size(len - 4), rest::binary>> ->
+        case handle_message(acc, tag, len, payload) do
+          {:ok, client_statements, pkt} ->
+            handle_pkts(
+              parse_state(acc,
+                pkts: [pkt | parse_state(acc, :pkts)],
+                prepared_statements: client_statements
+              ),
+              rest
+            )
+
+          err ->
+            err
+        end
+
+      # Incomplete message with known len
+      <<tag, len::32, _rest::binary>> = bin ->
+        # If we are interested in the content, we store it in pending so we can handle it later
+        if tag in [?P, ?B, ?C, ?D, ?Q] do
+          {:ok, parse_state(acc, pending_bin: bin)}
+        else
+          {:ok,
+           parse_state(acc,
+             pkts: [bin | parse_state(acc, :pkts)],
+             in_flight_pkt: {tag, len - byte_size(bin) + 1}
+           )}
+        end
+
+      # Incomplete message
+      bin ->
+        {:ok, parse_state(acc, pending_bin: bin)}
+    end
+  end
+
+  defp handle_message(acc, tag, len, payload) do
+    client_statements = parse_state(acc, :prepared_statements)
+
+    case tag do
+      ?P -> handle_parse_message(client_statements, len, payload)
+      ?B -> handle_bind_message(client_statements, len, payload)
+      ?C -> handle_close_message(client_statements, len, payload)
+      ?D -> handle_describe_message(client_statements, len, payload)
+      ?Q -> handle_simple_query_message(client_statements, len, payload)
+      _ -> {:ok, client_statements, <<tag, len::32, payload::binary>>}
+    end
+  end
+
+  defp handle_parse_message(client_statements, len, payload) do
+    case extract_null_terminated_string(payload) do
       # Unnamed prepared statements are passed through unchanged
       {"", _} ->
-        {:ok, client_statements, original_bin}
+        {:ok, client_statements, <<?P, len::32, payload::binary>>}
 
       {client_side_name, remaining} ->
         cond do
@@ -108,7 +181,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
             {:error, :duplicate_prepared_statement, client_side_name}
 
           true ->
-            server_side_name = gen_server_side_name(rest)
+            server_side_name = gen_server_side_name(payload)
 
             new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
             new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
@@ -126,12 +199,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
     end
   end
 
-  defp handle_bind_message(client_statements, bin, len, rest) do
-    {_portal_name, after_portal} = extract_null_terminated_string(rest)
+  defp handle_bind_message(client_statements, len, payload) do
+    {_portal_name, after_portal} = extract_null_terminated_string(payload)
 
     case extract_null_terminated_string(after_portal) do
       {"", _} ->
-        {:ok, client_statements, bin}
+        {:ok, client_statements, <<?B, len::32, payload::binary>>}
 
       {client_side_name, packet_after_client_name} ->
         case Storage.get(client_statements, client_side_name) do
@@ -150,8 +223,8 @@ defmodule Supavisor.Protocol.PreparedStatements do
     end
   end
 
-  defp handle_close_message(client_statements, len, rest) do
-    {client_side_name, _} = extract_null_terminated_string(rest)
+  defp handle_close_message(client_statements, len, payload) do
+    {client_side_name, _} = extract_null_terminated_string(payload)
 
     {prepared_statement, new_client_statements} = Storage.pop(client_statements, client_side_name)
 
@@ -167,8 +240,8 @@ defmodule Supavisor.Protocol.PreparedStatements do
     {:ok, new_client_statements, {:close_pkt, server_side_name, new_bin}}
   end
 
-  defp handle_describe_message(client_statements, len, rest) do
-    {client_side_name, _} = extract_null_terminated_string(rest)
+  defp handle_describe_message(client_statements, len, payload) do
+    {client_side_name, _} = extract_null_terminated_string(payload)
 
     server_side_name =
       case Storage.get(client_statements, client_side_name) do
@@ -182,13 +255,13 @@ defmodule Supavisor.Protocol.PreparedStatements do
     {:ok, client_statements, {:describe_pkt, server_side_name, new_bin}}
   end
 
-  defp handle_simple_query_message(client_statements, binary, _len, rest) do
-    case rest do
+  defp handle_simple_query_message(client_statements, len, payload) do
+    case payload do
       "PREPARE" <> _ ->
         {:error, :prepared_statement_on_simple_query}
 
       _ ->
-        {:ok, client_statements, binary}
+        {:ok, client_statements, <<?Q, len::32, payload::binary>>}
     end
   end
 
@@ -204,6 +277,6 @@ defmodule Supavisor.Protocol.PreparedStatements do
       :crypto.hash(:sha256, binary)
       |> Base.encode64(padding: false)
 
-    "supavisor_#{hash}"
+    "sv_#{hash}"
   end
 end

@@ -24,11 +24,11 @@ defmodule Supavisor.ClientHandler do
     Monitoring.Telem,
     Protocol,
     Protocol.Client,
-    Protocol.PreparedStatements,
     Tenants
   }
 
   require Supavisor.Protocol.Server, as: Server
+  require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
 
   @impl true
   def start_link(ref, transport, opts) do
@@ -105,7 +105,7 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0,
-      prepared_statements: PreparedStatements.Storage.new(),
+      parse_state: PreparedStatements.new_parse_state(),
       pending: ""
     }
 
@@ -1129,15 +1129,14 @@ defmodule Supavisor.ClientHandler do
       "ClientHandler: Forward query to db #{inspect(data_to_send)} #{inspect(data.db_pid)}"
     )
 
-    case handle_client_pkts(<<data.pending::binary, data_to_send::binary>>, data) do
-      {:ok, bin_or_pkts, prepared_statements, rest} ->
-        case sock_send_maybe_active_once(bin_or_pkts, data) do
+    case handle_client_pkts(data_to_send, data) do
+      {:ok, PreparedStatements.parse_state(pkts: pkts) = parse_state} ->
+        case sock_send_maybe_active_once(pkts, data) do
           :ok ->
             {:keep_state,
              %{
                data
-               | prepared_statements: prepared_statements,
-                 pending: rest,
+               | parse_state: PreparedStatements.parse_state(parse_state, pkts: []),
                  active_count: data.active_count + 1
              }}
 
@@ -1158,7 +1157,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec handle_client_pkts(binary, map) ::
-          {:ok, [PreparedStatements.handled_pkt()] | binary, map, binary}
+          {:ok, [PreparedStatements.handled_pkt()] | binary, PreparedStatements.parse_state()}
           | {:error, :max_prepared_statements}
           | {:error, :max_prepared_statements_memory}
           | {:error, :prepared_statement_on_simple_query}
@@ -1168,29 +1167,18 @@ defmodule Supavisor.ClientHandler do
          bin,
          %{mode: :transaction} = data
        ) do
-    stmts = data.prepared_statements
-    {pkts, rest} = Protocol.split_pkts(bin)
+    parse_state = data.parse_state
 
-    pkts
-    |> Enum.reduce_while({:ok, stmts, []}, fn pkt, {:ok, stmts, pkts} ->
-      case PreparedStatements.handle_pkt(stmts, pkt) do
-        {:ok, stmts, pkt} ->
-          {:cont, {:ok, stmts, [pkt | pkts]}}
-
-        error ->
-          {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, stmts, pkts} ->
-        {:ok, Enum.reverse(pkts), stmts, rest}
+    case PreparedStatements.handle_pkts(parse_state, bin) do
+      {:ok, parse_state, pkts} ->
+        {:ok, Enum.reverse(pkts), parse_state}
 
       error ->
         error
     end
   end
 
-  defp handle_client_pkts(bin, data), do: {:ok, bin, data.prepared_statements, data.pending}
+  defp handle_client_pkts(bin, data), do: {:ok, bin, data.parse_state}
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
