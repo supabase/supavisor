@@ -266,20 +266,30 @@ defmodule Supavisor.Protocol.PreparedStatements do
   end
 
   defp handle_describe_message(client_statements, len, payload) do
-    # Skip the statement type byte (?S) at the beginning of payload
-    <<_type, rest::binary>> = payload
-    {client_side_name, _} = extract_null_terminated_string(rest)
+    <<type, rest::binary>> = payload
+    {name, _} = extract_null_terminated_string(rest)
 
-    server_side_name =
-      case Storage.get(client_statements, client_side_name) do
-        %PreparedStatement{name: name} -> name
-        nil -> ""
-      end
+    case type do
+      ?S ->
+        # Describe statement - apply prepared statement name translation
+        server_side_name =
+          case Storage.get(client_statements, name) do
+            %PreparedStatement{name: server_name} -> server_name
+            nil -> name
+          end
 
-    new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
-    new_bin = <<?D, new_len::32, ?S, server_side_name::binary, 0>>
+        new_len = len + (byte_size(server_side_name) - byte_size(name))
+        new_bin = <<?D, new_len::32, ?S, server_side_name::binary, 0>>
+        {:ok, client_statements, {:describe_pkt, server_side_name, new_bin}}
 
-    {:ok, client_statements, {:describe_pkt, server_side_name, new_bin}}
+      ?P ->
+        # Describe portal - pass through unchanged
+        {:ok, client_statements, <<?D, len::32, payload::binary>>}
+
+      _ ->
+        # Unknown type - pass through unchanged
+        {:ok, client_statements, <<?D, len::32, payload::binary>>}
+    end
   end
 
   defp handle_simple_query_message(client_statements, len, payload) do

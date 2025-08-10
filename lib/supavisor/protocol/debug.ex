@@ -6,16 +6,46 @@ defmodule Supavisor.Protocol.Debug do
   @spec packet_to_string(binary() | tuple() | struct(), :frontend | :backend) :: String.t()
   def packet_to_string(packet, source) do
     case packet do
-      {:bind_pkt, stmt_name, _pkt, _parse_pkt} -> "BindMessage(statement=#{stmt_name})"
-      {:close_pkt, stmt_name, _pkt} -> "CloseMessage(statement=#{stmt_name})"
-      {:describe_pkt, stmt_name, _pkt} -> "DescribeMessage(statement=#{stmt_name})"
-      {:parse_pkt, stmt_name, _pkt} -> "ParseMessage(statement=#{stmt_name})"
-      %{bin: bin} when is_binary(bin) -> packet_to_string(bin, source)
-      <<tag, _length::32, rest::binary>> -> format_message_by_tag(tag, source, rest)
-      <<tag, rest::binary>> -> format_message_by_tag(tag, source, rest)
-      other -> "UnknownPacket(#{inspect(other)})"
+      {:bind_pkt, stmt_name, _pkt, _parse_pkt} ->
+        "BindMessage(statement=#{inspect(stmt_name)})"
+
+      {:close_pkt, stmt_name, _pkt} ->
+        "CloseMessage(statement=#{inspect(stmt_name)})"
+
+      {:describe_pkt, stmt_name, _pkt} ->
+        "DescribeMessage(statement=#{inspect(stmt_name)})"
+
+      {:parse_pkt, stmt_name, _pkt} ->
+        "ParseMessage(statement=#{inspect(stmt_name)})"
+
+      %{bin: bin} when is_binary(bin) ->
+        packet_to_string(bin, source)
+
+      bin when is_binary(bin) ->
+        {packets, remaining} = Supavisor.Protocol.split_pkts(bin)
+
+        packets_str = Enum.map_join(packets, ", ", &format_raw_binary(&1, source))
+
+        case {packets_str, remaining} do
+          {"", ""} -> format_raw_binary(bin, source)
+          {"", _} -> "Incomplete(#{inspect(remaining)})"
+          {str, ""} -> str
+          {str, _} -> str <> ", Incomplete(#{inspect(remaining)})"
+        end
+
+      other ->
+        "UnknownPacket(#{inspect(other)})"
     end
   end
+
+  defp format_raw_binary(<<tag, _length::32, rest::binary>>, source),
+    do: format_message_by_tag(tag, source, rest)
+
+  defp format_raw_binary(<<tag, rest::binary>>, source),
+    do: format_message_by_tag(tag, source, rest)
+
+  defp format_raw_binary(other, _source),
+    do: "UnknownPacket(#{inspect(other)})"
 
   @spec inspect_packet(binary() | tuple() | struct(), :frontend | :backend, String.t() | nil) ::
           binary() | tuple() | struct()
@@ -106,8 +136,11 @@ defmodule Supavisor.Protocol.Debug do
     case extract_null_terminated_string(data) do
       {portal_name, rest} ->
         case extract_null_terminated_string(rest) do
-          {stmt_name, _} -> "Bind(portal=#{portal_name}, statement=#{stmt_name})"
-          _ -> "Bind(malformed)"
+          {stmt_name, _} ->
+            "Bind(portal=#{inspect(portal_name)}, statement=#{inspect(stmt_name)})"
+
+          _ ->
+            "Bind(malformed)"
         end
 
       _ ->
@@ -121,7 +154,7 @@ defmodule Supavisor.Protocol.Debug do
         case extract_null_terminated_string(rest) do
           {name, _} ->
             type_str = if type == ?S, do: "statement", else: "portal"
-            "Close(#{type_str}=#{name})"
+            "Close(#{type_str}=#{inspect(name)})"
 
           _ ->
             "Close(malformed)"
@@ -138,7 +171,7 @@ defmodule Supavisor.Protocol.Debug do
         case extract_null_terminated_string(rest) do
           {name, _} ->
             type_str = if type == ?S, do: "statement", else: "portal"
-            "Describe(#{type_str}=#{name})"
+            "Describe(#{type_str}=#{inspect(name)})"
 
           _ ->
             "Describe(malformed)"
@@ -151,14 +184,14 @@ defmodule Supavisor.Protocol.Debug do
 
   defp format_execute_message(data) do
     case extract_null_terminated_string(data) do
-      {portal_name, _} -> "Execute(portal=#{portal_name})"
+      {portal_name, _} -> "Execute(portal=#{inspect(portal_name)})"
       _ -> "Execute(malformed)"
     end
   end
 
   defp format_parse_message(data) do
     case extract_null_terminated_string(data) do
-      {stmt_name, _} -> "Parse(statement=#{stmt_name})"
+      {stmt_name, _} -> "Parse(statement=#{inspect(stmt_name)})"
       _ -> "Parse(malformed)"
     end
   end

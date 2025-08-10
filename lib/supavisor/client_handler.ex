@@ -1080,7 +1080,10 @@ defmodule Supavisor.ClientHandler do
 
   # incoming query with a single pool
   defp handle_data(:info, bin, :idle, %{pool: pid} = data) when is_pid(pid) do
-    Logger.debug("ClientHandler: Receive query #{inspect(bin)}")
+    Logger.debug(
+      "ClientHandler: Receive query #{Supavisor.Protocol.Debug.packet_to_string(bin, :frontend)}"
+    )
+
     db_pid = db_checkout(:both, :on_query, data)
 
     {:next_state, :busy,
@@ -1126,7 +1129,7 @@ defmodule Supavisor.ClientHandler do
   # forward query to db
   defp handle_data(_, data_to_send, :busy, data) do
     Logger.debug(
-      "ClientHandler: Forward query to db #{inspect(data_to_send)} #{inspect(data.db_pid)}"
+      "ClientHandler: Forward query to db #{Supavisor.Protocol.Debug.packet_to_string(data_to_send, :frontend)} #{inspect(data.db_pid)}"
     )
 
     case handle_client_pkts(data_to_send, data) do
@@ -1228,6 +1231,10 @@ defmodule Supavisor.ClientHandler do
   @spec sock_send_pkts_maybe_active_once([PreparedStatements.handled_pkt()], map()) ::
           :ok | {:error, term()}
   defp sock_send_pkts_maybe_active_once(pkts, data) do
+    Logger.debug(
+      "ClientHandler: send packets: #{Enum.map(pkts, &Supavisor.Protocol.Debug.packet_to_string(&1, :frontend))}"
+    )
+
     {_pool, db_handler, db_sock} = data.db_pid
     active_count = data.active_count
 

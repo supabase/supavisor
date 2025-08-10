@@ -303,7 +303,7 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller, reply: nil} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug(
-      "DbHandler: Got write replica message  #{Supavisor.Protocol.Debug.packet_to_string(bin, :backend)}"
+      "DbHandler: Got write replica messages: #{Supavisor.Protocol.Debug.packet_to_string(bin, :backend)}"
     )
 
     {pkts, rest} = Supavisor.Protocol.split_pkts(<<data.pending_bin::binary, bin::binary>>)
