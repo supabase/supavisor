@@ -88,6 +88,16 @@ defmodule Supavisor.Protocol.PreparedStatements do
           | {:error, :duplicate_prepared_statement, statement_name()}
           | {:error, :prepared_statement_not_found, statement_name()}
   def handle_pkts(acc, binary) do
+    case do_handle_pkts(acc, binary) do
+      {:ok, acc} ->
+        {:ok, parse_state(acc, pkts: []), Enum.reverse(parse_state(acc, :pkts))}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp do_handle_pkts(acc, binary) do
     case acc do
       parse_state(in_flight_pkt: {_tag, _len}) ->
         handle_in_flight(acc, binary)
@@ -96,7 +106,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
         handle_pkt(acc, binary)
 
       parse_state(pending_bin: pending_bin) ->
-        handle_pkt(acc, pending_bin <> binary)
+        handle_pkt(parse_state(acc, pending_bin: ""), pending_bin <> binary)
     end
   end
 
@@ -106,7 +116,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
     case binary do
       # Message is complete
       <<rest_of_message::binary-size(remaining_len), rest::binary>> ->
-        handle_pkts(parse_state(acc, pkts: [rest_of_message | parse_state(acc, :pkts)]), rest)
+        do_handle_pkts(parse_state(acc, pkts: [rest_of_message | parse_state(acc, :pkts)]), rest)
 
       # Message is incomplete, continue in flight
       rest_of_message ->
@@ -119,7 +129,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
       <<tag, len::32, payload::binary-size(len - 4), rest::binary>> ->
         case handle_message(acc, tag, len, payload) do
           {:ok, client_statements, pkt} ->
-            handle_pkts(
+            do_handle_pkts(
               parse_state(acc,
                 pkts: [pkt | parse_state(acc, :pkts)],
                 prepared_statements: client_statements

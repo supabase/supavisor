@@ -1130,7 +1130,7 @@ defmodule Supavisor.ClientHandler do
     )
 
     case handle_client_pkts(data_to_send, data) do
-      {:ok, PreparedStatements.parse_state(pkts: pkts) = parse_state} ->
+      {:ok, parse_state, pkts} ->
         case sock_send_maybe_active_once(pkts, data) do
           :ok ->
             {:keep_state,
@@ -1157,28 +1157,17 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec handle_client_pkts(binary, map) ::
-          {:ok, [PreparedStatements.handled_pkt()] | binary, PreparedStatements.parse_state()}
+          {:ok, PreparedStatements.parse_state(), [PreparedStatements.handled_pkt()] | binary}
           | {:error, :max_prepared_statements}
           | {:error, :max_prepared_statements_memory}
           | {:error, :prepared_statement_on_simple_query}
           | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
           | {:error, :prepared_statement_not_found, PreparedStatements.statement_name()}
-  defp handle_client_pkts(
-         bin,
-         %{mode: :transaction} = data
-       ) do
-    parse_state = data.parse_state
-
-    case PreparedStatements.handle_pkts(parse_state, bin) do
-      {:ok, parse_state, pkts} ->
-        {:ok, Enum.reverse(pkts), parse_state}
-
-      error ->
-        error
-    end
+  defp handle_client_pkts(bin, %{mode: :transaction} = data) do
+    PreparedStatements.handle_pkts(data.parse_state, bin)
   end
 
-  defp handle_client_pkts(bin, data), do: {:ok, bin, data.parse_state}
+  defp handle_client_pkts(bin, data), do: {:ok, data.parse_state, bin}
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
@@ -1248,6 +1237,9 @@ defmodule Supavisor.ClientHandler do
     end
 
     pkts
+    |> tap(fn pkts ->
+      Enum.each(pkts, &Protocol.Debug.inspect_packet(&1, :frontend))
+    end)
     |> Enum.chunk_by(&is_tuple/1)
     |> Enum.reduce_while(:ok, fn chunk, _acc ->
       case chunk do
