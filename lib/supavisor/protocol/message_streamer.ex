@@ -153,4 +153,9 @@ defmodule Supavisor.Protocol.MessageStreamer do
       {:ok, handler_state, <<tag, len::32, payload::binary>>}
     end
   end
+
+  def update_state(acc, fun) do
+    new_handler_state = fun.(stream_state(acc, :handler_state))
+    stream_state(acc, handler_state: new_handler_state)
+  end
 end

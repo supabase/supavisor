@@ -40,6 +40,6 @@ defmodule Supavisor.Protocol.MessageHandler do
               len :: non_neg_integer(),
               payload :: binary()
             ) ::
-              {:ok, new_handler_state :: any(), output_packet :: binary() | tuple()}
+              {:ok, new_handler_state :: any(), output_packet :: iodata() | tuple()}
               | {:error, reason :: any()}
 end

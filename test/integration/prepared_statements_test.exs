@@ -16,6 +16,10 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   ORDER BY tablename;
   """
 
+  setup_all do
+    Logger.configure(level: :error)
+  end
+
   setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
@@ -24,7 +28,8 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
       port: Application.get_env(:supavisor, :proxy_port_transaction),
       database: db_conf[:database],
       password: db_conf[:password],
-      username: db_conf[:username] <> "." <> @tenant
+      username: db_conf[:username] <> "." <> @tenant,
+      show_sensitive_data_on_connection_error: true
     ]
 
     conns =

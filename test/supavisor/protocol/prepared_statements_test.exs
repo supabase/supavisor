@@ -213,7 +213,9 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
         MessageStreamer.handle_packets(stream_state, original_bin)
 
       # Should return unchanged
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) == MessageStreamer.stream_state(stream_state, :handler_state)
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
+               MessageStreamer.stream_state(stream_state, :handler_state)
+
       assert result == [original_bin]
     end
 

@@ -8,6 +8,7 @@ defmodule Supavisor.DbHandler do
 
   require Logger
   require Supavisor.Protocol.Server, as: Server
+  require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
   alias Supavisor.Protocol.PreparedStatements
 
@@ -16,6 +17,8 @@ defmodule Supavisor.DbHandler do
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
+    Protocol.BackendMessageHandler,
+    Protocol.MessageStreamer,
     Protocol.Server
   }
 
@@ -82,7 +85,7 @@ defmodule Supavisor.DbHandler do
         client_stats: %{},
         prepared_statements: MapSet.new(),
         pending_bin: "",
-        action_queue: :queue.new(),
+        stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
         mode: args.mode,
         replica_type: args.replica_type,
         reply: nil,
@@ -267,6 +270,8 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
       when proto in @proto do
     Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
+
+    # TODO: use streaming for read replica too
     {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
     data = %{data | pending_bin: rest}
 
@@ -306,12 +311,7 @@ defmodule Supavisor.DbHandler do
       "DbHandler: Got write replica messages: #{Supavisor.Protocol.Debug.packet_to_string(bin, :backend)}"
     )
 
-    {pkts, rest} = Supavisor.Protocol.split_pkts(<<data.pending_bin::binary, bin::binary>>)
-    data = %{data | pending_bin: rest}
-
-    last_packet = List.last(pkts)
-
-    if transaction_complete_pkt?(last_packet) do
+    if String.ends_with?(bin, Server.ready_for_query()) do
       HandlerHelpers.activate(data.sock)
 
       {_, stats} =
@@ -326,10 +326,10 @@ defmodule Supavisor.DbHandler do
           # for some reason, if we send the data **before** doing the `ready_for_query` cast,
           # we get race condition that sometimes causes msgs to be sent to the wrong socket
           ClientHandler.db_status(data.caller, :ready_for_query)
-          data = handle_server_messages(pkts, data)
+          data = handle_server_messages(bin, data)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
-          data = handle_server_messages(pkts, data)
+          data = handle_server_messages(bin, data)
 
           {_, client_stats} =
             if data.proxy,
@@ -344,7 +344,7 @@ defmodule Supavisor.DbHandler do
       if data.active_count > @switch_active_count,
         do: HandlerHelpers.active_once(data.sock)
 
-      data = handle_server_messages(pkts, data)
+      data = handle_server_messages(bin, data)
       {:keep_state, %{data | active_count: data.active_count + 1}}
     end
   end
@@ -358,9 +358,11 @@ defmodule Supavisor.DbHandler do
 
     data = %{
       data
-      | action_queue:
-          Enum.reduce(close_pkts, data.action_queue, fn _, queue ->
-            :queue.in({:intercept, :close}, queue)
+      | stream_state:
+          Enum.reduce(close_pkts, data.stream_state, fn _, stream_state ->
+            MessageStreamer.update_state(stream_state, fn queue ->
+              :queue.in({:intercept, :close}, queue)
+            end)
           end),
         prepared_statements: prepared_statements
     }
@@ -727,62 +729,15 @@ defmodule Supavisor.DbHandler do
     do: @reconnect_timeout
 
   @spec handle_server_messages([binary()], map()) :: map()
-  defp handle_server_messages(pkts, data) do
-    {packets_to_send, updated_data} = process_messages(pkts, [], data)
+  defp handle_server_messages(bin, data) do
+    {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
 
     if packets_to_send != [] do
-      HandlerHelpers.sock_send(data.client_sock, Enum.reverse(packets_to_send))
+      HandlerHelpers.sock_send(data.client_sock, packets_to_send)
     end
 
     updated_data
   end
-
-  defp process_messages([msg | rest], acc_bins, data) do
-    {acc_bins, data} = maybe_inject(data, acc_bins)
-
-    case msg do
-      Server.parse_complete_message() ->
-        {acc_bins, data} = maybe_filter_message(msg, acc_bins, data, :parse)
-        process_messages(rest, acc_bins, data)
-
-      Server.close_complete_message() ->
-        {acc_bins, data} = maybe_filter_message(msg, acc_bins, data, :close)
-        process_messages(rest, acc_bins, data)
-
-      _other ->
-        process_messages(rest, [msg | acc_bins], data)
-    end
-  end
-
-  defp process_messages([], acc_bins, data) do
-    maybe_inject(data, acc_bins)
-  end
-
-  defp maybe_filter_message(msg, acc_bins, data, action_type) do
-    case :queue.out(data.action_queue) do
-      {{:value, {:forward, ^action_type}}, updated_queue} ->
-        {[msg | acc_bins], %{data | action_queue: updated_queue}}
-
-      {{:value, {:intercept, ^action_type}}, updated_queue} ->
-        {acc_bins, %{data | action_queue: updated_queue}}
-
-      _other ->
-        {[msg | acc_bins], data}
-    end
-  end
-
-  defp maybe_inject(data, acc_bins) do
-    case :queue.out(data.action_queue) do
-      {{:value, {:inject, :parse}}, q2} ->
-        {[Server.parse_complete_message() | acc_bins], %{data | action_queue: q2}}
-
-      _other ->
-        {acc_bins, data}
-    end
-  end
-
-  defp transaction_complete_pkt?(<<?Z, 5::32, ?I>>), do: true
-  defp transaction_complete_pkt?(_), do: false
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
   # bind to the socket. If it doesn't, we must send the parse pkt first.
@@ -795,7 +750,10 @@ defmodule Supavisor.DbHandler do
     else
       new_data = %{
         data
-        | action_queue: :queue.in({:intercept, :parse}, data.action_queue),
+        | stream_state:
+            MessageStreamer.update_state(data.stream_state, fn queue ->
+              :queue.in({:intercept, :parse}, queue)
+            end),
           prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
       }
 
@@ -808,7 +766,10 @@ defmodule Supavisor.DbHandler do
      %{
        data
        | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name),
-         action_queue: :queue.in({:forward, :close}, data.action_queue)
+         stream_state:
+           MessageStreamer.update_state(data.stream_state, fn queue ->
+             :queue.in({:forward, :close}, queue)
+           end)
      }}
   end
 
@@ -820,7 +781,14 @@ defmodule Supavisor.DbHandler do
   # we need to potentially drop parse pkts and return a parse response
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
     if stmt_name in data.prepared_statements do
-      {iodata, %{data | action_queue: :queue.in({:inject, :parse}, data.action_queue)}}
+      {iodata,
+       %{
+         data
+         | stream_state:
+             MessageStreamer.update_state(data.stream_state, fn queue ->
+               :queue.in({:inject, :parse}, queue)
+             end)
+       }}
     else
       prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
 
@@ -828,7 +796,10 @@ defmodule Supavisor.DbHandler do
        %{
          data
          | prepared_statements: prepared_statements,
-           action_queue: :queue.in({:forward, :parse}, data.action_queue)
+           stream_state:
+             MessageStreamer.update_state(data.stream_state, fn queue ->
+               :queue.in({:forward, :parse}, queue)
+             end)
        }}
     end
   end
@@ -856,6 +827,17 @@ defmodule Supavisor.DbHandler do
       {:stop, {:failed_to_connect, reason}}
     else
       {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
+    end
+  end
+
+  defp process_backend_streaming(bin, data) do
+    case MessageStreamer.handle_packets(data.stream_state, bin) do
+      {:ok, new_stream_state, packets} ->
+        updated_data = %{data | stream_state: new_stream_state}
+        {:ok, updated_data, packets}
+
+      err ->
+        err
     end
   end
 end
