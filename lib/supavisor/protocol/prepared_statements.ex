@@ -147,7 +147,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
             {:ok, client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}
 
           nil ->
-            {:error, :prepared_statement_not_found}
+            {:error, :prepared_statement_not_found, client_side_name}
         end
     end
   end
@@ -190,28 +190,23 @@ defmodule Supavisor.Protocol.PreparedStatements do
     <<type, rest::binary>> = payload
     {name, _} = extract_null_terminated_string(rest)
 
-    case type do
-      ?S ->
-        # Describe statement - apply prepared statement name translation
-        case name do
-          # Unnamed prepared statements are passed through unchanged
-          "" ->
-            {:ok, client_statements, <<?D, len::32, payload::binary>>}
-
-          _ ->
-            case Storage.get(client_statements, name) do
-              %PreparedStatement{name: server_name} ->
-                new_len = len + (byte_size(server_name) - byte_size(name))
-                new_bin = <<?D, new_len::32, ?S, server_name::binary, 0>>
-                {:ok, client_statements, {:describe_pkt, server_name, new_bin}}
-
-              nil ->
-                {:error, :prepared_statement_not_found, name}
-            end
-        end
-
-      _ ->
+    case {type, name} do
+      {?P, _} ->
         {:ok, client_statements, <<?D, len::32, payload::binary>>}
+
+      {_, ""} ->
+        {:ok, client_statements, <<?D, len::32, payload::binary>>}
+
+      {?S, _} ->
+        case Storage.get(client_statements, name) do
+          %PreparedStatement{name: server_name} ->
+            new_len = len + (byte_size(server_name) - byte_size(name))
+            new_bin = <<?D, new_len::32, ?S, server_name::binary, 0>>
+            {:ok, client_statements, {:describe_pkt, server_name, new_bin}}
+
+          nil ->
+            {:error, :prepared_statement_not_found, name}
+        end
     end
   end
 

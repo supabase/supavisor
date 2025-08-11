@@ -3,6 +3,8 @@ defmodule Supavisor.Protocol.Debug do
   Debugging utilities for PostgreSQL protocol messages.
   """
 
+  # credo:disable-for-this-file
+
   @spec packet_to_string(binary() | tuple() | struct(), :frontend | :backend) :: String.t()
   def packet_to_string(packet, source) do
     case packet do
