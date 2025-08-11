@@ -314,19 +314,17 @@ defmodule Supavisor.Protocol.Debug do
     end)
   end
 
-  defp format_notification_response(data) do
-    case data do
-      <<_pid::32, rest::binary>> ->
-        safe_extract_string(rest, fn {channel, rest2} ->
-          case extract_null_terminated_string(rest2) do
-            {payload, _} -> "NotificationResponse(#{channel}, #{inspect(payload)})"
-            _ -> "NotificationResponse(#{channel})"
-          end
-        end)
+  defp format_notification_response(<<_pid::32, rest::binary>>) do
+    safe_extract_string(rest, fn {channel, rest2} ->
+      case extract_null_terminated_string(rest2) do
+        {payload, _} -> "NotificationResponse(#{channel}, #{inspect(payload)})"
+        _ -> "NotificationResponse(#{channel})"
+      end
+    end)
+  end
 
-      _ ->
-        format_malformed_message()
-    end
+  defp format_notification_response(_) do
+    format_malformed_message()
   end
 
   @spec extract_null_terminated_string(binary()) :: extract_result()
