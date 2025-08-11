@@ -1,8 +1,8 @@
 defmodule Supavisor.Protocol.BackendMessageHandlerTest do
   use ExUnit.Case, async: true
 
-  alias Supavisor.Protocol.MessageStreamer
   alias Supavisor.Protocol.BackendMessageHandler
+  alias Supavisor.Protocol.MessageStreamer
 
   require MessageStreamer
 

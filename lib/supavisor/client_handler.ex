@@ -23,6 +23,9 @@ defmodule Supavisor.ClientHandler do
     Helpers,
     Monitoring.Telem,
     Protocol.Client,
+    Protocol.Debug,
+    Protocol.FrontendMessageHandler,
+    Protocol.MessageStreamer,
     Tenants
   }
 
@@ -104,10 +107,7 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0,
-      stream_state:
-        Supavisor.Protocol.MessageStreamer.new_stream_state(
-          Supavisor.Protocol.FrontendMessageHandler
-        ),
+      stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
       pending: ""
     }
 
@@ -1082,9 +1082,7 @@ defmodule Supavisor.ClientHandler do
 
   # incoming query with a single pool
   defp handle_data(:info, bin, :idle, %{pool: pid} = data) when is_pid(pid) do
-    Logger.debug(
-      "ClientHandler: Receive query #{Supavisor.Protocol.Debug.packet_to_string(bin, :frontend)}"
-    )
+    Logger.debug("ClientHandler: Receive query #{Debug.packet_to_string(bin, :frontend)}")
 
     db_pid = db_checkout(:both, :on_query, data)
 
@@ -1131,7 +1129,7 @@ defmodule Supavisor.ClientHandler do
   # forward query to db
   defp handle_data(_, data_to_send, :busy, data) do
     Logger.debug(
-      "ClientHandler: Forward query to db #{Supavisor.Protocol.Debug.packet_to_string(data_to_send, :frontend)} #{inspect(data.db_pid)}"
+      "ClientHandler: Forward query to db #{Debug.packet_to_string(data_to_send, :frontend)} #{inspect(data.db_pid)}"
     )
 
     case handle_client_pkts(data_to_send, data) do
@@ -1170,7 +1168,7 @@ defmodule Supavisor.ClientHandler do
           | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
           | {:error, :prepared_statement_not_found, PreparedStatements.statement_name()}
   defp handle_client_pkts(bin, %{mode: :transaction} = data) do
-    Supavisor.Protocol.MessageStreamer.handle_packets(data.stream_state, bin)
+    MessageStreamer.handle_packets(data.stream_state, bin)
   end
 
   defp handle_client_pkts(bin, data), do: {:ok, data.stream_state, bin}
@@ -1235,7 +1233,7 @@ defmodule Supavisor.ClientHandler do
           :ok | {:error, term()}
   defp sock_send_pkts_maybe_active_once(pkts, data) do
     Logger.debug(
-      "ClientHandler: send packets: #{Enum.map(pkts, &Supavisor.Protocol.Debug.packet_to_string(&1, :frontend))}"
+      "ClientHandler: send packets: #{Enum.map(pkts, &Debug.packet_to_string(&1, :frontend))}"
     )
 
     {_pool, db_handler, db_sock} = data.db_pid

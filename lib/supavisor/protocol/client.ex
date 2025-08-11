@@ -2,6 +2,7 @@ defmodule Supavisor.Protocol.Client do
   @moduledoc false
 
   require Logger
+  alias Supavisor.Protocol.Debug
 
   @pkt_header_size 5
 
@@ -20,7 +21,7 @@ defmodule Supavisor.Protocol.Client do
       def inspect(pkt, _opts) do
         case pkt.bin do
           bin when is_binary(bin) ->
-            Supavisor.Protocol.Debug.packet_to_string(bin, :frontend)
+            Debug.packet_to_string(bin, :frontend)
 
           _ ->
             "#Supavisor.Protocol.Client.Pkt<malformed>"
