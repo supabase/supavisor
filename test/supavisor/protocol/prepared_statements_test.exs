@@ -125,7 +125,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 21
       payload = <<0, "test_stmt", 0, 0, 0, 0, 0, 0, 0, 0>>
 
-      assert {:error, :prepared_statement_not_found} =
+      assert {:error, :prepared_statement_not_found, "test_stmt"} =
                PreparedStatements.handle_bind_message(client_statements, len, payload)
     end
 
