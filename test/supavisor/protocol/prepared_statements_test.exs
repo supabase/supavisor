@@ -1,29 +1,32 @@
 defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.Protocol.MessageStreamer
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
   alias Supavisor.Protocol.PreparedStatements.Storage
 
-  require Supavisor.Protocol.PreparedStatements
+  require MessageStreamer
 
   setup do
-    parse_state = PreparedStatements.new_parse_state()
+    stream_state = MessageStreamer.new_stream_state(PreparedStatements)
 
-    {:ok, parse_state: parse_state}
+    {:ok, stream_state: stream_state}
   end
 
-  describe "handle_pkts/2" do
+  describe "handle_packets/2" do
     test "unnamed prepared statements are passed through unchanged", %{
-      parse_state: parse_state
+      stream_state: stream_state
     } do
       original_bin = <<?P, 16::32, 0, "select 1", 0, 0, 0>>
 
-      {:ok, new_parse_state, result} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
 
       # Should return unchanged
-      assert new_parse_state == parse_state
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
+               MessageStreamer.stream_state(stream_state, :handler_state)
+
       assert result == [original_bin]
     end
 
@@ -34,22 +37,20 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = Storage.put(Storage.new(), "test_stmt", prepared_statement)
 
-      parse_state =
-        PreparedStatements.parse_state(
-          prepared_statements: client_statements,
-          pending_bin: <<>>,
-          pkts: [],
-          in_flight_pkt: nil
+      stream_state =
+        MessageStreamer.stream_state(
+          MessageStreamer.new_stream_state(PreparedStatements),
+          handler_state: client_statements
         )
 
       # Close message for prepared statement
       original_bin = <<?C, 15::32, ?S, "test_stmt", 0>>
 
-      {:ok, new_parse_state, result} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
 
       # Should remove from client_statements
-      assert PreparedStatements.parse_state(new_parse_state, :prepared_statements) ==
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
                Storage.new()
 
       # Should return close_pkt tuple with statement name
@@ -61,18 +62,18 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     end
 
     test "parse message generates new server-side name", %{
-      parse_state: parse_state
+      stream_state: stream_state
     } do
       # Parse message with named statement
       original_bin =
         <<?P, 25::32, "test_stmt", 0, "select 1", 0, 0, 0>>
 
-      {:ok, new_parse_state, result} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
 
       # Should add mapping to client_statements
       new_client_statements =
-        PreparedStatements.parse_state(new_parse_state, :prepared_statements)
+        MessageStreamer.stream_state(new_stream_state, :handler_state)
 
       assert Storage.statement_count(new_client_statements) == 1
       prepared_statement = Storage.get(new_client_statements, "test_stmt")
@@ -99,27 +100,25 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = Storage.put(Storage.new(), "test_stmt", prepared_statement)
 
-      parse_state =
-        PreparedStatements.parse_state(
-          prepared_statements: client_statements,
-          pending_bin: <<>>,
-          pkts: [],
-          in_flight_pkt: nil
+      stream_state =
+        MessageStreamer.stream_state(
+          MessageStreamer.new_stream_state(PreparedStatements),
+          handler_state: client_statements
         )
 
       # Bind message referencing prepared statement
       original_bin =
         <<?B, 21::32, 0, "test_stmt", 0, 0, 0, 0, 0, 0, 0>>
 
-      {:ok, new_parse_state, result} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
 
       # Should not change client_statements
       new_client_statements =
-        PreparedStatements.parse_state(new_parse_state, :prepared_statements)
+        MessageStreamer.stream_state(new_stream_state, :handler_state)
 
       original_client_statements =
-        PreparedStatements.parse_state(parse_state, :prepared_statements)
+        MessageStreamer.stream_state(stream_state, :handler_state)
 
       assert new_client_statements == original_client_statements
 
@@ -139,25 +138,23 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
       client_statements = Storage.put(Storage.new(), "test_stmt", prepared_statement)
 
-      parse_state =
-        PreparedStatements.parse_state(
-          prepared_statements: client_statements,
-          pending_bin: <<>>,
-          pkts: [],
-          in_flight_pkt: nil
+      stream_state =
+        MessageStreamer.stream_state(
+          MessageStreamer.new_stream_state(PreparedStatements),
+          handler_state: client_statements
         )
 
       original_bin = <<?D, 15::32, ?S, "test_stmt", 0>>
 
-      {:ok, new_parse_state, result} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
 
       # Should not change client_statements
       new_client_statements =
-        PreparedStatements.parse_state(new_parse_state, :prepared_statements)
+        MessageStreamer.stream_state(new_stream_state, :handler_state)
 
       original_client_statements =
-        PreparedStatements.parse_state(parse_state, :prepared_statements)
+        MessageStreamer.stream_state(stream_state, :handler_state)
 
       assert new_client_statements == original_client_statements
 
@@ -170,48 +167,54 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     end
 
     test "passthrough for message types we ignore", %{
-      parse_state: parse_state
+      stream_state: stream_state
     } do
       # Execute message (should pass through)
       original_bin = <<?E, 9::32, 0, 0, 0, 0, 200>>
 
-      {:ok, new_parse_state, result} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
 
       # Should return unchanged
-      assert new_parse_state == parse_state
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
+               MessageStreamer.stream_state(stream_state, :handler_state)
+
       assert result == [original_bin]
     end
 
     test "bind message with unknown statement name" do
-      parse_state = PreparedStatements.new_parse_state()
+      stream_state = MessageStreamer.new_stream_state(PreparedStatements)
 
       # Bind message referencing unknown statement
       original_bin =
         <<?B, 21::32, 0, "test_stmt", 0, 0, 0, 0, 0, 0, 0>>
 
       {:error, :prepared_statement_not_found} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+        MessageStreamer.handle_packets(stream_state, original_bin)
     end
 
     test "describe message with unknown statement name" do
-      parse_state = PreparedStatements.new_parse_state()
+      stream_state = MessageStreamer.new_stream_state(PreparedStatements)
 
       # Describe message for unknown statement
       original_bin = <<?D, 15::32, ?S, "test_stmt", 0>>
 
-      {:ok, new_parse_state, result} =
-        PreparedStatements.handle_pkts(parse_state, original_bin)
+      {:error, :prepared_statement_not_found, "test_stmt"} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
+    end
 
-      # Should not change client_statements
-      assert new_parse_state == parse_state
+    test "describe message for unnamed statement is passed through unchanged", %{
+      stream_state: stream_state
+    } do
+      # Describe message for unnamed statement (empty name)
+      original_bin = <<?D, 6::32, ?S, 0>>
 
-      # Should return describe_pkt tuple with empty statement name
-      assert [result_pkt] = result
-      assert {:describe_pkt, "", result_bin} = result_pkt
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
 
-      # Verify the result binary has the correct format (empty statement name)
-      assert <<?D, _len::32, ?S, 0>> = result_bin
+      # Should return unchanged
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state) == MessageStreamer.stream_state(stream_state, :handler_state)
+      assert result == [original_bin]
     end
 
     test "parse message returns error when client limit is reached" do
@@ -223,19 +226,17 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
           })
         end)
 
-      parse_state =
-        PreparedStatements.parse_state(
-          prepared_statements: client_statements,
-          pending_bin: <<>>,
-          pkts: [],
-          in_flight_pkt: nil
+      stream_state =
+        MessageStreamer.stream_state(
+          MessageStreamer.new_stream_state(PreparedStatements),
+          handler_state: client_statements
         )
 
       bin =
         <<?P, 25::32, "test_stmt", 0, "select 1", 0, 0, 0>>
 
       assert {:error, :max_prepared_statements} =
-               PreparedStatements.handle_pkts(parse_state, bin)
+               MessageStreamer.handle_packets(stream_state, bin)
     end
 
     test "parse message returns error for duplicate PS" do
@@ -245,19 +246,17 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
           parse_pkt: <<>>
         })
 
-      parse_state =
-        PreparedStatements.parse_state(
-          prepared_statements: client_statements,
-          pending_bin: <<>>,
-          pkts: [],
-          in_flight_pkt: nil
+      stream_state =
+        MessageStreamer.stream_state(
+          MessageStreamer.new_stream_state(PreparedStatements),
+          handler_state: client_statements
         )
 
       bin =
         <<?P, 20::32, "stmt", 0, "select 1", 0, 0, 0>>
 
       assert {:error, :duplicate_prepared_statement, "stmt"} =
-               PreparedStatements.handle_pkts(parse_state, bin)
+               MessageStreamer.handle_packets(stream_state, bin)
     end
 
     test "parse message returns error when memory limit is reached" do
@@ -271,23 +270,21 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
 
       client_statements = Storage.put(Storage.new(), "existing_stmt", large_statement)
 
-      parse_state =
-        PreparedStatements.parse_state(
-          prepared_statements: client_statements,
-          pending_bin: <<>>,
-          pkts: [],
-          in_flight_pkt: nil
+      stream_state =
+        MessageStreamer.stream_state(
+          MessageStreamer.new_stream_state(PreparedStatements),
+          handler_state: client_statements
         )
 
       # Try to add another statement that would exceed memory limit
       bin = <<?P, 25::32, "test_stmt", 0, "select 1", 0, 0, 0>>
 
       assert {:error, :max_prepared_statements_memory} =
-               PreparedStatements.handle_pkts(parse_state, bin)
+               MessageStreamer.handle_packets(stream_state, bin)
     end
 
     test "streaming parsing works correctly regardless of packet sizes" do
-      parse_state = PreparedStatements.new_parse_state()
+      stream_state = MessageStreamer.new_stream_state(PreparedStatements)
 
       full_binary =
         [
@@ -309,8 +306,8 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
         {final_state, result} =
           full_binary
           |> chunk_binary(chunk_size)
-          |> Enum.reduce({parse_state, []}, fn chunk, {state, acc} ->
-            {:ok, new_state, chunk_result} = PreparedStatements.handle_pkts(state, chunk)
+          |> Enum.reduce({stream_state, []}, fn chunk, {state, acc} ->
+            {:ok, new_state, chunk_result} = MessageStreamer.handle_packets(state, chunk)
             {new_state, acc ++ chunk_result}
           end)
 
@@ -344,8 +341,8 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
                  <<?S, 4::32>>
                ] = grouped_result
 
-        assert PreparedStatements.parse_state(final_state, :pending_bin) == <<>>
-        assert PreparedStatements.parse_state(final_state, :in_flight_pkt) == nil
+        assert MessageStreamer.stream_state(final_state, :pending_bin) == <<>>
+        assert MessageStreamer.stream_state(final_state, :in_flight_pkt) == nil
       end
     end
   end

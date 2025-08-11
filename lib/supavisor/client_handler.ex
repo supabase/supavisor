@@ -22,7 +22,6 @@ defmodule Supavisor.ClientHandler do
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
-    Protocol,
     Protocol.Client,
     Tenants
   }
@@ -105,7 +104,8 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0,
-      parse_state: PreparedStatements.new_parse_state(),
+      stream_state:
+        Supavisor.Protocol.MessageStreamer.new_stream_state(Supavisor.Protocol.PreparedStatements),
       pending: ""
     }
 
@@ -1133,13 +1133,13 @@ defmodule Supavisor.ClientHandler do
     )
 
     case handle_client_pkts(data_to_send, data) do
-      {:ok, parse_state, pkts} ->
+      {:ok, new_stream_state, pkts} ->
         case sock_send_maybe_active_once(pkts, data) do
           :ok ->
             {:keep_state,
              %{
                data
-               | parse_state: PreparedStatements.parse_state(parse_state, pkts: []),
+               | stream_state: new_stream_state,
                  active_count: data.active_count + 1
              }}
 
@@ -1160,17 +1160,18 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec handle_client_pkts(binary, map) ::
-          {:ok, PreparedStatements.parse_state(), [PreparedStatements.handled_pkt()] | binary}
+          {:ok, Supavisor.Protocol.MessageStreamer.stream_state(),
+           [PreparedStatements.handled_pkt()] | binary}
           | {:error, :max_prepared_statements}
           | {:error, :max_prepared_statements_memory}
           | {:error, :prepared_statement_on_simple_query}
           | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
           | {:error, :prepared_statement_not_found, PreparedStatements.statement_name()}
   defp handle_client_pkts(bin, %{mode: :transaction} = data) do
-    PreparedStatements.handle_pkts(data.parse_state, bin)
+    Supavisor.Protocol.MessageStreamer.handle_packets(data.stream_state, bin)
   end
 
-  defp handle_client_pkts(bin, data), do: {:ok, data.parse_state, bin}
+  defp handle_client_pkts(bin, data), do: {:ok, data.stream_state, bin}
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do

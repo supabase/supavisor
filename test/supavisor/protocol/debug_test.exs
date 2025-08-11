@@ -110,7 +110,7 @@ defmodule Supavisor.Protocol.DebugTest do
       parse_pkt = <<?P, 16::32, "stmt1", 0, "SELECT 1", 0, 0, 0>>
 
       {:ok, _storage, {:parse_pkt, stmt_name, _pkt}} =
-        PreparedStatements.handle_pkt(storage, parse_pkt)
+        PreparedStatements.handle_message(storage, ?P, 16, <<"stmt1", 0, "SELECT 1", 0, 0, 0>>)
 
       assert Debug.packet_to_string({:parse_pkt, stmt_name, parse_pkt}, :frontend) ==
                "ParseMessage(statement=#{stmt_name})"
