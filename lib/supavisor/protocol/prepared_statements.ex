@@ -1,9 +1,34 @@
 defmodule Supavisor.Protocol.PreparedStatements do
   @moduledoc """
-  Handles prepared statement binary packet transformations.
-  """
+  Handles PostgreSQL prepared statement transformations and name translation.
 
-  @behaviour Supavisor.Protocol.MessageHandler
+  This module manages client-side to server-side prepared statement name mapping,
+  enabling prepared statement pooling across multiple client connections.
+
+  ## Message processing
+
+  Processes PostgreSQL frontend extended query protocol messages *Parse (P)*, *Bind (B)*,
+  *Close (C)*, and *Describe (D)*.
+
+  Translates client-side prepared statement names to unique server-side names. This allows
+  multiple clients to use the same prepared statement names (like "stmt1") without conflicts,
+  as each gets mapped to a unique server-side name generated from the statement's hash
+  (like "sv_9d8sad98sahzlxkc...").
+
+  Parse statements are cached in storage. When a `Bind` message is processed, the module
+  retrieves and attaches the corresponding `Parse` message, providing the DbHandler with
+  all necessary information to prepare the statement when needed.
+
+  ## Limits and Safety
+
+  Enforces several limits to prevent resource exhaustion:
+  - **Client statement count limit**: Maximum number of prepared statements per client connection.
+    Exceeding this limit returns an error to the client.
+  - **Client memory usage limit**: Maximum memory allocated for storing prepared statements per
+    client connection. Exceeding this limit returns an error to the client.
+  - **Backend statement count limit**: Maximum number of prepared statements per backend connection.
+    When exceeded, existing prepared statements are automatically closed to make room for new ones.
+  """
 
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
   alias Supavisor.Protocol.PreparedStatements.Storage
@@ -22,11 +47,11 @@ defmodule Supavisor.Protocol.PreparedStatements do
   @backend_limit 200
   @client_memory_limit_bytes 1_000_000
 
-  @impl true
-  def handled_message_types, do: [?P, ?B, ?C, ?D, ?Q]
-
-  @impl true
-  def init_state, do: Storage.new()
+  @doc """
+  Initializes a new prepared statement storage.
+  """
+  @spec init_storage() :: Storage.t()
+  def init_storage, do: Storage.new()
 
   @doc """
   Upper limit of prepared statements from the client
@@ -57,19 +82,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
     <<?C, len + 6::32, ?S, statement_name::binary, 0>>
   end
 
-  @impl true
-  def handle_message(client_statements, tag, len, payload) do
-    case tag do
-      ?P -> handle_parse_message(client_statements, len, payload)
-      ?B -> handle_bind_message(client_statements, len, payload)
-      ?C -> handle_close_message(client_statements, len, payload)
-      ?D -> handle_describe_message(client_statements, len, payload)
-      ?Q -> handle_simple_query_message(client_statements, len, payload)
-      _ -> {:ok, client_statements, <<tag, len::32, payload::binary>>}
-    end
-  end
-
-  defp handle_parse_message(client_statements, len, payload) do
+  @doc """
+  Handles a Parse (P) message for prepared statements.
+  """
+  @spec handle_parse_message(Storage.t(), non_neg_integer(), binary()) ::
+          {:ok, Storage.t(), pkt() | handled_pkt()} | {:error, atom()} | {:error, atom(), term()}
+  def handle_parse_message(client_statements, len, payload) do
     case extract_null_terminated_string(payload) do
       # Unnamed prepared statements are passed through unchanged
       {"", _} ->
@@ -105,7 +123,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
     end
   end
 
-  defp handle_bind_message(client_statements, len, payload) do
+  @doc """
+  Handles a Bind (B) message for prepared statements.
+  """
+  @spec handle_bind_message(Storage.t(), non_neg_integer(), binary()) ::
+          {:ok, Storage.t(), pkt() | handled_pkt()} | {:error, atom()}
+  def handle_bind_message(client_statements, len, payload) do
     {_portal_name, after_portal} = extract_null_terminated_string(payload)
 
     case extract_null_terminated_string(after_portal) do
@@ -129,7 +152,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
     end
   end
 
-  defp handle_close_message(client_statements, len, payload) do
+  @doc """
+  Handles a Close (C) message for prepared statements.
+  """
+  @spec handle_close_message(Storage.t(), non_neg_integer(), binary()) ::
+          {:ok, Storage.t(), pkt() | handled_pkt()}
+  def handle_close_message(client_statements, len, payload) do
     <<type, rest::binary>> = payload
     {name, _} = extract_null_terminated_string(rest)
 
@@ -153,7 +181,12 @@ defmodule Supavisor.Protocol.PreparedStatements do
     end
   end
 
-  defp handle_describe_message(client_statements, len, payload) do
+  @doc """
+  Handles a Describe (D) message for prepared statements.
+  """
+  @spec handle_describe_message(Storage.t(), non_neg_integer(), binary()) ::
+          {:ok, Storage.t(), pkt() | handled_pkt()} | {:error, atom()} | {:error, atom(), term()}
+  def handle_describe_message(client_statements, len, payload) do
     <<type, rest::binary>> = payload
     {name, _} = extract_null_terminated_string(rest)
 
@@ -179,16 +212,6 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
       _ ->
         {:ok, client_statements, <<?D, len::32, payload::binary>>}
-    end
-  end
-
-  defp handle_simple_query_message(client_statements, len, payload) do
-    case payload do
-      "PREPARE" <> _ ->
-        {:error, :prepared_statement_on_simple_query}
-
-      _ ->
-        {:ok, client_statements, <<?Q, len::32, payload::binary>>}
     end
   end
 

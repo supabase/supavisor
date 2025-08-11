@@ -105,7 +105,9 @@ defmodule Supavisor.ClientHandler do
       app_name: nil,
       subscribe_retries: 0,
       stream_state:
-        Supavisor.Protocol.MessageStreamer.new_stream_state(Supavisor.Protocol.PreparedStatements),
+        Supavisor.Protocol.MessageStreamer.new_stream_state(
+          Supavisor.Protocol.FrontendMessageHandler
+        ),
       pending: ""
     }
 
