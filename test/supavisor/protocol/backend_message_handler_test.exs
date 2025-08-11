@@ -54,6 +54,20 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       assert IO.iodata_to_binary(result) == original_bin
     end
 
+    test "ready for query message with no actions passes through unchanged", %{
+      stream_state: stream_state
+    } do
+      original_bin = <<?Z, 5::32, ?I>>
+
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, original_bin)
+
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
+               MessageStreamer.stream_state(stream_state, :handler_state)
+
+      assert IO.iodata_to_binary(result) == original_bin
+    end
+
     test "parse complete message with intercept action is intercepted", %{
       stream_state: stream_state
     } do

@@ -21,7 +21,7 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
 
   @impl true
   def handled_message_types do
-    [?1, ?3, ?t]
+    [?1, ?3, ?t, ?Z]
   end
 
   @impl true
@@ -59,4 +59,5 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   defp message_type(?1), do: :parse
   defp message_type(?3), do: :close
   defp message_type(?t), do: :parameter_description
+  defp message_type(?Z), do: :ready_for_query
 end
