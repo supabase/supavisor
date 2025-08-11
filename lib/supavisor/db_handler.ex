@@ -729,7 +729,7 @@ defmodule Supavisor.DbHandler do
   def reconnect_timeout(_),
     do: @reconnect_timeout
 
-  @spec handle_server_messages([binary()], map()) :: map()
+  @spec handle_server_messages(binary(), map()) :: map()
   defp handle_server_messages(bin, data) do
     {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
 

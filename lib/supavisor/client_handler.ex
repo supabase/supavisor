@@ -1304,6 +1304,13 @@ defmodule Supavisor.ClientHandler do
     Server.error_message("XX000", message_text)
   end
 
+  defp error_message({:error, :prepared_statement_on_simple_query}) do
+    message_text =
+      "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
+
+    Server.error_message("XX000", message_text)
+  end
+
   defp error_message({:error, :max_prepared_statements_memory}) do
     limit_mb = PreparedStatements.client_memory_limit_bytes() / 1_000_000
 
@@ -1320,12 +1327,5 @@ defmodule Supavisor.ClientHandler do
 
   defp error_message({:error, :duplicate_prepared_statement, name}) do
     Server.error_message("42P05", "prepared statement #{inspect(name)} already exists")
-  end
-
-  defp error_message({:error, :prepared_statement_on_simple_query}) do
-    message_text =
-      "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
-
-    Server.error_message("XX000", message_text)
   end
 end
