@@ -20,19 +20,6 @@ defmodule Supavisor.Protocol.MessageHandler do
 
   @doc """
   Handles a message that matches one of the interested message types.
-
-  ## Parameters
-  - `handler_state`: The current state of the handler
-  - `tag`: The message tag (byte)
-  - `len`: The message length
-  - `payload`: The message payload
-
-  ## Returns
-  - `{:ok, new_handler_state, output_packet}`: Success with new state and output
-  - `{:error, reason}`: Error with reason
-
-  The `output_packet` can be either a binary (raw packet) or a tuple representing
-  a special packet type that needs further processing.
   """
   @callback handle_message(
               handler_state :: any(),
@@ -41,5 +28,6 @@ defmodule Supavisor.Protocol.MessageHandler do
               payload :: binary()
             ) ::
               {:ok, new_handler_state :: any(), output_packet :: iodata() | tuple()}
-              | {:error, reason :: any()}
+              | {:error, reason :: atom()}
+              | {:error, reason :: atom(), details :: term()}
 end

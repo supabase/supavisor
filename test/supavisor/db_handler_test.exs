@@ -37,7 +37,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        reconnect_retries: 5
+        reconnect_retries: 5,
+        feature_flags: %{},
       }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)

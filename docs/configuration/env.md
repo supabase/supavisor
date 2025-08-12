@@ -34,6 +34,12 @@ This document provides a categorized list of all environment variables used in S
 | `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                                 | -             | No       |
 | `LOCAL_PROXY_SHARDS`          | Number of local proxy shards per mode (session/transaction) | `4`           | No       |
 
+### Feature Flags
+
+| Variable                            | Description                                                  | Default Value | Required |
+| ----------------------------------- | ------------------------------------------------------------ | ------------- | -------- |
+| `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `true`        | No       |
+
 ---
 
 ## 2. Management API Configuration

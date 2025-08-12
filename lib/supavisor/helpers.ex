@@ -339,10 +339,6 @@ defmodule Supavisor.Helpers do
 
   @doc """
   Sets the maximum heap size for the current process. The `max_heap_size` parameter is in megabytes.
-
-  ## Parameters
-
-  - `max_heap_size`: The maximum heap size in megabytes.
   """
   @spec set_max_heap_size(pos_integer()) :: map()
   def set_max_heap_size(max_heap_size) do

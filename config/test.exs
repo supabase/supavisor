@@ -46,6 +46,12 @@ config :supavisor, Supavisor.Vault,
     }
   ]
 
+config :supavisor, Supavisor.FeatureFlag, %{
+  "test_global_flag" => true,
+  "test_disabled_flag" => false,
+  "override_test" => true
+}
+
 # Print only warnings and errors during test
 config :logger, :default_handler, level: String.to_atom(System.get_env("LOGGER_LEVEL", "none"))
 

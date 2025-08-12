@@ -340,6 +340,7 @@ defmodule Supavisor do
       client_idle_timeout: client_idle_timeout,
       replica_type: replica_type,
       sni_hostname: sni_hostname,
+      feature_flags: feature_flags,
       users: [
         %{
           db_user: db_user,
@@ -389,7 +390,8 @@ defmodule Supavisor do
       default_parameter_status: ps,
       max_clients: max_clients,
       client_idle_timeout: client_idle_timeout,
-      log_level: log_level
+      log_level: log_level,
+      feature_flags: feature_flags
     }
   end
 

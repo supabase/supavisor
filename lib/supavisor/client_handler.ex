@@ -19,6 +19,7 @@ defmodule Supavisor.ClientHandler do
 
   alias Supavisor.{
     DbHandler,
+    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
@@ -83,6 +84,7 @@ defmodule Supavisor.ClientHandler do
       trans: trans,
       db_pid: nil,
       tenant: nil,
+      tenant_feature_flags: nil,
       user: nil,
       pool: nil,
       manager: nil,
@@ -882,6 +884,7 @@ defmodule Supavisor.ClientHandler do
     %{
       data
       | tenant: info.tenant.external_id,
+        tenant_feature_flags: info.tenant.feature_flags,
         user: user,
         timeout: info.user.pool_checkout_timeout,
         ps: info.tenant.default_parameter_status,
@@ -1167,8 +1170,16 @@ defmodule Supavisor.ClientHandler do
           | {:error, :prepared_statement_on_simple_query}
           | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
           | {:error, :prepared_statement_not_found, PreparedStatements.statement_name()}
-  defp handle_client_pkts(bin, %{mode: :transaction} = data) do
-    MessageStreamer.handle_packets(data.stream_state, bin)
+  defp handle_client_pkts(
+         bin,
+         %{mode: :transaction, tenant_feature_flags: tenant_feature_flags} = data
+       ) do
+    if tenant_feature_flags &&
+         FeatureFlag.enabled?(tenant_feature_flags, "named_prepared_statements") do
+      MessageStreamer.handle_packets(data.stream_state, bin)
+    else
+      {:ok, data.stream_state, bin}
+    end
   end
 
   defp handle_client_pkts(bin, data), do: {:ok, data.stream_state, bin}

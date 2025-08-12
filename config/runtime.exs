@@ -179,6 +179,10 @@ if config_env() != :test do
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
     node_host: System.get_env("NODE_IP", "127.0.0.1")
 
+  config :supavisor, Supavisor.FeatureFlag, %{
+    "named_prepared_statements" => Helpers.get_env_bool("NAMED_PREPARED_STATEMENTS_ENABLED", true)
+  }
+
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
     pool_size: System.get_env("DB_POOL_SIZE", "25") |> String.to_integer(),

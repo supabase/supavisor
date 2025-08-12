@@ -64,6 +64,12 @@ defmodule Supavisor.DbHandler do
     Helpers.set_log_level(args.log_level)
     Helpers.set_max_heap_size(90)
 
+    if args[:feature_flags] do
+      :nothing
+    else
+      raise "blah"
+    end
+
     {_, tenant} = args.tenant
     Logger.metadata(project: tenant, user: args.user, mode: args.mode)
 

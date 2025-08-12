@@ -46,13 +46,12 @@ defmodule Supavisor.Protocol.MessageStreamer do
   @doc """
   Handles incoming packet data and returns processed packets.
 
-  ## Returns
-  - `{:ok, new_stream_state, packets}`: Success with new state and output packets
-  - `{:error, reason}`: Error from the message handler
+  Errors are dependent on the message handler implementation
   """
   @spec handle_packets(stream_state(), pkt()) ::
           {:ok, stream_state(), [pkt() | tuple()]}
-          | {:error, any()}
+          | {:error, atom()}
+          | {:error, atom(), term()}
   def handle_packets(acc, binary) do
     case do_handle_packets(acc, binary) do
       {:ok, acc} ->
