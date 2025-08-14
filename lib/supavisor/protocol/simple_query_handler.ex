@@ -4,13 +4,17 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
 
   This module processes simple query messages and enforces restrictions,
   such as preventing the use of PREPARE statements in simple queries.
-
-  Simple queries bypass the extended query protocol and are executed
-  directly, but certain operations like PREPARE are not allowed to
-  maintain consistency with the prepared statement pooling system.
   """
 
+  require Logger
+
   @type pkt() :: binary()
+
+  @prepared_statements_stmts MapSet.new([
+                               "DeallocateStmt",
+                               "PrepareStmt",
+                               "ExecuteStmt"
+                             ])
 
   @doc """
   Handles a Simple Query (Q) message.
@@ -21,11 +25,22 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
   @spec handle_simple_query_message(any(), non_neg_integer(), binary()) ::
           {:ok, any(), pkt()} | {:error, atom()}
   def handle_simple_query_message(state, len, payload) do
-    case payload do
-      "PREPARE" <> _ ->
-        {:error, :prepared_statement_on_simple_query}
+    # Some clients may send null terminators
+    clean_payload = String.trim_trailing(payload, <<0>>)
 
-      _ ->
+    case Supavisor.PgParser.statement_types(clean_payload) do
+      {:ok, types} ->
+        if MapSet.disjoint?(MapSet.new(types), @prepared_statements_stmts) do
+          {:ok, state, <<?Q, len::32, payload::binary>>}
+        else
+          {:error, :prepared_statement_on_simple_query}
+        end
+
+      {:error, error} ->
+        Logger.debug(
+          "Failed to parse simple query: #{inspect(error)}, payload: #{inspect(clean_payload)}"
+        )
+
         {:ok, state, <<?Q, len::32, payload::binary>>}
     end
   end

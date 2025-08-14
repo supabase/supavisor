@@ -180,6 +180,33 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
     {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
       SingleConnection.query(conn, "PREPARE q0 AS SELECT $1")
+
+    {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
+      SingleConnection.query(conn, "EXECUTE q0('test')")
+
+    {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
+      SingleConnection.query(conn, "DEALLOCATE q0")
+  end
+
+  test "allowed statements work on simple query protocol", %{conn_opts: conn_opts} do
+    {:ok, conn} = start_supervised({SingleConnection, conn_opts})
+
+    {:ok, _result} = SingleConnection.query(conn, "SELECT 1")
+
+    {:ok, _result} =
+      SingleConnection.query(
+        conn,
+        "INSERT INTO public.test (details) VALUES ('simple_query_test')"
+      )
+
+    {:ok, _result} =
+      SingleConnection.query(
+        conn,
+        "UPDATE public.test SET details = 'updated' WHERE details = 'simple_query_test'"
+      )
+
+    {:ok, _result} =
+      SingleConnection.query(conn, "DELETE FROM public.test WHERE details = 'updated'")
   end
 
   defp generate_large_query do

@@ -191,7 +191,7 @@ if config_env() != :test do
 
   config :supavisor, Supavisor.FeatureFlag, %{
     "named_prepared_statements" =>
-      Helpers.get_env_bool("NAMED_PREPARED_STATEMENTS_ENABLED", false)
+      Supavisor.Helpers.get_env_bool("NAMED_PREPARED_STATEMENTS_ENABLED", false)
   }
 
   config :supavisor, Supavisor.Repo,
