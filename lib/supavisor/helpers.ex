@@ -388,4 +388,27 @@ defmodule Supavisor.Helpers do
   """
   @spec mb_to_words(number()) :: pos_integer()
   def mb_to_words(mb), do: round(mb * 1_048_576 / :erlang.system_info(:wordsize))
+
+  @spec get_env_bool(String.t(), boolean()) :: boolean()
+  def get_env_bool(env_var, default) do
+    case System.get_env(env_var) do
+      nil ->
+        default
+
+      "true" ->
+        true
+
+      "false" ->
+        false
+
+      "1" ->
+        true
+
+      "0" ->
+        false
+
+      value ->
+        raise "Invalid boolean value for #{env_var}: #{inspect(value)}. Expected: true, false, 1, or 0"
+    end
+  end
 end
