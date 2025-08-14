@@ -85,6 +85,36 @@ end
   end
 end)
 
+# Create tenants with specific prepared statements feature flag settings for transaction mode
+[
+  {"proxy_tenant_ps_enabled", %{"named_prepared_statements" => true}},
+  {"proxy_tenant_ps_disabled", %{"named_prepared_statements" => false}}
+]
+|> Enum.each(fn {tenant, feature_flags} ->
+  if !Tenants.get_tenant_by_external_id(tenant) do
+    {:ok, _} =
+      %{
+        db_host: db_conf[:hostname],
+        db_port: db_conf[:port],
+        db_database: db_conf[:database],
+        default_parameter_status: %{},
+        external_id: tenant,
+        require_user: true,
+        feature_flags: feature_flags,
+        users: [
+          %{
+            "db_user" => db_conf[:username],
+            "db_password" => db_conf[:password],
+            "pool_size" => 9,
+            "max_clients" => 100,
+            "mode_type" => "transaction"
+          }
+        ]
+      }
+      |> Tenants.create_tenant()
+  end
+end)
+
 {:ok, _} =
   Repo.transaction(fn ->
     [

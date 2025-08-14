@@ -6,9 +6,9 @@ defmodule Supavisor.Integration.ProxyTest do
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
 
-  @tenant "proxy_tenant1"
+  @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
 
-  setup do
+  defp setup_tenant_connections(tenant) do
     db_conf = Application.get_env(:supavisor, Repo)
 
     assert {:ok, proxy} =
@@ -17,7 +17,7 @@ defmodule Supavisor.Integration.ProxyTest do
                port: Application.get_env(:supavisor, :proxy_port_transaction),
                database: db_conf[:database],
                password: db_conf[:password],
-               username: db_conf[:username] <> "." <> @tenant
+               username: db_conf[:username] <> "." <> tenant
              )
 
     assert {:ok, origin} =
@@ -29,109 +29,132 @@ defmodule Supavisor.Integration.ProxyTest do
                username: db_conf[:username]
              )
 
-    %{proxy: proxy, origin: origin, user: db_conf[:username]}
+    %{proxy: proxy, origin: origin, user: db_conf[:username], tenant: tenant}
   end
 
-  test "the wrong password" do
-    db_conf = Application.get_env(:supavisor, Repo)
+  for tenant <- @tenants do
+    test "the wrong password with #{tenant}" do
+      db_conf = Application.get_env(:supavisor, Repo)
 
-    url =
-      "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+      url =
+        "postgresql://#{db_conf[:username] <> "." <> unquote(tenant)}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
-    assert {:error,
-            %Postgrex.Error{
-              message: "error received in SCRAM server final message: \"Wrong password\""
-            }} = parse_uri(url) |> single_connection()
+      assert {:error,
+              %Postgrex.Error{
+                message: "error received in SCRAM server final message: \"Wrong password\""
+              }} = parse_uri(url) |> single_connection()
+    end
   end
 
-  test "insert", %{proxy: proxy, origin: origin} do
-    P.query!(proxy, "insert into public.test (details) values ('test_insert')", [])
+  for tenant <- @tenants do
+    test "insert with #{tenant}" do
+      %{proxy: proxy, origin: origin} = setup_tenant_connections(unquote(tenant))
+      test_value = "test_insert_#{unquote(tenant)}"
+      P.query!(proxy, "insert into public.test (details) values ($1)", [test_value])
 
-    assert %P.Result{num_rows: 1} =
-             P.query!(origin, "select * from public.test where details = 'test_insert'", [])
+      assert %P.Result{num_rows: 1} =
+               P.query!(origin, "select * from public.test where details = $1", [test_value])
+    end
   end
 
-  @tag cluster: true
-  test "query via another node", %{proxy: proxy, user: user} do
-    assert {:ok, _pid, node2} = Cluster.start_node()
+  for tenant <- @tenants do
+    @tag cluster: true
+    test "query via another node with #{tenant}" do
+      %{proxy: proxy, user: user} = setup_tenant_connections(unquote(tenant))
+      assert {:ok, _pid, node2} = Cluster.start_node()
 
-    sup =
-      Enum.reduce_while(1..30, nil, fn _, acc ->
-        case Supavisor.get_global_sup({@tenant, user, :transaction}) do
-          nil ->
-            Process.sleep(100)
-            {:cont, acc}
+      sup =
+        Enum.reduce_while(1..30, nil, fn _, acc ->
+          case Supavisor.get_global_sup({unquote(tenant), user, :transaction}) do
+            nil ->
+              Process.sleep(100)
+              {:cont, acc}
 
-          pid ->
-            {:halt, pid}
-        end
-      end)
+            pid ->
+              {:halt, pid}
+          end
+        end)
 
-    assert sup ==
-             :erpc.call(
-               node2,
-               Supavisor,
-               :get_global_sup,
-               [{@tenant, user, :transaction}],
-               15_000
-             )
+      assert sup ==
+               :erpc.call(
+                 node2,
+                 Supavisor,
+                 :get_global_sup,
+                 [{unquote(tenant), user, :transaction}],
+                 15_000
+               )
 
-    db_conf = Application.fetch_env!(:supavisor, Repo)
+      db_conf = Application.fetch_env!(:supavisor, Repo)
 
-    assert {:ok, proxy2} =
-             Postgrex.start_link(
-               hostname: db_conf[:hostname],
-               port: Application.get_env(:supavisor, :secondary_proxy_port),
-               database: db_conf[:database],
-               password: db_conf[:password],
-               username: db_conf[:username] <> "." <> @tenant
-             )
+      assert {:ok, proxy2} =
+               Postgrex.start_link(
+                 hostname: db_conf[:hostname],
+                 port: Application.get_env(:supavisor, :secondary_proxy_port),
+                 database: db_conf[:database],
+                 password: db_conf[:password],
+                 username: db_conf[:username] <> "." <> unquote(tenant)
+               )
 
-    P.query!(proxy2, "insert into public.test (details) values ('dist_test_insert')", [])
+      test_value = "dist_test_insert_#{unquote(tenant)}"
+      P.query!(proxy2, "insert into public.test (details) values ($1)", [test_value])
 
-    assert %P.Result{num_rows: 1} =
-             P.query!(proxy, "select * from public.test where details = 'dist_test_insert'", [])
+      assert %P.Result{num_rows: 1} =
+               P.query!(proxy, "select * from public.test where details = $1", [test_value])
 
-    assert sup ==
-             :erpc.call(
-               node2,
-               Supavisor,
-               :get_global_sup,
-               [{@tenant, user, :transaction}],
-               15_000
-             )
+      assert sup ==
+               :erpc.call(
+                 node2,
+                 Supavisor,
+                 :get_global_sup,
+                 [{unquote(tenant), user, :transaction}],
+                 15_000
+               )
+    end
   end
 
-  test "select", %{proxy: proxy, origin: origin} do
-    P.query!(origin, "insert into public.test (details) values ('test_select')", [])
+  for tenant <- @tenants do
+    test "select with #{tenant}" do
+      %{proxy: proxy, origin: origin} = setup_tenant_connections(unquote(tenant))
+      test_value = "test_select_#{unquote(tenant)}"
+      P.query!(origin, "insert into public.test (details) values ($1)", [test_value])
 
-    assert %P.Result{num_rows: 1} =
-             P.query!(proxy, "select * from public.test where details = 'test_select'", [])
+      assert %P.Result{num_rows: 1} =
+               P.query!(proxy, "select * from public.test where details = $1", [test_value])
+    end
   end
 
-  test "update", %{proxy: proxy, origin: origin} do
-    P.query!(origin, "insert into public.test (details) values ('test_update')", [])
+  for tenant <- @tenants do
+    test "update with #{tenant}" do
+      %{proxy: proxy, origin: origin} = setup_tenant_connections(unquote(tenant))
+      test_value = "test_update_#{unquote(tenant)}"
+      updated_value = "test_update_updated_#{unquote(tenant)}"
+      P.query!(origin, "insert into public.test (details) values ($1)", [test_value])
 
-    P.query!(
-      proxy,
-      "update public.test set details = 'test_update_updated' where details = 'test_update'",
-      []
-    )
+      P.query!(
+        proxy,
+        "update public.test set details = $1 where details = $2",
+        [updated_value, test_value]
+      )
 
-    assert %P.Result{num_rows: 1} =
-             P.query!(
-               origin,
-               "select * from public.test where details = 'test_update_updated'",
-               []
-             )
+      assert %P.Result{num_rows: 1} =
+               P.query!(
+                 origin,
+                 "select * from public.test where details = $1",
+                 [updated_value]
+               )
+    end
   end
 
-  test "delete", %{proxy: proxy, origin: origin} do
-    P.query!(origin, "insert into public.test (details) values ('test_delete')", [])
-    P.query!(proxy, "delete from public.test where details = 'test_delete'", [])
+  for tenant <- @tenants do
+    test "delete with #{tenant}" do
+      %{proxy: proxy, origin: origin} = setup_tenant_connections(unquote(tenant))
+      test_value = "test_delete_#{unquote(tenant)}"
+      P.query!(origin, "insert into public.test (details) values ($1)", [test_value])
+      P.query!(proxy, "delete from public.test where details = $1", [test_value])
 
-    assert %P.Result{num_rows: 0} =
-             P.query!(origin, "select * from public.test where details = 'test_delete'", [])
+      assert %P.Result{num_rows: 0} =
+               P.query!(origin, "select * from public.test where details = $1", [test_value])
+    end
   end
 
   test "too many clients in session mode" do
@@ -175,13 +198,13 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://transaction.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+      "postgresql://transaction.proxy_tenant1:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
     assert {:ok, pid} = parse_uri(url) |> single_connection()
 
     [{_, client_pid, _}] =
       Supavisor.get_local_manager(
-        {{:single, @tenant}, "transaction", :transaction, "postgres", nil}
+        {{:single, "proxy_tenant1"}, "transaction", :transaction, "postgres", nil}
       )
       |> :sys.get_state()
       |> Access.get(:tid)
@@ -217,8 +240,17 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = single_connection(connection_opts)
   end
 
-  test "change role password", %{origin: origin} do
+  test "change role password" do
     db_conf = Application.get_env(:supavisor, Repo)
+
+    assert {:ok, origin} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: db_conf[:port],
+               database: db_conf[:database],
+               password: db_conf[:password],
+               username: db_conf[:username]
+             )
 
     conn = fn pass ->
       "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
@@ -250,7 +282,7 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Repo)
 
     url =
-      "postgresql://user\x10user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
+      "postgresql://user\x10user.proxy_tenant1:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
 
     assert {:error,
             %Postgrex.Error{
@@ -270,13 +302,13 @@ defmodule Supavisor.Integration.ProxyTest do
 
     connection_opts =
       Keyword.merge(db_conf,
-        username: db_conf[:username] <> "." <> @tenant,
+        username: db_conf[:username] <> ".proxy_tenant1",
         port: port
       )
 
     assert {:ok, pid} = single_connection(connection_opts)
 
-    id = {{:single, @tenant}, db_conf[:username], :session, db_conf[:database], nil}
+    id = {{:single, "proxy_tenant1"}, db_conf[:username], :session, db_conf[:database], nil}
     [{client_pid, _}] = Registry.lookup(Supavisor.Registry.TenantClients, id)
 
     P.SimpleConnection.call(pid, {:query, "select 1;"})
