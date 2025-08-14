@@ -114,7 +114,6 @@ end)
       |> Tenants.create_tenant()
   end
 end)
-
 # Create cluster test tenants for integration tests
 for i <- 1..10 do
   tenant_id = "cluster_pool_tenant_#{i}"
