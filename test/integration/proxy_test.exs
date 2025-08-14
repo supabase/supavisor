@@ -33,6 +33,17 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   for tenant <- @tenants do
+    test "insert with #{tenant}" do
+      %{proxy: proxy, origin: origin} = setup_tenant_connections(unquote(tenant))
+      test_value = "test_insert_#{unquote(tenant)}"
+      P.query!(proxy, "insert into public.test (details) values ($1)", [test_value])
+
+      assert %P.Result{num_rows: 1} =
+               P.query!(origin, "select * from public.test where details = $1", [test_value])
+    end
+  end
+
+  for tenant <- @tenants do
     test "the wrong password with #{tenant}" do
       db_conf = Application.get_env(:supavisor, Repo)
 
@@ -41,19 +52,13 @@ defmodule Supavisor.Integration.ProxyTest do
 
       assert {:error,
               %Postgrex.Error{
-                message: "error received in SCRAM server final message: \"Wrong password\""
+                postgres: %{
+                  code: :invalid_password,
+                  message: "password authentication failed for user \"" <> _,
+                  severity: "FATAL",
+                  pg_code: "28P01"
+                }
               }} = parse_uri(url) |> single_connection()
-    end
-  end
-
-  for tenant <- @tenants do
-    test "insert with #{tenant}" do
-      %{proxy: proxy, origin: origin} = setup_tenant_connections(unquote(tenant))
-      test_value = "test_insert_#{unquote(tenant)}"
-      P.query!(proxy, "insert into public.test (details) values ($1)", [test_value])
-
-      assert %P.Result{num_rows: 1} =
-               P.query!(origin, "select * from public.test where details = $1", [test_value])
     end
   end
 
@@ -270,7 +275,12 @@ defmodule Supavisor.Integration.ProxyTest do
 
     assert {:error,
             %Postgrex.Error{
-              message: "error received in SCRAM server final message: \"Wrong password\""
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"" <> _,
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
             }} = parse_uri(new_pass) |> single_connection()
 
     assert {:ok, pid} = parse_uri(new_pass) |> single_connection()

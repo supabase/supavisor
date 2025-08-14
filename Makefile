@@ -29,6 +29,8 @@ dev.node2:
 	PROXY_PORT_SESSION="5442" \
 	PROXY_PORT_TRANSACTION="6553" \
 	PROXY_PORT="5402" \
+	SESSION_PROXY_PORTS="12200,12201,12202,12203" \
+	TRANSACTION_PROXY_PORTS="12204,12205,12206,12207" \
 	NODE_IP=localhost \
 	AVAILABILITY_ZONE="ap-southeast-1c" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
@@ -45,6 +47,8 @@ dev.node3:
 	CLUSTER_POSTGRES="true" \
 	PROXY_PORT_SESSION="5443" \
 	PROXY_PORT_TRANSACTION="6554" \
+	SESSION_PROXY_PORTS="12300,12301,12302,12303" \
+	TRANSACTION_PROXY_PORTS="12304,12305,12306,12307" \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server
 
@@ -52,7 +56,7 @@ db_migrate:
 	mix ecto.migrate --prefix _supavisor --log-migrator-sql
 
 db_start:
-	docker-compose -f ./docker-compose.db.yml up
+	docker-compose -f ./docker-compose.db.yml up -d
 
 db_stop:
 	docker-compose -f ./docker-compose.db.yml down --remove-orphans
@@ -72,10 +76,10 @@ pgbench_init:
 	PGPASSWORD=postgres pgbench -i -h 127.0.0.1 -p 6432 -U postgres -d postgres
 
 pgbench_short:
-	PGPASSWORD=postgres pgbench -M extended --transactions 5 --jobs 4 --client 1 -h localhost -p 6543 -U postgres.sys postgres
+	PGPASSWORD=postgres pgbench -M extended --transactions 5 --jobs 4 --client 1 -h localhost -p $(PGBENCH_PORT) -U $(PGBENCH_USER) postgres
 
 pgbench_long:
-	PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 60 -h localhost -p 7654 -U transaction.localhost postgres
+	PGPASSWORD=postgres pgbench -M extended --transactions 100 --jobs 10 --client 60 -h localhost -p $(PGBENCH_PORT) -U $(PGBENCH_USER) postgres
 
 pgbench:
 	PGPASSWORD="postgres" pgbench \

@@ -1,7 +1,12 @@
 import Config
 
 require Logger
-alias Supavisor.Helpers
+
+parse_integer_list = fn numbers when is_binary(numbers) ->
+  numbers
+  |> String.split(",", trim: true)
+  |> Enum.map(&String.to_integer/1)
+end
 
 secret_key_base =
   if config_env() in [:dev, :test] do
@@ -103,7 +108,7 @@ config :libcluster,
 upstream_ca =
   if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
     File.read!(path)
-    |> Helpers.cert_to_bin()
+    |> Supavisor.Helpers.cert_to_bin()
     |> case do
       {:ok, bin} ->
         Logger.info("Loaded upstream CA from $GLOBAL_UPSTREAM_CA_PATH",
@@ -158,7 +163,12 @@ reconnect_retries =
 
 if config_env() != :test do
   config :supavisor,
-    local_proxy_shards: System.get_env("LOCAL_PROXY_SHARDS", "4") |> String.to_integer(),
+    session_proxy_ports:
+      System.get_env("SESSION_PROXY_PORTS", "12100,12101,12102,12103")
+      |> parse_integer_list.(),
+    transaction_proxy_ports:
+      System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107")
+      |> parse_integer_list.(),
     availability_zone: System.get_env("AVAILABILITY_ZONE"),
     region: System.get_env("REGION") || System.get_env("FLY_REGION"),
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
