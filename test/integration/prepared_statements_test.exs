@@ -173,19 +173,28 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   end
 
   test "prepared statements error on simple query protocol", %{conn_opts: conn_opts} do
-    {:ok, conn} = start_supervised({SingleConnection, conn_opts})
-
     expected_message =
       "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
+
+    {:ok, conn} = start_supervised({SingleConnection, conn_opts})
 
     {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
       SingleConnection.query(conn, "PREPARE q0 AS SELECT $1")
 
+    {:ok, conn} = start_supervised({SingleConnection, conn_opts})
+
     {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
       SingleConnection.query(conn, "EXECUTE q0('test')")
 
+    {:ok, conn} = start_supervised({SingleConnection, conn_opts})
+
     {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
       SingleConnection.query(conn, "DEALLOCATE q0")
+
+    {:ok, conn} = start_supervised({SingleConnection, conn_opts})
+
+    {:error, %Postgrex.Error{postgres: %{message: ^expected_message}}} =
+      SingleConnection.query(conn, "SELECT 1; PREPARE stmt AS SELECT 2")
   end
 
   test "allowed statements work on simple query protocol", %{conn_opts: conn_opts} do

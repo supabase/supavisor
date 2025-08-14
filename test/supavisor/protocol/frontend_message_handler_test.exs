@@ -64,17 +64,36 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "regular simple query passes through unchanged", %{stream_state: stream_state} do
-      # Regular simple query
       original_bin = <<?Q, 12::32, "SELECT 1">>
 
       {:ok, new_stream_state, result} =
         MessageStreamer.handle_packets(stream_state, original_bin)
 
-      # Should return unchanged
       assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
                MessageStreamer.stream_state(stream_state, :handler_state)
 
       assert result == [original_bin]
+    end
+
+    test "multiple statements with prepared statement commands returns error" do
+      stream_state = MessageStreamer.new_stream_state(FrontendMessageHandler)
+
+      multi_query_bin = <<?Q, 36::32, "SELECT 1; PREPARE stmt AS SELECT 2">>
+
+      assert {:error, :prepared_statement_on_simple_query} =
+               MessageStreamer.handle_packets(stream_state, multi_query_bin)
+    end
+
+    test "multiple allowed statements pass through unchanged", %{stream_state: stream_state} do
+      multi_query_bin = <<?Q, 32::32, "SELECT 1; SELECT 2; SELECT 3">>
+
+      {:ok, new_stream_state, result} =
+        MessageStreamer.handle_packets(stream_state, multi_query_bin)
+
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
+               MessageStreamer.stream_state(stream_state, :handler_state)
+
+      assert result == [multi_query_bin]
     end
   end
 end
