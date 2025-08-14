@@ -47,17 +47,17 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "simple query with prepared statement commands returns error" do
       stream_state = MessageStreamer.new_stream_state(FrontendMessageHandler)
 
-      prepare_bin = <<?Q, 20::32, "PREPARE stmt AS SELECT 1">>
+      prepare_bin = <<?Q, 27::32, "PREPARE stmt AS SELECT 1">>
 
       assert {:error, :prepared_statement_on_simple_query} =
                MessageStreamer.handle_packets(stream_state, prepare_bin)
 
-      execute_bin = <<?Q, 15::32, "EXECUTE stmt(1)">>
+      execute_bin = <<?Q, 19::32, "EXECUTE stmt(1)">>
 
       assert {:error, :prepared_statement_on_simple_query} =
                MessageStreamer.handle_packets(stream_state, execute_bin)
 
-      deallocate_bin = <<?Q, 16::32, "DEALLOCATE stmt">>
+      deallocate_bin = <<?Q, 19::32, "DEALLOCATE stmt">>
 
       assert {:error, :prepared_statement_on_simple_query} =
                MessageStreamer.handle_packets(stream_state, deallocate_bin)
