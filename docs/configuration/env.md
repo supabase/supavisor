@@ -38,7 +38,7 @@ This document provides a categorized list of all environment variables used in S
 
 | Variable                            | Description                                                  | Default Value | Required |
 | ----------------------------------- | ------------------------------------------------------------ | ------------- | -------- |
-| `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `true`        | No       |
+| `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `false`       | No       |
 
 ---
 
