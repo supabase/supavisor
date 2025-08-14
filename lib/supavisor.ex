@@ -391,7 +391,7 @@ defmodule Supavisor do
       max_clients: max_clients,
       client_idle_timeout: client_idle_timeout,
       log_level: log_level,
-      feature_flags: feature_flags
+      tenant_feature_flags: feature_flags
     }
   end
 

@@ -64,12 +64,6 @@ defmodule Supavisor.DbHandler do
     Helpers.set_log_level(args.log_level)
     Helpers.set_max_heap_size(90)
 
-    if args[:feature_flags] do
-      :nothing
-    else
-      raise "blah"
-    end
-
     {_, tenant} = args.tenant
     Logger.metadata(project: tenant, user: args.user, mode: args.mode)
 
@@ -81,6 +75,7 @@ defmodule Supavisor.DbHandler do
         auth: args.auth,
         user: args.user,
         tenant: args.tenant,
+        tenant_feature_flags: args.tenant_feature_flags,
         buffer: [],
         anon_buffer: [],
         db_state: nil,
@@ -737,13 +732,19 @@ defmodule Supavisor.DbHandler do
 
   @spec handle_server_messages(binary(), map()) :: map()
   defp handle_server_messages(bin, data) do
-    {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
+    if Supavisor.FeatureFlag.enabled?(data.tenant_feature_flags, "named_prepared_statements") do
+      {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
 
-    if packets_to_send != [] do
-      HandlerHelpers.sock_send(data.client_sock, packets_to_send)
+      if packets_to_send != [] do
+        HandlerHelpers.sock_send(data.client_sock, packets_to_send)
+      end
+
+      updated_data
+    else
+      HandlerHelpers.sock_send(data.client_sock, bin)
+
+      data
     end
-
-    updated_data
   end
 
   # If the prepared statement exists for us, it exists for the server, so we just send the

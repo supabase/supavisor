@@ -109,8 +109,7 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       app_name: nil,
       subscribe_retries: 0,
-      stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
-      pending: ""
+      stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :exchange, data)
@@ -499,6 +498,7 @@ defmodule Supavisor.ClientHandler do
       auth: data.auth,
       user: data.user,
       tenant: {:single, data.tenant},
+      tenant_feature_flags: data.tenant_feature_flags,
       replica_type: :write,
       mode: :proxy,
       proxy: true,
@@ -1063,9 +1063,13 @@ defmodule Supavisor.ClientHandler do
     # db_pid can be nil in transaction mode, so we will send ready_for_query
     # without checking out a direct connection. If there is a linked db_pid,
     # we will forward the message to it
-    if data.db_pid != nil,
-      do: :ok = sock_send_binary_maybe_active_once(msg, data),
-      else: :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
+    case data.db_pid do
+      nil ->
+        :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
+
+      _ ->
+        :ok = sock_send_binary_maybe_active_once(msg, data)
+    end
 
     {:keep_state, %{data | active_count: reset_active_count(data)}, handle_actions(data)}
   end
