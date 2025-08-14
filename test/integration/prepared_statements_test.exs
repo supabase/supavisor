@@ -5,7 +5,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   alias Supavisor.Protocol.PreparedStatements
 
-  @tenant "proxy_tenant1"
+  @tenant "proxy_tenant_ps_enabled"
 
   @moduletag integration: true
 
