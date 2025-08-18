@@ -302,7 +302,7 @@ defmodule Supavisor.ClientHandler do
 
             key = {:secrets, tenant_or_alias, user}
 
-            case auth_secrets(info, user, key, :timer.hours(24)) do
+            case cached_get_secrets(data.id, info, user, key, :timer.hours(24)) do
               {:ok, auth_secrets} ->
                 Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
 
@@ -351,57 +351,14 @@ defmodule Supavisor.ClientHandler do
           "ClientHandler: Exchange error: #{inspect(reason)} when method #{inspect(method)}"
         )
 
-        key = {:secrets_check, data.tenant, data.user}
-
-        if method != :password and reason == :wrong_password and
-             Cachex.get(Supavisor.Cache, key) == {:ok, nil} do
-          case auth_secrets(info, data.user, key, 15_000) do
-            {:ok, {method2, secrets2}} = value ->
-              if method != method2 or Map.delete(secrets.(), :client_key) != secrets2.() do
-                Logger.warning("ClientHandler: Update secrets and terminate pool")
-
-                Cachex.update(
-                  Supavisor.Cache,
-                  {:secrets, data.tenant, data.user},
-                  {:cached, value}
-                )
-
-                Supavisor.stop(data.id)
-              else
-                Logger.debug("ClientHandler: Cache the same #{inspect(key)}")
-              end
-
-            other ->
-              Logger.error("ClientHandler: Auth secrets check error: #{inspect(other)}")
-          end
-        else
-          Logger.debug("ClientHandler: Cache hit for #{inspect(key)}")
+        # Try cache invalidation and retry if conditions are met
+        case maybe_retry_with_fresh_secrets(sock, {method, secrets}, reason, info, data) do
+          {:retry_success, auth_result} -> auth_result
+          :no_retry -> handle_auth_failure(sock, reason, data)
         end
 
-        msg = postgres_auth_error(reason, data.user)
-        HandlerHelpers.sock_send(sock, msg)
-        Telem.client_join(:fail, data.id)
-        {:stop, {:shutdown, :exchange_error}}
-
       {:ok, client_key} ->
-        secrets =
-          if client_key,
-            do: fn -> Map.put(secrets.(), :client_key, client_key) end,
-            else: secrets
-
-        Logger.debug("ClientHandler: Exchange success")
-        :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
-        Telem.client_join(:ok, data.id)
-
-        auth = Map.merge(data.auth, %{secrets: secrets, method: method})
-
-        conn_type =
-          if data.mode == :proxy,
-            do: :connect_db,
-            else: :subscribe
-
-        {:keep_state, %{data | auth_secrets: {method, secrets}, auth: auth},
-         {:next_event, :internal, conn_type}}
+        handle_auth_success(sock, {method, secrets}, client_key, data)
     end
   end
 
@@ -712,6 +669,112 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
+  defp maybe_retry_if_secrets_changed(
+         sock,
+         {method, secrets},
+         {method2, secrets2},
+         data
+       ) do
+    if method != method2 or Map.delete(secrets.(), :client_key) != secrets2.() do
+      Logger.warning("ClientHandler: Update secrets and retry authentication")
+
+      # Retry authentication with fresh secrets
+      case handle_exchange(sock, {method2, secrets2}) do
+        {:ok, client_key} ->
+          {:retry_success, handle_auth_success(sock, {method2, secrets2}, client_key, data)}
+
+        {:error, retry_reason} ->
+          Logger.error("ClientHandler: Authentication retry failed: #{inspect(retry_reason)}")
+          {:retry_success, handle_auth_failure(sock, retry_reason, data)}
+      end
+    else
+      Logger.debug("ClientHandler: Secrets are the same")
+      :no_retry
+    end
+  end
+
+  defp maybe_retry_with_fresh_secrets(sock, {method, secrets}, reason, info, data) do
+    if method != :password and reason == :wrong_password do
+      key = {:secrets_check, data.tenant, data.user}
+
+      if Supavisor.CacheRefreshLimiter.cache_refresh_limited?(data.id) do
+        retry_with_cached_secrets(sock, {method, secrets}, data, info, key)
+      else
+        retry_with_get_secrets(sock, {method, secrets}, data, info, key)
+      end
+    else
+      Logger.debug("ClientHandler: No retry condition met")
+      :no_retry
+    end
+  end
+
+  defp retry_with_cached_secrets(sock, {method, secrets}, data, info, key) do
+    case cached_get_secrets(data.id, info, data.user, key, 15000) do
+      {:ok, {method2, secrets2}} ->
+        maybe_retry_if_secrets_changed(sock, {method, secrets}, {method2, secrets2}, data)
+
+      {:error, reason} ->
+        Logger.error("ClientHandler: Auth secrets error: #{inspect(reason)}")
+        :no_retry
+    end
+  end
+
+  defp retry_with_get_secrets(sock, {method, secrets}, data, info, key) do
+    case get_secrets(data.id, info, data.user) do
+      {:ok, {method2, secrets2}} = value ->
+        result =
+          maybe_retry_if_secrets_changed(sock, {method, secrets}, {method2, secrets2}, data)
+
+        # Update cache only if we're retrying (secrets changed)
+        case result do
+          {:retry_success, _} ->
+            update_secrets_cache(key, value, data.tenant, data.user)
+
+          :no_retry ->
+            :ok
+        end
+
+        result
+
+      other ->
+        Logger.error("ClientHandler: Auth secrets check error: #{inspect(other)}")
+        :no_retry
+    end
+  end
+
+  defp update_secrets_cache(key, value, tenant, user) do
+    Cachex.put(Supavisor.Cache, key, {:cached, value}, ttl: 5_000)
+    Cachex.update(Supavisor.Cache, {:secrets, tenant, user}, {:cached, value})
+  end
+
+  defp handle_auth_success(sock, {method, secrets}, client_key, data) do
+    final_secrets =
+      if client_key,
+        do: fn -> Map.put(secrets.(), :client_key, client_key) end,
+        else: secrets
+
+    Logger.debug("ClientHandler: Exchange success")
+    :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
+    Telem.client_join(:ok, data.id)
+
+    auth = Map.merge(data.auth, %{secrets: final_secrets, method: method})
+
+    conn_type =
+      if data.mode == :proxy,
+        do: :connect_db,
+        else: :subscribe
+
+    {:keep_state, %{data | auth_secrets: {method, final_secrets}, auth: auth},
+     {:next_event, :internal, conn_type}}
+  end
+
+  defp handle_auth_failure(sock, reason, data) do
+    msg = postgres_auth_error(reason, data.user)
+    HandlerHelpers.sock_send(sock, msg)
+    Telem.client_join(:fail, data.id)
+    {:stop, {:shutdown, :exchange_error}}
+  end
+
   @spec postgres_auth_error(
           :wrong_password | {:timeout, String.t()} | {:unexpected_message, term()},
           String.t()
@@ -905,83 +968,96 @@ defmodule Supavisor.ClientHandler do
     }
   end
 
-  @spec auth_secrets(map, String.t(), term(), non_neg_integer()) ::
+  @spec cached_get_secrets(Supavisor.id(), map, String.t(), term(), non_neg_integer()) ::
           {:ok, Supavisor.secrets()} | {:error, term()}
   ## password secrets
-  def auth_secrets(%{user: user, tenant: %{require_user: true}}, _, _, _) do
+  defp cached_get_secrets(_id, %{user: user, tenant: %{require_user: true}}, _, _, _) do
     secrets = %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
 
     {:ok, {:password, fn -> secrets end}}
   end
 
   ## auth_query secrets
-  def auth_secrets(info, db_user, key, ttl) do
+  defp cached_get_secrets(id, info, db_user, key, ttl) do
     fetch = fn _key ->
-      case get_secrets(info, db_user) do
+      case get_secrets(id, info, db_user) do
         {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: ttl}
         {:error, _} = resp -> {:ignore, resp}
       end
     end
 
     case Cachex.fetch(Supavisor.Cache, key, fetch) do
-      {:ok, {:cached, value}} -> value
-      {:commit, {:cached, value}, _opts} -> value
-      {:ignore, resp} -> resp
+      {:ok, {:cached, value}} ->
+        value
+
+      {:commit, {:cached, value}, _opts} ->
+        value
+
+      {:ignore, resp} ->
+        resp
     end
   end
 
-  @spec get_secrets(map, String.t()) :: {:ok, {:auth_query, fun()}} | {:error, term()}
-  def get_secrets(%{user: user, tenant: tenant}, db_user) do
-    ssl_opts =
-      if tenant.upstream_ssl and tenant.upstream_verify == :peer do
-        [
-          verify: :verify_peer,
-          cacerts: [Helpers.upstream_cert(tenant.upstream_tls_ca)],
-          server_name_indication: String.to_charlist(tenant.db_host),
-          customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
-        ]
-      else
-        [
-          verify: :verify_none
-        ]
-      end
+  @spec get_secrets(Supavisor.id(), map, String.t()) ::
+          {:ok, {:auth_query, fun()}} | {:error, term()}
+  defp get_secrets(id, %{user: user, tenant: tenant}, db_user) do
+    case Supavisor.SecretChecker.get_secrets(id) do
+      {:error, :not_started} ->
+        ssl_opts =
+          if tenant.upstream_ssl and tenant.upstream_verify == :peer do
+            [
+              verify: :verify_peer,
+              cacerts: [Helpers.upstream_cert(tenant.upstream_tls_ca)],
+              server_name_indication: String.to_charlist(tenant.db_host),
+              customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+            ]
+          else
+            [
+              verify: :verify_none
+            ]
+          end
 
-    {:ok, conn} =
-      Postgrex.start_link(
-        hostname: tenant.db_host,
-        port: tenant.db_port,
-        database: tenant.db_database,
-        password: user.db_password,
-        username: user.db_user,
-        parameters: [application_name: "Supavisor auth_query"],
-        ssl: tenant.upstream_ssl,
-        socket_options: [
-          Helpers.ip_version(tenant.ip_version, tenant.db_host)
-        ],
-        queue_target: 1_000,
-        queue_interval: 5_000,
-        ssl_opts: ssl_opts
-      )
+        {:ok, conn} =
+          Postgrex.start_link(
+            hostname: tenant.db_host,
+            port: tenant.db_port,
+            database: tenant.db_database,
+            password: user.db_password,
+            username: user.db_user,
+            parameters: [application_name: "Supavisor auth_query"],
+            ssl: tenant.upstream_ssl,
+            socket_options: [
+              Helpers.ip_version(tenant.ip_version, tenant.db_host)
+            ],
+            queue_target: 1_000,
+            queue_interval: 5_000,
+            ssl_opts: ssl_opts
+          )
 
-    try do
-      Logger.debug(
-        "ClientHandler: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
-      )
+        try do
+          Logger.debug(
+            "ClientHandler: Connected to db #{tenant.db_host} #{tenant.db_port} #{tenant.db_database} #{user.db_user}"
+          )
 
-      resp =
-        with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
-          t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-          {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
+          resp =
+            with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
+              t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
+              {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
+            end
+
+          Logger.info("ClientHandler: Get secrets finished")
+          resp
+        rescue
+          exception ->
+            Logger.error("ClientHandler: Couldn't fetch user secrets from #{tenant.db_host}")
+            reraise exception, __STACKTRACE__
+        after
+          Process.unlink(conn)
+          GenServer.stop(conn, :normal, 5_000)
         end
 
-      Logger.info("ClientHandler: Get secrets finished")
-      resp
-    rescue
-      exception ->
-        Logger.error("ClientHandler: Couldn't fetch user secrets from #{tenant.db_host}")
-        reraise exception, __STACKTRACE__
-    after
-      GenServer.stop(conn, :normal, 5_000)
+      secrets ->
+        secrets
     end
   end
 
