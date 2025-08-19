@@ -1053,7 +1053,14 @@ defmodule Supavisor.ClientHandler do
             reraise exception, __STACKTRACE__
         after
           Process.unlink(conn)
-          GenServer.stop(conn, :normal, 5_000)
+
+          spawn(fn ->
+            try do
+              GenServer.stop(conn, :normal, 5_000)
+            catch
+              :exit, _ -> Process.exit(conn, :kill)
+            end
+          end)
         end
 
       secrets ->
