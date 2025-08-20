@@ -6,7 +6,7 @@ defmodule Supavisor.Protocol.Server do
   Error codes https://www.postgresql.org/docs/current/errcodes-appendix.html
   """
   require Logger
-  alias Supavisor.Protocol.PgType
+  alias Supavisor.Protocol.{Debug, PgType}
 
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
@@ -16,18 +16,39 @@ defmodule Supavisor.Protocol.Server do
   @msg_cancel_header <<16::32, 1234::16, 5678::16>>
   @application_name <<?S, 31::32, "application_name", 0, "Supavisor", 0>>
   @terminate_message <<?X, 4::32>>
+  @parse_complete_message <<?1, 4::32>>
+  @bind_complete_message <<?2, 4::32>>
+  @close_complete_message <<?3, 4::32>>
   @flush <<?H, 4::integer-32>>
   @sync <<?S, 4::integer-32>>
 
   defmodule Pkt do
-    @moduledoc "Representing a packet structure with tag, length, and payload fields."
-    defstruct([:tag, :len, :payload])
+    @moduledoc """
+    Represents a packet structure with tag, length, and payload fields.
+
+    The original binary can be found on the bin field.
+    """
+
+    defstruct([:tag, :len, :payload, :bin])
 
     @type t :: %Pkt{
             tag: atom,
             len: integer,
-            payload: any
+            payload: any,
+            bin: binary
           }
+
+    defimpl Inspect do
+      def inspect(pkt, _opts) do
+        case pkt.bin do
+          bin when is_binary(bin) ->
+            Debug.packet_to_string(bin, :backend)
+
+          _ ->
+            "#Supavisor.Protocol.Server.Pkt<malformed>"
+        end
+      end
+    end
   end
 
   defmacro cancel_message(pid, key) do
@@ -37,11 +58,21 @@ defmodule Supavisor.Protocol.Server do
   end
 
   defmacro ssl_request_message, do: @ssl_request
+  defmacro parse_complete_message, do: @parse_complete_message
+  defmacro bind_complete_message, do: @bind_complete_message
+  defmacro close_complete_message, do: @close_complete_message
 
-  @spec decode(iodata()) :: [Pkt.t()]
+  defmacro parameter_description_message_shape do
+    quote do
+      <<?t, _rest::binary>>
+    end
+  end
+
+  @spec decode(iodata()) :: {:ok, [Pkt.t()], rest :: binary()}
   def decode(data), do: decode(data, [])
 
-  @spec decode_pkt(binary()) :: {:ok, Pkt.t(), binary()} | {:error, :bad_packet}
+  @spec decode_pkt(binary()) ::
+          {:ok, Pkt.t(), binary()} | {:error, :bad_packet} | {:error, :incomplete}
   def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>) do
     payload_len = pkt_len - 4
 
@@ -49,10 +80,18 @@ defmodule Supavisor.Protocol.Server do
       <<bin_payload::binary-size(payload_len), rest2::binary>> ->
         tag = tag(char)
         payload = decode_payload(tag, bin_payload)
-        {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
+
+        pkt = %Pkt{
+          tag: tag,
+          len: pkt_len + 1,
+          payload: payload,
+          bin: <<char, pkt_len::32, bin_payload::binary>>
+        }
+
+        {:ok, pkt, rest2}
 
       _ ->
-        {:error, :bad_packet}
+        {:error, :incomplete}
     end
   end
 
@@ -179,13 +218,21 @@ defmodule Supavisor.Protocol.Server do
 
   # Internal functions
 
-  @spec decode(binary(), list()) :: [Pkt.t()]
+  @spec decode(binary(), list()) :: {:ok, [Pkt.t()], rest :: binary()}
   defp decode(data, acc) when byte_size(data) >= @pkt_header_size do
-    {:ok, pkt, rest} = decode_pkt(data)
-    decode(rest, [pkt | acc])
+    case decode_pkt(data) do
+      {:ok, pkt, rest} ->
+        decode(rest, [pkt | acc])
+
+      {:error, :incomplete} ->
+        {:ok, Enum.reverse(acc), data}
+
+      {:error, :bad_packet} ->
+        raise "bad packet: #{inspect(data)}"
+    end
   end
 
-  defp decode(_, acc), do: Enum.reverse(acc)
+  defp decode(data, acc), do: {:ok, Enum.reverse(acc), data}
 
   @spec tag(char()) :: atom()
   defp tag(char) do

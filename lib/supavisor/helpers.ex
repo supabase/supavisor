@@ -346,10 +346,6 @@ defmodule Supavisor.Helpers do
 
   @doc """
   Sets the maximum heap size for the current process. The `max_heap_size` parameter is in megabytes.
-
-  ## Parameters
-
-  - `max_heap_size`: The maximum heap size in megabytes.
   """
   @spec set_max_heap_size(pos_integer()) :: map()
   def set_max_heap_size(max_heap_size) do
@@ -399,4 +395,27 @@ defmodule Supavisor.Helpers do
   """
   @spec mb_to_words(number()) :: pos_integer()
   def mb_to_words(mb), do: round(mb * 1_048_576 / :erlang.system_info(:wordsize))
+
+  @spec get_env_bool(String.t(), boolean()) :: boolean()
+  def get_env_bool(env_var, default) do
+    case System.get_env(env_var) do
+      nil ->
+        default
+
+      "true" ->
+        true
+
+      "false" ->
+        false
+
+      "1" ->
+        true
+
+      "0" ->
+        false
+
+      value ->
+        raise "Invalid boolean value for #{env_var}: #{inspect(value)}. Expected: true, false, 1, or 0"
+    end
+  end
 end
