@@ -709,7 +709,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp retry_with_cached_secrets(sock, {method, secrets}, data, info, key) do
-    case cached_get_secrets(data.id, info, data.user, key, 15000) do
+    case cached_get_secrets(data.id, info, data.user, key, 15_000) do
       {:ok, {method2, secrets2}} ->
         maybe_retry_if_secrets_changed(sock, {method, secrets}, {method2, secrets2}, data)
 
