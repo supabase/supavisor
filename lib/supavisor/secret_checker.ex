@@ -84,7 +84,7 @@ defmodule Supavisor.SecretChecker do
 
   def handle_info(:check, state) do
     check_secrets(state.user, state)
-    {:noreply, %{state | check_ref: check(), counter: 0}}
+    {:noreply, %{state | check_ref: check()}}
   end
 
   def handle_info(msg, state) do
