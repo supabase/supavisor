@@ -102,6 +102,7 @@ defmodule Supavisor.Application do
     children = [
       Supavisor.ErlSysMon,
       Supavisor.Health,
+      Supavisor.CacheRefreshLimiter,
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},

@@ -29,14 +29,12 @@ defmodule Supavisor.Integration.ProxyTest do
                username: db_conf[:username]
              )
 
-    %{proxy: proxy, origin: origin, user: db_conf[:username]}
+    %{proxy: proxy, origin: origin, db_conf: db_conf, user: db_conf[:username]}
   end
 
-  test "prepared statement", %{proxy: proxy} do
+  test "prepared statement", %{proxy: proxy, db_conf: db_conf} do
     prepare_sql =
       "PREPARE tenant (text) AS SELECT id, external_id FROM _supavisor.tenants WHERE external_id = $1;"
-
-    db_conf = Application.get_env(:supavisor, Repo)
 
     assert {:ok, pid} =
              Keyword.merge(db_conf, username: db_conf[:username] <> "." <> @tenant)
@@ -53,9 +51,7 @@ defmodule Supavisor.Integration.ProxyTest do
     :gen_statem.stop(pid)
   end
 
-  test "the wrong password" do
-    db_conf = Application.get_env(:supavisor, Repo)
-
+  test "the wrong password", %{db_conf: db_conf} do
     url =
       "postgresql://#{db_conf[:username] <> "." <> @tenant}:no_pass@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
@@ -78,7 +74,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   @tag cluster: true
-  test "query via another node", %{proxy: proxy, user: user} do
+  test "query via another node", %{proxy: proxy, user: user, db_conf: db_conf} do
     assert {:ok, _pid, node2} = Cluster.start_node()
 
     sup =
@@ -101,8 +97,6 @@ defmodule Supavisor.Integration.ProxyTest do
                [{@tenant, user, :transaction}],
                15_000
              )
-
-    db_conf = Application.fetch_env!(:supavisor, Repo)
 
     assert {:ok, proxy2} =
              Postgrex.start_link(
@@ -160,8 +154,7 @@ defmodule Supavisor.Integration.ProxyTest do
              P.query!(origin, "select * from public.test where details = 'test_delete'", [])
   end
 
-  test "too many clients in session mode" do
-    db_conf = Application.get_env(:supavisor, Repo)
+  test "too many clients in session mode", %{db_conf: db_conf} do
     port = Application.get_env(:supavisor, :proxy_port_session)
 
     connection_opts =
@@ -197,9 +190,9 @@ defmodule Supavisor.Integration.ProxyTest do
                [{~c"x-app-version", Application.spec(:supavisor, :vsn)}], []}}
   end
 
-  test "checks that client_handler is idle and db_pid is nil for transaction mode" do
-    db_conf = Application.get_env(:supavisor, Repo)
-
+  test "checks that client_handler is idle and db_pid is nil for transaction mode", %{
+    db_conf: db_conf
+  } do
     url =
       "postgresql://transaction.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
 
@@ -220,9 +213,7 @@ defmodule Supavisor.Integration.ProxyTest do
     :gen_statem.stop(pid)
   end
 
-  test "limit client connections" do
-    db_conf = Application.get_env(:supavisor, Repo)
-
+  test "limit client connections", %{db_conf: db_conf} do
     connection_opts = [
       hostname: db_conf[:hostname],
       port: Application.get_env(:supavisor, :proxy_port_transaction),
@@ -243,43 +234,40 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = single_connection(connection_opts)
   end
 
-  test "change role password", %{origin: origin} do
-    db_conf = Application.get_env(:supavisor, Repo)
-
+  test "change role password", %{origin: origin, db_conf: db_conf} do
     conn = fn pass ->
       "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
     end
 
-    first_pass = conn.("postgres")
+    first_pass = conn.(db_conf[:password])
     new_pass = conn.("postgres_new")
 
     assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
-
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
     :gen_statem.stop(pid)
+
     P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
-    Supavisor.stop({{:single, "is_manager"}, "dev_postgres", :transaction, "postgres"})
-
-    :timer.sleep(1000)
-
-    assert {:error,
-            %Postgrex.Error{
-              postgres: %{
-                code: :invalid_password,
-                message: "password authentication failed for user \"" <> _,
-                severity: "FATAL",
-                pg_code: "28P01"
-              }
-            }} = parse_uri(new_pass) |> single_connection()
 
     assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
     assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
     :gen_statem.stop(pid)
+  after
+    P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
   end
 
-  test "invalid characters in user or db_name" do
-    db_conf = Application.get_env(:supavisor, Repo)
+  test "try old password after password change", %{origin: origin, db_conf: db_conf} do
+    old_pass =
+      "postgresql://dev_postgres.is_manager:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
 
+    P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+
+    assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} =
+             parse_uri(old_pass) |> single_connection()
+  after
+    P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
+  end
+
+  test "invalid characters in user or db_name", %{db_conf: db_conf} do
     url =
       "postgresql://user\x10user.#{@tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
 
@@ -295,8 +283,7 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = parse_uri(url) |> single_connection()
   end
 
-  test "active_count doesn't block" do
-    db_conf = Application.get_env(:supavisor, Repo)
+  test "active_count doesn't block", %{db_conf: db_conf} do
     port = Application.get_env(:supavisor, :proxy_port_session)
 
     connection_opts =
