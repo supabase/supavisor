@@ -357,8 +357,8 @@ defmodule Supavisor.ClientHandler do
           :no_retry -> handle_auth_failure(sock, reason, data)
         end
 
-      {:ok, client_key} ->
-        handle_auth_success(sock, {method, secrets}, client_key, data)
+      {:ok, client_key, password} ->
+        handle_auth_success(sock, {method, secrets}, client_key, password, data)
     end
   end
 
@@ -664,6 +664,7 @@ defmodule Supavisor.ClientHandler do
   def terminate(reason, state, _data) do
     Logger.metadata(state: state)
     Logger.debug("ClientHandler: socket closed with reason #{inspect(reason)}")
+
     :ok
   end
 
@@ -680,8 +681,9 @@ defmodule Supavisor.ClientHandler do
 
       # Retry authentication with fresh secrets
       case handle_exchange(sock, {method2, secrets2}) do
-        {:ok, client_key} ->
-          {:retry_success, handle_auth_success(sock, {method2, secrets2}, client_key, data)}
+        {:ok, client_key, password} ->
+          {:retry_success,
+           handle_auth_success(sock, {method2, secrets2}, client_key, password, data)}
 
         {:error, retry_reason} ->
           Logger.error("ClientHandler: Authentication retry failed: #{inspect(retry_reason)}")
@@ -747,11 +749,17 @@ defmodule Supavisor.ClientHandler do
     Cachex.update(Supavisor.Cache, {:secrets, tenant, user}, {:cached, value})
   end
 
-  defp handle_auth_success(sock, {method, secrets}, client_key, data) do
+  defp handle_auth_success(sock, {method, secrets}, client_key, password, data) do
     final_secrets =
-      if client_key,
-        do: fn -> Map.put(secrets.(), :client_key, client_key) end,
-        else: secrets
+      fn ->
+        Enum.reduce(
+          [client_key: client_key, cls_password: password],
+          secrets.(),
+          fn {k, v}, acc ->
+            if v != nil, do: Map.put(acc, k, v), else: acc
+          end
+        )
+      end
 
     Logger.debug("ClientHandler: Exchange success")
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
@@ -793,7 +801,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec handle_exchange(Supavisor.sock(), {atom(), fun()}) ::
-          {:ok, binary() | nil}
+          {:ok, binary() | nil, binary() | nil}
           | {:error, :wrong_password | {:timeout, String.t()} | {:unexpected_message, term()}}
   def handle_exchange({_, socket} = sock, {:auth_query_md5 = method, secrets}) do
     salt = :crypto.strong_rand_bytes(4)
@@ -805,7 +813,24 @@ defmodule Supavisor.ClientHandler do
             payload: {:md5, client_md5}
           }, _} <- receive_next(socket, "Timeout while waiting for the md5 exchange"),
          {:ok, key} <- authenticate_exchange(method, client_md5, secrets.().secret, salt) do
-      {:ok, key}
+      {:ok, key, nil}
+    else
+      {:error, message} -> {:error, message}
+      other -> {:error, "Unexpected message #{inspect(other)}"}
+    end
+  end
+
+  def handle_exchange({_, socket} = sock, {:auth_query_jit = method, secrets}) do
+    :ok = HandlerHelpers.sock_send(sock, Server.password_request())
+    {:ok, {ip, _port}} = :inet.peername(socket)
+
+    with {:ok,
+          %{
+            tag: :password_message,
+            payload: {:cleartext_password, password}
+          }, _} <- receive_next(socket, "Timeout while waiting for the password exchange"),
+         {:ok, key} <- authenticate_exchange(method, secrets, password, ip) do
+      {:ok, key, password}
     else
       {:error, message} -> {:error, message}
       other -> {:error, "Unexpected message #{inspect(other)}"}
@@ -839,7 +864,7 @@ defmodule Supavisor.ClientHandler do
          {:ok, key} <- authenticate_exchange(method, secrets, signatures, p) do
       message = "v=#{Base.encode64(signatures.server)}"
       :ok = HandlerHelpers.sock_send(sock, Server.exchange_message(:final, message))
-      {:ok, key}
+      {:ok, key, nil}
     else
       {:error, message} -> {:error, message}
       other -> {:error, "Unexpected message #{inspect(other)}"}
@@ -884,6 +909,57 @@ defmodule Supavisor.ClientHandler do
     if "md5" <> Helpers.md5([server_hash, salt]) == client_hash,
       do: {:ok, nil},
       else: {:error, :wrong_password}
+  end
+
+  defp authenticate_exchange(:auth_query_jit, secrets, password, ip) do
+    # check if incomming password looks like PAT or a JWT
+    # otherwise handle as password,
+    secret = secrets.()
+
+    if Helpers.token_matches?(password) do
+      Logger.debug("Looks like a PAT/JWT - #{inspect(secret.jit_api_url)}")
+      rhost = ip |> :inet.ntoa() |> to_string()
+
+      case Helpers.check_user_has_jit_role(secret.jit_api_url, password, secret.user, rhost) do
+        {:ok, true} ->
+          # set a fake client_key incase upstream switches away from pam mid auth
+          {:ok, :crypto.hash(:sha256, password)}
+
+        {:ok, false} ->
+          Logger.debug("User token is valid but can't assume this role")
+          {:error, :wrong_password}
+
+        {:error, :unauthorized_or_forbidden} ->
+          {:error, :wrong_password}
+
+        {:error, _} ->
+          Logger.debug("Unexpected error while calling API")
+          {:error, :wrong_password}
+      end
+    else
+      # match against the scram-sha-256 / md5 we have from auth_query
+      case secret.digest do
+        :md5 ->
+          if Helpers.md5([password, secret.user]) == secret.secret do
+            {:ok, nil}
+          else
+            {:error, :wrong_password}
+          end
+
+        _ ->
+          salt = Base.decode64!(secret.salt)
+
+          salted_password =
+            :crypto.pbkdf2_hmac(:sha256, password, salt, secret.iterations, 32)
+
+          client_key = :crypto.mac(:hmac, :sha256, salted_password, "Client Key")
+          stored_key = :crypto.hash(:sha256, client_key)
+
+          if :crypto.hash_equals(stored_key, secret.stored_key),
+            do: {:ok, client_key},
+            else: {:error, :wrong_password}
+      end
+    end
   end
 
   @spec db_checkout(:write | :read | :both, :on_connect | :on_query, map) ::
@@ -949,7 +1025,9 @@ defmodule Supavisor.ClientHandler do
       require_user: info.tenant.require_user,
       upstream_ssl: info.tenant.upstream_ssl,
       upstream_tls_ca: info.tenant.upstream_tls_ca,
-      upstream_verify: info.tenant.upstream_verify
+      upstream_verify: info.tenant.upstream_verify,
+      use_jit: info.tenant.use_jit,
+      jit_api_url: info.tenant.jit_api_url
     }
 
     %{
@@ -1041,8 +1119,18 @@ defmodule Supavisor.ClientHandler do
 
           resp =
             with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
-              t = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-              {:ok, {t, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
+              t =
+                case {tenant.use_jit, secret.digest} do
+                  {true, _} -> :auth_query_jit
+                  {_, :md5} -> :auth_query_md5
+                  _ -> :auth_query
+                end
+
+              {:ok,
+               {t,
+                fn ->
+                  Map.merge(secret, %{alias: user.db_user_alias, jit_api_url: tenant.jit_api_url})
+                end}}
             end
 
           Logger.info("ClientHandler: Get secrets finished")

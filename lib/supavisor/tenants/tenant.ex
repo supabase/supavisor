@@ -32,6 +32,8 @@ defmodule Supavisor.Tenants.Tenant do
     field(:client_heartbeat_interval, :integer, default: 60)
     field(:allow_list, {:array, :string}, default: ["0.0.0.0/0", "::/0"])
     field(:availability_zone, :string)
+    field(:use_jit, :boolean, default: false)
+    field(:jit_api_url, :string)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -65,7 +67,9 @@ defmodule Supavisor.Tenants.Tenant do
       :client_idle_timeout,
       :client_heartbeat_interval,
       :allow_list,
-      :availability_zone
+      :availability_zone,
+      :use_jit,
+      :jit_api_url
     ])
     |> check_constraint(:upstream_ssl, name: :upstream_constraints, prefix: "_supavisor")
     |> check_constraint(:upstream_verify, name: :upstream_constraints, prefix: "_supavisor")
