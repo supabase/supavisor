@@ -14,6 +14,7 @@ defmodule Supavisor.DbHandler do
 
   alias Supavisor.{
     ClientHandler,
+    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
@@ -732,7 +733,7 @@ defmodule Supavisor.DbHandler do
 
   @spec handle_server_messages(binary(), map()) :: map()
   defp handle_server_messages(bin, data) do
-    if Supavisor.FeatureFlag.enabled?(data.tenant_feature_flags, "named_prepared_statements") do
+    if FeatureFlag.enabled?(data.tenant_feature_flags, "named_prepared_statements") do
       {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
 
       if packets_to_send != [] do

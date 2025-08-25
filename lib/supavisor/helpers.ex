@@ -402,16 +402,10 @@ defmodule Supavisor.Helpers do
       nil ->
         default
 
-      "true" ->
+      value when value in ["true", "1"] ->
         true
 
-      "false" ->
-        false
-
-      "1" ->
-        true
-
-      "0" ->
+      value when value in ["false", "0"] ->
         false
 
       value ->
