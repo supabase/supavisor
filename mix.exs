@@ -132,7 +132,7 @@ defmodule Supavisor.MixProject do
       # use the existing appups.
       appups_path = Path.join(["relups", "#{from}-#{vsn}", "appups"])
 
-      if appups_path do
+      if File.dir?(appups_path) do
         IO.puts("Using existing appups from #{appups_path}")
 
         appups_path
