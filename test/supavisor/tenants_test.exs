@@ -16,9 +16,75 @@ defmodule Supavisor.TenantsTest do
       allow_list: ["foo", "bar"]
     }
 
+    test "list_tenants/0 returns all tenants" do
+      tenants = Tenants.list_tenants()
+
+      assert Enum.all?(1..10, fn i ->
+               "cluster_pool_tenant_#{i}" in Enum.map(tenants, & &1.external_id)
+             end)
+    end
+
     test "get_tenant!/1 returns the tenant with given id" do
       tenant = tenant_fixture()
       assert Tenants.get_tenant!(tenant.id) |> Repo.preload(:users) == tenant
+    end
+
+    test "get_tenant_by_external_id/1 returns the tenant with given external_id" do
+      tenant = tenant_fixture()
+      assert Tenants.get_tenant_by_external_id(tenant.external_id) == tenant
+    end
+
+    test "get_cluster_by_alias/1 returns the cluster with given alias" do
+      cluster = cluster_fixture()
+      assert Tenants.get_cluster_by_alias(cluster.alias) == cluster
+    end
+
+    test "get_tenant_cache/2 returns a tenant from cache" do
+      tenant = tenant_fixture(%{external_id: "cache_tenant", sni_hostname: "cache.example.com"})
+
+      Cachex.put(
+        Supavisor.Cache,
+        {:tenant_cache, "cache_tenant", "cache.example.com"},
+        {:cached, tenant}
+      )
+
+      assert Tenants.get_tenant_cache("cache_tenant", "cache.example.com") |> Repo.preload(:users) ==
+               tenant
+    end
+
+    test "get_tenant_cache/2 fetches and caches a tenant after it expires" do
+      tenant = tenant_fixture(%{external_id: "cache_tenant", sni_hostname: "cache.example.com"})
+
+      Cachex.put(Supavisor.Cache, {:tenant_cache, "cache_tenant", "cache.example.com"}, tenant,
+        ttl: 10
+      )
+
+      Process.sleep(50)
+
+      assert Tenants.get_tenant_cache("cache_tenant", "cache.example.com") |> Repo.preload(:users) ==
+               tenant
+    end
+
+    test "get_tenant/2 returns the tenant with given external_id and sni_hostname" do
+      tenant = tenant_fixture(%{external_id: "sni_tenant", sni_hostname: "sni.example.com"})
+
+      assert Tenants.get_tenant("sni_tenant", "sni.example.com") |> Repo.preload(:users) ==
+               tenant
+    end
+
+    test "get_tenant/2 returns the tenant with sni_hostname when external_id is nil" do
+      tenant = tenant_fixture(%{sni_hostname: "sni.example.com"})
+
+      assert Tenants.get_tenant(nil, "sni.example.com") |> Repo.preload(:users) ==
+               tenant
+    end
+
+    test "get_tenant/2 when both provided external_id and sni are nil" do
+      assert Tenants.get_tenant(nil, nil) == nil
+    end
+
+    test "get_tenant/2 returns nil if tenant is not found" do
+      assert Tenants.get_tenant("no_tenant", "no_host") == nil
     end
 
     test "create_tenant/1 with valid data creates a tenant" do
@@ -79,6 +145,32 @@ defmodule Supavisor.TenantsTest do
 
       assert {:ok, %{tenant: _, user: _}} =
                Tenants.get_user(:single, "postgres", "dev_tenant", "")
+    end
+
+    test "update_tenant_ps/2 updates the tenant's default_parameter_status" do
+      _tenant = tenant_fixture()
+      default_parameter_status = %{"server_version" => "17.0"}
+
+      assert {:ok, %Tenant{default_parameter_status: ^default_parameter_status}} =
+               Tenants.update_tenant_ps("dev_tenant", default_parameter_status)
+    end
+
+    test "delete_tenant_by_external_id/1 returns true tenant is found and deleted by a given external_id" do
+      tenant = tenant_fixture()
+      assert Tenants.delete_tenant_by_external_id(tenant.external_id) == true
+    end
+
+    test "delete_tenant_by_external_id/1 returns false if no tenant is found from a given external_id" do
+      assert Tenants.delete_tenant_by_external_id("dev_tenant") == false
+    end
+
+    test "delete_cluster_by_alias/1 returns true if cluster is found and deleted by a given alias" do
+      cluster = cluster_fixture()
+      assert Tenants.delete_cluster_by_alias(cluster.alias) == true
+    end
+
+    test "delete_cluster_by_alias/1 returns false if no cluster is found from a given alias" do
+      assert Tenants.delete_cluster_by_alias("some_alias") == false
     end
   end
 
