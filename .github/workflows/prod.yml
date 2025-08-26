@@ -55,13 +55,8 @@ jobs:
         run: mix release supavisor
       - name: Checkout RELEASE_TO
         run: git checkout v${{ env.RELEASE_TO }}
-      - name: Cache Mix
-        uses: actions/cache@v3
-        with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
+      - name: Clean mix deps
+        run: mix deps.clean --all
       - name: Install dependencies
         run: |
           mix local.hex --force
@@ -84,4 +79,3 @@ jobs:
       - name: Deploy to S3
         shell: bash
         run: aws s3 sync ./_build/${{ env.MIX_ENV }} ${{ secrets.TARBALLS_PATH_PROD }} --exclude '*' --include '*tar.gz'
-
