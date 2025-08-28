@@ -89,15 +89,17 @@ defmodule Supavisor.Tenants do
   def fetch_user_cache(type, user, external_id, sni_hostname) do
     cache_key = {:user_cache, type, user, external_id, sni_hostname}
 
-    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           case fetch_user(type, user, external_id, sni_hostname) do
-             {:ok, value} -> {:commit, {:cached, value}, ttl: :timer.hours(24)}
-             {:error, reason} -> {:ignore, reason}
-           end
-         end) do
+    case Cachex.fetch(Supavisor.Cache, cache_key, fn key -> build_user_cache(key) end) do
       {:ok, {:cached, value}} -> {:ok, value}
       {:commit, {:cached, value}, _} -> {:ok, value}
       {:ignore, error} -> {:error, error}
+    end
+  end
+
+  defp build_user_cache({_key, type, user, external_id, sni_hostname}) do
+    case fetch_user(type, user, external_id, sni_hostname) do
+      {:ok, value} -> {:commit, {:cached, value}, ttl: :timer.hours(24)}
+      {:error, reason} -> {:ignore, reason}
     end
   end
 
@@ -115,7 +117,7 @@ defmodule Supavisor.Tenants do
       %ClusterTenants{} = ct ->
         fetch_user(:single, user, ct.tenant_external_id, sni_hostname)
 
-      _ ->
+      nil ->
         {:error, :not_found}
     end
   end
