@@ -180,7 +180,7 @@ defmodule SupavisorWeb.TenantControllerTest do
   end
 
   defp set_cache(external_id) do
-    Supavisor.Tenants.get_user_cache(:single, "user", external_id, nil)
+    Supavisor.Tenants.fetch_user_cache(:single, "user", external_id, nil)
     Supavisor.Tenants.get_tenant_cache(external_id, nil)
   end
 

@@ -73,12 +73,73 @@ defmodule Supavisor.TenantsTest do
       assert %Ecto.Changeset{} = Tenants.change_tenant(tenant)
     end
 
-    test "get_user/4" do
-      _tenant = tenant_fixture()
-      assert {:error, :not_found} = Tenants.get_user(:single, "no_user", "no_tenant", "")
+    test "fetch_user_cache/4 returns a user from cache" do
+      tenant =
+        tenant_fixture(%{external_id: "user_cache_tenant", sni_hostname: "user.example.com"})
 
-      assert {:ok, %{tenant: _, user: _}} =
-               Tenants.get_user(:single, "postgres", "dev_tenant", "")
+      user = List.first(tenant.users)
+
+      assert {:error, "Either external_id or sni_hostname must be provided"} ==
+               Tenants.fetch_user_cache(:single, user.db_user, nil, nil)
+    end
+
+    test "fetch_user/4 returns :multiple_results when more than one user matches" do
+      users_attrs = [
+        %{
+          "db_user" => "postgres",
+          "db_password" => "postgres",
+          "pool_size" => 3,
+          "mode_type" => "session"
+        },
+        %{
+          "db_user" => "postgres",
+          "db_password" => "postgres",
+          "pool_size" => 3,
+          "mode_type" => "transaction"
+        }
+      ]
+
+      _tenant = tenant_fixture(%{users: users_attrs})
+
+      assert {:error, :multiple_results} =
+               Tenants.fetch_user(:single, "postgres", "dev_tenant", "")
+    end
+
+    test "fetch_user/4 returns :not_found for missing user or tenant, and :ok for valid input" do
+      tenant = tenant_fixture()
+      user = List.first(tenant.users)
+
+      assert {:error, :not_found} = Tenants.fetch_user(:single, "no_user", "no_tenant", "")
+      assert {:error, :not_found} = Tenants.fetch_user(:single, "postgres", nil, "")
+
+      assert {:ok, %{user: fetched_user, tenant: fetched_tenant}} =
+               Tenants.fetch_user(:single, "postgres", "dev_tenant", "")
+
+      assert fetched_user.id == user.id
+      assert fetched_tenant.id == tenant.id
+    end
+
+    test "fetch_user/4 with :cluster mode returns :not_found for invalid tenant alias and :ok for valid alias" do
+      cluster_tenant_attrs = %{
+        type: "write",
+        cluster_alias: "cluster_alias",
+        tenant_external_id: "dev_tenant",
+        active: true
+      }
+
+      tenant = tenant_fixture()
+      user = List.first(tenant.users)
+
+      _cluster =
+        cluster_fixture(%{alias: "cluster_alias", cluster_tenants: [cluster_tenant_attrs]})
+
+      assert {:error, :not_found} == Tenants.fetch_user(:cluster, "postgres", "cluster", "")
+
+      assert {:ok, %{user: fetched_user, tenant: fetched_tenant}} =
+               Tenants.fetch_user(:cluster, "postgres", "cluster_alias", "")
+
+      assert fetched_user.id == user.id
+      assert fetched_tenant.id == tenant.id
     end
   end
 
