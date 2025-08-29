@@ -9,7 +9,7 @@ defmodule Supavisor.Integration.ProxyTest do
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
 
   defp setup_tenant_connections(tenant) do
-    db_conf = Application.get_env(:supavisor, Repo)
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
 
     assert {:ok, proxy} =
              Postgrex.start_link(
@@ -29,7 +29,7 @@ defmodule Supavisor.Integration.ProxyTest do
                username: db_conf[:username]
              )
 
-    %{proxy: proxy, origin: origin, user: db_conf[:username], tenant: tenant}
+    %{db_conf: db_conf, proxy: proxy, origin: origin, user: db_conf[:username]}
   end
 
   for tenant <- @tenants do
@@ -163,7 +163,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "too many clients in session mode" do
-    db_conf = Application.get_env(:supavisor, Repo)
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
     port = Application.get_env(:supavisor, :proxy_port_session)
 
     connection_opts =
@@ -200,7 +200,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "checks that client_handler is idle and db_pid is nil for transaction mode" do
-    db_conf = Application.get_env(:supavisor, Repo)
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
     url =
       "postgresql://transaction.proxy_tenant1:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
@@ -223,7 +223,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "limit client connections" do
-    db_conf = Application.get_env(:supavisor, Repo)
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
     connection_opts = [
       hostname: db_conf[:hostname],
@@ -246,50 +246,54 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "change role password" do
-    db_conf = Application.get_env(:supavisor, Repo)
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
-    assert {:ok, origin} =
-             Postgrex.start_link(
-               hostname: db_conf[:hostname],
-               port: db_conf[:port],
-               database: db_conf[:database],
-               password: db_conf[:password],
-               username: db_conf[:username]
-             )
+    try do
+      conn = fn pass ->
+        "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+      end
 
-    conn = fn pass ->
-      "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+      first_pass = conn.(db_conf[:password])
+      new_pass = conn.("postgres_new")
+
+      assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
+
+      assert [%Postgrex.Result{rows: [["1"]]}] =
+               P.SimpleConnection.call(pid, {:query, "select 1;"})
+
+      :gen_statem.stop(pid)
+
+      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+
+      assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
+
+      assert [%Postgrex.Result{rows: [["1"]]}] =
+               P.SimpleConnection.call(pid, {:query, "select 1;"})
+
+      :gen_statem.stop(pid)
+    after
+      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
     end
+  end
 
-    first_pass = conn.("postgres")
-    new_pass = conn.("postgres_new")
+  test "try old password after password change" do
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
-    assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
+    try do
+      old_pass =
+        "postgresql://dev_postgres.is_manager:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
 
-    assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
-    :gen_statem.stop(pid)
-    P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
-    Supavisor.stop({{:single, "is_manager"}, "dev_postgres", :transaction, "postgres"})
+      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
 
-    :timer.sleep(1000)
-
-    assert {:error,
-            %Postgrex.Error{
-              postgres: %{
-                code: :invalid_password,
-                message: "password authentication failed for user \"" <> _,
-                severity: "FATAL",
-                pg_code: "28P01"
-              }
-            }} = parse_uri(new_pass) |> single_connection()
-
-    assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
-    assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
-    :gen_statem.stop(pid)
+      assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} =
+               parse_uri(old_pass) |> single_connection()
+    after
+      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
+    end
   end
 
   test "invalid characters in user or db_name" do
-    db_conf = Application.get_env(:supavisor, Repo)
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
     url =
       "postgresql://user\x10user.proxy_tenant1:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres\\\\\\\\\"\\"
@@ -307,7 +311,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "active_count doesn't block" do
-    db_conf = Application.get_env(:supavisor, Repo)
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
     port = Application.get_env(:supavisor, :proxy_port_session)
 
     connection_opts =

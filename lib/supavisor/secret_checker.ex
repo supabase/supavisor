@@ -10,8 +10,19 @@ defmodule Supavisor.SecretChecker do
 
   def start_link(args) do
     name = {:via, Registry, {Supavisor.Registry.Tenants, {:secret_checker, args.id}}}
-
     GenServer.start_link(__MODULE__, args, name: name)
+  end
+
+  @spec get_secrets(Supavisor.id()) ::
+          {:ok, {method :: atom(), Supavisor.secrets()}} | {:error, :not_started}
+  def get_secrets(id) do
+    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+      [] ->
+        {:error, :not_started}
+
+      [{pid, _}] ->
+        GenServer.call(pid, :get_secrets)
+    end
   end
 
   def init(args) do
@@ -72,7 +83,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   def handle_info(:check, state) do
-    check_secrets(state)
+    check_secrets(state.user, state)
     {:noreply, %{state | check_ref: check()}}
   end
 
@@ -89,7 +100,7 @@ defmodule Supavisor.SecretChecker do
   def check(interval \\ @interval),
     do: Process.send_after(self(), :check, interval)
 
-  def check_secrets(%{auth: auth, user: user, conn: conn} = state) do
+  def check_secrets(user, %{auth: auth, conn: conn} = state) do
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
         method = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
@@ -111,8 +122,14 @@ defmodule Supavisor.SecretChecker do
           Cachex.put(Supavisor.Cache, state.key, {:cached, value}, expire: :timer.hours(24))
         end
 
+        {:ok, {method, fn -> secret end}}
+
       other ->
         Logger.error("Failed to get secret: #{inspect(other)}")
     end
+  end
+
+  def handle_call(:get_secrets, _from, state) do
+    {:reply, check_secrets(state.user, state), state}
   end
 end

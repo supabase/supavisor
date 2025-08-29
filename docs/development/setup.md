@@ -56,7 +56,7 @@ psql postgresql://postgres.dev_tenant:postgres@localhost:6543/postgres
 > multi-tenancy on a single IP address.
 
 As a general note, if you are not using the `Makefile` you will have to set a
-`VAULT_ENC_KEY` which should be at least 32 bytes long.
+`VAULT_ENC_KEY` which should be exactly 32 bytes long.
 
 ## General Commands
 

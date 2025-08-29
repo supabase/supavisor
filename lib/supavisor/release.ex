@@ -10,10 +10,14 @@ defmodule Supavisor.Release do
 
     for repo <- repos() do
       {:ok, _, _} =
-        Ecto.Migrator.with_repo(
-          repo,
-          &Ecto.Migrator.run(&1, :up, all: true, prefix: "_supavisor")
-        )
+        Ecto.Migrator.with_repo(repo, fn repo ->
+          # Pre-migration seeds create the schema, which is necessary to run the migrations
+          Application.app_dir(:supavisor)
+          |> Path.join("priv/repo/seeds_before_migration.exs")
+          |> Code.eval_file()
+
+          Ecto.Migrator.run(repo, :up, all: true, prefix: "_supavisor")
+        end)
     end
   end
 
