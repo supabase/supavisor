@@ -78,7 +78,6 @@ defmodule Supavisor.DbHandler do
         tenant: args.tenant,
         tenant_feature_flags: args.tenant_feature_flags,
         buffer: [],
-        anon_buffer: [],
         db_state: nil,
         parameter_status: %{},
         nonce: nil,
@@ -243,27 +242,6 @@ defmodule Supavisor.DbHandler do
     {:next_state, :busy, %{data | buffer: []}}
   end
 
-  # check if it needs to apply queries from the anon buffer
-  def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
-    Logger.debug("DbHandler: Check anon buffer")
-
-    if buff != [] do
-      Logger.debug(
-        "DbHandler: Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes"
-      )
-
-      buff = Enum.reverse(buff)
-      :ok = HandlerHelpers.sock_send(data.sock, buff)
-    end
-
-    {:keep_state, %{data | anon_buffer: []}}
-  end
-
-  def handle_event(:internal, :check_anon_buffer, _, _) do
-    Logger.debug("DbHandler: Anon buffer is empty")
-    :keep_state_and_data
-  end
-
   # the process received message from db without linked caller
   def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in @proto do
     Logger.debug("DbHandler: Got db response #{inspect(bin)} when caller was nil")
@@ -342,7 +320,7 @@ defmodule Supavisor.DbHandler do
           %{data | stats: stats, active_count: 0, client_stats: client_stats}
         end
 
-      {:next_state, :idle, data, {:next_event, :internal, :check_anon_buffer}}
+      {:next_state, :idle, data}
     else
       if data.active_count > @switch_active_count,
         do: HandlerHelpers.active_once(data.sock)
