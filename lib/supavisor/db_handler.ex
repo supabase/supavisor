@@ -285,10 +285,8 @@ defmodule Supavisor.DbHandler do
       # after which it will unlink the direct db connection process from itself.
       data =
         if data.mode == :transaction do
-          # for some reason, if we send the data **before** doing the `ready_for_query` cast,
-          # we get race condition that sometimes causes msgs to be sent to the wrong socket
-          ClientHandler.db_status(data.caller, :ready_for_query)
           data = handle_server_messages(bin, data)
+          ClientHandler.db_status(data.caller, :ready_for_query)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
           data = handle_server_messages(bin, data)
