@@ -40,6 +40,17 @@ defmodule Supavisor.Tenants do
   """
   def get_tenant!(id), do: Repo.get!(Tenant, id)
 
+  @doc """
+  Gets a single tenant by external_id.
+
+  ## Examples
+
+      iex> get_tenant_by_external_id!("123")
+      %Tenant{}
+
+      iex> get_tenant!(456)
+      nil
+  """
   @spec get_tenant_by_external_id(String.t()) :: Tenant.t() | nil
   def get_tenant_by_external_id(external_id) do
     Tenant |> Repo.get_by(external_id: external_id) |> Repo.preload(:users)
@@ -57,14 +68,14 @@ defmodule Supavisor.Tenants do
     case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
            {:commit, {:cached, get_tenant(external_id, sni_hostname)}, ttl: :timer.hours(24)}
          end) do
-      {_, {:cached, value}} -> value
-      {_, {:cached, value}, _} -> value
+      {:ok, {:cached, value}} -> value
+      {:commit, {:cached, value}, _} -> value
     end
   end
 
   @spec get_tenant(String.t() | nil, String.t() | nil) :: Tenant.t() | nil
-  def get_tenant(nil, sni) when sni != nil do
-    Tenant |> Repo.get_by(sni: sni)
+  def get_tenant(nil, sni_hostname) when sni_hostname != nil do
+    Tenant |> Repo.get_by(sni_hostname: sni_hostname)
   end
 
   def get_tenant(external_id, _) when external_id != nil do
