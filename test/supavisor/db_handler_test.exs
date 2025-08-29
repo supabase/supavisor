@@ -48,7 +48,6 @@ defmodule Supavisor.DbHandlerTest do
       assert data.sent == false
       assert data.auth == args.auth
       assert data.tenant == args.tenant
-      assert data.buffer == []
       assert data.db_state == nil
       assert data.parameter_status == %{}
       assert data.nonce == nil

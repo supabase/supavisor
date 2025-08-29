@@ -77,7 +77,6 @@ defmodule Supavisor.DbHandler do
         user: args.user,
         tenant: args.tenant,
         tenant_feature_flags: args.tenant_feature_flags,
-        buffer: [],
         db_state: nil,
         parameter_status: %{},
         nonce: nil,
@@ -90,7 +89,6 @@ defmodule Supavisor.DbHandler do
         stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
         mode: args.mode,
         replica_type: args.replica_type,
-        reply: nil,
         caller: args[:caller] || nil,
         client_sock: args[:client_sock] || nil,
         proxy: args[:proxy] || false,
@@ -217,29 +215,12 @@ defmodule Supavisor.DbHandler do
           Supavisor.set_parameter_status(data.id, ps)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps, reconnect_retries: 0},
-         {:next_event, :internal, :check_buffer}}
+        {:next_state, :idle, %{data | parameter_status: ps, reconnect_retries: 0}}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
         {:stop, :auth_error, data}
     end
-  end
-
-  def handle_event(:internal, :check_buffer, :idle, %{reply: from} = data) when from != nil do
-    Logger.debug("DbHandler: Check buffer")
-    {:next_state, :busy, %{data | reply: nil}, {:reply, from, data.sock}}
-  end
-
-  def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
-      when is_pid(caller) do
-    if buff != [] do
-      Logger.debug("DbHandler: Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
-      buff = Enum.reverse(buff)
-      :ok = HandlerHelpers.sock_send(data.sock, buff)
-    end
-
-    {:next_state, :busy, %{data | buffer: []}}
   end
 
   # the process received message from db without linked caller
@@ -286,7 +267,7 @@ defmodule Supavisor.DbHandler do
   end
 
   # forward the message to the client
-  def handle_event(:info, {proto, _, bin}, _, %{caller: caller, reply: nil} = data)
+  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug(
       "DbHandler: Got write replica messages: #{Debug.packet_to_string(bin, :backend)}"
@@ -354,10 +335,11 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}")
 
-    # store the reply ref and send it when the state is idle
-    if state in [:idle, :busy],
-      do: {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}},
-      else: {:keep_state, %{data | client_sock: sock, caller: caller, reply: from}}
+    if state in [:idle, :busy] do
+      {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}}
+    else
+      {:keep_state_and_data, :postpone}
+    end
   end
 
   def handle_event({:call, from}, :ps, _, data) do
