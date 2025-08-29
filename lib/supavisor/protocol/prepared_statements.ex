@@ -43,9 +43,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
           | {:describe_pkt, statement_name(), pkt()}
           | pkt()
 
-  @client_limit 100
   @backend_limit 200
-  @client_memory_limit_bytes 1_000_000
 
   @doc """
   Initializes a new prepared statement storage.
@@ -57,7 +55,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
   Upper limit of prepared statements from the client
   """
   @spec client_limit() :: pos_integer()
-  def client_limit, do: @client_limit
+  def client_limit, do: Storage.statement_limit()
 
   @doc """
   Upper limit of prepared statements backend-side.
@@ -71,7 +69,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
   Upper limit of prepared statements memory from the client in bytes
   """
   @spec client_memory_limit_bytes() :: pos_integer()
-  def client_memory_limit_bytes, do: @client_memory_limit_bytes
+  def client_memory_limit_bytes, do: Storage.memory_limit_bytes()
 
   @doc """
   Receives a statement name and returns a close packet for it
@@ -94,32 +92,18 @@ defmodule Supavisor.Protocol.PreparedStatements do
         {:ok, client_statements, <<?P, len::32, payload::binary>>}
 
       {client_side_name, remaining} ->
-        cond do
-          Storage.statement_count(client_statements) >= @client_limit ->
-            {:error, :max_prepared_statements}
+        server_side_name = gen_server_side_name(payload)
+        new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
+        new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
 
-          Storage.get(client_statements, client_side_name) ->
-            {:error, :duplicate_prepared_statement, client_side_name}
+        prepared_statement = %PreparedStatement{
+          name: server_side_name,
+          parse_pkt: new_bin
+        }
 
-          true ->
-            server_side_name = gen_server_side_name(payload)
-
-            new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
-            new_bin = <<?P, new_len::32, server_side_name::binary, 0, remaining::binary>>
-
-            prepared_statement = %PreparedStatement{
-              name: server_side_name,
-              parse_pkt: new_bin
-            }
-
-            new_client_statements =
-              Storage.put(client_statements, client_side_name, prepared_statement)
-
-            if Storage.statement_memory(new_client_statements) > @client_memory_limit_bytes do
-              {:error, :max_prepared_statements_memory}
-            else
-              {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
-            end
+        with {:ok, new_client_statements} <-
+               Storage.put(client_statements, client_side_name, prepared_statement) do
+          {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
         end
     end
   end

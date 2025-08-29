@@ -29,7 +29,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     test "handle_close_message updates statement name and removes from storage" do
       parse_pkt = <<?P, 27::32, "server_stmt", 0, "select 1", 0, 0, 0>>
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
-      client_statements = Storage.put(Storage.new(), "test_stmt", prepared_statement)
+      {:ok, client_statements} = Storage.put(Storage.new(), "test_stmt", prepared_statement)
 
       len = 15
       payload = <<?S, "test_stmt", 0>>
@@ -79,7 +79,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
         <<?P, 27::32, "server_stmt", 0, "select 1", 0, 0, 0>>
 
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
-      client_statements = Storage.put(Storage.new(), "test_stmt", prepared_statement)
+      {:ok, client_statements} = Storage.put(Storage.new(), "test_stmt", prepared_statement)
 
       len = 21
       payload = <<0, "test_stmt", 0, 0, 0, 0, 0, 0, 0, 0>>
@@ -103,7 +103,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
         <<?P, 27::32, "server_stmt", 0, "select 1", 0, 0, 0>>
 
       prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
-      client_statements = Storage.put(Storage.new(), "test_stmt", prepared_statement)
+      {:ok, client_statements} = Storage.put(Storage.new(), "test_stmt", prepared_statement)
 
       len = 15
       payload = <<?S, "test_stmt", 0>>
@@ -154,10 +154,13 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     test "parse message returns error when client limit is reached" do
       client_statements =
         Enum.reduce(1..PreparedStatements.client_limit(), Storage.new(), fn i, acc ->
-          Storage.put(acc, "stmt_#{i}", %PreparedStatement{
-            name: "server_stmt_#{i}",
-            parse_pkt: <<>>
-          })
+          {:ok, new_acc} =
+            Storage.put(acc, "stmt_#{i}", %PreparedStatement{
+              name: "server_stmt_#{i}",
+              parse_pkt: <<>>
+            })
+
+          new_acc
         end)
 
       len = 25
@@ -168,7 +171,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
     end
 
     test "parse message returns error for duplicate PS" do
-      client_statements =
+      {:ok, client_statements} =
         Storage.put(Storage.new(), "stmt", %PreparedStatement{
           name: "server_stmt",
           parse_pkt: <<>>
@@ -183,14 +186,14 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
 
     test "parse message returns error when memory limit is reached" do
       # Create a large prepared statement that will push us over the memory limit
-      large_query = String.duplicate("SELECT * FROM large_table WHERE col = 'data' AND ", 50_000)
+      large_query = String.duplicate("a", PreparedStatements.client_memory_limit_bytes() - 19)
 
       large_parse_pkt =
-        <<?P, byte_size(large_query) + 20::32, "large_stmt", 0, large_query::binary, 0, 0, 0>>
+        <<?P, byte_size(large_query) + 18::32, "large_stmt", 0, large_query::binary, 0, 0, 0>>
 
       large_statement = %PreparedStatement{name: "large_stmt", parse_pkt: large_parse_pkt}
 
-      client_statements = Storage.put(Storage.new(), "existing_stmt", large_statement)
+      {:ok, client_statements} = Storage.put(Storage.new(), "existing_stmt", large_statement)
 
       # Try to add another statement that would exceed memory limit
       len = 25
