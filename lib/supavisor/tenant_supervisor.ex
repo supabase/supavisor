@@ -20,6 +20,8 @@ defmodule Supavisor.TenantSupervisor do
 
   @impl true
   def init(%{replicas: replicas} = args) do
+    {{type, tenant}, user, mode, db_name, search_path} = args.id
+
     pools =
       replicas
       |> Enum.with_index()
@@ -35,7 +37,6 @@ defmodule Supavisor.TenantSupervisor do
 
     children = [{Manager, args}, {SecretChecker, args} | pools]
 
-    {{type, tenant}, user, mode, db_name, search_path} = args.id
     map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
 
