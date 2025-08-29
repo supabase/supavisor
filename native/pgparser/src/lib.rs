@@ -10,11 +10,4 @@ fn statement_types(query: &str) -> Result<Vec<String>, String> {
     Ok(message)
 }
 
-#[rustler::nif]
-fn fingerprint(query: &str) -> Result<String, String> {
-    pg_query::fingerprint(query)
-        .map(|fingerprint| Ok(fingerprint.hex))
-        .map_err(|_| "Error fingerprinting query")?
-}
-
 rustler::init!("Elixir.Supavisor.PgParser");
