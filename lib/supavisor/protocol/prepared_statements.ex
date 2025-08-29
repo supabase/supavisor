@@ -98,9 +98,6 @@ defmodule Supavisor.Protocol.PreparedStatements do
           Storage.statement_count(client_statements) >= @client_limit ->
             {:error, :max_prepared_statements}
 
-          Storage.statement_memory(client_statements) > @client_memory_limit_bytes ->
-            {:error, :max_prepared_statements_memory}
-
           Storage.get(client_statements, client_side_name) ->
             {:error, :duplicate_prepared_statement, client_side_name}
 
@@ -118,7 +115,11 @@ defmodule Supavisor.Protocol.PreparedStatements do
             new_client_statements =
               Storage.put(client_statements, client_side_name, prepared_statement)
 
-            {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
+            if Storage.statement_memory(new_client_statements) > @client_memory_limit_bytes do
+              {:error, :max_prepared_statements_memory}
+            else
+              {:ok, new_client_statements, {:parse_pkt, server_side_name, new_bin}}
+            end
         end
     end
   end

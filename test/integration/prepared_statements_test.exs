@@ -64,8 +64,8 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   test "prepared statement memory limit (client)", %{conns: [conn | _]} do
     # Create large queries until we hit the memory limit
-    # Each query is roughly 120KB, so we need 9 to hit the 1MB limit
-    for i <- 1..8 do
+    # Each query is roughly 126KB, so we can fit 7 before hitting the 1MB limit
+    for i <- 1..7 do
       large_query = generate_large_query()
       Postgrex.prepare!(conn, "large_q_#{i}", large_query)
     end
