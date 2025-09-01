@@ -16,10 +16,6 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   ORDER BY tablename;
   """
 
-  setup_all do
-    Logger.configure(level: :error)
-  end
-
   setup do
     db_conf = Application.get_env(:supavisor, Repo)
 
