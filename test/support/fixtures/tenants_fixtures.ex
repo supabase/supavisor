@@ -31,6 +31,23 @@ defmodule Supavisor.TenantsFixtures do
     tenant
   end
 
+  @doc """
+  Generate a user.
+  """
+  def user_fixture(attrs \\ %{}) do
+    {:ok, user} =
+      attrs
+      |> Enum.into(%{
+        "db_user" => "postgres",
+        "db_password" => "postgres",
+        "pool_size" => 3,
+        "mode_type" => "transaction"
+      })
+      |> Supavisor.Tenants.create_user()
+
+    user
+  end
+
   # @doc """
   # Generate a unique cluster tenant_external_id.
   # """
@@ -63,5 +80,25 @@ defmodule Supavisor.TenantsFixtures do
       |> Supavisor.Tenants.create_cluster()
 
     cluster
+  end
+
+  @doc """
+  Generate a cluster tenants.
+  """
+  def cluster_tenants_fixture(attrs \\ %{}) do
+    tenant = tenant_fixture()
+    cluster = cluster_fixture(%{cluster_tenants: []})
+
+    {:ok, cluster_tenants} =
+      attrs
+      |> Enum.into(%{
+        type: "write",
+        cluster_alias: cluster.alias,
+        tenant_external_id: tenant.external_id,
+        active: true
+      })
+      |> Supavisor.Tenants.create_cluster_tenants()
+
+    cluster_tenants
   end
 end

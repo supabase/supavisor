@@ -84,60 +84,6 @@ defmodule Supavisor.Tenants do
 
   def get_tenant(_, _), do: nil
 
-  @spec get_user_cache(:single | :cluster, String.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, map()} | {:error, any()}
-  def get_user_cache(type, user, external_id, sni_hostname) do
-    cache_key = {:user_cache, type, user, external_id, sni_hostname}
-
-    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
-            ttl: :timer.hours(24)}
-         end) do
-      {_, {:cached, value}} -> value
-      {_, {:cached, value}, _} -> value
-    end
-  end
-
-  @spec get_user(atom(), String.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, map()} | {:error, any()}
-  def get_user(_, _, nil, nil) do
-    {:error, "Either external_id or sni_hostname must be provided"}
-  end
-
-  def get_user(:cluster, user, external_id, sni_hostname) do
-    query =
-      from(ct in ClusterTenants,
-        where: ct.cluster_alias == ^external_id and ct.active == true,
-        limit: 1
-      )
-
-    case Repo.all(query) do
-      [%ClusterTenants{} = ct] ->
-        get_user(:single, user, ct.tenant_external_id, sni_hostname)
-
-      [_ | _] ->
-        {:error, :multiple_results}
-
-      _ ->
-        {:error, :not_found}
-    end
-  end
-
-  def get_user(:single, user, external_id, sni_hostname) do
-    query = build_user_query(user, external_id, sni_hostname)
-
-    case Repo.all(query) do
-      [{%User{}, %Tenant{}} = {user, tenant}] ->
-        {:ok, %{user: user, tenant: tenant}}
-
-      [_ | _] ->
-        {:error, :multiple_results}
-
-      _ ->
-        {:error, :not_found}
-    end
-  end
-
   def get_pool_config(external_id, user) do
     query =
       from(a in User,
@@ -307,6 +253,76 @@ defmodule Supavisor.Tenants do
   end
 
   @doc """
+  Gets a single user.
+
+  Raises `Ecto.NoResultsError` if the User does not exist.
+
+  ## Examples
+
+      iex> get_user!(123)
+      %User{}
+
+      iex> get_user!(456)
+      ** (Ecto.NoResultsError)
+
+  """
+  def get_user!(id), do: Repo.get!(User, id)
+
+  @spec get_user_cache(:single | :cluster, String.t(), String.t() | nil, String.t() | nil) ::
+          {:ok, map()} | {:error, any()}
+  def get_user_cache(type, user, external_id, sni_hostname) do
+    cache_key = {:user_cache, type, user, external_id, sni_hostname}
+
+    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
+            ttl: :timer.hours(24)}
+         end) do
+      {_, {:cached, value}} -> value
+      {_, {:cached, value}, _} -> value
+    end
+  end
+
+  @spec get_user(atom(), String.t(), String.t() | nil, String.t() | nil) ::
+          {:ok, map()} | {:error, any()}
+  def get_user(_, _, nil, nil) do
+    {:error, "Either external_id or sni_hostname must be provided"}
+  end
+
+  def get_user(:cluster, user, external_id, sni_hostname) do
+    query =
+      from(ct in ClusterTenants,
+        where: ct.cluster_alias == ^external_id and ct.active == true,
+        limit: 1
+      )
+
+    case Repo.all(query) do
+      [%ClusterTenants{} = ct] ->
+        get_user(:single, user, ct.tenant_external_id, sni_hostname)
+
+      [_ | _] ->
+        {:error, :multiple_results}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  def get_user(:single, user, external_id, sni_hostname) do
+    query = build_user_query(user, external_id, sni_hostname)
+
+    case Repo.all(query) do
+      [{%User{}, %Tenant{}} = {user, tenant}] ->
+        {:ok, %{user: user, tenant: tenant}}
+
+      [_ | _] ->
+        {:error, :multiple_results}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
   Creates a user.
 
   ## Examples
@@ -423,17 +439,6 @@ defmodule Supavisor.Tenants do
 
   """
   def get_cluster!(id), do: Repo.get!(Cluster, id)
-
-  @spec get_cluster_with_rel(String.t()) :: {:ok, Cluster.t()} | {:error, any()}
-  def get_cluster_with_rel(id) do
-    case Repo.get(Cluster, id) do
-      nil ->
-        {:error, :not_found}
-
-      cluster ->
-        {:ok, Repo.preload(cluster, :cluster_tenants)}
-    end
-  end
 
   @doc """
   Creates a cluster.
