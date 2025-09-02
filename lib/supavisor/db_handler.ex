@@ -285,8 +285,8 @@ defmodule Supavisor.DbHandler do
       # after which it will unlink the direct db connection process from itself.
       data =
         if data.mode == :transaction do
-          data = handle_server_messages(bin, data)
           ClientHandler.db_status(data.caller, :ready_for_query)
+          data = handle_server_messages(bin, data)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
           data = handle_server_messages(bin, data)
