@@ -85,7 +85,6 @@ defmodule Supavisor.DbHandler do
         stats: %{},
         client_stats: %{},
         prepared_statements: MapSet.new(),
-        pending_bin: "",
         stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
         mode: args.mode,
         replica_type: args.replica_type,
