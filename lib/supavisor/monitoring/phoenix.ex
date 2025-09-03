@@ -12,11 +12,15 @@ defmodule Supavisor.PromEx.Plugins.Phoenix do
   alias PromEx.Utils
 
   defmodule PhoenixDurationBuckets do
+    @moduledoc false
+
     use Peep.Buckets.Custom,
       buckets: [10, 100, 500, 1_000, 5_000, 10_000, 30_000]
   end
 
   defmodule PhoenixByteBuckets do
+    @moduledoc false
+
     use Peep.Buckets.Custom,
       buckets: [64, 512, 4_096, 65_536, 262_144, 1_048_576, 4_194_304, 16_777_216]
   end
