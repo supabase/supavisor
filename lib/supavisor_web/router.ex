@@ -16,6 +16,7 @@ defmodule SupavisorWeb.Router do
   end
 
   pipeline :metrics do
+    plug(:check_auth, [:metrics_jwt_secret, :metrics_blocklist])
   end
 
   pipeline :openapi do
