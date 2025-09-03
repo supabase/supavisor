@@ -35,6 +35,12 @@ This document provides a categorized list of all environment variables used in S
 | `SESSION_PROXY_PORTS`         | Comma-separated list of ports for session proxy shards    | `12100,12101,12102,12103` | No |
 | `TRANSACTION_PROXY_PORTS`     | Comma-separated list of ports for transaction proxy shards | `12104,12105,12106,12107` | No |
 
+### Feature Flags
+
+| Variable                            | Description                                                  | Default Value | Required |
+| ----------------------------------- | ------------------------------------------------------------ | ------------- | -------- |
+| `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `false`       | No       |
+
 ---
 
 ## 2. Management API Configuration

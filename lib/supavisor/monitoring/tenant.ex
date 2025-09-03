@@ -213,6 +213,12 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :db_handler, :db_connection, :all],
           description: "The total number of database connections by db_handler.",
           tags: @tags
+        ),
+        counter(
+          [:supavisor, :db_handler, :prepared_statements, :evicted, :count],
+          event_name: [:supavisor, :db_handler, :prepared_statements, :evicted],
+          description: "The number of prepared statements evicted by db_handler.",
+          tags: @tags
         )
       ]
     )
