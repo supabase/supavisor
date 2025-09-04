@@ -18,6 +18,7 @@ defmodule Supavisor.ClientHandler do
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
 
   alias Supavisor.{
+    ConnectionRateLimiter,
     DbHandler,
     FeatureFlag,
     HandlerHelpers,
@@ -55,6 +56,14 @@ defmodule Supavisor.ClientHandler do
     {:ok, sock} = :ranch.handshake(ref)
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
+
+    case ConnectionRateLimiter.check_rate_limit(peer_ip, local) do
+      :deny ->
+        exit({:shutdown, :rate_limit_exceeded})
+
+      :ok ->
+        :ok
+    end
 
     Logger.metadata(
       peer_ip: peer_ip,

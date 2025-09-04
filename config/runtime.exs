@@ -39,6 +39,14 @@ config :supavisor, SupavisorWeb.Endpoint,
   ],
   secret_key_base: secret_key_base
 
+config :supavisor, Supavisor.ConnectionRateLimiter,
+  enforce?: Supavisor.Helpers.get_env_bool("RATE_LIMITER_ENFORCE", false),
+  max_hits: System.get_env("RATE_LIMITER_MAX_HITS", "5000") |> String.to_integer(),
+  interval:
+    System.get_env("RATE_LIMITER_INTERVAL_SECONDS", "10")
+    |> String.to_integer()
+    |> :timer.seconds()
+
 topologies = []
 
 topologies =
