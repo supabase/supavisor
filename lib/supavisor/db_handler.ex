@@ -4,15 +4,23 @@ defmodule Supavisor.DbHandler do
   It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
   """
 
-  require Logger
-
   @behaviour :gen_statem
+
+  require Logger
+  require Supavisor.Protocol.Server, as: Server
+  require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
+
+  alias Supavisor.Protocol.PreparedStatements
 
   alias Supavisor.{
     ClientHandler,
+    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
+    Protocol.BackendMessageHandler,
+    Protocol.Debug,
+    Protocol.MessageStreamer,
     Protocol.Server
   }
 
@@ -32,6 +40,11 @@ defmodule Supavisor.DbHandler do
 
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
+
+  @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
+  def handle_prepared_statement_pkts(pid, pkts) do
+    :gen_statem.call(pid, {:handle_ps_pkts, pkts}, 15_000)
+  end
 
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
@@ -63,8 +76,7 @@ defmodule Supavisor.DbHandler do
         auth: args.auth,
         user: args.user,
         tenant: args.tenant,
-        buffer: [],
-        anon_buffer: [],
+        tenant_feature_flags: args.tenant_feature_flags,
         db_state: nil,
         parameter_status: %{},
         nonce: nil,
@@ -72,9 +84,10 @@ defmodule Supavisor.DbHandler do
         server_proof: nil,
         stats: %{},
         client_stats: %{},
+        prepared_statements: MapSet.new(),
+        stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
         mode: args.mode,
         replica_type: args.replica_type,
-        reply: nil,
         caller: args[:caller] || nil,
         client_sock: args[:client_sock] || nil,
         proxy: args[:proxy] || false,
@@ -151,7 +164,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
-    dec_pkt = Server.decode(bin)
+    {:ok, dec_pkt, _} = Server.decode(bin)
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     resp = Enum.reduce(dec_pkt, %{}, &handle_auth_pkts(&1, &2, data))
@@ -201,50 +214,12 @@ defmodule Supavisor.DbHandler do
           Supavisor.set_parameter_status(data.id, ps)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps, reconnect_retries: 0},
-         {:next_event, :internal, :check_buffer}}
+        {:next_state, :idle, %{data | parameter_status: ps, reconnect_retries: 0}}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
         {:stop, :auth_error, data}
     end
-  end
-
-  def handle_event(:internal, :check_buffer, :idle, %{reply: from} = data) when from != nil do
-    Logger.debug("DbHandler: Check buffer")
-    {:next_state, :busy, %{data | reply: nil}, {:reply, from, data.sock}}
-  end
-
-  def handle_event(:internal, :check_buffer, :idle, %{buffer: buff, caller: caller} = data)
-      when is_pid(caller) do
-    if buff != [] do
-      Logger.debug("DbHandler: Buffer is not empty, try to send #{IO.iodata_length(buff)} bytes")
-      buff = Enum.reverse(buff)
-      :ok = sock_send(data.sock, buff)
-    end
-
-    {:next_state, :busy, %{data | buffer: []}}
-  end
-
-  # check if it needs to apply queries from the anon buffer
-  def handle_event(:internal, :check_anon_buffer, _, %{anon_buffer: buff, caller: nil} = data) do
-    Logger.debug("DbHandler: Check anon buffer")
-
-    if buff != [] do
-      Logger.debug(
-        "DbHandler: Anon buffer is not empty, try to send #{IO.iodata_length(buff)} bytes"
-      )
-
-      buff = Enum.reverse(buff)
-      :ok = sock_send(data.sock, buff)
-    end
-
-    {:keep_state, %{data | anon_buffer: []}}
-  end
-
-  def handle_event(:internal, :check_anon_buffer, _, _) do
-    Logger.debug("DbHandler: Anon buffer is empty")
-    :keep_state_and_data
   end
 
   # the process received message from db without linked caller
@@ -256,7 +231,10 @@ defmodule Supavisor.DbHandler do
   def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
       when proto in @proto do
     Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
-    pkts = Server.decode(bin)
+
+    # TODO: use streaming for read replica too
+    {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
+    data = %{data | pending_bin: rest}
 
     resp =
       cond do
@@ -278,18 +256,21 @@ defmodule Supavisor.DbHandler do
       end
 
     if resp != :continue do
-      :ok = ClientHandler.db_status(data.caller, resp, bin)
+      HandlerHelpers.sock_send(data.client_sock, bin)
+      :ok = ClientHandler.db_status(data.caller, resp)
       {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
       {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
     else
-      :keep_state_and_data
+      {:keep_state, data}
     end
   end
 
   # forward the message to the client
-  def handle_event(:info, {proto, _, bin}, _, %{caller: caller, reply: nil} = data)
+  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
-    Logger.debug("DbHandler: Got write replica message  #{inspect(bin)}")
+    Logger.debug(
+      "DbHandler: Got write replica messages: #{Debug.packet_to_string(bin, :backend)}"
+    )
 
     if String.ends_with?(bin, Server.ready_for_query()) do
       HandlerHelpers.activate(data.sock)
@@ -303,10 +284,11 @@ defmodule Supavisor.DbHandler do
       # after which it will unlink the direct db connection process from itself.
       data =
         if data.mode == :transaction do
-          ClientHandler.db_status(data.caller, :ready_for_query, bin)
+          ClientHandler.db_status(data.caller, :ready_for_query)
+          data = handle_server_messages(bin, data)
           %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
         else
-          HandlerHelpers.sock_send(data.client_sock, bin)
+          data = handle_server_messages(bin, data)
 
           {_, client_stats} =
             if data.proxy,
@@ -316,30 +298,45 @@ defmodule Supavisor.DbHandler do
           %{data | stats: stats, active_count: 0, client_stats: client_stats}
         end
 
-      {:next_state, :idle, data, {:next_event, :internal, :check_anon_buffer}}
+      {:next_state, :idle, data}
     else
       if data.active_count > @switch_active_count,
         do: HandlerHelpers.active_once(data.sock)
 
-      HandlerHelpers.sock_send(data.client_sock, bin)
+      data = handle_server_messages(bin, data)
       {:keep_state, %{data | active_count: data.active_count + 1}}
     end
   end
 
-  def handle_event(:info, {:handle_ps, payload, bin}, _state, data) do
-    Logger.notice("DbHandler: Apply prepare statement change #{inspect(payload)}")
+  def handle_event({:call, from}, {:handle_ps_pkts, pkts}, _state, data) do
+    {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
-    {:keep_state, %{data | anon_buffer: [bin | data.anon_buffer]},
-     {:next_event, :internal, :check_anon_buffer}}
+    {close_pkts, prepared_statements} = evict_exceeding(data)
+
+    :ok = HandlerHelpers.sock_send(data.sock, Enum.reverse([close_pkts | iodata]))
+
+    data = %{
+      data
+      | stream_state:
+          Enum.reduce(close_pkts, data.stream_state, fn _, stream_state ->
+            MessageStreamer.update_state(stream_state, fn queue ->
+              :queue.in({:intercept, :close}, queue)
+            end)
+          end),
+        prepared_statements: prepared_statements
+    }
+
+    {:keep_state, data, {:reply, from, :ok}}
   end
 
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}")
 
-    # store the reply ref and send it when the state is idle
-    if state in [:idle, :busy],
-      do: {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}},
-      else: {:keep_state, %{data | client_sock: sock, caller: caller, reply: from}}
+    if state in [:idle, :busy] do
+      {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}}
+    else
+      {:keep_state_and_data, :postpone}
+    end
   end
 
   def handle_event({:call, from}, :ps, _, data) do
@@ -360,20 +357,16 @@ defmodule Supavisor.DbHandler do
   end
 
   # linked client_handler went down
-  def handle_event(_, {:EXIT, pid, reason}, state, data) do
+  def handle_event(_, {:EXIT, pid, reason}, _state, data) do
     if reason != :normal do
       Logger.error(
         "DbHandler: ClientHandler #{inspect(pid)} went down with reason #{inspect(reason)}"
       )
     end
 
-    if state == :busy or data.mode == :session do
-      sock_send(data.sock, Server.terminate_message())
-      :gen_tcp.close(elem(data.sock, 1))
-      {:stop, {:client_handler_down, data.mode}}
-    else
-      {:keep_state, %{data | caller: nil, buffer: []}}
-    end
+    HandlerHelpers.sock_send(data.sock, Server.terminate_message())
+    HandlerHelpers.sock_close(data.sock)
+    {:stop, {:client_handler_down, data.mode}}
   end
 
   def handle_event({:call, from}, :get_state_and_mode, state, data) do
@@ -419,7 +412,7 @@ defmodule Supavisor.DbHandler do
 
   @spec try_ssl_handshake(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.sock()} | {:error, term()}
   defp try_ssl_handshake(sock, %{upstream_ssl: true} = auth) do
-    case sock_send(sock, Server.ssl_request()) do
+    case HandlerHelpers.sock_send(sock, Server.ssl_request()) do
       :ok -> ssl_recv(sock, auth)
       error -> error
     end
@@ -478,12 +471,7 @@ defmodule Supavisor.DbHandler do
         ] ++ if(search_path, do: [{"options", "--search_path=#{search_path}"}], else: [])
       )
 
-    sock_send(sock, msg)
-  end
-
-  @spec sock_send(Supavisor.sock(), iodata) :: :ok | {:error, term}
-  defp sock_send({mod, sock}, data) do
-    mod.send(sock, data)
+    HandlerHelpers.sock_send(sock, msg)
   end
 
   @spec activate(Supavisor.sock()) :: :ok | {:error, term}
@@ -700,6 +688,104 @@ defmodule Supavisor.DbHandler do
   def reconnect_timeout(_),
     do: @reconnect_timeout
 
+  @spec handle_server_messages(binary(), map()) :: map()
+  defp handle_server_messages(bin, data) do
+    if FeatureFlag.enabled?(data.tenant_feature_flags, "named_prepared_statements") do
+      {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
+
+      if packets_to_send != [] do
+        HandlerHelpers.sock_send(data.client_sock, packets_to_send)
+      end
+
+      updated_data
+    else
+      HandlerHelpers.sock_send(data.client_sock, bin)
+
+      data
+    end
+  end
+
+  # If the prepared statement exists for us, it exists for the server, so we just send the
+  # bind to the socket. If it doesn't, we must send the parse pkt first.
+  #
+  # If we received a bind without a parse, we need to intercept the parse response, otherwise,
+  # the client will receive an unexpected message.
+  defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
+    if stmt_name in data.prepared_statements do
+      {[pkt | iodata], data}
+    else
+      new_data = %{
+        data
+        | stream_state:
+            MessageStreamer.update_state(data.stream_state, fn queue ->
+              :queue.in({:intercept, :parse}, queue)
+            end),
+          prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
+      }
+
+      {[[parse_pkt, pkt] | iodata], new_data}
+    end
+  end
+
+  defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, {iodata, data}) do
+    {[pkt | iodata],
+     %{
+       data
+       | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name),
+         stream_state:
+           MessageStreamer.update_state(data.stream_state, fn queue ->
+             :queue.in({:forward, :close}, queue)
+           end)
+     }}
+  end
+
+  defp handle_prepared_statement_pkt({:describe_pkt, _stmt_name, pkt}, {iodata, data}) do
+    {[pkt | iodata], data}
+  end
+
+  # If we stop generating unique id per statement, and instead do deterministic ids,
+  # we need to potentially drop parse pkts and return a parse response
+  defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
+    if stmt_name in data.prepared_statements do
+      {iodata,
+       %{
+         data
+         | stream_state:
+             MessageStreamer.update_state(data.stream_state, fn queue ->
+               :queue.in({:inject, :parse}, queue)
+             end)
+       }}
+    else
+      prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
+
+      {[pkt | iodata],
+       %{
+         data
+         | prepared_statements: prepared_statements,
+           stream_state:
+             MessageStreamer.update_state(data.stream_state, fn queue ->
+               :queue.in({:forward, :parse}, queue)
+             end)
+       }}
+    end
+  end
+
+  defp evict_exceeding(%{prepared_statements: prepared_statements, id: id}) do
+    limit = PreparedStatements.backend_limit()
+
+    if MapSet.size(prepared_statements) >= limit do
+      count = div(limit, 5)
+      to_remove = Enum.take_random(prepared_statements, count) |> MapSet.new()
+      close_pkts = Enum.map(to_remove, &PreparedStatements.build_close_pkt/1)
+      prepared_statements = MapSet.difference(prepared_statements, to_remove)
+      Telem.prepared_statements_evicted(count, id)
+
+      {close_pkts, prepared_statements}
+    else
+      {[], prepared_statements}
+    end
+  end
+
   defp maybe_reconnect(reason, data) do
     max_reconnect_retries = Application.get_env(:supavisor, :reconnect_retries)
 
@@ -707,6 +793,17 @@ defmodule Supavisor.DbHandler do
       {:stop, {:failed_to_connect, reason}}
     else
       {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
+    end
+  end
+
+  defp process_backend_streaming(bin, data) do
+    case MessageStreamer.handle_packets(data.stream_state, bin) do
+      {:ok, new_stream_state, packets} ->
+        updated_data = %{data | stream_state: new_stream_state}
+        {:ok, updated_data, packets}
+
+      err ->
+        err
     end
   end
 end

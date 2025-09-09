@@ -60,7 +60,8 @@ defmodule Supavisor.Monitoring.PromEx do
       # PromEx built in plugins
       Plugins.Application,
       Plugins.Beam,
-      {Plugins.Phoenix, router: SupavisorWeb.Router, endpoint: SupavisorWeb.Endpoint},
+      {Supavisor.PromEx.Plugins.Phoenix,
+       router: SupavisorWeb.Router, endpoint: SupavisorWeb.Endpoint},
       Plugins.Ecto,
 
       # Custom PromEx metrics plugins
