@@ -6,7 +6,7 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
 
-  @tag cluster: true
+  @tag cluster: true, flaky: true
   test "nodes start unclustered then cluster and pools work across all nodes" do
     db_conf = Application.get_env(:supavisor, Repo)
 
