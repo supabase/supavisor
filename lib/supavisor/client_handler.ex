@@ -461,7 +461,7 @@ defmodule Supavisor.ClientHandler do
     }
 
     {:ok, db_pid} = DbHandler.start_link(args)
-    db_sock = :gen_statem.call(db_pid, {:checkout, data.sock, self()})
+    db_sock = DbHandler.checkout(db_pid, data.sock, self())
     {:keep_state, %{data | db_pid: {nil, db_pid, db_sock}, mode: :proxy}}
   end
 
