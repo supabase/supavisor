@@ -182,9 +182,6 @@ defmodule Supavisor.DbHandler do
       %{authentication_ok: true} ->
         :keep_state_and_data
 
-      :authentication ->
-        :keep_state_and_data
-
       :authentication_md5 ->
         {:keep_state, data}
 
