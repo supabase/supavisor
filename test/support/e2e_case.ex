@@ -47,6 +47,7 @@ defmodule Supavisor.E2ECase do
                db_database: external_id,
                auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
                external_id: external_id,
+               feature_flags: %{"named_prepared_statements" => true},
                users: [
                  %{
                    "pool_size" => 15,

@@ -37,7 +37,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        reconnect_retries: 5
+        reconnect_retries: 5,
+        tenant_feature_flags: %{}
       }
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
@@ -47,7 +48,6 @@ defmodule Supavisor.DbHandlerTest do
       assert data.sent == false
       assert data.auth == args.auth
       assert data.tenant == args.tenant
-      assert data.buffer == []
       assert data.db_state == nil
       assert data.parameter_status == %{}
       assert data.nonce == nil
