@@ -24,10 +24,10 @@ defmodule Supavisor.Tenants.User do
   @doc false
   def changeset(user, attrs) do
     attrs =
-      if attrs["db_user_alias"] do
-        attrs
-      else
-        Map.put(attrs, "db_user_alias", attrs["db_user"])
+      case attrs do
+        %{"db_user_alias" => _} -> attrs
+        %{"db_user" => db_user} -> Map.put(attrs, "db_user_alias", db_user)
+        _ -> attrs
       end
 
     user

@@ -139,14 +139,6 @@ defmodule Supavisor.TenantsTest do
       assert %Ecto.Changeset{} = Tenants.change_tenant(tenant)
     end
 
-    test "get_user/4" do
-      _tenant = tenant_fixture()
-      assert {:error, :not_found} = Tenants.get_user(:single, "no_user", "no_tenant", "")
-
-      assert {:ok, %{tenant: _, user: _}} =
-               Tenants.get_user(:single, "postgres", "dev_tenant", "")
-    end
-
     test "update_tenant_ps/2 updates the tenant's default_parameter_status" do
       _tenant = tenant_fixture()
       default_parameter_status = %{"server_version" => "17.0"}
@@ -171,6 +163,77 @@ defmodule Supavisor.TenantsTest do
 
     test "delete_cluster_by_alias/1 returns false if no cluster is found from a given alias" do
       assert Tenants.delete_cluster_by_alias("some_alias") == false
+    end
+  end
+
+  describe "users" do
+    alias Supavisor.Tenants.User
+
+    import Supavisor.TenantsFixtures
+
+    @invalid_attrs %{
+      "db_user" => nil,
+      "db_password" => nil,
+      "pool_size" => nil,
+      "mode_type" => nil
+    }
+
+    test "list_users/0 returns all users" do
+      user = user_fixture()
+      assert user in Tenants.list_users()
+    end
+
+    test "get_user!/1 returns the user with given id" do
+      user = user_fixture()
+      assert Tenants.get_user!(user.id) == user
+    end
+
+    test "get_user/4" do
+      _tenant = tenant_fixture()
+      assert {:error, :not_found} = Tenants.get_user(:single, "no_user", "no_tenant", "")
+
+      assert {:ok, %{tenant: _, user: _}} =
+               Tenants.get_user(:single, "postgres", "dev_tenant", "")
+    end
+
+    test "create_user/1 with valid data creates a user" do
+      valid_attrs = %{
+        "db_user" => "some_user",
+        "db_password" => "some_password",
+        "pool_size" => 3,
+        "mode_type" => "transaction"
+      }
+
+      assert {:ok, %User{} = user} = Tenants.create_user(valid_attrs)
+      assert user.db_user_alias == "some_user"
+      assert user.db_user == "some_user"
+      assert user.db_password == "some_password"
+      assert user.pool_size == 3
+      assert user.mode_type == :transaction
+    end
+
+    test "create_user/1 with invalid data returns error changeset" do
+      assert {:error, %Ecto.Changeset{}} = Tenants.create_user(@invalid_attrs)
+    end
+
+    test "update_user/2 with valid data updates the user" do
+      user = user_fixture()
+      update_attrs = %{"db_password" => "some_updated_password", "pool_size" => 4}
+
+      assert {:ok, %User{} = user} = Tenants.update_user(user, update_attrs)
+      assert user.db_password == "some_updated_password"
+      assert user.pool_size == 4
+    end
+
+    test "delete_user/1 deletes the user" do
+      user = user_fixture()
+      assert {:ok, %User{}} = Tenants.delete_user(user)
+      assert_raise Ecto.NoResultsError, fn -> Tenants.get_user!(user.id) end
+    end
+
+    test "change_user/1 returns a user changeset" do
+      user = user_fixture()
+      assert %Ecto.Changeset{} = Tenants.change_user(user)
     end
   end
 
@@ -223,6 +286,78 @@ defmodule Supavisor.TenantsTest do
     test "change_cluster/1 returns a cluster changeset" do
       cluster = cluster_fixture()
       assert %Ecto.Changeset{} = Tenants.change_cluster(cluster)
+    end
+  end
+
+  describe "cluster_tenants" do
+    alias Supavisor.Tenants.ClusterTenants
+
+    import Supavisor.TenantsFixtures
+
+    @invalid_attrs %{type: nil, cluster_alias: nil, tenant_external_id: nil, active: nil}
+
+    test "list_cluster_tenants/0 returns all cluster_tenants" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert cluster_tenants in Tenants.list_cluster_tenants()
+    end
+
+    test "get_cluster_tenants!/1 returns the cluster_tenants with given id" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert Tenants.get_cluster_tenants!(cluster_tenants.id) == cluster_tenants
+    end
+
+    test "create_cluster_tenants/1 with valid data creates a cluster_tenants" do
+      tenant = tenant_fixture()
+      cluster = cluster_fixture()
+
+      valid_attrs = %{
+        type: "write",
+        cluster_alias: cluster.alias,
+        tenant_external_id: tenant.external_id,
+        active: true
+      }
+
+      assert {:ok, %ClusterTenants{} = cluster_tenants} =
+               Tenants.create_cluster_tenants(valid_attrs)
+
+      assert cluster_tenants.type == :write
+      assert cluster_tenants.cluster_alias == cluster.alias
+      assert cluster_tenants.tenant_external_id == tenant.external_id
+      assert cluster_tenants.active == true
+    end
+
+    test "create_cluster_tenants/1 with invalid data returns error changeset" do
+      assert {:error, %Ecto.Changeset{}} = Tenants.create_cluster_tenants(@invalid_attrs)
+    end
+
+    test "update_cluster_tenants/2 with valid data updates the cluster_tenants" do
+      valid_attrs = %{type: "read"}
+      cluster_tenants = cluster_tenants_fixture()
+
+      assert {:ok, %ClusterTenants{} = cluster_tenants} =
+               Tenants.update_cluster_tenants(cluster_tenants, valid_attrs)
+
+      assert cluster_tenants.active == true
+    end
+
+    test "update_cluster_tenants/2 with invalid data returns error changeset" do
+      cluster_tenants = cluster_tenants_fixture()
+
+      assert {:error, %Ecto.Changeset{}} =
+               Tenants.update_cluster_tenants(cluster_tenants, @invalid_attrs)
+
+      assert cluster_tenants == Tenants.get_cluster_tenants!(cluster_tenants.id)
+    end
+
+    test "delete_cluster_tenants/1 deletes the cluster_tenants" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert {:ok, %ClusterTenants{}} = Tenants.delete_cluster_tenants(cluster_tenants)
+      assert_raise Ecto.NoResultsError, fn -> Tenants.get_cluster_tenants!(cluster_tenants.id) end
+    end
+
+    test "change_cluster_tenants/1 returns a cluster_tenants changeset" do
+      cluster_tenants = cluster_tenants_fixture()
+      assert %Ecto.Changeset{} = Tenants.change_cluster_tenants(cluster_tenants)
     end
   end
 end
