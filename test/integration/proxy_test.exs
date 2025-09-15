@@ -199,7 +199,7 @@ defmodule Supavisor.Integration.ProxyTest do
                [{~c"x-app-version", Application.spec(:supavisor, :vsn)}], []}}
   end
 
-  test "checks that client_handler is idle and db_pid is nil for transaction mode" do
+  test "checks that client_handler is idle and db_connection is nil for transaction mode" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
     url =
@@ -216,9 +216,9 @@ defmodule Supavisor.Integration.ProxyTest do
       |> :ets.tab2list()
 
     assert {state, map} = :sys.get_state(client_pid)
-    assert %{db_pid: db_pid} = map
+    assert %{db_connection: db_connection} = map
 
-    assert {:idle, nil} = {state, db_pid}
+    assert {:idle, nil} = {state, db_connection}
     :gen_statem.stop(pid)
   end
 

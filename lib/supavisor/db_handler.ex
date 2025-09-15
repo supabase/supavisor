@@ -225,49 +225,10 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
-      when proto in @proto do
-    Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
-
-    # TODO: use streaming for read replica too
-    {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
-    data = %{data | pending_bin: rest}
-
-    resp =
-      cond do
-        Server.has_read_only_error?(pkts) ->
-          Logger.error("DbHandler: read only error")
-
-          with [_] <- pkts do
-            # need to flush ready_for_query if it's not in same packet
-            :ok = receive_ready_for_query()
-          end
-
-          :read_sql_error
-
-        List.last(pkts).tag == :ready_for_query ->
-          :ready_for_query
-
-        true ->
-          :continue
-      end
-
-    if resp != :continue do
-      HandlerHelpers.sock_send(data.client_sock, bin)
-      :ok = ClientHandler.db_status(data.caller, resp)
-      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
-    else
-      {:keep_state, data}
-    end
-  end
-
   # forward the message to the client
   def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
-    Logger.debug(
-      "DbHandler: Got write replica messages: #{Debug.packet_to_string(bin, :backend)}"
-    )
+    Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
     if String.ends_with?(bin, Server.ready_for_query()) do
       HandlerHelpers.activate(data.sock)
@@ -363,7 +324,7 @@ defmodule Supavisor.DbHandler do
 
     HandlerHelpers.sock_send(data.sock, Server.terminate_message())
     HandlerHelpers.sock_close(data.sock)
-    {:stop, {:client_handler_down, data.mode}}
+    {:stop, :normal}
   end
 
   def handle_event({:call, from}, :get_state_and_mode, state, data) do
@@ -402,9 +363,15 @@ defmodule Supavisor.DbHandler do
       HandlerHelpers.sock_send(data.client_sock, message)
     end
 
-    Logger.error(
-      "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
-    )
+    case reason do
+      :normal ->
+        :ok
+
+      reason ->
+        Logger.error(
+          "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
+        )
+    end
   end
 
   @spec try_ssl_handshake(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.sock()} | {:error, term()}
@@ -488,42 +455,6 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec receive_ready_for_query() :: :ok | :timeout_error
-  defp receive_ready_for_query do
-    receive do
-      {_proto, _socket, <<?Z, 5::32, ?I>>} ->
-        :ok
-    after
-      15_000 -> :timeout_error
-    end
-  end
-
-  @spec handler_caller(map()) :: pid() | nil
-  defp handler_caller(%{mode: :session} = data), do: data.caller
-  defp handler_caller(_), do: nil
-
-  @spec check_ready(binary()) ::
-          {:ready_for_query, :idle | :transaction_block | :failed_transaction_block} | :continue
-  def check_ready(bin) do
-    bin_size = byte_size(bin)
-
-    case bin do
-      <<_::binary-size(bin_size - 6), 90, 0, 0, 0, 5, status_indicator::binary>> ->
-        indicator =
-          case status_indicator do
-            <<?I>> -> :idle
-            <<?T>> -> :transaction_block
-            <<?E>> -> :failed_transaction_block
-            _ -> :continue
-          end
-
-        {:ready_for_query, indicator}
-
-      _ ->
-        :continue
-    end
-  end
-
   @spec handle_auth_pkts(map(), map(), map()) :: any()
   defp handle_auth_pkts(%{tag: :parameter_status, payload: {k, v}}, acc, _),
     do: update_in(acc, [:ps], fn ps -> Map.put(ps || %{}, k, v) end)
@@ -533,7 +464,7 @@ defmodule Supavisor.DbHandler do
 
   defp handle_auth_pkts(%{tag: :backend_key_data, payload: payload}, acc, data) do
     key = self()
-    conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
+    conn = %{host: data.auth.host, port: data.auth.port, ip_version: data.auth.ip_version}
     Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
     Logger.debug("DbHandler: Backend #{inspect(key)} data: #{inspect(payload)}")
     Map.put(acc, :backend_key_data, payload)
