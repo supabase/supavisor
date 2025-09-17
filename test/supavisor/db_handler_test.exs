@@ -129,6 +129,49 @@ defmodule Supavisor.DbHandlerTest do
 
       assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
     end
+
+    test "rejects connection when DB responds with SSL negotiation 'N'" do
+      {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
+      {:ok, {host, port}} = :inet.sockname(listen)
+
+      this = self()
+
+      spawn(fn ->
+        {:ok, recv} = :gen_tcp.accept(listen)
+
+        :gen_tcp.controlling_process(recv, this)
+
+        {:ok, _message} = :gen_tcp.recv(recv, 0)
+
+        :gen_tcp.send(recv, <<?N>>)
+      end)
+
+      secrets = fn -> %{user: "some user", db_user: "some user"} end
+
+      auth = %{
+        host: host,
+        port: port,
+        user: "some user",
+        require_user: true,
+        database: "some database",
+        application_name: "some application name",
+        ip_version: :inet,
+        secrets: secrets,
+        upstream_ssl: true
+      }
+
+      data = %{
+        auth: auth,
+        sock: {:gen_tcp, nil},
+        id: @id,
+        proxy: false,
+        reconnect_retries: 6,
+        client_sock: nil
+      }
+
+      assert {:keep_state_and_data, {:state_timeout, 2500, :connect}} ==
+               Db.handle_event(:internal, nil, :connect, data)
+    end
   end
 
   describe "handle_event/4 info tcp authentication authentication_cleartext_password payload events" do
