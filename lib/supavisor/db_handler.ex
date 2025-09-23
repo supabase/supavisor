@@ -103,7 +103,7 @@ defmodule Supavisor.DbHandler do
   def callback_mode, do: [:handle_event_function]
 
   @impl true
-  def handle_event(:internal, _, :connect, %{auth: auth} = data) do
+  def handle_event(:internal, :connect, :connect, %{auth: auth} = data) do
     Logger.debug("DbHandler: Try to connect to DB")
 
     sock_opts =
@@ -219,14 +219,14 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  # the process received message from db without linked caller
-  def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in @proto do
-    Logger.debug("DbHandler: Got db response #{inspect(bin)} when caller was nil")
+  # the process received message from db while idle
+  def handle_event(:info, {proto, _, bin}, :idle, _data) when proto in @proto do
+    Logger.debug("DbHandler: Got db response #{inspect(bin)} when idle")
     :keep_state_and_data
   end
 
   # forward the message to the client
-  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
+  def handle_event(:info, {proto, _, bin}, :busy, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
@@ -240,23 +240,22 @@ defmodule Supavisor.DbHandler do
 
       # in transaction mode, we need to notify the client when the transaction is finished,
       # after which it will unlink the direct db connection process from itself.
-      data =
-        if data.mode == :transaction do
-          ClientHandler.db_status(data.caller, :ready_for_query)
-          data = handle_server_messages(bin, data)
-          %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
-        else
-          data = handle_server_messages(bin, data)
+      if data.mode == :transaction do
+        ClientHandler.db_status(data.caller, :ready_for_query)
+        data = handle_server_messages(bin, data)
 
-          {_, client_stats} =
-            if data.proxy,
-              do: {nil, data.client_stats},
-              else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
+        {:next_state, :idle,
+         %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}}
+      else
+        data = handle_server_messages(bin, data)
 
-          %{data | stats: stats, active_count: 0, client_stats: client_stats}
-        end
+        {_, client_stats} =
+          if data.proxy,
+            do: {nil, data.client_stats},
+            else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
 
-      {:next_state, :idle, data}
+        {:keep_state, %{data | stats: stats, active_count: 0, client_stats: client_stats}}
+      end
     else
       if data.active_count > @switch_active_count,
         do: HandlerHelpers.active_once(data.sock)
@@ -266,7 +265,7 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event({:call, from}, {:handle_ps_pkts, pkts}, _state, data) do
+  def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
     {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
     {close_pkts, prepared_statements} = evict_exceeding(data)
@@ -291,13 +290,13 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: checkout call when state was #{state}")
 
     if state in [:idle, :busy] do
-      {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}}
+      {:next_state, :busy, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}}
     else
       {:keep_state_and_data, :postpone}
     end
   end
 
-  def handle_event({:call, from}, :ps, _, data) do
+  def handle_event({:call, from}, :ps, :busy, data) do
     Logger.debug("DbHandler: get parameter status")
     {:keep_state_and_data, {:reply, from, data.parameter_status}}
   end
@@ -591,20 +590,13 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(_e, acc, _data), do: acc
 
   @spec handle_authentication_error(map(), String.t()) :: any()
-  defp handle_authentication_error(%{proxy: false} = data, reason) do
+  defp handle_authentication_error(%{proxy: false} = data, _reason) do
     tenant = Supavisor.tenant(data.id)
 
     :erpc.multicast([node() | Node.list()], fn ->
       Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
       Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
-
-      Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
-        for {client_handler, _meta} <- entries,
-            do: send(client_handler, {:disconnect, reason})
-      end)
     end)
-
-    Supavisor.stop(data.id)
   end
 
   defp handle_authentication_error(%{proxy: true}, _reason), do: :ok

@@ -74,7 +74,7 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       state =
-        Db.handle_event(:internal, nil, :connect, %{
+        Db.handle_event(:internal, :connect, :connect, %{
           auth: auth,
           sock: {:gen_tcp, nil},
           id: @id,
@@ -119,7 +119,7 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       state =
-        Db.handle_event(:internal, nil, :connect, %{
+        Db.handle_event(:internal, :connect, :connect, %{
           auth: auth,
           sock: nil,
           id: @id,
@@ -170,7 +170,7 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       assert {:keep_state_and_data, {:state_timeout, 2500, :connect}} ==
-               Db.handle_event(:internal, nil, :connect, data)
+               Db.handle_event(:internal, :connect, :connect, data)
     end
   end
 

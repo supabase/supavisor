@@ -79,14 +79,14 @@ defmodule Supavisor.ClientHandler do
       "HTTP/1.1 204 OK\r\nx-app-version: #{Application.spec(:supavisor, :vsn)}\r\n\r\n"
     )
 
-    {:stop, {:shutdown, :http_request}}
+    {:stop, :normal}
   end
 
   # cancel request
   def handle_event(:info, {_, _, Server.cancel_message(pid, key)}, _state, _) do
     Logger.debug("ClientHandler: Got cancel query for #{inspect({pid, key})}")
     :ok = Cancel.send_cancel_query(pid, key)
-    {:stop, {:shutdown, :cancel_query}}
+    {:stop, :normal}
   end
 
   # send cancel request to db
@@ -126,7 +126,7 @@ defmodule Supavisor.ClientHandler do
         error ->
           Logger.error("ClientHandler: SSL handshake error: #{inspect(error)}")
           Telem.client_join(:fail, data.id)
-          {:stop, {:shutdown, :ssl_handshake_error}}
+          {:stop, :normal}
       end
     else
       Logger.error(
@@ -140,7 +140,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, _) when byte_size(bin) > 1024 do
     Logger.error("ClientHandler: Startup packet too large #{byte_size(bin)}")
-    {:stop, {:shutdown, :startup_packet_too_large}}
+    {:stop, :normal}
   end
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
@@ -151,26 +151,16 @@ defmodule Supavisor.ClientHandler do
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
 
       {:error, {:invalid_user_info, {:invalid_format, {user, db_name}}}} ->
-        reason = "Invalid format for user or db_name"
-        Logger.error("ClientHandler: #{inspect(reason)} #{inspect({user, db_name})}")
-
         # Extract tenant from the attempted parsing for telemetry
         {_, {_, tenant_or_alias, _}} = HandlerHelpers.parse_user_info(%{"user" => user})
         Telem.client_join(:fail, tenant_or_alias)
-
-        maybe_log_and_send_error(data.sock, {:error, :auth_error, reason})
-
-        {:stop, {:shutdown, :invalid_format}}
-
-      {:error, {:decode_error, error}} ->
-        Logger.error("ClientHandler: Client startup message error: #{inspect(error)}")
-        Telem.client_join(:fail, data.id)
-        {:stop, {:shutdown, :startup_packet_error}}
+        Error.maybe_log_and_send_error(data.sock, {:error, :auth_error, :invalid_user_format})
+        {:stop, :normal}
 
       {:error, error} ->
         Logger.error("ClientHandler: Client startup message error: #{inspect(error)}")
         Telem.client_join(:fail, data.id)
-        {:stop, {:shutdown, :startup_packet_error}}
+        {:stop, :normal}
     end
   end
 
@@ -209,14 +199,14 @@ defmodule Supavisor.ClientHandler do
 
         cond do
           !data.local and info.tenant.enforce_ssl and !data.ssl ->
-            maybe_log_and_send_error(sock, {:error, :ssl_required, user})
+            Error.maybe_log_and_send_error(sock, {:error, :ssl_required, user})
             Telem.client_join(:fail, id)
-            {:stop, {:shutdown, :ssl_required}}
+            {:stop, :normal}
 
           HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] ->
-            maybe_log_and_send_error(sock, {:error, :address_not_allowed, addr})
+            Error.maybe_log_and_send_error(sock, {:error, :address_not_allowed, addr})
             Telem.client_join(:fail, id)
-            {:stop, {:shutdown, :address_not_allowed}}
+            {:stop, :normal}
 
           true ->
             new_data = Data.set_tenant_info(data, info, user, id, db_name, data.mode)
@@ -227,24 +217,20 @@ defmodule Supavisor.ClientHandler do
                 {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
 
               {:error, reason} ->
-                Logger.error(
-                  "ClientHandler: Authentication auth_secrets error: #{inspect(reason)}"
-                )
-
-                maybe_log_and_send_error(sock, {:error, :auth_error, reason})
+                Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason}, :handshake)
                 Telem.client_join(:fail, id)
-                {:stop, {:shutdown, :auth_secrets_error}}
+                {:stop, :normal}
             end
         end
 
       {:error, reason} ->
-        maybe_log_and_send_error(
+        Error.maybe_log_and_send_error(
           sock,
           {:error, :tenant_not_found, reason, type, user, tenant_or_alias}
         )
 
         Telem.client_join(:fail, data.id)
-        {:stop, {:shutdown, :user_not_found}}
+        {:stop, :normal}
     end
   end
 
@@ -308,14 +294,14 @@ defmodule Supavisor.ClientHandler do
       {:keep_state, data, next}
     else
       {:error, :max_clients_reached} ->
-        maybe_log_and_send_error(data.sock, {:error, :max_clients_reached})
+        Error.maybe_log_and_send_error(data.sock, {:error, :max_clients_reached})
         Telem.client_join(:fail, data.id)
-        {:stop, {:shutdown, :max_clients_reached}}
+        {:stop, :normal}
 
       {:error, :max_pools_reached} ->
-        maybe_log_and_send_error(data.sock, {:error, :max_pools_reached})
+        Error.maybe_log_and_send_error(data.sock, {:error, :max_pools_reached})
         Telem.client_join(:fail, data.id)
-        {:stop, {:shutdown, :max_pools_reached}}
+        {:stop, :normal}
 
       :proxy ->
         case Proxy.prepare_proxy_connection(data) do
@@ -371,7 +357,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:timeout, :idle_terminate, _state, data) do
     Logger.warning("ClientHandler: Terminate an idle connection by #{data.idle_timeout} timeout")
-    {:stop, {:shutdown, :idle_terminate}}
+    {:stop, :normal}
   end
 
   def handle_event(:timeout, :heartbeat_check, _state, data) do
@@ -390,22 +376,17 @@ defmodule Supavisor.ClientHandler do
   end
 
   # client closed connection
-  def handle_event(_, {closed, _}, :busy, _data)
+  def handle_event(_, {closed, _}, state, _data)
       when closed in [:tcp_closed, :ssl_closed] do
-    Logger.warning("ClientHandler: #{closed} socket closed while busy")
-    {:stop, :normal}
-  end
-
-  def handle_event(_, {closed, _}, _state, _data)
-      when closed in [:tcp_closed, :ssl_closed] do
-    Logger.debug("ClientHandler: #{closed} socket closed")
+    level = if state == :idle, do: :info, else: :warning
+    Logger.log(level, "ClientHandler: #{closed} socket closed while state was #{state}")
     {:stop, :normal}
   end
 
   # linked DbHandler went down
   def handle_event(:info, {:EXIT, db_pid, reason}, _state, data) do
-    maybe_log_and_send_error(data.sock, {:error, :db_handler_exited, db_pid, reason})
-    {:stop, {:shutdown, :db_handler_exit}}
+    Error.maybe_log_and_send_error(data.sock, {:error, :db_handler_exited, db_pid, reason})
+    {:stop, :normal}
   end
 
   # pool's manager went down
@@ -420,11 +401,6 @@ defmodule Supavisor.ClientHandler do
       {:connecting, _} -> {:keep_state_and_data, {:next_event, :internal, :subscribe}}
       {:busy, _} -> {:stop, {:shutdown, :manager_down}}
     end
-  end
-
-  def handle_event(:info, {:disconnect, reason}, _state, _data) do
-    Logger.warning("ClientHandler: Disconnected due to #{inspect(reason)}")
-    {:stop, {:shutdown, {:disconnect, reason}}}
   end
 
   # emulate handle_cast
@@ -561,7 +537,7 @@ defmodule Supavisor.ClientHandler do
   # Terminate request
   def handle_event(_kind, {proto, _, <<?X, 4::32>>}, :idle, _data) when proto in @proto do
     Logger.info("ClientHandler: Terminate received from client")
-    {:stop, {:shutdown, :terminate_received}}
+    {:stop, :normal}
   end
 
   # Sync when idle and no db_connection - return sync directly
@@ -629,20 +605,19 @@ defmodule Supavisor.ClientHandler do
       ) do
     Logger.metadata(state: state)
 
+    # TODO: ensure these errors are forwarded properly on proxy
     error_type =
       case data.mode do
         :session -> {:error, :session_timeout}
         :transaction -> {:error, :transaction_timeout}
       end
 
-    maybe_log_and_send_error(data.sock, error_type)
-    :ok
+    Error.maybe_log_and_send_error(data.sock, error_type)
   end
 
   def terminate(reason, state, _data) do
     Logger.metadata(state: state)
     Logger.debug("ClientHandler: terminating with reason #{inspect(reason)}")
-    :ok
   end
 
   ## Internal functions
@@ -703,9 +678,9 @@ defmodule Supavisor.ClientHandler do
         prepare_retry_transition(sock, new_secrets, data)
 
       :no_retry ->
-        maybe_log_and_send_error(sock, {:error, :auth_error, reason, data.user}, context)
+        Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason, data.user}, context)
         Telem.client_join(:fail, data.id)
-        {:stop, {:shutdown, :auth_error}}
+        {:stop, :normal}
     end
   end
 
@@ -757,7 +732,7 @@ defmodule Supavisor.ClientHandler do
       {:ok, updated_data}
     else
       error ->
-        maybe_log_and_send_error(data.sock, error, "sending query")
+        Error.maybe_log_and_send_error(data.sock, error, "sending query")
         {:error, elem(error, 1)}
     end
   end
@@ -817,24 +792,8 @@ defmodule Supavisor.ClientHandler do
       {:keep_state, %{data | subscribe_retries: subscribe_retries + 1},
        {:timeout, @timeout_subscribe, :subscribe}}
     else
-      Logger.error("ClientHandler: Terminate after retries")
-      {:stop, {:shutdown, :subscribe_retries}}
-    end
-  end
-
-  @spec maybe_log_and_send_error(term(), term(), String.t() | nil) :: :ok
-  defp maybe_log_and_send_error(sock, error, context \\ nil) do
-    case Error.to_log_message(error, context) do
-      {:log, log_message} -> Logger.error("ClientHandler: #{log_message}")
-      :no_log -> :ok
-    end
-
-    {message, send_ready_for_query?} = Error.to_message(error, context)
-
-    if send_ready_for_query? do
-      HandlerHelpers.sock_send(sock, [message, Server.ready_for_query()])
-    else
-      HandlerHelpers.sock_send(sock, message)
+      Error.maybe_log_and_send_error(data.sock, {:error, :subscribe_retries_exhausted})
+      {:stop, :normal}
     end
   end
 end

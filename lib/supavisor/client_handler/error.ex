@@ -3,252 +3,279 @@ defmodule Supavisor.ClientHandler.Error do
   Error handling and message formatting for ClientHandler.
   """
 
-  alias Supavisor.Protocol.Server
+  alias Supavisor.{HandlerHelpers, Protocol.Server}
 
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
 
-  @doc """
-  Converts error tuples to properly formatted PostgreSQL error messages.
+  @type error_response :: %{
+          error: binary(),
+          log_message: String.t() | nil,
+          send_ready_for_query: boolean()
+        }
 
-  Returns {message, send_ready_for_query?} tuple.
+  @doc """
+  Handles error by logging and sending appropriate error message to the client socket.
 
   Optional context parameter is used for generic errors to indicate where they occurred.
   """
-  @spec to_message(term(), term()) :: {binary(), boolean()}
-  def to_message(error, context \\ nil)
+  @spec maybe_log_and_send_error(term(), term(), term()) :: :ok
+  def maybe_log_and_send_error(sock, error, context \\ nil) do
+    %{error: message, log_message: log_message, send_ready_for_query: send_ready_for_query} =
+      process(error, context)
 
-  def to_message({:error, :max_prepared_statements}, _context) do
+    if log_message do
+      require Logger
+      Logger.error("ClientHandler: #{log_message}")
+    end
+
+    if send_ready_for_query do
+      HandlerHelpers.sock_send(sock, [message, Server.ready_for_query()])
+    else
+      HandlerHelpers.sock_send(sock, message)
+    end
+  end
+
+  @spec process(term(), term()) :: error_response()
+  defp process({:error, :max_prepared_statements}, _context) do
     message_text =
       "max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"
 
-    {Server.error_message("XX000", message_text), false}
+    %{
+      error: Server.error_message("XX000", message_text),
+      log_message: message_text,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :prepared_statement_on_simple_query}, _context) do
+  defp process({:error, :prepared_statement_on_simple_query}, _context) do
     message_text =
       "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
 
-    {Server.error_message("XX000", message_text), true}
+    %{
+      error: Server.error_message("XX000", message_text),
+      log_message: message_text,
+      send_ready_for_query: true
+    }
   end
 
-  def to_message({:error, :max_prepared_statements_memory}, _context) do
+  defp process({:error, :max_prepared_statements_memory}, _context) do
     limit_mb = PreparedStatements.client_memory_limit_bytes() / 1_000_000
 
     message_text =
       "max prepared statements memory limit reached. Limit: #{limit_mb}MB per connection"
 
-    {Server.error_message("XX000", message_text), false}
+    %{
+      error: Server.error_message("XX000", message_text),
+      log_message: message_text,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :prepared_statement_not_found, name}, _context) do
+  defp process({:error, :prepared_statement_not_found, name}, _context) do
     message_text = "prepared statement #{inspect(name)} does not exist"
-    {Server.error_message("26000", message_text), false}
+
+    %{
+      error: Server.error_message("26000", message_text),
+      log_message: message_text,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :duplicate_prepared_statement, name}, _context) do
-    {Server.error_message("42P05", "prepared statement #{inspect(name)} already exists"), false}
+  defp process({:error, :duplicate_prepared_statement, name}, _context) do
+    message_text = "prepared statement #{inspect(name)} already exists"
+
+    %{
+      error: Server.error_message("42P05", message_text),
+      log_message: message_text,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :ssl_required}, _context) do
-    {Server.error_message("XX000", "SSL connection is required"), false}
+  defp process({:error, :ssl_required, user}, _context) do
+    %{
+      error: Server.error_message("XX000", "SSL connection is required"),
+      log_message: "Tenant is not allowed to connect without SSL, user #{user}",
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :ssl_required, _user}, _context) do
-    {Server.error_message("XX000", "SSL connection is required"), false}
-  end
-
-  def to_message({:error, :address_not_allowed, addr}, _context) do
+  defp process({:error, :address_not_allowed, addr}, _context) do
     message = "Address not in tenant allow_list: " <> inspect(addr)
-    {Server.error_message("XX000", message), false}
+
+    %{
+      error: Server.error_message("XX000", message),
+      log_message: message,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :tenant_not_found}, _context) do
-    {Server.error_message("XX000", "Tenant or user not found"), false}
+  defp process({:error, :tenant_not_found}, _context) do
+    %{
+      error: Server.error_message("XX000", "Tenant or user not found"),
+      log_message: "Tenant not found",
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :tenant_not_found, _reason, _type, _user, _tenant_or_alias}, _context) do
-    {Server.error_message("XX000", "Tenant or user not found"), false}
+  defp process({:error, :tenant_not_found, reason, type, user, tenant_or_alias}, _context) do
+    %{
+      error: Server.error_message("XX000", "Tenant or user not found"),
+      log_message: "User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}",
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :auth_error, :wrong_password, user}, _context) do
-    {Server.error_message("28P01", "password authentication failed for user \"#{user}\""), false}
+  defp process({:error, :auth_error, :wrong_password, user}, _context) do
+    %{
+      error: Server.error_message("28P01", "password authentication failed for user \"#{user}\""),
+      log_message: nil,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :auth_error, {:timeout, _message}, _user}, _context) do
-    {Server.error_message("08006", "connection failure during authentication"), false}
+  defp process({:error, :auth_error, {:timeout, _message}, _user}, _context) do
+    %{
+      error: Server.error_message("08006", "connection failure during authentication"),
+      log_message: nil,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :auth_error, {:unexpected_message, _details}, _user}, _context) do
-    {Server.error_message("08P01", "protocol violation during authentication"), false}
+  defp process({:error, :auth_error, {:unexpected_message, _details}, _user}, _context) do
+    %{
+      error: Server.error_message("08P01", "protocol violation during authentication"),
+      log_message: nil,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :auth_error, reason}, _context) do
-    {Server.error_message("XX000", "Authentication error, reason: #{inspect(reason)}"), false}
+  defp process({:error, :auth_error, {:decode_error, error}}, context) do
+    auth_stage = auth_context_description(context)
+
+    %{
+      error: Server.error_message("08P01", "protocol violation during authentication"),
+      log_message: "#{auth_stage} auth decode error: #{inspect(error)}",
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :max_clients_reached}, _context) do
-    {Server.error_message("XX000", "Max client connections reached"), false}
+  defp process({:error, :auth_error, {:unexpected_message, other}}, context) do
+    auth_stage = auth_context_description(context)
+
+    %{
+      error: Server.error_message("08P01", "protocol violation during authentication"),
+      log_message: "#{auth_stage} auth unexpected message: #{inspect(other)}",
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :max_pools_reached}, _context) do
-    {Server.error_message("XX000", "Max pools count reached"), false}
+  defp process({:error, :auth_error, {:timeout, _}}, context) do
+    log_message =
+      case context do
+        :auth_md5_wait -> "Timeout while waiting for MD5 password"
+        :auth_scram_first_wait -> "Timeout while waiting for first SCRAM message"
+        :auth_scram_final_wait -> "Timeout while waiting for final SCRAM message"
+        _ -> "Authentication timeout"
+      end
+
+    %{
+      error: Server.error_message("08006", "connection failure during authentication"),
+      log_message: log_message,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :db_handler_exited}, _context) do
-    {Server.error_message("XX000", "DbHandler exited"), false}
+  defp process({:error, :auth_error, :invalid_user_format}, _context) do
+    %{
+      error:
+        Server.error_message(
+          "XX000",
+          "Authentication error, reason: \"Invalid format for user or db_name\""
+        ),
+      log_message: "Invalid format for user or db_name",
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :db_handler_exited, _pid, _reason}, _context) do
-    {Server.error_message("XX000", "DbHandler exited"), false}
+  defp process({:error, :auth_error, reason}, _context) do
+    %{
+      error: Server.error_message("XX000", "Authentication error, reason: #{inspect(reason)}"),
+      log_message: nil,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :session_timeout}, _context) do
+  defp process({:error, :max_clients_reached}, _context) do
+    %{
+      error: Server.error_message("XX000", "Max client connections reached"),
+      log_message: "Max client connections reached",
+      send_ready_for_query: false
+    }
+  end
+
+  defp process({:error, :max_pools_reached}, _context) do
+    %{
+      error: Server.error_message("XX000", "Max pools count reached"),
+      log_message: "Max pools count reached",
+      send_ready_for_query: false
+    }
+  end
+
+  defp process({:error, :db_handler_exited, pid, reason}, _context) do
+    %{
+      error: Server.error_message("XX000", "DbHandler exited"),
+      log_message: "DbHandler #{inspect(pid)} exited #{inspect(reason)}",
+      send_ready_for_query: false
+    }
+  end
+
+  defp process({:error, :session_timeout}, _context) do
     message =
       "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size"
 
-    {Server.error_message("XX000", message), false}
+    %{
+      error: Server.error_message("XX000", message),
+      log_message: message,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message({:error, :transaction_timeout}, _context) do
-    {Server.error_message("XX000", "Unable to check out process from the pool due to timeout"),
-     false}
+  defp process({:error, :transaction_timeout}, _context) do
+    message = "Unable to check out process from the pool due to timeout"
+
+    %{
+      error: Server.error_message("XX000", message),
+      log_message: message,
+      send_ready_for_query: false
+    }
   end
 
-  def to_message(error, context) do
+  defp process({:error, :subscribe_retries_exhausted}, _context) do
+    message = "Failed to subscribe to tenant after multiple retries. Terminating."
+
+    %{
+      error: Server.error_message("XX000", message),
+      log_message: message,
+      send_ready_for_query: false
+    }
+  end
+
+  defp process(error, context) do
     message =
       case context do
         nil -> "Internal error: #{inspect(error)}"
         context -> "Internal error (#{context}): #{inspect(error)}"
       end
 
-    {Server.error_message("XX000", message), false}
+    %{
+      error: Server.error_message("XX000", message),
+      log_message: message,
+      send_ready_for_query: false
+    }
   end
 
-  @doc """
-  Determines if an error should be logged and returns the appropriate log message.
-
-  Returns {:log, message} if the error should be logged, or :no_log if logging
-  should be handled elsewhere or skipped.
-
-  Optional context parameter is used for generic errors to indicate where they occurred.
-  """
-  @spec to_log_message(term(), term()) :: {:log, String.t()} | :no_log
-  def to_log_message(error, context \\ nil)
-
-  def to_log_message({:error, :max_prepared_statements}, _context) do
-    {:log,
-     "max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"}
-  end
-
-  def to_log_message({:error, :prepared_statement_on_simple_query}, _context) do
-    {:log,
-     "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"}
-  end
-
-  def to_log_message({:error, :max_prepared_statements_memory}, _context) do
-    limit_mb = PreparedStatements.client_memory_limit_bytes() / 1_000_000
-    {:log, "max prepared statements memory limit reached. Limit: #{limit_mb}MB per connection"}
-  end
-
-  def to_log_message({:error, :prepared_statement_not_found, name}, _context) do
-    {:log, "prepared statement #{inspect(name)} does not exist"}
-  end
-
-  def to_log_message({:error, :duplicate_prepared_statement, name}, _context) do
-    {:log, "prepared statement #{inspect(name)} already exists"}
-  end
-
-  def to_log_message({:error, :ssl_required}, _context) do
-    {:log, "Tenant is not allowed to connect without SSL"}
-  end
-
-  def to_log_message({:error, :ssl_required, user}, _context) do
-    {:log, "Tenant is not allowed to connect without SSL, user #{user}"}
-  end
-
-  def to_log_message({:error, :address_not_allowed, addr}, _context) do
-    {:log, "Address not in tenant allow_list: " <> inspect(addr)}
-  end
-
-  def to_log_message({:error, :tenant_not_found}, _context) do
-    {:log, "Tenant or user not found"}
-  end
-
-  def to_log_message({:error, :tenant_not_found, reason, type, user, tenant_or_alias}, _context) do
-    {:log, "User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}"}
-  end
-
-  # Auth error logging with context
-  def to_log_message({:error, :auth_error, {:decode_error, error}}, :auth_md5_wait) do
-    {:log, "MD5 auth decode error: #{inspect(error)}"}
-  end
-
-  def to_log_message({:error, :auth_error, {:unexpected_message, other}}, :auth_md5_wait) do
-    {:log, "MD5 auth unexpected message: #{inspect(other)}"}
-  end
-
-  def to_log_message({:error, :auth_error, {:decode_error, error}}, :auth_scram_first_wait) do
-    {:log, "SCRAM first auth decode error: #{inspect(error)}"}
-  end
-
-  def to_log_message({:error, :auth_error, {:unexpected_message, other}}, :auth_scram_first_wait) do
-    {:log, "SCRAM first auth unexpected message: #{inspect(other)}"}
-  end
-
-  def to_log_message({:error, :auth_error, {:decode_error, error}}, :auth_scram_final_wait) do
-    {:log, "SCRAM final auth decode error: #{inspect(error)}"}
-  end
-
-  def to_log_message({:error, :auth_error, {:unexpected_message, other}}, :auth_scram_final_wait) do
-    {:log, "SCRAM final auth unexpected message: #{inspect(other)}"}
-  end
-
-  def to_log_message({:error, :auth_error, {:timeout, _}}, context) do
-    case context do
-      :auth_md5_wait -> {:log, "Timeout while waiting for MD5 password"}
-      :auth_scram_first_wait -> {:log, "Timeout while waiting for first SCRAM message"}
-      :auth_scram_final_wait -> {:log, "Timeout while waiting for final SCRAM message"}
-      _ -> {:log, "Authentication timeout"}
-    end
-  end
-
-  # Fallback for other auth errors
-  def to_log_message({:error, :auth_error, _}, _context), do: :no_log
-  def to_log_message({:error, :auth_error, _, _}, _context), do: :no_log
-  def to_log_message({:error, :auth_error, _, _, _}, _context), do: :no_log
-
-  def to_log_message({:error, :max_clients_reached}, _context) do
-    {:log, "Max client connections reached"}
-  end
-
-  def to_log_message({:error, :max_pools_reached}, _context) do
-    {:log, "Max pools count reached"}
-  end
-
-  def to_log_message({:error, :db_handler_exited}, _context) do
-    {:log, "DbHandler exited"}
-  end
-
-  def to_log_message({:error, :db_handler_exited, pid, reason}, _context) do
-    {:log, "DbHandler #{inspect(pid)} exited #{inspect(reason)}"}
-  end
-
-  def to_log_message({:error, :session_timeout}, _context) do
-    {:log,
-     "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size"}
-  end
-
-  def to_log_message({:error, :transaction_timeout}, _context) do
-    {:log, "Unable to check out process from the pool due to timeout"}
-  end
-
-  def to_log_message(error, context) do
-    message =
-      case context do
-        nil -> "Internal error: #{inspect(error)}"
-        context -> "Internal error (#{context}): #{inspect(error)}"
-      end
-
-    {:log, message}
-  end
+  defp auth_context_description(:auth_md5_wait), do: "MD5"
+  defp auth_context_description(:auth_scram_first_wait), do: "SCRAM first"
+  defp auth_context_description(:auth_scram_final_wait), do: "SCRAM final"
+  defp auth_context_description(_), do: "Unknown"
 end
