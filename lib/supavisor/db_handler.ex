@@ -287,7 +287,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
-    Logger.debug("DbHandler: checkout call when state was #{state}")
+    Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
       {:next_state, :busy, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}}

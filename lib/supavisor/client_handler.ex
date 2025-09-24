@@ -19,18 +19,21 @@ defmodule Supavisor.ClientHandler do
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
 
   alias Supavisor.{
-    ClientHandler.Auth,
-    ClientHandler.Cancel,
-    ClientHandler.Data,
-    ClientHandler.Error,
-    ClientHandler.ProtocolHelpers,
-    ClientHandler.Proxy,
     DbHandler,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
     Protocol.Debug,
     Tenants
+  }
+
+  alias Supavisor.ClientHandler.{
+    Auth,
+    Cancel,
+    Data,
+    Error,
+    ProtocolHelpers,
+    Proxy
   }
 
   require Supavisor.Protocol.Server, as: Server
@@ -195,6 +198,7 @@ defmodule Supavisor.ClientHandler do
           app_name: data.app_name
         )
 
+        IO.inspect(sock)
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
 
         cond do
@@ -376,10 +380,20 @@ defmodule Supavisor.ClientHandler do
   end
 
   # client closed connection
-  def handle_event(_, {closed, _}, state, _data)
+  def handle_event(_, {closed, _}, state, data)
       when closed in [:tcp_closed, :ssl_closed] do
-    level = if state == :idle, do: :info, else: :warning
-    Logger.log(level, "ClientHandler: #{closed} socket closed while state was #{state}")
+    level =
+      if state == :idle or data.mode in [:proxy, :session] do
+        :info
+      else
+        :warning
+      end
+
+    Logger.log(
+      level,
+      "ClientHandler: #{closed} socket closed while state was #{state} (#{data.mode})"
+    )
+
     {:stop, :normal}
   end
 
@@ -646,7 +660,7 @@ defmodule Supavisor.ClientHandler do
   defp handle_auth_success(sock, {method, secrets}, client_key, data) do
     final_secrets = Auth.prepare_final_secrets(secrets, client_key)
 
-    Logger.debug("ClientHandler: Exchange success")
+    Logger.info("ClientHandler: Connection authenticated")
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
     Telem.client_join(:ok, data.id)
 
@@ -717,7 +731,7 @@ defmodule Supavisor.ClientHandler do
   @spec handle_data(binary(), map()) :: {:ok, map()} | {:error, atom()}
   defp handle_data(data_to_send, data) do
     Logger.debug(
-      "ClientHandler: Forward query to db #{Debug.packet_to_string(data_to_send, :frontend)} #{inspect(data.db_connection)}"
+      "ClientHandler: Forward pkt to db #{Debug.packet_to_string(data_to_send, :frontend)} #{inspect(data.db_connection)}"
     )
 
     with {:ok, new_stream_state, pkts} <-
