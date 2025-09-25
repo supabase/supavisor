@@ -187,14 +187,16 @@ defmodule Supavisor.DbHandler do
       :authentication_cleartext ->
         {:keep_state, data}
 
-      {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
+      {:error_response, %{"S" => "FATAL", "C" => "28P01"} = error} ->
+        reason = error["M"] || "Authentication failed"
         handle_authentication_error(data, reason)
-        Logger.error("DbHandler: Auth error #{inspect(reason)}")
+        Logger.error("DbHandler: Auth error #{inspect(error)}")
         {:stop, :invalid_password, data}
 
       {:error_response, error} ->
         Logger.error("DbHandler: Error auth response #{inspect(error)}")
-        {:stop, {:encode_and_forward, error}}
+        encode_and_forward_error(error, data)
+        {:stop, :normal}
 
       {:ready_for_query, acc} ->
         ps = acc.ps
@@ -352,24 +354,31 @@ defmodule Supavisor.DbHandler do
   def terminate(reason, state, data) do
     Telem.handler_action(:db_handler, :stopped, data.id)
 
-    if data.client_sock != nil do
-      message =
-        case reason do
-          {:encode_and_forward, msg} -> Server.encode_error_message(msg)
-          _ -> Server.error_message("XX000", inspect(reason))
-        end
-
-      HandlerHelpers.sock_send(data.client_sock, message)
-    end
-
     case reason do
       :normal ->
+        :ok
+
+      :shutdown ->
         :ok
 
       reason ->
         Logger.error(
           "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
         )
+    end
+  end
+
+  @spec encode_and_forward_error(map(), map()) :: :ok | :noop
+  defp encode_and_forward_error(message, data) do
+    case data do
+      %{client_sock: sock} when not is_nil(sock) ->
+        HandlerHelpers.sock_send(
+          sock,
+          Server.encode_error_message(message)
+        )
+
+      _other ->
+        :noop
     end
   end
 

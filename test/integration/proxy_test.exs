@@ -272,7 +272,11 @@ defmodule Supavisor.Integration.ProxyTest do
 
       :gen_statem.stop(pid)
     after
-      P.query(origin, "alter user dev_postgres_password_test with password '#{db_conf[:password]}';", [])
+      P.query(
+        origin,
+        "alter user dev_postgres_password_test with password '#{db_conf[:password]}';",
+        []
+      )
     end
   end
 

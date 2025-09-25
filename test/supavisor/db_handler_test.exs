@@ -308,23 +308,21 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event(:info, content, :authentication, data)
     end
 
-    test "handles server encode and forward error" do
+    test "encodes and forwards server error" do
       bin = <<?E, 4::32>>
+      {send, recv} = sockpair()
+      content = {:tcp, recv, bin}
 
-      {_a, b} = sockpair()
-      content = {:tcp, b, bin}
+      assert {:stop, :normal} =
+               Db.handle_event(:info, content, :authentication, %{client_sock: {:gen_tcp, send}})
 
-      assert {:stop, {:encode_and_forward, []}} =
-               Db.handle_event(:info, content, :authentication, %{})
+      # The implementation adds a null terminator
+      assert {:ok, <<?E, 5::32, 0>>} = :gen_tcp.recv(recv, 0, 1000)
     end
   end
 
   describe "handle_event/4 info tcp authentication authentication_md5_password payload events" do
     setup do
-      # `82` is `?R`, which identifies the payload tag as `:authentication`
-      # `0, 0, 0, 12` is the packet length
-      # `0, 0, 0, 5` is the authentication type, identified as `:authentication_md5_password`
-      # `100, 100, 100, 100` is the md5 salt from db, a random 4 bytes value
       bin = <<82, 0, 0, 0, 12, 0, 0, 0, 5, 100, 100, 100, 100>>
 
       {send, recv} = sockpair()
