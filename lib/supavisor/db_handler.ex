@@ -91,7 +91,6 @@ defmodule Supavisor.DbHandler do
         caller: args[:caller] || nil,
         client_sock: args[:client_sock] || nil,
         proxy: args[:proxy] || false,
-        active_count: 0,
         reconnect_retries: 0
       }
 
@@ -244,8 +243,7 @@ defmodule Supavisor.DbHandler do
         ClientHandler.db_status(data.caller, :ready_for_query)
         data = handle_server_messages(bin, data)
 
-        {:next_state, :idle,
-         %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}}
+        {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
       else
         data = handle_server_messages(bin, data)
 
@@ -254,14 +252,11 @@ defmodule Supavisor.DbHandler do
             do: {nil, data.client_stats},
             else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
 
-        {:keep_state, %{data | stats: stats, active_count: 0, client_stats: client_stats}}
+        {:keep_state, %{data | stats: stats, client_stats: client_stats}}
       end
     else
-      if data.active_count > @switch_active_count,
-        do: HandlerHelpers.active_once(data.sock)
-
       data = handle_server_messages(bin, data)
-      {:keep_state, %{data | active_count: data.active_count + 1}}
+      {:keep_state, data}
     end
   end
 
@@ -328,6 +323,11 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, :get_state_and_mode, state, data) do
     {:keep_state_and_data, {:reply, from, {state, data.mode}}}
+  end
+
+  def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
+    HandlerHelpers.setopts(data.sock, active: @switch_active_count)
+    :keep_state_and_data
   end
 
   def handle_event(type, content, state, data) do
@@ -439,11 +439,11 @@ defmodule Supavisor.DbHandler do
 
   @spec activate(Supavisor.sock()) :: :ok | {:error, term}
   defp activate({:gen_tcp, sock}) do
-    :inet.setopts(sock, active: true)
+    :inet.setopts(sock, active: @switch_active_count)
   end
 
   defp activate({:ssl, sock}) do
-    :ssl.setopts(sock, active: true)
+    :ssl.setopts(sock, active: @switch_active_count)
   end
 
   defp get_user(auth) do

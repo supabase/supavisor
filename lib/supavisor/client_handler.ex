@@ -63,9 +63,7 @@ defmodule Supavisor.ClientHandler do
     local = opts[:local] || false
 
     Logger.metadata(peer_ip: peer_ip, local: local, state: :init)
-
-    :ok = trans.setopts(sock, active: true)
-
+    :ok = trans.setopts(sock, active: @switch_active_count)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
     data = Data.new({:gen_tcp, sock}, trans, peer_ip, local, opts.mode)
@@ -123,7 +121,7 @@ defmodule Supavisor.ClientHandler do
       case :ssl.handshake(elem(sock, 1), opts) do
         {:ok, ssl_sock} ->
           socket = {:ssl, ssl_sock}
-          :ok = HandlerHelpers.setopts(socket, active: true)
+          :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
           {:keep_state, %{data | sock: socket, ssl: true}}
 
         error ->
@@ -198,7 +196,6 @@ defmodule Supavisor.ClientHandler do
           app_name: data.app_name
         )
 
-        IO.inspect(sock)
         {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
 
         cond do
@@ -333,7 +330,6 @@ defmodule Supavisor.ClientHandler do
 
     {:ok, db_pid} = DbHandler.start_link(args)
     db_sock = DbHandler.checkout(db_pid, data.sock, self())
-    db_sock = :gen_statem.call(db_pid, {:checkout, data.sock, self()})
     {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
   end
 
@@ -430,13 +426,8 @@ defmodule Supavisor.ClientHandler do
 
     Telem.client_query_time(data.query_start, data.id)
 
-    {:next_state, :idle,
-     %{
-       data
-       | db_connection: db_connection,
-         stats: stats,
-         active_count: HandlerHelpers.reset_active_count(data)
-     }, handle_actions(data)}
+    {:next_state, :idle, %{data | db_connection: db_connection, stats: stats},
+     handle_actions(data)}
   end
 
   def handle_event(:info, {sock_error, _sock, msg}, _state, _data)
@@ -444,6 +435,11 @@ defmodule Supavisor.ClientHandler do
     Logger.error("ClientHandler: Socket error: #{inspect(msg)}")
 
     {:stop, {:shutdown, {:socket_error, msg}}}
+  end
+
+  def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
+    HandlerHelpers.setopts(data.sock, active: @switch_active_count)
+    :keep_state_and_data
   end
 
   # Authentication state handlers
@@ -565,18 +561,16 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler: Receive sync")
     :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
 
-    {:keep_state, %{data | active_count: HandlerHelpers.reset_active_count(data)},
-     handle_actions(data)}
+    {:keep_state, data, handle_actions(data)}
   end
 
   # Sync in other states - send to db
   def handle_event(_kind, {proto, _, <<?S, 4::32, _::binary>> = msg}, _state, data)
       when proto in @proto do
     Logger.debug("ClientHandler: Receive sync")
-    :ok = sock_send_maybe_active_once(msg, data)
+    :ok = sock_send(msg, data)
 
-    {:keep_state, %{data | active_count: HandlerHelpers.reset_active_count(data)},
-     handle_actions(data)}
+    {:keep_state, data, handle_actions(data)}
   end
 
   # Any message when idle - checkout and send to db
@@ -736,14 +730,8 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, new_stream_state, pkts} <-
            ProtocolHelpers.process_client_packets(data_to_send, data.mode, data),
-         :ok <- sock_send_maybe_active_once(pkts, data) do
-      updated_data = %{
-        data
-        | stream_state: new_stream_state,
-          active_count: data.active_count + 1
-      }
-
-      {:ok, updated_data}
+         :ok <- sock_send(pkts, data) do
+      {:ok, %{data | stream_state: new_stream_state}}
     else
       error ->
         Error.maybe_log_and_send_error(data.sock, error, "sending query")
@@ -763,16 +751,9 @@ defmodule Supavisor.ClientHandler do
     idle ++ heartbeat
   end
 
-  @spec sock_send_maybe_active_once([PreparedStatements.handled_pkt()] | binary(), map()) ::
-          :ok | {:error, term()}
-  defp sock_send_maybe_active_once(bin_or_pkts, data) do
+  @spec sock_send([PreparedStatements.handled_pkt()] | binary(), map()) :: :ok | {:error, term()}
+  defp sock_send(bin_or_pkts, data) do
     {_pool, db_handler, db_sock} = data.db_connection
-    active_count = data.active_count
-
-    if active_count > @switch_active_count do
-      Logger.debug("ClientHandler: Activate socket #{inspect(active_count)}")
-      HandlerHelpers.active_once(data.sock)
-    end
 
     case bin_or_pkts do
       pkts when is_list(pkts) ->
