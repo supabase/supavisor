@@ -151,11 +151,11 @@ defmodule Supavisor.ClientHandler do
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
 
-      {:error, {:invalid_user_info, {:invalid_format, {user, db_name}}}} ->
+      {:error, reason = {:invalid_user_info, {:invalid_format, {user, db_name}}}} ->
         # Extract tenant from the attempted parsing for telemetry
         {_, {_, tenant_or_alias, _}} = HandlerHelpers.parse_user_info(%{"user" => user})
         Telem.client_join(:fail, tenant_or_alias)
-        Error.maybe_log_and_send_error(data.sock, {:error, :auth_error, :invalid_user_format})
+        Error.maybe_log_and_send_error(data.sock, {:error, reason})
         {:stop, :normal}
 
       {:error, error} ->

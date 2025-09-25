@@ -185,14 +185,14 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
-  defp process({:error, :auth_error, :invalid_user_format}, _context) do
+  defp process({:error, {:invalid_user_info, {:invalid_format, {user, db_name}}}}, _context) do
     %{
       error:
         Server.error_message(
           "XX000",
           "Authentication error, reason: \"Invalid format for user or db_name\""
         ),
-      log_message: "Invalid format for user or db_name",
+      log_message: "Invalid format for user or db_name: #{inspect({user, db_name})}",
       send_ready_for_query: false
     }
   end
