@@ -250,7 +250,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
     try do
       conn = fn pass ->
-        "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+        "postgresql://dev_postgres_password_test.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
       end
 
       first_pass = conn.(db_conf[:password])
@@ -263,7 +263,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
       :gen_statem.stop(pid)
 
-      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+      P.query(origin, "alter user dev_postgres_password_test with password 'postgres_new';", [])
 
       assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
 
@@ -272,7 +272,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
       :gen_statem.stop(pid)
     after
-      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
+      P.query(origin, "alter user dev_postgres_password_test with password '#{db_conf[:password]}';", [])
     end
   end
 

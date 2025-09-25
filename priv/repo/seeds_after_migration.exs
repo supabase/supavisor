@@ -144,6 +144,8 @@ end
     [
       "drop user if exists dev_postgres;",
       "create user dev_postgres with password 'postgres';",
+      "drop user if exists dev_postgres_password_test;",
+      "create user dev_postgres_password_test with password 'postgres';",
       "drop table if exists \"public\".\"test\";",
       "create sequence if not exists test_id_seq;",
       "create table \"public\".\"test\" (
