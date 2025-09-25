@@ -468,22 +468,23 @@ defmodule Supavisor.ClientHandler do
       when proto in @proto do
     auth_context = data.auth_context
 
-    with {:ok, {user, nonce, channel}} <- Auth.parse_auth_message(bin, auth_context.method) do
-      {message, signatures} =
-        Auth.prepare_auth_challenge(
-          auth_context.method,
-          auth_context.secrets,
-          nonce,
-          user,
-          channel
-        )
+    case Auth.parse_auth_message(bin, auth_context.method) do
+      {:ok, {user, nonce, channel}} ->
+        {message, signatures} =
+          Auth.prepare_auth_challenge(
+            auth_context.method,
+            auth_context.secrets,
+            nonce,
+            user,
+            channel
+          )
 
-      :ok = HandlerHelpers.sock_send(data.sock, Server.exchange_message(:first, message))
+        :ok = HandlerHelpers.sock_send(data.sock, Server.exchange_message(:first, message))
 
-      new_auth_context = Auth.update_auth_context_with_signatures(auth_context, signatures)
-      new_data = %{data | auth_context: new_auth_context}
-      {:next_state, :auth_scram_final_wait, new_data, {:timeout, 15_000, :auth_timeout}}
-    else
+        new_auth_context = Auth.update_auth_context_with_signatures(auth_context, signatures)
+        new_data = %{data | auth_context: new_auth_context}
+        {:next_state, :auth_scram_final_wait, new_data, {:timeout, 15_000, :auth_timeout}}
+
       {:error, reason} ->
         handle_auth_failure(data.sock, reason, data, :auth_scram_first_wait)
     end

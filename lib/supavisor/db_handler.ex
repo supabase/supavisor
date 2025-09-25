@@ -708,11 +708,12 @@ defmodule Supavisor.DbHandler do
 
   defp maybe_reconnect(reason, data) do
     max_reconnect_retries = Application.get_env(:supavisor, :reconnect_retries)
+    data = %{data | reconnect_retries: data.reconnect_retries + 1}
 
-    if data.reconnect_retries > max_reconnect_retries and data.client_sock != nil do
+    if data.reconnect_retries > max_reconnect_retries do
       {:stop, {:failed_to_connect, reason}}
     else
-      {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
+      {:keep_state, data, {:state_timeout, reconnect_timeout(data), :connect}}
     end
   end
 
