@@ -151,7 +151,7 @@ defmodule Supavisor.ClientHandler do
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
 
-      {:error, reason = {:invalid_user_info, {:invalid_format, {user, db_name}}}} ->
+      {:error, {:invalid_user_info, {:invalid_format, {user, _}}} = reason} ->
         # Extract tenant from the attempted parsing for telemetry
         {_, {_, tenant_or_alias, _}} = HandlerHelpers.parse_user_info(%{"user" => user})
         Telem.client_join(:fail, tenant_or_alias)
