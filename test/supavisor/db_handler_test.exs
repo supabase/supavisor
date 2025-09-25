@@ -118,16 +118,23 @@ defmodule Supavisor.DbHandlerTest do
         secrets: secrets
       }
 
-      state =
-        Db.handle_event(:internal, :connect, :connect, %{
-          auth: auth,
-          sock: nil,
-          id: @id,
-          proxy: false,
-          reconnect_retries: 5
-        })
+      assert {:keep_state, _data, {:state_timeout, 2_500, :connect}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 auth: auth,
+                 sock: nil,
+                 id: @id,
+                 proxy: false,
+                 reconnect_retries: 0
+               })
 
-      assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
+      assert {:stop, {:failed_to_connect, _}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 auth: auth,
+                 sock: nil,
+                 id: @id,
+                 proxy: false,
+                 reconnect_retries: 5
+               })
     end
 
     test "rejects connection when DB responds with SSL negotiation 'N'" do
@@ -169,7 +176,7 @@ defmodule Supavisor.DbHandlerTest do
         client_sock: nil
       }
 
-      assert {:keep_state_and_data, {:state_timeout, 2500, :connect}} ==
+      assert {:stop, {:failed_to_connect, :ssl_not_available}} ==
                Db.handle_event(:internal, :connect, :connect, data)
     end
   end
