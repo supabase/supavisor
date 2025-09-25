@@ -35,8 +35,16 @@ defmodule Supavisor.DbHandler do
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
 
-  def checkout(pid, sock, caller, timeout \\ 15_000),
-    do: :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
+          {:ok, Supavisor.sock()} | {:error, {:exit, term()}}
+  def checkout(pid, sock, caller, timeout \\ 15_000) do
+    try do
+      :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+    catch
+      :exit, reason ->
+        {:error, {:exit, reason}}
+    end
+  end
 
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
@@ -194,7 +202,7 @@ defmodule Supavisor.DbHandler do
         {:stop, :invalid_password, data}
 
       {:error_response, error} ->
-        Logger.error("DbHandler: Error auth response #{inspect(error)}")
+        Logger.error("DbHandler: Error response during auth: #{inspect(error)}")
         encode_and_forward_error(error, data)
         {:stop, :normal}
 
@@ -287,7 +295,8 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
-      {:next_state, :busy, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}}
+      {:next_state, :busy, %{data | client_sock: sock, caller: caller},
+       {:reply, from, {:ok, data.sock}}}
     else
       {:keep_state_and_data, :postpone}
     end

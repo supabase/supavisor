@@ -329,8 +329,23 @@ defmodule Supavisor.ClientHandler do
     args = Proxy.build_db_handler_args(data)
 
     {:ok, db_pid} = DbHandler.start_link(args)
-    db_sock = DbHandler.checkout(db_pid, data.sock, self())
-    {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
+
+    case DbHandler.checkout(db_pid, data.sock, self()) do
+      {:ok, db_sock} ->
+        {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
+
+      {:error, {:exit, {:timeout, _}}} ->
+        timeout_error(data)
+
+      # Errors are already forwarded to the client socket, so we can safely ignore them
+      # here.
+      {:error, {:exit, {reason, _}}} ->
+        Logger.error(
+          "ClientHandler: error checking out DbHandler (proxy), exit with reason: #{inspect(reason)}"
+        )
+
+        {:stop, :normal}
+    end
   end
 
   def handle_event(:internal, {:greetings, ps}, _state, %{sock: sock} = data) do
@@ -607,26 +622,16 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
-  def terminate(
-        {:timeout, {_, _, [_, {:checkout, _, _}, _]}},
-        state,
-        data
-      ) do
-    Logger.metadata(state: state)
-
-    # TODO: ensure these errors are forwarded properly on proxy
-    error_type =
-      case data.mode do
-        :session -> {:error, :session_timeout}
-        :transaction -> {:error, :transaction_timeout}
-      end
-
-    Error.maybe_log_and_send_error(data.sock, error_type)
-  end
-
   def terminate(reason, state, _data) do
     Logger.metadata(state: state)
-    Logger.debug("ClientHandler: terminating with reason #{inspect(reason)}")
+
+    level =
+      case reason do
+        :normal -> :debug
+        _ -> :error
+      end
+
+    Logger.log(level, "ClientHandler: terminating with reason #{inspect(reason)}")
   end
 
   ## Internal functions
@@ -703,12 +708,31 @@ defmodule Supavisor.ClientHandler do
 
   defp maybe_checkout(_, _, data) do
     start = System.monotonic_time(:microsecond)
-    db_pid = :poolboy.checkout(data.pool, true, data.timeout)
-    Process.link(db_pid)
-    db_sock = DbHandler.checkout(db_pid, data.sock, self())
-    same_box = if node(db_pid) == node(), do: :local, else: :remote
-    Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
-    {data.pool, db_pid, db_sock}
+
+    with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout),
+         true <- Process.link(db_pid),
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self()) do
+      same_box = if node(db_pid) == node(), do: :local, else: :remote
+      Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
+      {data.pool, db_pid, db_sock}
+    else
+      {:error, {:exit, {:timeout, _}}} ->
+        timeout_error(data)
+
+      {:error, {:exit, e}} ->
+        exit(e)
+    end
+  end
+
+  defp timeout_error(data) do
+    error =
+      case data.mode do
+        :session -> {:error, :session_timeout}
+        :transaction -> {:error, :transaction_timeout}
+      end
+
+    Error.maybe_log_and_send_error(data.sock, error)
+    {:stop, :normal}
   end
 
   @spec maybe_checkin(:proxy, pool_pid :: pid(), Data.db_connection()) :: Data.db_connection()
@@ -791,5 +815,11 @@ defmodule Supavisor.ClientHandler do
       Error.maybe_log_and_send_error(data.sock, {:error, :subscribe_retries_exhausted})
       {:stop, :normal}
     end
+  end
+
+  defp pool_checkout(pool, timeout) do
+    {:ok, :poolboy.checkout(pool, true, timeout)}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
   end
 end

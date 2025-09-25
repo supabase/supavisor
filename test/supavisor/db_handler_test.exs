@@ -6,6 +6,35 @@ defmodule Supavisor.DbHandlerTest do
   # import Mock
   @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
 
+  defmodule MockDbHandler do
+    use GenServer
+
+    def start_link(behavior) do
+      GenServer.start_link(__MODULE__, behavior)
+    end
+
+    def init(behavior) do
+      {:ok, %{behavior: behavior, sock: {:fake_db_sock, self()}}}
+    end
+
+    def handle_call({:checkout, _sock, _caller}, _from, %{behavior: behavior} = state) do
+      case behavior do
+        :normal ->
+          {:reply, {:ok, state.sock}, state}
+
+        :crash ->
+          raise "simulated crash"
+
+        :normal_exit ->
+          exit(:normal)
+
+        :timeout ->
+          # Don't reply to simulate timeout
+          {:noreply, state}
+      end
+    end
+  end
+
   defp sockpair do
     {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
     {:ok, {address, port}} = :inet.sockname(listen)
@@ -382,6 +411,41 @@ defmodule Supavisor.DbHandlerTest do
       content = {:tcp, b, bin}
 
       assert {:stop, :auth_error, %{}} = Db.handle_event(:info, content, :authentication, %{})
+    end
+  end
+
+  describe "checkout/4 error handling" do
+    test "successful checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :normal})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:ok, {:fake_db_sock, ^mock_pid}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+    end
+
+    test "handles process crash during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :crash})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {{%RuntimeError{}, _}, _}}} =
+               Db.checkout(mock_pid, dummy_sock, caller, 1000)
+    end
+
+    test "handles process normal exit during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :normal_exit})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {:normal, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+    end
+
+    test "handles checkout timeout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :timeout})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {:timeout, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 100)
     end
   end
 end
