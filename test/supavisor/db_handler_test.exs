@@ -74,7 +74,6 @@ defmodule Supavisor.DbHandlerTest do
       assert next_event == :internal
       assert data.sock == nil
       assert data.caller == nil
-      assert data.sent == false
       assert data.auth == args.auth
       assert data.tenant == args.tenant
       assert data.db_state == nil
