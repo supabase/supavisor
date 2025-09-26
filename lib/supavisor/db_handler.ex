@@ -78,7 +78,6 @@ defmodule Supavisor.DbHandler do
       %{
         id: args.id,
         sock: nil,
-        sent: false,
         auth: args.auth,
         user: args.user,
         tenant: args.tenant,
@@ -86,7 +85,6 @@ defmodule Supavisor.DbHandler do
         db_state: nil,
         parameter_status: %{},
         nonce: nil,
-        messages: "",
         server_proof: nil,
         stats: %{},
         client_stats: %{},
