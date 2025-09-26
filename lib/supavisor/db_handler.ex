@@ -38,12 +38,10 @@ defmodule Supavisor.DbHandler do
   @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
           {:ok, Supavisor.sock()} | {:error, {:exit, term()}}
   def checkout(pid, sock, caller, timeout \\ 15_000) do
-    try do
-      :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
-    catch
-      :exit, reason ->
-        {:error, {:exit, reason}}
-    end
+    :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
   end
 
   @spec checkin(pid()) :: :ok
