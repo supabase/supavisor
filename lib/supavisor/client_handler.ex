@@ -36,6 +36,8 @@ defmodule Supavisor.ClientHandler do
     Proxy
   }
 
+  alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer}
+
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
 
@@ -66,7 +68,24 @@ defmodule Supavisor.ClientHandler do
     :ok = trans.setopts(sock, active: @switch_active_count)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
-    data = Data.new({:gen_tcp, sock}, trans, peer_ip, local, opts.mode)
+    now = System.monotonic_time()
+
+    data = %Data{
+      sock: {:gen_tcp, sock},
+      trans: trans,
+      peer_ip: peer_ip,
+      local: local,
+      ssl: false,
+      auth: %{},
+      mode: opts.mode,
+      stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
+      stats: %{},
+      idle_timeout: 0,
+      heartbeat_interval: 0,
+      connection_start: now,
+      state_entered_at: now,
+      subscribe_retries: 0
+    }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data)
   end
@@ -210,7 +229,7 @@ defmodule Supavisor.ClientHandler do
             {:stop, :normal}
 
           true ->
-            new_data = Data.set_tenant_info(data, info, user, id, db_name, data.mode)
+            new_data = set_tenant_info(data, info, user, id, db_name)
 
             case Auth.get_user_secrets(data.id, info, user, tenant_or_alias) do
               {:ok, auth_secrets} ->
@@ -821,5 +840,42 @@ defmodule Supavisor.ClientHandler do
     {:ok, :poolboy.checkout(pool, true, timeout)}
   catch
     :exit, reason -> {:error, {:exit, reason}}
+  end
+
+  defp set_tenant_info(data, info, user, id, db_name) do
+    proxy_type =
+      if info.tenant.require_user,
+        do: :password,
+        else: :auth_query
+
+    auth = %{
+      application_name: data.app_name || "Supavisor",
+      database: db_name,
+      host: to_charlist(info.tenant.db_host),
+      sni_hostname:
+        if(info.tenant.sni_hostname != nil, do: to_charlist(info.tenant.sni_hostname)),
+      port: info.tenant.db_port,
+      user: user,
+      password: info.user.db_password,
+      require_user: info.tenant.require_user,
+      upstream_ssl: info.tenant.upstream_ssl,
+      upstream_tls_ca: info.tenant.upstream_tls_ca,
+      upstream_verify: info.tenant.upstream_verify
+    }
+
+    %{
+      data
+      | id: id,
+        tenant: info.tenant.external_id,
+        tenant_feature_flags: info.tenant.feature_flags,
+        tenant_availability_zone: info.tenant.availability_zone,
+        user: user,
+        db_name: db_name,
+        timeout: info.user.pool_checkout_timeout,
+        ps: info.tenant.default_parameter_status,
+        proxy_type: proxy_type,
+        heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
+        auth: auth
+    }
   end
 end

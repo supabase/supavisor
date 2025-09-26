@@ -94,8 +94,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
         :transaction,
         %{tenant_feature_flags: tenant_feature_flags} = data
       ) do
-    if tenant_feature_flags &&
-         FeatureFlag.enabled?(tenant_feature_flags, "named_prepared_statements") do
+    if FeatureFlag.enabled?(tenant_feature_flags, "named_prepared_statements") do
       MessageStreamer.handle_packets(data.stream_state, bin)
     else
       {:ok, data.stream_state, bin}
