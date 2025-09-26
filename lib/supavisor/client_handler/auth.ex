@@ -7,8 +7,6 @@ defmodule Supavisor.ClientHandler.Auth do
   - Credential validation for different auth methods (MD5, SCRAM)
   - Authentication challenge preparation
   - Retry logic for failed authentications
-
-  All functions are pure business logic - no socket operations or process management.
   """
 
   require Logger
