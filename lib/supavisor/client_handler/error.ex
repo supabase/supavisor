@@ -6,12 +6,7 @@ defmodule Supavisor.ClientHandler.Error do
   alias Supavisor.{HandlerHelpers, Protocol.Server}
 
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
-
-  @type error_response :: %{
-          error: binary(),
-          log_message: String.t() | nil,
-          send_ready_for_query: boolean()
-        }
+  require Logger
 
   @doc """
   Handles error by logging and sending appropriate error message to the client socket.
@@ -20,11 +15,12 @@ defmodule Supavisor.ClientHandler.Error do
   """
   @spec maybe_log_and_send_error(term(), term(), term()) :: :ok
   def maybe_log_and_send_error(sock, error, context \\ nil) do
-    %{error: message, log_message: log_message, send_ready_for_query: send_ready_for_query} =
-      process(error, context)
+    error_actions = process(error, context)
+    message = Map.fetch!(error_actions, :error)
+    log_message = Map.get(error_actions, :log_message)
+    send_ready_for_query = Map.get(error_actions, :send_ready_for_query, false)
 
     if log_message do
-      require Logger
       Logger.error("ClientHandler: #{log_message}")
     end
 
@@ -35,15 +31,18 @@ defmodule Supavisor.ClientHandler.Error do
     end
   end
 
-  @spec process(term(), term()) :: error_response()
+  @spec process(term(), term()) :: %{
+          required(:error) => binary(),
+          optional(:log_message) => String.t(),
+          optional(:send_ready_for_query) => boolean()
+        }
   defp process({:error, :max_prepared_statements}, _context) do
     message_text =
       "max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"
 
     %{
       error: Server.error_message("XX000", message_text),
-      log_message: message_text,
-      send_ready_for_query: false
+      log_message: message_text
     }
   end
 
@@ -66,8 +65,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("XX000", message_text),
-      log_message: message_text,
-      send_ready_for_query: false
+      log_message: message_text
     }
   end
 
@@ -76,8 +74,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("26000", message_text),
-      log_message: message_text,
-      send_ready_for_query: false
+      log_message: message_text
     }
   end
 
@@ -86,16 +83,14 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("42P05", message_text),
-      log_message: message_text,
-      send_ready_for_query: false
+      log_message: message_text
     }
   end
 
   defp process({:error, :ssl_required, user}, _context) do
     %{
       error: Server.error_message("XX000", "SSL connection is required"),
-      log_message: "Tenant is not allowed to connect without SSL, user #{user}",
-      send_ready_for_query: false
+      log_message: "Tenant is not allowed to connect without SSL, user #{user}"
     }
   end
 
@@ -104,48 +99,39 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("XX000", message),
-      log_message: message,
-      send_ready_for_query: false
+      log_message: message
     }
   end
 
   defp process({:error, :tenant_not_found}, _context) do
     %{
       error: Server.error_message("XX000", "Tenant or user not found"),
-      log_message: "Tenant not found",
-      send_ready_for_query: false
+      log_message: "Tenant not found"
     }
   end
 
   defp process({:error, :tenant_not_found, reason, type, user, tenant_or_alias}, _context) do
     %{
       error: Server.error_message("XX000", "Tenant or user not found"),
-      log_message: "User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}",
-      send_ready_for_query: false
+      log_message: "User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}"
     }
   end
 
   defp process({:error, :auth_error, :wrong_password, user}, _context) do
     %{
-      error: Server.error_message("28P01", "password authentication failed for user \"#{user}\""),
-      log_message: nil,
-      send_ready_for_query: false
+      error: Server.error_message("28P01", "password authentication failed for user \"#{user}\"")
     }
   end
 
   defp process({:error, :auth_error, {:timeout, _message}, _user}, _context) do
     %{
-      error: Server.error_message("08006", "connection failure during authentication"),
-      log_message: nil,
-      send_ready_for_query: false
+      error: Server.error_message("08006", "connection failure during authentication")
     }
   end
 
   defp process({:error, :auth_error, {:unexpected_message, _details}, _user}, _context) do
     %{
-      error: Server.error_message("08P01", "protocol violation during authentication"),
-      log_message: nil,
-      send_ready_for_query: false
+      error: Server.error_message("08P01", "protocol violation during authentication")
     }
   end
 
@@ -154,8 +140,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("08P01", "protocol violation during authentication"),
-      log_message: "#{auth_stage} auth decode error: #{inspect(error)}",
-      send_ready_for_query: false
+      log_message: "#{auth_stage} auth decode error: #{inspect(error)}"
     }
   end
 
@@ -164,8 +149,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("08P01", "protocol violation during authentication"),
-      log_message: "#{auth_stage} auth unexpected message: #{inspect(other)}",
-      send_ready_for_query: false
+      log_message: "#{auth_stage} auth unexpected message: #{inspect(other)}"
     }
   end
 
@@ -180,8 +164,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("08006", "connection failure during authentication"),
-      log_message: log_message,
-      send_ready_for_query: false
+      log_message: log_message
     }
   end
 
@@ -192,40 +175,34 @@ defmodule Supavisor.ClientHandler.Error do
           "XX000",
           "Authentication error, reason: \"Invalid format for user or db_name\""
         ),
-      log_message: "Invalid format for user or db_name: #{inspect({user, db_name})}",
-      send_ready_for_query: false
+      log_message: "Invalid format for user or db_name: #{inspect({user, db_name})}"
     }
   end
 
   defp process({:error, :auth_error, reason}, _context) do
     %{
-      error: Server.error_message("XX000", "Authentication error, reason: #{inspect(reason)}"),
-      log_message: nil,
-      send_ready_for_query: false
+      error: Server.error_message("XX000", "Authentication error, reason: #{inspect(reason)}")
     }
   end
 
   defp process({:error, :max_clients_reached}, _context) do
     %{
       error: Server.error_message("XX000", "Max client connections reached"),
-      log_message: "Max client connections reached",
-      send_ready_for_query: false
+      log_message: "Max client connections reached"
     }
   end
 
   defp process({:error, :max_pools_reached}, _context) do
     %{
       error: Server.error_message("XX000", "Max pools count reached"),
-      log_message: "Max pools count reached",
-      send_ready_for_query: false
+      log_message: "Max pools count reached"
     }
   end
 
   defp process({:error, :db_handler_exited, pid, reason}, _context) do
     %{
       error: Server.error_message("XX000", "DbHandler exited"),
-      log_message: "DbHandler #{inspect(pid)} exited #{inspect(reason)}",
-      send_ready_for_query: false
+      log_message: "DbHandler #{inspect(pid)} exited #{inspect(reason)}"
     }
   end
 
@@ -235,8 +212,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("XX000", message),
-      log_message: message,
-      send_ready_for_query: false
+      log_message: message
     }
   end
 
@@ -245,8 +221,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("XX000", message),
-      log_message: message,
-      send_ready_for_query: false
+      log_message: message
     }
   end
 
@@ -255,8 +230,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("XX000", message),
-      log_message: message,
-      send_ready_for_query: false
+      log_message: message
     }
   end
 
@@ -269,8 +243,7 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("XX000", message),
-      log_message: message,
-      send_ready_for_query: false
+      log_message: message
     }
   end
 
