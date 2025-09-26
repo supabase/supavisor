@@ -475,6 +475,10 @@ defmodule Supavisor.DbHandler do
     do: {:ready_for_query, Map.put(acc, :db_state, db_state)}
 
   defp handle_auth_pkts(%{tag: :backend_key_data, payload: payload}, acc, data) do
+    if data.mode != :proxy do
+      Logger.metadata(backend_pid: payload[:pid])
+    end
+
     key = self()
     conn = %{host: data.auth.host, port: data.auth.port, ip_version: data.auth.ip_version}
     Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
