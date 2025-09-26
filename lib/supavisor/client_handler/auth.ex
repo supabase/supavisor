@@ -395,7 +395,7 @@ defmodule Supavisor.ClientHandler.Auth do
     end
   end
 
-  @spec update_secrets_cache(String.t(), String.t(), term()) :: :ok
+  @spec update_secrets_cache(String.t(), String.t(), term()) :: {:ok, term()}
   defp update_secrets_cache(tenant, user, value) do
     cache_key = {:secrets_check, tenant, user}
     Cachex.put(Supavisor.Cache, cache_key, {:cached, value}, ttl: 5_000)
