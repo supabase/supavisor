@@ -106,7 +106,7 @@ defmodule Supavisor.DbHandlerTest do
           auth: auth,
           sock: {:gen_tcp, nil},
           id: @id,
-          proxy: false
+          mode: :session
         })
 
       assert {:next_state, :authentication,
@@ -123,7 +123,7 @@ defmodule Supavisor.DbHandlerTest do
                 },
                 sock: {:gen_tcp, _},
                 id: @id,
-                proxy: false
+                mode: :session
               }} = state
     end
 
@@ -330,7 +330,7 @@ defmodule Supavisor.DbHandlerTest do
       {_a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      data = %{id: @id, proxy: false, user: "some user"}
+      data = %{id: @id, mode: :session, user: "some user"}
 
       assert {:stop, :invalid_password, ^data} =
                Db.handle_event(:info, content, :authentication, data)

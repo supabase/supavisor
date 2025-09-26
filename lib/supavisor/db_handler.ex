@@ -94,7 +94,6 @@ defmodule Supavisor.DbHandler do
         replica_type: args.replica_type,
         caller: args[:caller] || nil,
         client_sock: args[:client_sock] || nil,
-        proxy: args[:proxy] || false,
         reconnect_retries: 0
       }
 
@@ -132,7 +131,7 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            tenant = if data.proxy, do: Supavisor.tenant(data.id)
+            tenant = if data.mode == :proxy, do: Supavisor.tenant(data.id)
             search_path = Supavisor.search_path(data.id)
 
             case send_startup(sock, auth, tenant, search_path) do
@@ -209,7 +208,7 @@ defmodule Supavisor.DbHandler do
           "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
         )
 
-        if data.proxy do
+        if data.mode == :proxy do
           bin_ps = Server.encode_parameter_status(ps)
           send(data.caller, {:parameter_status, bin_ps})
         else
@@ -239,7 +238,7 @@ defmodule Supavisor.DbHandler do
       HandlerHelpers.activate(data.sock)
 
       {_, stats} =
-        if data.proxy,
+        if data.mode == :proxy,
           do: {nil, data.stats},
           else: Telem.network_usage(:db, data.sock, data.id, data.stats)
 
@@ -254,7 +253,7 @@ defmodule Supavisor.DbHandler do
         data = handle_server_messages(bin, data)
 
         {_, client_stats} =
-          if data.proxy,
+          if data.mode == :proxy,
             do: {nil, data.client_stats},
             else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
 
@@ -604,7 +603,9 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(_e, acc, _data), do: acc
 
   @spec handle_authentication_error(map(), String.t()) :: any()
-  defp handle_authentication_error(%{proxy: false} = data, _reason) do
+  defp handle_authentication_error(%{mode: :proxy}, _reason), do: :ok
+
+  defp handle_authentication_error(%{mode: _other} = data, _reason) do
     tenant = Supavisor.tenant(data.id)
 
     :erpc.multicast([node() | Node.list()], fn ->
@@ -612,8 +613,6 @@ defmodule Supavisor.DbHandler do
       Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
     end)
   end
-
-  defp handle_authentication_error(%{proxy: true}, _reason), do: :ok
 
   @spec reconnect_timeout(map()) :: pos_integer()
   def reconnect_timeout(%{proxy: true}),
