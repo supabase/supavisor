@@ -13,13 +13,16 @@ defmodule SupavisorWeb.TenantController do
   alias Tenants.Tenant, as: TenantModel
 
   alias SupavisorWeb.OpenApiSchemas.{
+    BadRequest,
     Created,
     Empty,
     NotFound,
     ServiceUnavailable,
     Tenant,
     TenantCreate,
-    TenantList
+    TenantData,
+    TenantList,
+    UnprocessablyEntity
   }
 
   action_fallback(SupavisorWeb.FallbackController)
@@ -46,6 +49,19 @@ defmodule SupavisorWeb.TenantController do
     render(conn, "index.json", tenants: tenants)
   end
 
+  operation(:create,
+    summary: "Create tenant",
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    request_body: TenantCreate.params(),
+    responses: %{
+      201 => TenantData.response(),
+      422 => UnprocessablyEntity.response()
+    }
+  )
+
   def create(conn, %{"tenant" => tenant_params}) do
     with {:ok, %TenantModel{} = tenant} <- Tenants.create_tenant(tenant_params) do
       conn
@@ -61,8 +77,9 @@ defmodule SupavisorWeb.TenantController do
       external_id: [in: :path, description: "External id", type: :string],
       authorization: @authorization
     ],
+    request_body: TenantCreate.params(),
     responses: %{
-      200 => Tenant.response(),
+      200 => TenantData.response(),
       404 => NotFound.response()
     }
   )
@@ -90,7 +107,9 @@ defmodule SupavisorWeb.TenantController do
     request_body: TenantCreate.params(),
     responses: %{
       201 => Created.response(Tenant),
-      404 => NotFound.response()
+      400 => BadRequest.response(),
+      404 => NotFound.response(),
+      422 => UnprocessablyEntity.response()
     }
   )
 
@@ -106,11 +125,11 @@ defmodule SupavisorWeb.TenantController do
           "tenant" => %{tenant_params | "upstream_tls_ca" => bin}
         })
 
-      {:error, realson} ->
+      {:error, reason} ->
         conn
         |> put_status(400)
         |> render("error.json",
-          error: "Invalid 'upstream_tls_ca' certificate, reason: #{inspect(realson)}"
+          error: "Invalid 'upstream_tls_ca' certificate, reason: #{inspect(reason)}"
         )
     end
   end
