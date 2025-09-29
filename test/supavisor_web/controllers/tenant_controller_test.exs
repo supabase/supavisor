@@ -31,6 +31,16 @@ defmodule SupavisorWeb.TenantControllerTest do
     allow_list: ["71.209.249.38/32"],
     users: [@user_valid_attrs]
   }
+  @update_upstream_attrs %{
+    upstream_tls_ca: "-----BEGIN CERTIFICATE-----\nsomecert\n-----END CERTIFICATE-----"
+  }
+  @update_invalid_upstream_attrs %{
+    upstream_tls_ca: "-----BEGIN"
+  }
+  @invalid_upstream_verify_attrs %{
+    upstream_ssl: true,
+    upstream_verify: "peer"
+  }
   @invalid_attrs %{
     db_database: nil,
     db_host: nil,
@@ -70,22 +80,25 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   describe "create tenant" do
     test "renders tenant when data is valid", %{conn: conn} do
-      conn = put(conn, Routes.tenant_path(conn, :update, "dev_tenant"), tenant: @create_attrs)
-      assert %{"external_id" => _id} = json_response(conn, 201)["data"]
+      assert %{data: %{external_id: "dev_tenant"}} =
+               conn
+               |> put(~p"/api/tenants/dev_tenant", tenant: @create_attrs)
+               |> json_response(201)
+               |> assert_schema("TenantData")
     end
 
     test "renders errors when data is invalid", %{conn: conn} do
-      conn = put(conn, Routes.tenant_path(conn, :update, "dev_tenant"), tenant: @invalid_attrs)
-      assert json_response(conn, 422)["errors"] != %{}
+      assert %{} !=
+               conn
+               |> put(~p"/api/tenants/dev_tenant", tenant: @invalid_attrs)
+               |> json_response(422)
+               |> assert_schema("UnprocessablyEntity")
     end
   end
 
   describe "create tenant with blocked ip" do
     test "renders tenant when data is valid", %{blocked_conn: blocked_conn} do
-      blocked_conn =
-        put(blocked_conn, Routes.tenant_path(blocked_conn, :update, "dev_tenant"),
-          tenant: @create_attrs
-        )
+      blocked_conn = put(blocked_conn, ~p"/api/tenants/dev_tenant", tenant: @create_attrs)
 
       assert blocked_conn.status == 403
     end
@@ -96,27 +109,77 @@ defmodule SupavisorWeb.TenantControllerTest do
 
     test "renders tenant when data is valid", %{
       conn: conn,
-      tenant: %Tenant{external_id: external_id} = _tenant
+      tenant: %Tenant{external_id: external_id}
     } do
       set_cache(external_id)
-      conn = put(conn, Routes.tenant_path(conn, :update, external_id), tenant: @update_attrs)
-      assert %{"external_id" => ^external_id} = json_response(conn, 200)["data"]
+
+      assert %{data: %{external_id: ^external_id}} =
+               put(conn, ~p"/api/tenants/#{external_id}", tenant: @update_attrs)
+               |> json_response(200)
+               |> assert_schema("TenantData")
+
       check_cache(external_id)
 
-      conn = get(conn, Routes.tenant_path(conn, :show, external_id))
-
       assert %{
-               "external_id" => ^external_id,
-               "db_database" => "some updated db_database",
-               "db_host" => "some updated db_host",
-               "db_port" => 43,
-               "allow_list" => ["71.209.249.38/32"]
-             } = json_response(conn, 200)["data"]
+               data: %{
+                 external_id: ^external_id,
+                 db_database: "some updated db_database",
+                 db_host: "some updated db_host",
+                 db_port: 43,
+                 allow_list: ["71.209.249.38/32"]
+               }
+             } =
+               conn
+               |> get(~p"/api/tenants/#{external_id}")
+               |> json_response(200)
+               |> assert_schema("TenantData")
+    end
+
+    test "renders tenant when data is valid and coverts cert to pem format", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{data: %{external_id: external_id}} =
+               conn
+               |> put(~p"/api/tenants/#{external_id}", tenant: @update_upstream_attrs)
+               |> json_response(200)
+               |> assert_schema("TenantData")
+
+      assert Supavisor.Tenants.get_tenant_by_external_id(external_id).upstream_tls_ca ==
+               <<178, 137, 158, 113, 234, 237>>
+    end
+
+    test "renders error when upstream_tls_ca is invalid", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{
+               "error" =>
+                 "Invalid 'upstream_tls_ca' certificate, reason: :cant_decode_certificate"
+             } ==
+               conn
+               |> put(~p"/api/tenants/#{external_id}", tenant: @update_invalid_upstream_attrs)
+               |> json_response(400)
+               |> assert_schema("NotFound")
     end
 
     test "renders errors when data is invalid", %{conn: conn, tenant: tenant} do
-      conn = put(conn, Routes.tenant_path(conn, :update, tenant), tenant: @invalid_attrs)
-      assert json_response(conn, 422)["errors"] != %{}
+      assert %{
+               "error" =>
+                 "Invalid 'upstream_verify' value, 'peer' is not allowed without certificate"
+             } ==
+               conn
+               |> put(~p"/api/tenants/#{tenant}", tenant: @invalid_upstream_verify_attrs)
+               |> json_response(400)
+               |> assert_schema("NotFound")
+    end
+
+    test "renders errors", %{conn: conn, tenant: tenant} do
+      assert %{} !=
+               conn
+               |> put(~p"/api/tenants/#{tenant}", tenant: @invalid_attrs)
+               |> json_response(422)
+               |> assert_schema("UnprocessablyEntity")
     end
 
     test "triggers Supavisor.stop/2", %{
@@ -126,7 +189,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       msg = "Stop #{@update_attrs.external_id}"
 
       assert capture_log(fn ->
-               put(conn, Routes.tenant_path(conn, :update, external_id), tenant: @update_attrs)
+               put(conn, ~p"/api/tenants/#{external_id}", tenant: @update_attrs)
              end) =~ msg
     end
   end
@@ -136,9 +199,9 @@ defmodule SupavisorWeb.TenantControllerTest do
 
     test "deletes chosen tenant", %{conn: conn, tenant: %Tenant{external_id: external_id}} do
       set_cache(external_id)
-      conn = delete(conn, Routes.tenant_path(conn, :delete, external_id))
+      conn = delete(conn, ~p"/api/tenants/#{external_id}")
       check_cache(external_id)
-      assert response(conn, 204)
+      assert response(conn, 204) == ""
     end
   end
 
@@ -148,29 +211,32 @@ defmodule SupavisorWeb.TenantControllerTest do
     test "returns 404 not found for non-existing tenant", %{conn: conn} do
       non_existing_tenant_id = "non_existing_tenant_id"
 
-      conn = get(conn, Routes.tenant_path(conn, :show, non_existing_tenant_id))
-      assert json_response(conn, 404)["error"] == "not found"
+      assert %{"error" => "not found"} ==
+               get(conn, ~p"/api/tenants/#{non_existing_tenant_id}")
+               |> json_response(404)
+               |> assert_schema("NotFound")
     end
   end
 
   describe "health endpoint" do
     test "returns 204 when all health checks pass", %{conn: conn} do
-      conn = get(conn, Routes.tenant_path(conn, :health))
-      assert response(conn, 204) == ""
+      assert "" ==
+               conn
+               |> get(~p"/api/health")
+               |> response(204)
     end
 
     test "returns 503 with failed checks when health checks fail", %{conn: conn} do
       :meck.expect(Supavisor.Health, :database_reachable?, fn -> false end)
       on_exit(fn -> :meck.unload(Supavisor.Health) end)
 
-      conn = get(conn, Routes.tenant_path(conn, :health))
+      assert %{status: "unhealthy", failed_checks: ["database_reachable"], timestamp: timestamp} =
+               conn
+               |> get(~p"/api/health")
+               |> json_response(503)
+               |> assert_schema("ServiceUnavailable")
 
-      assert conn.status == 503
-      response_body = json_response(conn, 503)
-
-      assert response_body["status"] == "unhealthy"
-      assert response_body["failed_checks"] == ["database_reachable"]
-      assert {:ok, _datetime, _offset} = DateTime.from_iso8601(response_body["timestamp"])
+      assert {:ok, _datetime, _offset} = DateTime.from_iso8601(timestamp)
     end
   end
 
