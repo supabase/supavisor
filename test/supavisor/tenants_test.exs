@@ -2,12 +2,10 @@ defmodule Supavisor.TenantsTest do
   use Supavisor.DataCase
 
   alias Supavisor.Tenants
+  alias Supavisor.Tenants.{Cluster, Tenant, User}
+  import Supavisor.TenantsFixtures
 
   describe "tenants" do
-    alias Supavisor.Tenants.{Tenant, User}
-
-    import Supavisor.TenantsFixtures
-
     @invalid_attrs %{
       db_database: nil,
       db_host: nil,
@@ -175,10 +173,6 @@ defmodule Supavisor.TenantsTest do
   end
 
   describe "clusters" do
-    alias Supavisor.Tenants.Cluster
-
-    import Supavisor.TenantsFixtures
-
     @invalid_attrs %{active: nil, alias: nil}
     @valid_attrs %{active: true, alias: "some_alias"}
 
@@ -224,5 +218,9 @@ defmodule Supavisor.TenantsTest do
       cluster = cluster_fixture()
       assert %Ecto.Changeset{} = Tenants.change_cluster(cluster)
     end
+  end
+
+  test "db_password is redacted" do
+    refute inspect(%Tenant{users: [%User{db_password: "zxc"}]}) =~ "zxc"
   end
 end

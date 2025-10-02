@@ -11,7 +11,7 @@ defmodule Supavisor.Tenants.User do
   schema "users" do
     field(:db_user_alias, :string)
     field(:db_user, :string)
-    field(:db_password, Supavisor.Encrypted.Binary, source: :db_pass_encrypted)
+    field(:db_password, Supavisor.Encrypted.Binary, source: :db_pass_encrypted, redact: true)
     field(:is_manager, :boolean, default: false)
     field(:mode_type, Ecto.Enum, values: [:transaction, :session])
     field(:pool_size, :integer)
