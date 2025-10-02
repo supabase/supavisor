@@ -6,6 +6,35 @@ defmodule Supavisor.DbHandlerTest do
   # import Mock
   @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
 
+  defmodule MockDbHandler do
+    use GenServer
+
+    def start_link(behavior) do
+      GenServer.start_link(__MODULE__, behavior)
+    end
+
+    def init(behavior) do
+      {:ok, %{behavior: behavior, sock: {:fake_db_sock, self()}}}
+    end
+
+    def handle_call({:checkout, _sock, _caller}, _from, %{behavior: behavior} = state) do
+      case behavior do
+        :normal ->
+          {:reply, {:ok, state.sock}, state}
+
+        :crash ->
+          raise "simulated crash"
+
+        :normal_exit ->
+          exit(:normal)
+
+        :timeout ->
+          # Don't reply to simulate timeout
+          {:noreply, state}
+      end
+    end
+  end
+
   defp sockpair do
     {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
     {:ok, {address, port}} = :inet.sockname(listen)
@@ -45,7 +74,6 @@ defmodule Supavisor.DbHandlerTest do
       assert next_event == :internal
       assert data.sock == nil
       assert data.caller == nil
-      assert data.sent == false
       assert data.auth == args.auth
       assert data.tenant == args.tenant
       assert data.db_state == nil
@@ -74,11 +102,11 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       state =
-        Db.handle_event(:internal, nil, :connect, %{
+        Db.handle_event(:internal, :connect, :connect, %{
           auth: auth,
           sock: {:gen_tcp, nil},
           id: @id,
-          proxy: false
+          mode: :session
         })
 
       assert {:next_state, :authentication,
@@ -95,7 +123,7 @@ defmodule Supavisor.DbHandlerTest do
                 },
                 sock: {:gen_tcp, _},
                 id: @id,
-                proxy: false
+                mode: :session
               }} = state
     end
 
@@ -118,16 +146,23 @@ defmodule Supavisor.DbHandlerTest do
         secrets: secrets
       }
 
-      state =
-        Db.handle_event(:internal, nil, :connect, %{
-          auth: auth,
-          sock: nil,
-          id: @id,
-          proxy: false,
-          reconnect_retries: 5
-        })
+      assert {:keep_state, _data, {:state_timeout, 2_500, :connect}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 auth: auth,
+                 sock: nil,
+                 id: @id,
+                 proxy: false,
+                 reconnect_retries: 0
+               })
 
-      assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
+      assert {:stop, {:failed_to_connect, _}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 auth: auth,
+                 sock: nil,
+                 id: @id,
+                 proxy: false,
+                 reconnect_retries: 5
+               })
     end
 
     test "rejects connection when DB responds with SSL negotiation 'N'" do
@@ -169,8 +204,8 @@ defmodule Supavisor.DbHandlerTest do
         client_sock: nil
       }
 
-      assert {:keep_state_and_data, {:state_timeout, 2500, :connect}} ==
-               Db.handle_event(:internal, nil, :connect, data)
+      assert {:stop, {:failed_to_connect, :ssl_not_available}} ==
+               Db.handle_event(:internal, :connect, :connect, data)
     end
   end
 
@@ -295,29 +330,27 @@ defmodule Supavisor.DbHandlerTest do
       {_a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      data = %{id: @id, proxy: false, user: "some user"}
+      data = %{id: @id, mode: :session, user: "some user"}
 
       assert {:stop, :invalid_password, ^data} =
                Db.handle_event(:info, content, :authentication, data)
     end
 
-    test "handles server encode and forward error" do
+    test "encodes and forwards server error" do
       bin = <<?E, 4::32>>
+      {send, recv} = sockpair()
+      content = {:tcp, recv, bin}
 
-      {_a, b} = sockpair()
-      content = {:tcp, b, bin}
+      assert {:stop, :normal} =
+               Db.handle_event(:info, content, :authentication, %{client_sock: {:gen_tcp, send}})
 
-      assert {:stop, {:encode_and_forward, []}} =
-               Db.handle_event(:info, content, :authentication, %{})
+      # The implementation adds a null terminator
+      assert {:ok, <<?E, 5::32, 0>>} = :gen_tcp.recv(recv, 0, 1000)
     end
   end
 
   describe "handle_event/4 info tcp authentication authentication_md5_password payload events" do
     setup do
-      # `82` is `?R`, which identifies the payload tag as `:authentication`
-      # `0, 0, 0, 12` is the packet length
-      # `0, 0, 0, 5` is the authentication type, identified as `:authentication_md5_password`
-      # `100, 100, 100, 100` is the md5 salt from db, a random 4 bytes value
       bin = <<82, 0, 0, 0, 12, 0, 0, 0, 5, 100, 100, 100, 100>>
 
       {send, recv} = sockpair()
@@ -380,29 +413,38 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
-  describe "check_ready/1" do
-    test "ready_for_query valid" do
-      assert {:ready_for_query, :transaction_block} == Db.check_ready(<<90, 0, 0, 0, 5, ?T>>)
+  describe "checkout/4 error handling" do
+    test "successful checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :normal})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
 
-      assert {:ready_for_query, :transaction_block} ==
-               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?T>>)
-
-      assert {:ready_for_query, :failed_transaction_block} ==
-               Db.check_ready(<<90, 0, 0, 0, 5, ?E>>)
-
-      assert {:ready_for_query, :failed_transaction_block} ==
-               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?E>>)
-
-      assert {:ready_for_query, :idle} == Db.check_ready(<<90, 0, 0, 0, 5, ?I>>)
-
-      assert {:ready_for_query, :idle} ==
-               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?I>>)
+      assert {:ok, {:fake_db_sock, ^mock_pid}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
     end
 
-    test "ready_for_query not valid" do
-      assert :continue == Db.check_ready(<<>>)
-      assert :continue == Db.check_ready(<<90, 0, 0, 0, 5, ?I, 1, 1, 1>>)
-      assert :continue == Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?I, 1, 1, 1>>)
+    test "handles process crash during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :crash})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {{%RuntimeError{}, _}, _}}} =
+               Db.checkout(mock_pid, dummy_sock, caller, 1000)
+    end
+
+    test "handles process normal exit during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :normal_exit})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {:normal, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+    end
+
+    test "handles checkout timeout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :timeout})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {:timeout, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 100)
     end
   end
 end

@@ -35,8 +35,14 @@ defmodule Supavisor.DbHandler do
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
 
-  def checkout(pid, sock, caller, timeout \\ 15_000),
-    do: :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
+          {:ok, Supavisor.sock()} | {:error, {:exit, term()}}
+  def checkout(pid, sock, caller, timeout \\ 15_000) do
+    :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
+  end
 
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
@@ -72,7 +78,6 @@ defmodule Supavisor.DbHandler do
       %{
         id: args.id,
         sock: nil,
-        sent: false,
         auth: args.auth,
         user: args.user,
         tenant: args.tenant,
@@ -80,7 +85,6 @@ defmodule Supavisor.DbHandler do
         db_state: nil,
         parameter_status: %{},
         nonce: nil,
-        messages: "",
         server_proof: nil,
         stats: %{},
         client_stats: %{},
@@ -90,8 +94,6 @@ defmodule Supavisor.DbHandler do
         replica_type: args.replica_type,
         caller: args[:caller] || nil,
         client_sock: args[:client_sock] || nil,
-        proxy: args[:proxy] || false,
-        active_count: 0,
         reconnect_retries: 0
       }
 
@@ -103,7 +105,7 @@ defmodule Supavisor.DbHandler do
   def callback_mode, do: [:handle_event_function]
 
   @impl true
-  def handle_event(:internal, _, :connect, %{auth: auth} = data) do
+  def handle_event(:internal, :connect, :connect, %{auth: auth} = data) do
     Logger.debug("DbHandler: Try to connect to DB")
 
     sock_opts =
@@ -129,7 +131,7 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            tenant = if data.proxy, do: Supavisor.tenant(data.id)
+            tenant = if data.mode == :proxy, do: Supavisor.tenant(data.id)
             search_path = Supavisor.search_path(data.id)
 
             case send_startup(sock, auth, tenant, search_path) do
@@ -188,14 +190,16 @@ defmodule Supavisor.DbHandler do
       :authentication_cleartext ->
         {:keep_state, data}
 
-      {:error_response, ["SFATAL", "VFATAL", "C28P01", reason, _, _, _]} ->
+      {:error_response, %{"S" => "FATAL", "C" => "28P01"} = error} ->
+        reason = error["M"] || "Authentication failed"
         handle_authentication_error(data, reason)
-        Logger.error("DbHandler: Auth error #{inspect(reason)}")
+        Logger.error("DbHandler: Auth error #{inspect(error)}")
         {:stop, :invalid_password, data}
 
       {:error_response, error} ->
-        Logger.error("DbHandler: Error auth response #{inspect(error)}")
-        {:stop, {:encode_and_forward, error}}
+        Logger.error("DbHandler: Error response during auth: #{inspect(error)}")
+        encode_and_forward_error(error, data)
+        {:stop, :normal}
 
       {:ready_for_query, acc} ->
         ps = acc.ps
@@ -204,7 +208,7 @@ defmodule Supavisor.DbHandler do
           "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
         )
 
-        if data.proxy do
+        if data.mode == :proxy do
           bin_ps = Server.encode_parameter_status(ps)
           send(data.caller, {:parameter_status, bin_ps})
         else
@@ -219,93 +223,49 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  # the process received message from db without linked caller
-  def handle_event(:info, {proto, _, bin}, _, %{caller: nil}) when proto in @proto do
-    Logger.debug("DbHandler: Got db response #{inspect(bin)} when caller was nil")
+  # the process received message from db while idle
+  def handle_event(:info, {proto, _, bin}, :idle, _data) when proto in @proto do
+    Logger.debug("DbHandler: Got db response #{inspect(bin)} when idle")
     :keep_state_and_data
   end
 
-  def handle_event(:info, {proto, _, bin}, _, %{replica_type: :read} = data)
-      when proto in @proto do
-    Logger.debug("DbHandler: Got read replica message #{inspect(bin)}")
-
-    # TODO: use streaming for read replica too
-    {:ok, pkts, rest} = Server.decode(<<data.pending_bin::binary, bin::binary>>)
-    data = %{data | pending_bin: rest}
-
-    resp =
-      cond do
-        Server.has_read_only_error?(pkts) ->
-          Logger.error("DbHandler: read only error")
-
-          with [_] <- pkts do
-            # need to flush ready_for_query if it's not in same packet
-            :ok = receive_ready_for_query()
-          end
-
-          :read_sql_error
-
-        List.last(pkts).tag == :ready_for_query ->
-          :ready_for_query
-
-        true ->
-          :continue
-      end
-
-    if resp != :continue do
-      HandlerHelpers.sock_send(data.client_sock, bin)
-      :ok = ClientHandler.db_status(data.caller, resp)
-      {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-      {:keep_state, %{data | stats: stats, caller: handler_caller(data)}}
-    else
-      {:keep_state, data}
-    end
-  end
-
   # forward the message to the client
-  def handle_event(:info, {proto, _, bin}, _, %{caller: caller} = data)
+  def handle_event(:info, {proto, _, bin}, :busy, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
-    Logger.debug(
-      "DbHandler: Got write replica messages: #{Debug.packet_to_string(bin, :backend)}"
-    )
+    Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
     if String.ends_with?(bin, Server.ready_for_query()) do
       HandlerHelpers.activate(data.sock)
 
       {_, stats} =
-        if data.proxy,
+        if data.mode == :proxy,
           do: {nil, data.stats},
           else: Telem.network_usage(:db, data.sock, data.id, data.stats)
 
       # in transaction mode, we need to notify the client when the transaction is finished,
       # after which it will unlink the direct db connection process from itself.
-      data =
-        if data.mode == :transaction do
-          ClientHandler.db_status(data.caller, :ready_for_query)
-          data = handle_server_messages(bin, data)
-          %{data | stats: stats, caller: nil, client_sock: nil, active_count: 0}
-        else
-          data = handle_server_messages(bin, data)
+      if data.mode == :transaction do
+        ClientHandler.db_status(data.caller, :ready_for_query)
+        data = handle_server_messages(bin, data)
 
-          {_, client_stats} =
-            if data.proxy,
-              do: {nil, data.client_stats},
-              else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
+        {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+      else
+        data = handle_server_messages(bin, data)
 
-          %{data | stats: stats, active_count: 0, client_stats: client_stats}
-        end
+        {_, client_stats} =
+          if data.mode == :proxy,
+            do: {nil, data.client_stats},
+            else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
 
-      {:next_state, :idle, data}
+        {:keep_state, %{data | stats: stats, client_stats: client_stats}}
+      end
     else
-      if data.active_count > @switch_active_count,
-        do: HandlerHelpers.active_once(data.sock)
-
       data = handle_server_messages(bin, data)
-      {:keep_state, %{data | active_count: data.active_count + 1}}
+      {:keep_state, data}
     end
   end
 
-  def handle_event({:call, from}, {:handle_ps_pkts, pkts}, _state, data) do
+  def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
     {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
     {close_pkts, prepared_statements} = evict_exceeding(data)
@@ -327,16 +287,17 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
-    Logger.debug("DbHandler: checkout call when state was #{state}")
+    Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
-      {:keep_state, %{data | client_sock: sock, caller: caller}, {:reply, from, data.sock}}
+      {:next_state, :busy, %{data | client_sock: sock, caller: caller},
+       {:reply, from, {:ok, data.sock}}}
     else
       {:keep_state_and_data, :postpone}
     end
   end
 
-  def handle_event({:call, from}, :ps, _, data) do
+  def handle_event({:call, from}, :ps, :busy, data) do
     Logger.debug("DbHandler: get parameter status")
     {:keep_state_and_data, {:reply, from, data.parameter_status}}
   end
@@ -363,11 +324,16 @@ defmodule Supavisor.DbHandler do
 
     HandlerHelpers.sock_send(data.sock, Server.terminate_message())
     HandlerHelpers.sock_close(data.sock)
-    {:stop, {:client_handler_down, data.mode}}
+    {:stop, :normal}
   end
 
   def handle_event({:call, from}, :get_state_and_mode, state, data) do
     {:keep_state_and_data, {:reply, from, {state, data.mode}}}
+  end
+
+  def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
+    HandlerHelpers.setopts(data.sock, active: @switch_active_count)
+    :keep_state_and_data
   end
 
   def handle_event(type, content, state, data) do
@@ -392,19 +358,32 @@ defmodule Supavisor.DbHandler do
   def terminate(reason, state, data) do
     Telem.handler_action(:db_handler, :stopped, data.id)
 
-    if data.client_sock != nil do
-      message =
-        case reason do
-          {:encode_and_forward, msg} -> Server.encode_error_message(msg)
-          _ -> Server.error_message("XX000", inspect(reason))
-        end
+    case reason do
+      :normal ->
+        :ok
 
-      HandlerHelpers.sock_send(data.client_sock, message)
+      :shutdown ->
+        :ok
+
+      reason ->
+        Logger.error(
+          "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
+        )
     end
+  end
 
-    Logger.error(
-      "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
-    )
+  @spec encode_and_forward_error(map(), map()) :: :ok | :noop
+  defp encode_and_forward_error(message, data) do
+    case data do
+      %{client_sock: sock} when not is_nil(sock) ->
+        HandlerHelpers.sock_send(
+          sock,
+          Server.encode_error_message(message)
+        )
+
+      _other ->
+        :noop
+    end
   end
 
   @spec try_ssl_handshake(Supavisor.tcp_sock(), map) :: {:ok, Supavisor.sock()} | {:error, term()}
@@ -473,11 +452,11 @@ defmodule Supavisor.DbHandler do
 
   @spec activate(Supavisor.sock()) :: :ok | {:error, term}
   defp activate({:gen_tcp, sock}) do
-    :inet.setopts(sock, active: true)
+    :inet.setopts(sock, active: @switch_active_count)
   end
 
   defp activate({:ssl, sock}) do
-    :ssl.setopts(sock, active: true)
+    :ssl.setopts(sock, active: @switch_active_count)
   end
 
   defp get_user(auth) do
@@ -485,42 +464,6 @@ defmodule Supavisor.DbHandler do
       auth.secrets.().db_user
     else
       auth.secrets.().user
-    end
-  end
-
-  @spec receive_ready_for_query() :: :ok | :timeout_error
-  defp receive_ready_for_query do
-    receive do
-      {_proto, _socket, <<?Z, 5::32, ?I>>} ->
-        :ok
-    after
-      15_000 -> :timeout_error
-    end
-  end
-
-  @spec handler_caller(map()) :: pid() | nil
-  defp handler_caller(%{mode: :session} = data), do: data.caller
-  defp handler_caller(_), do: nil
-
-  @spec check_ready(binary()) ::
-          {:ready_for_query, :idle | :transaction_block | :failed_transaction_block} | :continue
-  def check_ready(bin) do
-    bin_size = byte_size(bin)
-
-    case bin do
-      <<_::binary-size(bin_size - 6), 90, 0, 0, 0, 5, status_indicator::binary>> ->
-        indicator =
-          case status_indicator do
-            <<?I>> -> :idle
-            <<?T>> -> :transaction_block
-            <<?E>> -> :failed_transaction_block
-            _ -> :continue
-          end
-
-        {:ready_for_query, indicator}
-
-      _ ->
-        :continue
     end
   end
 
@@ -532,8 +475,12 @@ defmodule Supavisor.DbHandler do
     do: {:ready_for_query, Map.put(acc, :db_state, db_state)}
 
   defp handle_auth_pkts(%{tag: :backend_key_data, payload: payload}, acc, data) do
+    if data.mode != :proxy do
+      Logger.metadata(backend_pid: payload[:pid])
+    end
+
     key = self()
-    conn = %{host: data.auth.host, port: data.auth.port, ip_ver: data.auth.ip_version}
+    conn = %{host: data.auth.host, port: data.auth.port, ip_version: data.auth.ip_version}
     Registry.register(Supavisor.Registry.PoolPids, key, Map.merge(payload, conn))
     Logger.debug("DbHandler: Backend #{inspect(key)} data: #{inspect(payload)}")
     Map.put(acc, :backend_key_data, payload)
@@ -660,23 +607,16 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(_e, acc, _data), do: acc
 
   @spec handle_authentication_error(map(), String.t()) :: any()
-  defp handle_authentication_error(%{proxy: false} = data, reason) do
+  defp handle_authentication_error(%{mode: :proxy}, _reason), do: :ok
+
+  defp handle_authentication_error(%{mode: _other} = data, _reason) do
     tenant = Supavisor.tenant(data.id)
 
     :erpc.multicast([node() | Node.list()], fn ->
       Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
       Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
-
-      Registry.dispatch(Supavisor.Registry.TenantClients, data.id, fn entries ->
-        for {client_handler, _meta} <- entries,
-            do: send(client_handler, {:disconnect, reason})
-      end)
     end)
-
-    Supavisor.stop(data.id)
   end
-
-  defp handle_authentication_error(%{proxy: true}, _reason), do: :ok
 
   @spec reconnect_timeout(map()) :: pos_integer()
   def reconnect_timeout(%{proxy: true}),
@@ -785,11 +725,12 @@ defmodule Supavisor.DbHandler do
 
   defp maybe_reconnect(reason, data) do
     max_reconnect_retries = Application.get_env(:supavisor, :reconnect_retries)
+    data = %{data | reconnect_retries: data.reconnect_retries + 1}
 
-    if data.reconnect_retries > max_reconnect_retries and data.client_sock != nil do
+    if data.reconnect_retries > max_reconnect_retries do
       {:stop, {:failed_to_connect, reason}}
     else
-      {:keep_state_and_data, {:state_timeout, reconnect_timeout(data), :connect}}
+      {:keep_state, data, {:state_timeout, reconnect_timeout(data), :connect}}
     end
   end
 
