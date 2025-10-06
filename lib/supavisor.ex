@@ -140,21 +140,21 @@ defmodule Supavisor do
   Updates credentials for all SecretChecker processes for a tenant across the cluster.
   Used for auth_query mode (require_user: false) to hot-update credentials without restarting pools.
   """
-  @spec update_secret_checker_credentials_global(String.t(), String.t(), String.t()) :: [
+  @spec update_secret_checker_credentials_global(String.t(), String.t(), (-> String.t())) :: [
           {node(), term()}
         ]
-  def update_secret_checker_credentials_global(tenant, new_user, new_password) do
+  def update_secret_checker_credentials_global(tenant, new_user, password_fn) do
     :erpc.multicall(
       [node() | Node.list()],
       Supavisor,
       :update_secret_checker_credentials_local,
-      [tenant, new_user, new_password],
+      [tenant, new_user, password_fn],
       60_000
     )
   end
 
-  @spec update_secret_checker_credentials_local(String.t(), String.t(), String.t()) :: map()
-  def update_secret_checker_credentials_local(tenant, new_user, new_password) do
+  @spec update_secret_checker_credentials_local(String.t(), String.t(), (-> String.t())) :: map()
+  def update_secret_checker_credentials_local(tenant, new_user, password_fn) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant)
     |> Enum.reduce(%{}, fn {_pid,
                             %{
@@ -168,7 +168,7 @@ defmodule Supavisor do
       id = {{type, tenant}, user, mode, db_name, search_path}
 
       result =
-        case Supavisor.SecretChecker.update_credentials(id, new_user, new_password) do
+        case Supavisor.SecretChecker.update_credentials(id, new_user, password_fn) do
           :ok -> :ok
           {:error, reason} -> {:error, reason}
         end

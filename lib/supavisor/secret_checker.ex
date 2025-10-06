@@ -25,15 +25,15 @@ defmodule Supavisor.SecretChecker do
     end
   end
 
-  @spec update_credentials(Supavisor.id(), String.t(), String.t()) ::
+  @spec update_credentials(Supavisor.id(), String.t(), (-> String.t())) ::
           :ok | {:error, :not_started}
-  def update_credentials(id, new_user, new_password) do
+  def update_credentials(id, new_user, password_fn) do
     case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
       [] ->
         {:error, :not_started}
 
       [{pid, _}] ->
-        GenServer.call(pid, {:update_credentials, new_user, new_password})
+        GenServer.call(pid, {:update_credentials, new_user, password_fn})
     end
   end
 
@@ -108,13 +108,13 @@ defmodule Supavisor.SecretChecker do
     {:reply, check_secrets(state.user, state), state}
   end
 
-  def handle_call({:update_credentials, new_user, new_password}, _from, state) do
+  def handle_call({:update_credentials, new_user, password_fn}, _from, state) do
     Logger.info("SecretChecker: changing auth_query user to #{new_user}")
 
     new_auth = %{
       state.auth
       | user: new_user,
-        password: fn -> new_password end
+        password: password_fn
     }
 
     {:ok, new_conn} = start_postgrex_connection(new_auth)

@@ -296,11 +296,13 @@ defmodule SupavisorWeb.TenantController do
                 "Updating auth credentials for tenant #{id}, user #{updated_user.db_user}"
               )
 
+              password_fn = fn -> updated_user.db_password end
+
               result =
                 Supavisor.update_secret_checker_credentials_global(
                   id,
                   updated_user.db_user,
-                  updated_user.db_password
+                  password_fn
                 )
 
               Logger.info("Update SecretChecker credentials #{id}: #{inspect(result)}")
