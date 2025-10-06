@@ -41,11 +41,9 @@ defmodule Supavisor.SecretChecker do
     Logger.debug("SecretChecker: Starting secret checker")
     tenant = Supavisor.tenant(args.id)
 
-    %{auth: auth, user: user} = Enum.find(args.replicas, fn e -> e.replica_type == :write end)
-
     state = %{
+      tenant_external_id: tenant,
       tenant: tenant,
-      auth: auth,
       user: user,
       key: {:secrets, tenant, user},
       ttl: args[:ttl] || :timer.hours(24),
