@@ -251,4 +251,68 @@ defmodule SupavisorWeb.TenantController do
         |> json(response)
     end
   end
+
+  operation(:update_auth_credentials,
+    summary: "Update auth query credentials",
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    request_body: TenantCreate.params(),
+    responses: %{
+      200 => TenantData.response(),
+      400 => BadRequest.response(),
+      404 => NotFound.response(),
+      422 => UnprocessablyEntity.response()
+    }
+  )
+
+  def update_auth_credentials(conn, %{"external_id" => id, "user" => user_params}) do
+    case Tenants.get_tenant_by_external_id(id) do
+      nil ->
+        conn
+        |> put_status(404)
+        |> render("not_found.json", tenant: nil)
+
+      %TenantModel{require_user: true} ->
+        conn
+        |> put_status(400)
+        |> render("error.json",
+          error: "Cannot update credentials for tenants with require_user: true"
+        )
+
+      %TenantModel{require_user: false} = tenant ->
+        tenant = Repo.preload(tenant, :users)
+
+        case Enum.find(tenant.users, & &1.is_manager) do
+          nil ->
+            conn
+            |> put_status(400)
+            |> render("error.json", error: "No manager user found for tenant")
+
+          manager_user ->
+            with {:ok, updated_user} <- Tenants.update_user(manager_user, user_params) do
+              Logger.info(
+                "Updating auth credentials for tenant #{id}, user #{updated_user.db_user}"
+              )
+
+              result =
+                Supavisor.update_secret_checker_credentials_global(
+                  id,
+                  updated_user.db_user,
+                  updated_user.db_password
+                )
+
+              Logger.info("Update SecretChecker credentials #{id}: #{inspect(result)}")
+
+              # Clear cache after SecretCheckers are updated to avoid race condition
+              cleanup_result = Supavisor.del_all_cache_dist(id)
+              Logger.info("Delete cache dist #{id}: #{inspect(cleanup_result)}")
+
+              tenant = Tenants.get_tenant_by_external_id(id)
+              render(conn, "show.json", tenant: tenant)
+            end
+        end
+    end
+  end
 end

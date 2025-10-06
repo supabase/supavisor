@@ -136,6 +136,47 @@ defmodule Supavisor do
     :erpc.multicall([node() | Node.list()], Supavisor, :dirty_terminate, [tenant], 60_000)
   end
 
+  @doc """
+  Updates credentials for all SecretChecker processes for a tenant across the cluster.
+  Used for auth_query mode (require_user: false) to hot-update credentials without restarting pools.
+  """
+  @spec update_secret_checker_credentials_global(String.t(), String.t(), String.t()) :: [
+          {node(), term()}
+        ]
+  def update_secret_checker_credentials_global(tenant, new_user, new_password) do
+    :erpc.multicall(
+      [node() | Node.list()],
+      Supavisor,
+      :update_secret_checker_credentials_local,
+      [tenant, new_user, new_password],
+      60_000
+    )
+  end
+
+  @spec update_secret_checker_credentials_local(String.t(), String.t(), String.t()) :: map()
+  def update_secret_checker_credentials_local(tenant, new_user, new_password) do
+    Registry.lookup(Supavisor.Registry.TenantSups, tenant)
+    |> Enum.reduce(%{}, fn {_pid,
+                            %{
+                              user: user,
+                              mode: mode,
+                              type: type,
+                              db_name: db_name,
+                              search_path: search_path
+                            }},
+                           acc ->
+      id = {{type, tenant}, user, mode, db_name, search_path}
+
+      result =
+        case Supavisor.SecretChecker.update_credentials(id, new_user, new_password) do
+          :ok -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+
+      Map.put(acc, {user, mode}, result)
+    end)
+  end
+
   @spec del_all_cache(String.t(), String.t()) :: [map()]
   def del_all_cache(tenant, user) do
     Logger.info("Deleting all cache for tenant #{tenant} and user #{user}")

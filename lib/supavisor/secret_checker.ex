@@ -25,6 +25,18 @@ defmodule Supavisor.SecretChecker do
     end
   end
 
+  @spec update_credentials(Supavisor.id(), String.t(), String.t()) ::
+          :ok | {:error, :not_started}
+  def update_credentials(id, new_user, new_password) do
+    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+      [] ->
+        {:error, :not_started}
+
+      [{pid, _}] ->
+        GenServer.call(pid, {:update_credentials, new_user, new_password})
+    end
+  end
+
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
     tenant = Supavisor.tenant(args.id)
@@ -46,39 +58,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   def handle_continue(:init_conn, %{auth: auth} = state) do
-    ssl_opts =
-      if auth.upstream_ssl and auth.upstream_verify == :peer do
-        [
-          verify: :verify_peer,
-          cacerts: [Helpers.upstream_cert(auth.upstream_tls_ca)],
-          server_name_indication: auth.host,
-          customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
-        ]
-      else
-        [
-          verify: :verify_none
-        ]
-      end
-
-    {:ok, conn} =
-      Postgrex.start_link(
-        hostname: auth.host,
-        port: auth.port,
-        database: auth.database,
-        password: auth.password.(),
-        username: auth.user,
-        parameters: [application_name: "Supavisor auth_query"],
-        ssl: auth.upstream_ssl,
-        socket_options: [
-          auth.ip_version
-        ],
-        queue_target: 1_000,
-        queue_interval: 5_000,
-        ssl_opts: ssl_opts
-      )
-
-    # kill the postgrex connection if the current process exits unexpectedly
-    Process.link(conn)
+    {:ok, conn} = start_postgrex_connection(auth)
     {:noreply, %{state | conn: conn}}
   end
 
@@ -90,11 +70,6 @@ defmodule Supavisor.SecretChecker do
   def handle_info(msg, state) do
     Logger.error("Unexpected message: #{inspect(msg)}")
     {:noreply, state}
-  end
-
-  def terminate(_, state) do
-    :gen_statem.stop(state.conn)
-    :ok
   end
 
   def check(interval \\ @interval),
@@ -131,5 +106,65 @@ defmodule Supavisor.SecretChecker do
 
   def handle_call(:get_secrets, _from, state) do
     {:reply, check_secrets(state.user, state), state}
+  end
+
+  def handle_call({:update_credentials, new_user, new_password}, _from, state) do
+    Logger.info("SecretChecker: changing auth_query user to #{new_user}")
+
+    new_auth = %{
+      state.auth
+      | user: new_user,
+        password: fn -> new_password end
+    }
+
+    {:ok, new_conn} = start_postgrex_connection(new_auth)
+
+    old_conn = state.conn
+    Process.unlink(old_conn)
+
+    Task.start(fn ->
+      try do
+        GenServer.stop(old_conn, :normal, 5_000)
+      catch
+        :exit, _ -> Process.exit(old_conn, :kill)
+      end
+    end)
+
+    Cachex.del(Supavisor.Cache, state.key)
+
+    Logger.info("SecretChecker: Successfully changed auth_query user")
+    {:reply, :ok, %{state | auth: new_auth, conn: new_conn}}
+  end
+
+  defp start_postgrex_connection(auth) do
+    ssl_opts =
+      if auth.upstream_ssl and auth.upstream_verify == :peer do
+        [
+          verify: :verify_peer,
+          cacerts: [Helpers.upstream_cert(auth.upstream_tls_ca)],
+          server_name_indication: auth.host,
+          customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+        ]
+      else
+        [
+          verify: :verify_none
+        ]
+      end
+
+    Postgrex.start_link(
+      hostname: auth.host,
+      port: auth.port,
+      database: auth.database,
+      password: auth.password.(),
+      username: auth.user,
+      parameters: [application_name: "Supavisor auth_query"],
+      ssl: auth.upstream_ssl,
+      socket_options: [
+        auth.ip_version
+      ],
+      queue_target: 1_000,
+      queue_interval: 5_000,
+      ssl_opts: ssl_opts
+    )
   end
 end
