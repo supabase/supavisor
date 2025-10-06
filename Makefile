@@ -118,7 +118,8 @@ prod_rel:
 
 prod_start_rel:
 	MIX_ENV=prod \
-	NODE_NAME="localhost" \
+	NODE_NAME="node1" \
+	NODE_IP="127.0.0.1" \
 	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
 	API_JWT_SECRET=dev \
 	METRICS_JWT_SECRET=dev \
@@ -139,7 +140,10 @@ prod_start_rel2:
 	REGION=eu \
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
+	PROXY_PORT="5402" \
 	PROXY_PORT_SESSION="5442" \
 	PROXY_PORT_TRANSACTION="6553" \
-	NODE_IP=localhost \
+	SESSION_PROXY_PORTS="12200,12201,12202,12203" \
+	TRANSACTION_PROXY_PORTS="12204,12205,12206,12207" \
+	NODE_IP=127.0.0.1 \
 	_build/prod/rel/supavisor/bin/supavisor start_iex
