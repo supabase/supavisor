@@ -62,10 +62,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   def handle_continue(:init_conn, state) do
-    # Secret Checker always uses the manager user
-    tenant =
-      state.tenant_external_id
-      |> Tenants.get_tenant_by_external_id()
+    tenant = Tenants.get_tenant_by_external_id(state.tenant_external_id)
 
     auth_query_user =
       case tenant.users do
