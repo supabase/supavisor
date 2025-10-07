@@ -139,17 +139,15 @@ defmodule Supavisor.Tenants do
   end
 
   def get_pool_config(external_id, user) do
-    query =
-      from(a in User,
-        where: a.db_user_alias == ^user
-      )
-
-    Repo.all(
-      from(p in Tenant,
-        where: p.external_id == ^external_id,
-        preload: [users: ^query]
-      )
+    from(t in Tenant,
+      left_join: u in User,
+      on:
+        u.tenant_external_id == t.external_id and
+          (u.db_user_alias == ^user or (is_nil(u.db_user_alias) and u.db_user == ^user)),
+      where: t.external_id == ^external_id,
+      preload: [users: u]
     )
+    |> Repo.all()
   end
 
   def get_pool_config_cache(external_id, user, ttl \\ :timer.hours(24)) do

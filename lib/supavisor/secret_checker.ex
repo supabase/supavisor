@@ -4,7 +4,7 @@ defmodule Supavisor.SecretChecker do
   use GenServer
   require Logger
 
-  alias Supavisor.Helpers
+  alias Supavisor.{Helpers, Tenants}
 
   @interval :timer.seconds(15)
 
@@ -39,25 +39,49 @@ defmodule Supavisor.SecretChecker do
 
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
-    tenant = Supavisor.tenant(args.id)
+    {{_type, tenant}, user, _mode, db_name, _search_path} = args.id
 
     state = %{
+      id: args.id,
       tenant_external_id: tenant,
-      tenant: tenant,
       user: user,
+      db_name: db_name,
       key: {:secrets, tenant, user},
       ttl: args[:ttl] || :timer.hours(24),
       conn: nil,
-      check_ref: check()
+      check_ref: nil,
+      auth: nil
     }
 
     Logger.metadata(project: tenant, user: user)
     {:ok, state, {:continue, :init_conn}}
   end
 
-  def handle_continue(:init_conn, %{auth: auth} = state) do
-    {:ok, conn} = start_postgrex_connection(auth)
-    {:noreply, %{state | conn: conn}}
+  def handle_continue(:init_conn, state) do
+    # Secret Checker always uses the manager user
+    tenant =
+      state.tenant_external_id
+      |> Tenants.get_tenant_by_external_id()
+
+    auth_query_user =
+      case tenant.users do
+        [u] -> u
+        users -> Enum.find(users, fn u -> u.is_manager end)
+      end
+
+    if auth_query_user do
+      auth =
+        tenant
+        |> Map.put(:users, [auth_query_user])
+        |> Supavisor.build_auth(state.db_name, :auth_query, {:auth_query, fn -> %{} end})
+
+      {:ok, conn} = start_postgrex_connection(auth)
+
+      {:noreply, %{state | conn: conn, auth: auth, check_ref: check()}}
+    else
+      Logger.info("SecretsChecker terminating: no adequate user found")
+      {:noreply, {:stop, :normal}}
+    end
   end
 
   def handle_info(:check, state) do
@@ -71,7 +95,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   def check(interval \\ @interval),
-    do: Process.send_after(self(), :check, interval)
+    do: Process.send_after(self(), :check, interval + jitter())
 
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
@@ -165,4 +189,6 @@ defmodule Supavisor.SecretChecker do
       ssl_opts: ssl_opts
     )
   end
+
+  defp jitter(), do: :rand.uniform(div(@interval, 10))
 end
