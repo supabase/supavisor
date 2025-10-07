@@ -67,7 +67,7 @@ defmodule Supavisor.SecretChecker do
     auth_query_user =
       case tenant.users do
         [u] -> u
-        users -> Enum.find(users, fn u -> u.is_manager end)
+        users -> Enum.find(users, & &1.is_manager)
       end
 
     if auth_query_user do
