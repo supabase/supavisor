@@ -1031,7 +1031,7 @@ defmodule Supavisor.ClientHandler do
             database: tenant.db_database,
             password: user.db_password,
             username: user.db_user,
-            parameters: [application_name: "Supavisor auth_query"],
+            parameters: [application_name: "Supavisor (auth query)"],
             ssl: tenant.upstream_ssl,
             socket_options: [
               Helpers.ip_version(tenant.ip_version, tenant.db_host)
