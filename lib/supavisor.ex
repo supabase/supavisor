@@ -166,13 +166,7 @@ defmodule Supavisor do
                             }},
                            acc ->
       id = {{type, tenant}, user, mode, db_name, search_path}
-
-      result =
-        case Supavisor.SecretChecker.update_credentials(id, new_user, password_fn) do
-          :ok -> :ok
-          {:error, reason} -> {:error, reason}
-        end
-
+      result = Supavisor.SecretChecker.update_credentials(id, new_user, password_fn)
       Map.put(acc, {user, mode}, result)
     end)
   end

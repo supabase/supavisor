@@ -190,5 +190,5 @@ defmodule Supavisor.SecretChecker do
     )
   end
 
-  defp jitter(), do: :rand.uniform(div(@interval, 10))
+  defp jitter, do: :rand.uniform(div(@interval, 10))
 end
