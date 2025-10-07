@@ -442,7 +442,7 @@ defmodule Supavisor do
   Builds an auth configuration map from tenant record data.
   """
   @spec build_auth(map(), String.t() | nil, atom(), secrets()) :: map()
-  def build_auth(tenant_record, db_name, method, secrets) do
+  def build_auth(tenant_record, db_name, method, secrets, app_name \\ "Supavisor") do
     %{
       db_host: db_host,
       db_port: db_port,
@@ -468,7 +468,7 @@ defmodule Supavisor do
       auth_query: auth_query,
       database: if(db_name != nil, do: db_name, else: db_database),
       password: fn -> db_pass end,
-      application_name: "Supavisor",
+      application_name: app_name,
       ip_version: Helpers.ip_version(ip_ver, db_host),
       upstream_ssl: tenant_record.upstream_ssl,
       upstream_verify: tenant_record.upstream_verify,

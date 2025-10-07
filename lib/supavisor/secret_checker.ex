@@ -77,7 +77,12 @@ defmodule Supavisor.SecretChecker do
       auth =
         tenant
         |> Map.put(:users, [auth_query_user])
-        |> Supavisor.build_auth(state.db_name, :auth_query, {:auth_query, fn -> %{} end})
+        |> Supavisor.build_auth(
+          state.db_name,
+          :auth_query,
+          {:auth_query, fn -> %{} end},
+          "Supavisor (auth_query)"
+        )
 
       {:ok, conn} = start_postgrex_connection(auth)
       {:noreply, %{state | conn: conn, auth: auth, check_ref: check()}}
