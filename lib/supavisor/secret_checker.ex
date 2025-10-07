@@ -16,25 +16,29 @@ defmodule Supavisor.SecretChecker do
   @spec get_secrets(Supavisor.id()) ::
           {:ok, {method :: atom(), Supavisor.secrets()}} | {:error, :not_started}
   def get_secrets(id) do
-    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
-      [] ->
-        {:error, :not_started}
+    erpc_call_node(id, fn ->
+      case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+        [] ->
+          {:error, :not_started}
 
-      [{pid, _}] ->
-        GenServer.call(pid, :get_secrets)
-    end
+        [{pid, _}] ->
+          GenServer.call(pid, :get_secrets)
+      end
+    end)
   end
 
   @spec update_credentials(Supavisor.id(), String.t(), (-> String.t())) ::
           :ok | {:error, :not_started}
   def update_credentials(id, new_user, password_fn) do
-    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
-      [] ->
-        {:error, :not_started}
+    erpc_call_node(id, fn ->
+      case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+        [] ->
+          {:error, :not_started}
 
-      [{pid, _}] ->
-        GenServer.call(pid, {:update_credentials, new_user, password_fn})
-    end
+        [{pid, _}] ->
+          GenServer.call(pid, {:update_credentials, new_user, password_fn})
+      end
+    end)
   end
 
   def init(args) do
@@ -76,7 +80,6 @@ defmodule Supavisor.SecretChecker do
         |> Supavisor.build_auth(state.db_name, :auth_query, {:auth_query, fn -> %{} end})
 
       {:ok, conn} = start_postgrex_connection(auth)
-
       {:noreply, %{state | conn: conn, auth: auth, check_ref: check()}}
     else
       Logger.info("SecretsChecker terminating: no adequate user found")
@@ -191,4 +194,14 @@ defmodule Supavisor.SecretChecker do
   end
 
   defp jitter, do: :rand.uniform(div(@interval, 10))
+
+  defp erpc_call_node(id, fun) do
+    case Supavisor.get_global_sup(id) do
+      nil ->
+        {:error, :not_started}
+
+      pid ->
+        :erpc.call(node(pid), fun)
+    end
+  end
 end
