@@ -460,7 +460,7 @@ defmodule Supavisor do
     } = tenant_record
 
     %{
-      host: String.to_charlist(db_host),
+      host: to_charlist(db_host),
       sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
       user: db_user,
