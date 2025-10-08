@@ -11,6 +11,8 @@ defmodule Supavisor.Tenants do
   alias Supavisor.Tenants.Tenant
   alias Supavisor.Tenants.User
 
+  require Logger
+
   @doc """
   Returns the list of tenants.
 
@@ -139,17 +141,15 @@ defmodule Supavisor.Tenants do
   end
 
   def get_pool_config(external_id, user) do
-    query =
-      from(a in User,
-        where: a.db_user_alias == ^user
-      )
-
-    Repo.all(
-      from(p in Tenant,
-        where: p.external_id == ^external_id,
-        preload: [users: ^query]
-      )
+    from(t in Tenant,
+      left_join: u in User,
+      on:
+        u.tenant_external_id == t.external_id and
+          (u.db_user_alias == ^user or (is_nil(u.db_user_alias) and u.db_user == ^user)),
+      where: t.external_id == ^external_id,
+      preload: [users: u]
     )
+    |> Repo.all()
   end
 
   def get_pool_config_cache(external_id, user, ttl \\ :timer.hours(24)) do
@@ -340,6 +340,61 @@ defmodule Supavisor.Tenants do
     user
     |> User.changeset(attrs)
     |> Repo.update()
+  end
+
+  @doc """
+  Updates the manager user credentials for a tenant.
+
+  This function also updates the secret checker credentials globally and clears the cache.
+
+  ## Examples
+
+      iex> update_manager_user_credentials(tenant, %{"db_user" => "new_user", "db_password" => "new_pass"})
+      {:ok, %User{}}
+
+      iex> update_manager_user_credentials(tenant, %{})
+      {:error, :no_manager_user}
+
+  """
+  def update_manager_user_credentials(%Tenant{} = tenant, attrs) do
+    tenant = Repo.preload(tenant, :users)
+
+    case Enum.find(tenant.users, & &1.is_manager) do
+      nil ->
+        {:error, :no_manager_user}
+
+      manager_user ->
+        case manager_user
+             |> User.credentials_changeset(attrs)
+             |> Repo.update() do
+          {:ok, updated_user} ->
+            Logger.info(
+              "Updating auth credentials for tenant #{tenant.external_id}, user #{updated_user.db_user}"
+            )
+
+            password_fn = fn -> updated_user.db_password end
+
+            checker_result =
+              Supavisor.update_secret_checker_credentials_global(
+                tenant.external_id,
+                updated_user.db_user,
+                password_fn
+              )
+
+            Logger.info(
+              "Update SecretChecker credentials #{tenant.external_id}: #{inspect(checker_result)}"
+            )
+
+            # Clear cache after SecretCheckers are updated to avoid race condition
+            cleanup_result = Supavisor.del_all_cache_dist(tenant.external_id)
+            Logger.info("Delete cache dist #{tenant.external_id}: #{inspect(cleanup_result)}")
+
+            :ok
+
+          {:error, changeset} ->
+            {:error, changeset}
+        end
+    end
   end
 
   @doc """

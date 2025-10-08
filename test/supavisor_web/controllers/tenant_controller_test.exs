@@ -7,11 +7,11 @@ defmodule SupavisorWeb.TenantControllerTest do
   alias Supavisor.Tenants.Tenant
 
   @user_valid_attrs %{
-    db_user_alias: "some_db_user",
-    db_user: "some db_user",
-    db_password: "some db_password",
-    pool_size: 3,
-    mode_type: "transaction"
+    "db_user_alias" => "some_db_user",
+    "db_user" => "some db_user",
+    "db_password" => "some db_password",
+    "pool_size" => 3,
+    "mode_type" => "transaction"
   }
 
   @create_attrs %{
@@ -20,6 +20,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     db_port: 42,
     external_id: "dev_tenant",
     require_user: true,
+    default_parameter_status: %{"server_version" => "15.0"},
     users: [@user_valid_attrs]
   }
   @update_attrs %{
@@ -46,6 +47,28 @@ defmodule SupavisorWeb.TenantControllerTest do
     db_host: nil,
     db_port: nil,
     external_id: nil
+  }
+  @auth_query_tenant_attrs %{
+    db_database: "auth_query_db",
+    db_host: "auth_query_host",
+    db_port: 5432,
+    external_id: "auth_query_tenant",
+    require_user: false,
+    auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
+    default_parameter_status: %{"server_version" => "15.0"},
+    users: [
+      %{
+        "db_user" => "manager_user",
+        "db_password" => "old_password",
+        "pool_size" => 3,
+        "mode_type" => "transaction",
+        "is_manager" => true
+      }
+    ]
+  }
+  @update_auth_credentials_attrs %{
+    db_user: "manager_user",
+    db_password: "new_password"
   }
 
   setup %{conn: conn} do
@@ -215,6 +238,161 @@ defmodule SupavisorWeb.TenantControllerTest do
                get(conn, ~p"/api/tenants/#{non_existing_tenant_id}")
                |> json_response(404)
                |> assert_schema("NotFound")
+    end
+  end
+
+  describe "update auth credentials" do
+    test "successfully updates credentials for auth_query tenant (require_user: false)", %{
+      conn: conn
+    } do
+      {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
+      external_id = auth_tenant.external_id
+
+      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant,
+                                                                            _user,
+                                                                            _password ->
+        [{:ok, :ok}]
+      end)
+
+      on_exit(fn ->
+        :meck.unload(Supavisor)
+      end)
+
+      assert "" ==
+               conn
+               |> post(
+                 ~p"/api/tenants/#{external_id}/update_auth_credentials",
+                 @update_auth_credentials_attrs
+               )
+               |> response(204)
+
+      updated_tenant = Supavisor.Tenants.get_tenant_by_external_id(external_id)
+      manager = Enum.find(updated_tenant.users, & &1.is_manager)
+      assert manager.db_password == "new_password"
+    end
+
+    test "rejects update for require_user: true tenant", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+
+      assert %{"error" => "Cannot update credentials for tenants with require_user: true"} ==
+               conn
+               |> post(
+                 ~p"/api/tenants/#{tenant.external_id}/update_auth_credentials",
+                 @update_auth_credentials_attrs
+               )
+               |> json_response(400)
+               |> assert_schema("NotFound")
+    end
+
+    test "returns 404 for non-existent tenant", %{conn: conn} do
+      assert %{"error" => "not found"} ==
+               conn
+               |> post(
+                 ~p"/api/tenants/non_existent_tenant/update_auth_credentials",
+                 @update_auth_credentials_attrs
+               )
+               |> json_response(404)
+               |> assert_schema("NotFound")
+    end
+
+    test "clears cache when updating credentials", %{conn: conn} do
+      {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
+      external_id = auth_tenant.external_id
+
+      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant,
+                                                                            _user,
+                                                                            _password ->
+        [{:ok, :ok}]
+      end)
+
+      on_exit(fn ->
+        :meck.unload(Supavisor)
+      end)
+
+      set_cache(external_id)
+
+      assert "" ==
+               conn
+               |> post(
+                 ~p"/api/tenants/#{external_id}/update_auth_credentials",
+                 @update_auth_credentials_attrs
+               )
+               |> response(204)
+
+      check_cache(external_id)
+    end
+
+    test "accepts only db_user and db_password fields", %{conn: conn} do
+      {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
+      external_id = auth_tenant.external_id
+
+      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant,
+                                                                            _user,
+                                                                            _password ->
+        [{:ok, :ok}]
+      end)
+
+      on_exit(fn ->
+        :meck.unload(Supavisor)
+      end)
+
+      params_with_extra_fields = %{
+        db_user: "new_manager_user",
+        db_password: "new_secure_password",
+        pool_size: 999,
+        is_manager: false,
+        mode_type: "session"
+      }
+
+      assert "" ==
+               conn
+               |> post(
+                 ~p"/api/tenants/#{external_id}/update_auth_credentials",
+                 params_with_extra_fields
+               )
+               |> response(204)
+
+      updated_tenant = Supavisor.Tenants.get_tenant_by_external_id(external_id)
+      manager = Enum.find(updated_tenant.users, & &1.is_manager)
+      assert manager.db_user == "new_manager_user"
+      assert manager.db_password == "new_secure_password"
+      assert manager.pool_size == 3
+      assert manager.is_manager == true
+      assert manager.mode_type == :transaction
+    end
+
+    test "returns validation error when db_user is missing", %{conn: conn} do
+      {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
+      external_id = auth_tenant.external_id
+
+      invalid_params = %{db_password: "new_password"}
+
+      assert %{"errors" => _} =
+               conn
+               |> post(~p"/api/tenants/#{external_id}/update_auth_credentials", invalid_params)
+               |> json_response(422)
+    end
+
+    test "returns validation error when db_password is missing", %{conn: conn} do
+      {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
+      external_id = auth_tenant.external_id
+
+      invalid_params = %{db_user: "new_user"}
+
+      assert %{"errors" => _} =
+               conn
+               |> post(~p"/api/tenants/#{external_id}/update_auth_credentials", invalid_params)
+               |> json_response(422)
+    end
+
+    test "returns validation error when both fields are missing", %{conn: conn} do
+      {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
+      external_id = auth_tenant.external_id
+
+      assert %{"errors" => _} =
+               conn
+               |> post(~p"/api/tenants/#{external_id}/update_auth_credentials", %{})
+               |> json_response(422)
     end
   end
 

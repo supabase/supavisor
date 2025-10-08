@@ -22,7 +22,8 @@ defmodule SupavisorWeb.TenantController do
     TenantCreate,
     TenantData,
     TenantList,
-    UnprocessablyEntity
+    UnprocessablyEntity,
+    UserCredentialsUpdate
   }
 
   action_fallback(SupavisorWeb.FallbackController)
@@ -249,6 +250,54 @@ defmodule SupavisorWeb.TenantController do
         conn
         |> put_status(503)
         |> json(response)
+    end
+  end
+
+  operation(:update_auth_credentials,
+    summary: "Update auth query credentials",
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    request_body: UserCredentialsUpdate.params(),
+    responses: %{
+      204 => Empty.response(),
+      400 => BadRequest.response(),
+      404 => NotFound.response(),
+      422 => UnprocessablyEntity.response()
+    }
+  )
+
+  def update_auth_credentials(conn, %{"external_id" => id} = params) do
+    case Tenants.get_tenant_by_external_id(id) do
+      nil ->
+        conn
+        |> put_status(404)
+        |> render("not_found.json", tenant: nil)
+
+      %TenantModel{require_user: true} ->
+        conn
+        |> put_status(400)
+        |> render("error.json",
+          error: "Cannot update credentials for tenants with require_user: true"
+        )
+
+      %TenantModel{require_user: false} = tenant ->
+        case Tenants.update_manager_user_credentials(tenant, params) do
+          :ok ->
+            send_resp(conn, 204, "")
+
+          {:error, :no_manager_user} ->
+            conn
+            |> put_status(400)
+            |> render("error.json", error: "No manager user found for tenant")
+
+          {:error, %Ecto.Changeset{} = changeset} ->
+            conn
+            |> put_status(422)
+            |> put_view(SupavisorWeb.ChangesetView)
+            |> render("error.json", changeset: changeset)
+        end
     end
   end
 end
