@@ -22,7 +22,8 @@ defmodule SupavisorWeb.TenantController do
     TenantCreate,
     TenantData,
     TenantList,
-    UnprocessablyEntity
+    UnprocessablyEntity,
+    UserCredentialsUpdate
   }
 
   action_fallback(SupavisorWeb.FallbackController)
@@ -258,16 +259,16 @@ defmodule SupavisorWeb.TenantController do
       external_id: [in: :path, description: "External id", type: :string],
       authorization: @authorization
     ],
-    request_body: TenantCreate.params(),
+    request_body: UserCredentialsUpdate.params(),
     responses: %{
-      200 => TenantData.response(),
+      204 => Empty.response(),
       400 => BadRequest.response(),
       404 => NotFound.response(),
       422 => UnprocessablyEntity.response()
     }
   )
 
-  def update_auth_credentials(conn, %{"external_id" => id, "user" => user_params}) do
+  def update_auth_credentials(conn, %{"external_id" => id} = params) do
     case Tenants.get_tenant_by_external_id(id) do
       nil ->
         conn
@@ -282,38 +283,20 @@ defmodule SupavisorWeb.TenantController do
         )
 
       %TenantModel{require_user: false} = tenant ->
-        tenant = Repo.preload(tenant, :users)
+        case Tenants.update_manager_user_credentials(tenant, params) do
+          :ok ->
+            send_resp(conn, 204, "")
 
-        case Enum.find(tenant.users, & &1.is_manager) do
-          nil ->
+          {:error, :no_manager_user} ->
             conn
             |> put_status(400)
             |> render("error.json", error: "No manager user found for tenant")
 
-          manager_user ->
-            with {:ok, updated_user} <- Tenants.update_user(manager_user, user_params) do
-              Logger.info(
-                "Updating auth credentials for tenant #{id}, user #{updated_user.db_user}"
-              )
-
-              password_fn = fn -> updated_user.db_password end
-
-              result =
-                Supavisor.update_secret_checker_credentials_global(
-                  id,
-                  updated_user.db_user,
-                  password_fn
-                )
-
-              Logger.info("Update SecretChecker credentials #{id}: #{inspect(result)}")
-
-              # Clear cache after SecretCheckers are updated to avoid race condition
-              cleanup_result = Supavisor.del_all_cache_dist(id)
-              Logger.info("Delete cache dist #{id}: #{inspect(cleanup_result)}")
-
-              tenant = Tenants.get_tenant_by_external_id(id)
-              render(conn, "show.json", tenant: tenant)
-            end
+          {:error, %Ecto.Changeset{} = changeset} ->
+            conn
+            |> put_status(422)
+            |> put_view(SupavisorWeb.ChangesetView)
+            |> render("error.json", changeset: changeset)
         end
     end
   end

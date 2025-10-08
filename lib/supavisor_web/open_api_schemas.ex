@@ -268,4 +268,24 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     def response, do: {"Unprocessable Entity", "application/json", __MODULE__}
   end
+
+  defmodule UserCredentialsUpdate do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        db_user: %Schema{type: :string, description: "Database user"},
+        db_password: %Schema{type: :string, description: "Database password"}
+      },
+      required: [:db_user, :db_password],
+      example: %{
+        db_user: "postgres",
+        db_password: "new_password"
+      }
+    })
+
+    def params, do: {"User Credentials Update Params", "application/json", __MODULE__}
+  end
 end

@@ -49,4 +49,27 @@ defmodule Supavisor.Tenants.User do
       :mode_type
     ])
   end
+
+  @doc """
+  Changeset for updating only user credentials (db_user and db_password).
+  """
+  def credentials_changeset(user, attrs) do
+    changeset =
+      user
+      |> cast(attrs, [:db_user, :db_password])
+      |> validate_required([:db_user, :db_password])
+
+    Enum.reduce([:db_user, :db_password], changeset, fn required_field, changeset ->
+      cond do
+        attrs[required_field] ->
+          changeset
+
+        attrs[Atom.to_string(required_field)] ->
+          changeset
+
+        true ->
+          add_error(changeset, required_field, "can't be blank")
+      end
+    end)
+  end
 end

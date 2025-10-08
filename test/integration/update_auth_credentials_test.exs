@@ -52,16 +52,16 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
       assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
 
       update_attrs = %{
-        "db_user" => to_string(db_conf[:username]),
-        "db_password" => to_string(db_conf[:password])
+        db_user: to_string(db_conf[:username]),
+        db_password: to_string(db_conf[:password])
       }
 
       conn = gen_authenticated_conn()
 
-      assert %{"data" => %{"external_id" => ^tenant_id}} =
+      assert "" ==
                conn
-               |> post("/api/tenants/#{tenant_id}/update_auth_credentials", user: update_attrs)
-               |> json_response(200)
+               |> post("/api/tenants/#{tenant_id}/update_auth_credentials", update_attrs)
+               |> response(204)
 
       assert %P.Result{rows: [[2]]} = P.query!(proxy, "SELECT 2", [])
       GenServer.stop(proxy)
@@ -118,16 +118,16 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
       Process.sleep(100)
 
       update_attrs = %{
-        "db_user" => new_manager_user,
-        "db_password" => new_manager_password
+        db_user: new_manager_user,
+        db_password: new_manager_password
       }
 
       conn = gen_authenticated_conn()
 
-      assert %{"data" => %{"external_id" => ^tenant_id}} =
+      assert "" ==
                conn
-               |> post("/api/tenants/#{tenant_id}/update_auth_credentials", user: update_attrs)
-               |> json_response(200)
+               |> post("/api/tenants/#{tenant_id}/update_auth_credentials", update_attrs)
+               |> response(204)
 
       Process.sleep(200)
 
@@ -175,13 +175,16 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
       Process.sleep(100)
 
       update_attrs = %{
-        "db_user" => new_manager_user,
-        "db_password" => new_manager_password
+        db_user: new_manager_user,
+        db_password: new_manager_password
       }
 
       conn = gen_authenticated_conn()
 
-      post(conn, "/api/tenants/#{tenant_id}/update_auth_credentials", user: update_attrs)
+      assert "" ==
+               conn
+               |> post("/api/tenants/#{tenant_id}/update_auth_credentials", update_attrs)
+               |> response(204)
 
       assert {:ok, nil} = Cachex.get(Supavisor.Cache, cache_key)
 
