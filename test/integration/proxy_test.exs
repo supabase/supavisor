@@ -246,50 +246,37 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "change role password" do
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
 
-    try do
-      conn = fn pass ->
-        "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
-      end
-
-      first_pass = conn.(db_conf[:password])
-      new_pass = conn.("postgres_new")
-
-      assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
-
-      assert [%Postgrex.Result{rows: [["1"]]}] =
-               P.SimpleConnection.call(pid, {:query, "select 1;"})
-
-      :gen_statem.stop(pid)
-
-      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
-
-      assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
-
-      assert [%Postgrex.Result{rows: [["1"]]}] =
-               P.SimpleConnection.call(pid, {:query, "select 1;"})
-
-      :gen_statem.stop(pid)
-    after
-      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
+    conn = fn pass ->
+      "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
     end
-  end
 
-  test "try old password after password change" do
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+    first_pass = conn.(db_conf[:password])
+    new_pass = conn.("postgres_new")
 
-    try do
-      old_pass =
-        "postgresql://dev_postgres.is_manager:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+    assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
 
-      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+    assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
+    :gen_statem.stop(pid)
+    P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+    Supavisor.stop({{:single, "is_manager"}, "dev_postgres", :transaction, "postgres"})
 
-      assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} =
-               parse_uri(old_pass) |> single_connection()
-    after
-      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
-    end
+    :timer.sleep(1000)
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"" <> _,
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
+            }} = parse_uri(new_pass) |> single_connection()
+
+    assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
+    assert [%Postgrex.Result{rows: [["1"]]}] = P.SimpleConnection.call(pid, {:query, "select 1;"})
+    :gen_statem.stop(pid)
   end
 
   test "invalid characters in user or db_name" do
