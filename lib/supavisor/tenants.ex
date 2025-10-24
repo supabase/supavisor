@@ -209,6 +209,16 @@ defmodule Supavisor.Tenants do
     %Tenant{}
     |> Tenant.changeset(attrs)
     |> Repo.insert()
+    |> case do
+      {:ok, tenant} ->
+        # Clear cache after creating tenant to ensure cached "not found" results are invalidated
+        cleanup_result = Supavisor.del_all_cache_dist(tenant.external_id)
+        Logger.info("Delete cache dist #{tenant.external_id}: #{inspect(cleanup_result)}")
+        {:ok, tenant}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
   end
 
   @doc """
