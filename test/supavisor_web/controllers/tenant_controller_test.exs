@@ -215,6 +215,45 @@ defmodule SupavisorWeb.TenantControllerTest do
                put(conn, ~p"/api/tenants/#{external_id}", tenant: @update_attrs)
              end) =~ msg
     end
+
+    test "does not restart pool when no changes", %{conn: conn} do
+      external_id = "proxy_tenant1"
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      {:ok, proxy} =
+        Postgrex.start_link(
+          hostname: db_conf[:hostname],
+          port: Application.get_env(:supavisor, :proxy_port_transaction),
+          database: db_conf[:database],
+          password: db_conf[:password],
+          username: "#{db_conf[:username]}.#{external_id}"
+        )
+
+      Postgrex.query!(proxy, "SELECT 1", [])
+
+      id = {{:single, external_id}, db_conf[:username], :transaction, db_conf[:database], nil}
+      pool_sup_before = Supavisor.get_global_sup(id)
+      assert pool_sup_before != nil
+
+      tenant = Supavisor.Tenants.get_tenant_by_external_id(external_id)
+
+      same_attrs = %{
+        db_database: tenant.db_database,
+        db_host: tenant.db_host,
+        db_port: tenant.db_port,
+        require_user: tenant.require_user
+      }
+
+      put(conn, ~p"/api/tenants/#{external_id}", tenant: same_attrs)
+
+      Process.sleep(250)
+
+      pool_sup_after = Supavisor.get_global_sup(id)
+      assert pool_sup_after == pool_sup_before
+      assert Process.alive?(pool_sup_after)
+
+      GenServer.stop(proxy)
+    end
   end
 
   describe "delete tenant" do
