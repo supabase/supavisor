@@ -230,14 +230,9 @@ defmodule Supavisor.Tenants do
   end
 
   @doc """
-  Updates a tenant and handles cache cleanup and pool restart if changes were made.
+  Updates a tenant with cache cleanup and pool restart.
 
-  This function will:
-  - Skip update entirely if no changes detected
-  - Clear the tenant's cache if changes exist
-  - Update the tenant in the database
-  - Terminate pools only if actual changes were made
-  - Return the updated tenant
+  Skips update and restart when no changes are detected to avoid unnecessary pool disruption.
 
   ## Examples
 
