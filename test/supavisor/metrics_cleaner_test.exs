@@ -37,4 +37,25 @@ defmodule Supavisor.MetricsCleanerTest do
 
     refute IO.iodata_to_binary(metrics) =~ ~r/non-existent/
   end
+
+  test "sums/counters for unknown tenant are removed" do
+    :ok =
+      Supavisor.Monitoring.Telem.handler_action(
+        :db_handler,
+        :stopped,
+        {{:single, "non-existent"}, "foo", :transaction, "bar", nil}
+      )
+
+    metrics = Supavisor.Monitoring.PromEx.get_metrics()
+
+    assert IO.iodata_to_binary(metrics) =~ ~r/non-existent/
+
+    @subject.clean()
+
+    assert_receive {:metrics, _}
+
+    metrics = Supavisor.Monitoring.PromEx.get_metrics()
+
+    refute IO.iodata_to_binary(metrics) =~ ~r/non-existent/
+  end
 end
