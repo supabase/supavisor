@@ -27,7 +27,8 @@ jobs:
       - name: Set upgrade variables
         run: |
           elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config
-          echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
+          echo "RELEASE_BASE=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
+          echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_previous ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
           echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
           echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
           echo "TYPE=$(elixir ./deploy/upgrade/handler.exs type ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
