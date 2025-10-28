@@ -73,16 +73,16 @@ defmodule Supavisor.MetricsCleaner do
 
   defp clean_table(tid) do
     func =
-      fn elem, acc ->
-        with {{_,
-               %{
-                 type: type,
-                 mode: mode,
-                 user: user,
-                 tenant: tenant,
-                 db_name: db,
-                 search_path: search_path
-               }} = key, _} <- elem,
+      fn {key, _val}, acc ->
+        # We use elem/2 instead of pattern matching because the key may be a tuple with size 2 or 3
+        with %{
+               type: type,
+               mode: mode,
+               user: user,
+               tenant: tenant,
+               db_name: db,
+               search_path: search_path
+             } <- elem(key, 1),
              [] <-
                :ets.lookup(@tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) do
           Logger.warning("Found orphaned metric: #{inspect(key)}")
