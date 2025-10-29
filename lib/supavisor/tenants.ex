@@ -209,6 +209,16 @@ defmodule Supavisor.Tenants do
     %Tenant{}
     |> Tenant.changeset(attrs)
     |> Repo.insert()
+    |> case do
+      {:ok, tenant} ->
+        # Clear cache after creating tenant to ensure cached "not found" results are invalidated
+        cleanup_result = Supavisor.del_all_cache_dist(tenant.external_id)
+        Logger.info("Delete cache dist #{tenant.external_id}: #{inspect(cleanup_result)}")
+        {:ok, tenant}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
   end
 
   @doc """
@@ -227,6 +237,48 @@ defmodule Supavisor.Tenants do
     tenant
     |> Tenant.changeset(attrs)
     |> Repo.update()
+  end
+
+  @doc """
+  Updates a tenant with cache cleanup and pool restart.
+
+  Skips update and restart when no changes are detected to avoid unnecessary pool disruption.
+
+  ## Examples
+
+      iex> update_tenant_with_restart(tenant, %{field: new_value})
+      {:ok, %Tenant{}}
+
+      iex> update_tenant_with_restart(tenant, %{field: bad_value})
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def update_tenant_with_restart(%Tenant{} = tenant, attrs) do
+    changeset = Tenant.changeset(tenant, attrs)
+
+    # TODO: Consider checking if specific changed fields require restart.
+    # Some fields may not require pool termination.
+    if Enum.empty?(changeset.changes) do
+      Logger.info(
+        "No changes detected for tenant #{tenant.external_id}, skipping update and restart"
+      )
+
+      {:ok, tenant}
+    else
+      # Clear cache before update
+      cleanup_result = Supavisor.del_all_cache_dist(tenant.external_id)
+      Logger.info("Delete cache dist #{tenant.external_id}: #{inspect(cleanup_result)}")
+
+      case Repo.update(changeset) do
+        {:ok, updated_tenant} ->
+          result = Supavisor.terminate_global(tenant.external_id)
+          Logger.warning("Stop #{tenant.external_id}: #{inspect(result)}")
+          {:ok, updated_tenant}
+
+        {:error, changeset} ->
+          {:error, changeset}
+      end
+    end
   end
 
   def update_tenant_ps(external_id, new_ps) do
