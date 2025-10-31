@@ -1308,7 +1308,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec maybe_change_log(map()) :: atom() | nil
-  def maybe_change_log(%{"payload" => %{"options" => options}}) do
+  def maybe_change_log(%{payload: %{"options" => options}}) do
     level = options["log_level"] && String.to_existing_atom(options["log_level"])
 
     if level in [:debug, :info, :notice, :warning, :error] do
