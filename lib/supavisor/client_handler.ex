@@ -220,7 +220,7 @@ defmodule Supavisor.ClientHandler do
 
         if Helpers.validate_name(user) and Helpers.validate_name(db_name) do
           log_level = maybe_change_log(hello)
-          search_path = hello.payload["options"]["--search_path"]
+          search_path = hello.payload["options"]["search_path"]
           event = {:hello, {type, {user, tenant_or_alias, db_name, search_path}}}
           app_name = app_name(hello.payload["application_name"])
 

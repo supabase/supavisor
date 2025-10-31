@@ -1,6 +1,8 @@
 defmodule Supavisor.Protocol.ServerTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   require Supavisor.Protocol.Server, as: Server
 
   @initial_data %{
@@ -223,7 +225,9 @@ defmodule Supavisor.Protocol.ServerTest do
              "database" => "postgres",
              "replication" => "database",
              "options" => %{
-               "-c datestyle" => "ISO -c intervalstyle=postgres -c extra_float_digits=3"
+               "datestyle" => "ISO",
+               "intervalstyle" => "postgres",
+               "extra_float_digits" => "3"
              },
              "application_name" => "my_subscription",
              "client_encoding" => "UTF8"
@@ -233,6 +237,65 @@ defmodule Supavisor.Protocol.ServerTest do
 
     assert Server.decode_startup_packet(<<0, 0, 0, 8, 0, 3, 0, 0>>) ==
              {:error, :bad_startup_payload}
+  end
+
+  test "decode_startup_packet handles --search_path option" do
+    payload =
+      [
+        "user",
+        0,
+        "postgres",
+        0,
+        "database",
+        0,
+        "postgres",
+        0,
+        "options",
+        0,
+        "--search_path=custom",
+        0,
+        0
+      ]
+      |> IO.iodata_to_binary()
+
+    len = byte_size(payload) + 4
+    input = <<len::32, 0, 3, 0, 0, payload::binary>>
+
+    assert {:ok, packet} = Server.decode_startup_packet(input)
+    assert packet.payload["options"]["search_path"] == "custom"
+    assert packet.payload["user"] == "postgres"
+    assert packet.payload["database"] == "postgres"
+  end
+
+  test "decode_startup_packet ignores malformed option flag while keeping search_path" do
+    payload =
+      [
+        "user",
+        0,
+        "postgres",
+        0,
+        "database",
+        0,
+        "postgres",
+        0,
+        "options",
+        0,
+        "--search_path=custom -malformed",
+        0,
+        0
+      ]
+      |> IO.iodata_to_binary()
+
+    len = byte_size(payload) + 4
+    input = <<len::32, 0, 3, 0, 0, payload::binary>>
+
+    log =
+      capture_log(fn ->
+        assert {:ok, packet} = Server.decode_startup_packet(input)
+        assert packet.payload["options"]["search_path"] == "custom"
+      end)
+
+    assert log =~ "-malformed"
   end
 
   test "has_read_only_error?/1" do
