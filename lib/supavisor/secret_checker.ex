@@ -103,10 +103,31 @@ defmodule Supavisor.SecretChecker do
     do: Process.send_after(self(), :check, interval + jitter())
 
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
+    # get tenant information so that we can check configuration information
+    # that affects secrets, like :use_jit
+    t = Supavisor.Tenants.get_tenant_cache(state.tenant, state.auth.sni_hostname)
+
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
-        method = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-        secrets = Map.put(secret, :alias, auth.alias)
+        # when jit is in use, make sure to keep the jit_api_url in the cache, and
+        # set the method to also be otherwise
+        # we'll try use scram-sha-256 or md5 even though the upstream server is expecting
+        # jit. Something that is configured in the tenant.
+        # make sure to bring across the jit_api_url too, which will never be in the secrets
+        # returned by the db
+        method =
+          cond do
+            t.use_jit -> :auth_query_jit
+            secret.digest == :md5 -> :auth_query_md5
+            true -> :auth_query
+          end
+
+        secrets =
+          if t.use_jit do
+            Map.merge(secret, %{alias: auth.alias, jit_api_url: t.jit_api_url})
+          else
+            Map.put(secret, :alias, auth.alias)
+          end
 
         update_cache =
           case Cachex.get(Supavisor.Cache, state.key) do
