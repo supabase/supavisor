@@ -6,7 +6,7 @@ defmodule Supavisor.Protocol.Server do
   Error codes https://www.postgresql.org/docs/current/errcodes-appendix.html
   """
   require Logger
-  alias Supavisor.Protocol.{Debug, PgType}
+  alias Supavisor.Protocol.{Debug, PgType, StartupOptions}
 
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
@@ -450,7 +450,7 @@ defmodule Supavisor.Protocol.Server do
         fields
         |> Enum.chunk_every(2)
         |> Enum.map(fn
-          ["options" = k, v] -> {k, URI.decode_query(v)}
+          ["options" = k, v] -> {k, StartupOptions.parse(v)}
           [k, v] -> {k, v}
         end)
         |> Map.new()
