@@ -284,7 +284,8 @@ defmodule Supavisor do
       ) do
     Logger.info("Starting pool(s) for #{inspect(id)}")
 
-    user = elem(secrets, 1).().alias
+    secrets_map = elem(secrets, 1).()
+    user = secrets_map[:alias] || secrets_map[:user]
 
     case type do
       :single -> Tenants.get_pool_config_cache(tenant, user)
@@ -292,21 +293,28 @@ defmodule Supavisor do
     end
     |> case do
       [_ | _] = replicas ->
-        opts =
+        # Extract only minimal info needed for pool creation
+        replicas_info =
           Enum.map(replicas, fn replica ->
             case replica do
               %Tenants.ClusterTenants{tenant: tenant, type: type} ->
-                Map.put(tenant, :replica_type, type)
+                %{
+                  replica_type: type,
+                  pool_size: tenant.users |> List.first() |> Map.get(:pool_size)
+                }
 
               %Tenants.Tenant{} = tenant ->
-                Map.put(tenant, :replica_type, :write)
+                %{
+                  replica_type: :write,
+                  pool_size: tenant.users |> List.first() |> Map.get(:pool_size)
+                }
             end
-            |> supervisor_args(id, secrets, log_level)
           end)
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
-          {Supavisor.TenantSupervisor, %{id: id, replicas: opts, log_level: log_level}}
+          {Supavisor.TenantSupervisor,
+           %{id: id, replicas: replicas_info, secrets: secrets, log_level: log_level}}
         )
         |> case do
           {:error, {:already_started, pid}} -> {:ok, pid}
@@ -321,79 +329,6 @@ defmodule Supavisor do
   end
 
   ## Internal functions
-
-  defp supervisor_args(
-         tenant_record,
-         {tenant, user, mode, db_name, _search_path} = id,
-         {method, secrets},
-         log_level
-       ) do
-    %{
-      db_host: db_host,
-      db_port: db_port,
-      db_database: db_database,
-      auth_query: auth_query,
-      default_parameter_status: ps,
-      ip_version: ip_ver,
-      default_pool_size: def_pool_size,
-      default_max_clients: def_max_clients,
-      client_idle_timeout: client_idle_timeout,
-      replica_type: replica_type,
-      sni_hostname: sni_hostname,
-      feature_flags: feature_flags,
-      users: [
-        %{
-          db_user: db_user,
-          db_password: db_pass,
-          pool_size: pool_size,
-          db_user_alias: alias,
-          # mode_type: mode_type,
-          max_clients: max_clients
-        }
-      ]
-    } = tenant_record
-
-    {pool_size, max_clients} =
-      if method == :auth_query do
-        {def_pool_size, def_max_clients}
-      else
-        {pool_size, max_clients}
-      end
-
-    auth = %{
-      host: String.to_charlist(db_host),
-      sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
-      port: db_port,
-      user: db_user,
-      alias: alias,
-      auth_query: auth_query,
-      database: if(db_name != nil, do: db_name, else: db_database),
-      password: fn -> db_pass end,
-      application_name: "Supavisor",
-      ip_version: Helpers.ip_version(ip_ver, db_host),
-      upstream_ssl: tenant_record.upstream_ssl,
-      upstream_verify: tenant_record.upstream_verify,
-      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
-      require_user: tenant_record.require_user,
-      method: method,
-      secrets: secrets
-    }
-
-    %{
-      id: id,
-      tenant: tenant,
-      replica_type: replica_type,
-      user: user,
-      auth: auth,
-      pool_size: pool_size,
-      mode: mode,
-      default_parameter_status: ps,
-      max_clients: max_clients,
-      client_idle_timeout: client_idle_timeout,
-      log_level: log_level,
-      tenant_feature_flags: feature_flags
-    }
-  end
 
   @spec set_parameter_status(id, [{binary, binary}]) ::
           :ok | {:error, :not_found}
@@ -412,8 +347,8 @@ defmodule Supavisor do
     end
   end
 
-  @spec get_local_server(id, atom) :: map()
-  def get_local_server(id, mode) do
+  @spec get_local_server(id) :: map()
+  def get_local_server({_, _, mode, _, _} = id) do
     host = Application.get_env(:supavisor, :node_host)
 
     ports =

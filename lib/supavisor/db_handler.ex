@@ -1,7 +1,10 @@
 defmodule Supavisor.DbHandler do
   @moduledoc """
-  This module contains functions to start a link with the database, send requests to the database, and handle incoming messages from clients.
-  It uses the Supavisor.Protocol.Server module to decode messages from the database and sends messages to clients Supavisor.ClientHandler.
+  This module contains functions to start a connection to the database, send
+  requests to the database, and handle incoming messages from clients.
+
+  The state machine uses the Supavisor.Protocol.Server module to decode messages
+  from the database and sends messages to the client socket it received on checkout.
   """
 
   @behaviour :gen_statem
@@ -32,9 +35,26 @@ defmodule Supavisor.DbHandler do
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
 
+  @doc """
+  Starts a DbHandler state machine
+
+  Accepts two different types of args:
+
+  TODO: details about required arguments in each
+  - proxied
+  - not proxied
+  """
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
 
+  @doc """
+  Checks out a DbHandler process
+
+  Requires a client socket. The DbHandler will forward messages directly to the
+  client socket when possible.
+
+  Returns the server socket, which the client may write messages directly to.
+  """
   @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
           {:ok, Supavisor.sock()} | {:error, {:exit, term()}}
   def checkout(pid, sock, caller, timeout \\ 15_000) do
@@ -44,14 +64,27 @@ defmodule Supavisor.DbHandler do
       {:error, {:exit, reason}}
   end
 
+  @doc """
+  Checks in a DbHandler process
+  """
   @spec checkin(pid()) :: :ok
   def checkin(pid), do: :gen_statem.cast(pid, :checkin)
 
+  @doc """
+  Sends prepared statement packets to a DbHandler
+
+  Different from most packets, prepared statements packets involve state at the DbHandler,
+  and hence can't be sent directly to the database socket. Instead, they should be sent
+  to the DbHandler through this function.
+  """
   @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
   def handle_prepared_statement_pkts(pid, pkts) do
     :gen_statem.call(pid, {:handle_ps_pkts, pkts}, 15_000)
   end
 
+  @doc """
+  Returns the state and the mode of the DbHandler
+  """
   @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
   def get_state_and_mode(pid) do
     {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
@@ -59,6 +92,9 @@ defmodule Supavisor.DbHandler do
     error, reason -> {:error, {error, reason}}
   end
 
+  @doc """
+  Stops a DbHandler
+  """
   @spec stop(pid()) :: :ok
   def stop(pid) do
     Logger.debug("DbHandler: Stop pid #{inspect(pid)}")
@@ -68,20 +104,33 @@ defmodule Supavisor.DbHandler do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    Helpers.set_log_level(args.log_level)
+
+    {id, config} =
+      case args do
+        %{proxy: true} ->
+          {args.id, args}
+
+        %{} ->
+          config = Supavisor.Manager.get_config(args.id)
+          {args.id, config}
+      end
+
+    Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
 
-    {_, tenant} = args.tenant
-    Logger.metadata(project: tenant, user: args.user, mode: args.mode)
+    {_, tenant} = config.tenant
+    Logger.metadata(project: tenant, user: config.user, mode: config.mode)
+
+    auth = get_auth_with_secrets(config.auth, tenant, config.user)
 
     data =
       %{
-        id: args.id,
+        id: id,
         sock: nil,
-        auth: args.auth,
-        user: args.user,
-        tenant: args.tenant,
-        tenant_feature_flags: args.tenant_feature_flags,
+        auth: auth,
+        user: config.user,
+        tenant: config.tenant,
+        tenant_feature_flags: config.tenant_feature_flags,
         db_state: nil,
         parameter_status: %{},
         nonce: nil,
@@ -89,15 +138,16 @@ defmodule Supavisor.DbHandler do
         stats: %{},
         client_stats: %{},
         prepared_statements: MapSet.new(),
+        proxy: Map.get(config, :proxy, false),
         stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
-        mode: args.mode,
-        replica_type: args.replica_type,
-        caller: args[:caller] || nil,
-        client_sock: args[:client_sock] || nil,
+        mode: config.mode,
+        replica_type: config.replica_type,
+        caller: Map.get(config, :caller) || nil,
+        client_sock: Map.get(config, :client_sock) || nil,
         reconnect_retries: 0
       }
 
-    Telem.handler_action(:db_handler, :started, args.id)
+    Telem.handler_action(:db_handler, :started, id)
     {:ok, :connect, data, {:next_event, :internal, :connect}}
   end
 
@@ -108,20 +158,13 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, :connect, :connect, %{auth: auth} = data) do
     Logger.debug("DbHandler: Try to connect to DB")
 
-    sock_opts =
-      [
-        auth.ip_version,
-        mode: :binary,
-        packet: :raw,
-        # recbuf: 8192,
-        # sndbuf: 8192,
-        # backlog: 2048,
-        # send_timeout: 120,
-        # keepalive: true,
-        # nopush: true,
-        nodelay: true,
-        active: false
-      ]
+    sock_opts = [
+      auth.ip_version,
+      mode: :binary,
+      packet: :raw,
+      nodelay: true,
+      active: false
+    ]
 
     Telem.handler_action(:db_handler, :db_connection, data.id)
 
@@ -460,10 +503,13 @@ defmodule Supavisor.DbHandler do
   end
 
   defp get_user(auth) do
+    {_method, secrets_fn} = auth.secrets
+    secrets_map = secrets_fn.()
+
     if auth.require_user do
-      auth.secrets.().db_user
+      secrets_map.db_user
     else
-      auth.secrets.().user
+      secrets_map.user
     end
   end
 
@@ -527,10 +573,10 @@ defmodule Supavisor.DbHandler do
     {client_final_message, server_proof} =
       Helpers.get_client_final(
         :auth_query,
-        data.auth.secrets.(),
+        auth_secrets(data.auth),
         server_first_parts,
         nonce,
-        data.auth.secrets.().user,
+        auth_secrets(data.auth).user,
         "biws"
       )
 
@@ -553,7 +599,7 @@ defmodule Supavisor.DbHandler do
         server_first_parts,
         nonce,
         data.auth.user,
-        data.auth.secrets.().password
+        auth_secrets(data.auth).password
       )
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
@@ -583,7 +629,7 @@ defmodule Supavisor.DbHandler do
       if data.auth.method == :password do
         Helpers.md5([data.auth.password.(), data.auth.user])
       else
-        data.auth.secrets.().secret
+        auth_secrets(data.auth).secret
       end
 
     payload = ["md5", Helpers.md5([digest, salt]), 0]
@@ -611,11 +657,7 @@ defmodule Supavisor.DbHandler do
 
   defp handle_authentication_error(%{mode: _other} = data, _reason) do
     tenant = Supavisor.tenant(data.id)
-
-    :erpc.multicast([node() | Node.list()], fn ->
-      Cachex.del(Supavisor.Cache, {:secrets, tenant, data.user})
-      Cachex.del(Supavisor.Cache, {:secrets_check, tenant, data.user})
-    end)
+    Supavisor.SecretCache.invalidate(tenant, data.user)
   end
 
   @spec reconnect_timeout(map()) :: pos_integer()
@@ -742,6 +784,21 @@ defmodule Supavisor.DbHandler do
 
       err ->
         err
+    end
+  end
+
+  defp auth_secrets(auth) do
+    {_method, fun} = auth.secrets
+    fun.()
+  end
+
+  defp get_auth_with_secrets(auth, tenant, user) do
+    case Supavisor.SecretCache.get_upstream_auth_secrets(tenant, user) do
+      {:ok, upstream_auth_secrets} ->
+        Map.put(auth, :secrets, upstream_auth_secrets)
+
+      _other ->
+        raise "Upstream connection secrets not found"
     end
   end
 end

@@ -655,35 +655,17 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  defp prepare_retry_transition(sock, {method, secrets}, data) do
-    auth_context = data.auth_context
-    updated_auth_context = %{auth_context | method: method, secrets: secrets}
-
-    case method do
-      :auth_query_md5 ->
-        salt = :crypto.strong_rand_bytes(4)
-        :ok = HandlerHelpers.sock_send(sock, Server.md5_request(salt))
-        final_auth_context = %{updated_auth_context | salt: salt}
-
-        {:next_state, :auth_md5_wait, %{data | auth_context: final_auth_context},
-         {:timeout, 15_000, :auth_timeout}}
-
-      _scram_method ->
-        :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
-
-        {:next_state, :auth_scram_first_wait, %{data | auth_context: updated_auth_context},
-         {:timeout, 15_000, :auth_timeout}}
-    end
-  end
-
   defp handle_auth_success(sock, {method, secrets}, client_key, data) do
     final_secrets = Auth.prepare_final_secrets(secrets, client_key)
+
+    {{_type, tenant}, user, _mode, _db, _search} = data.id
+    Supavisor.SecretCache.put_upstream_auth_secrets(tenant, user, method, final_secrets)
 
     Logger.info("ClientHandler: Connection authenticated")
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
     Telem.client_join(:ok, data.id)
 
-    auth = Map.merge(data.auth, %{secrets: final_secrets, method: method})
+    auth = Map.put(data.auth, :secrets, {method, final_secrets})
 
     conn_type =
       if data.mode == :proxy,
@@ -698,23 +680,21 @@ defmodule Supavisor.ClientHandler do
   defp handle_auth_failure(sock, reason, data, context) do
     auth_context = data.auth_context
 
-    case Auth.handle_auth_retry(
-           auth_context.method,
-           reason,
-           data.id,
-           auth_context.info,
-           data.tenant,
-           data.user,
-           {auth_context.method, auth_context.secrets}
-         ) do
-      {:should_retry, new_secrets} ->
-        prepare_retry_transition(sock, new_secrets, data)
+    # Check if secrets changed and update cache, but don't retry
+    # Most clients don't cope well with auto-retry on auth errors
+    Auth.check_and_update_secrets(
+      auth_context.method,
+      reason,
+      data.id,
+      auth_context.info,
+      data.tenant,
+      data.user,
+      auth_context.secrets
+    )
 
-      :no_retry ->
-        Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason, data.user}, context)
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
-    end
+    Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason, data.user}, context)
+    Telem.client_join(:fail, data.id)
+    {:stop, :normal}
   end
 
   @spec maybe_checkout(:both, :on_connect | :on_query, map) :: Data.db_connection()

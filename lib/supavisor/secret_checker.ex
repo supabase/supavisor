@@ -28,20 +28,19 @@ defmodule Supavisor.SecretChecker do
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
     tenant = Supavisor.tenant(args.id)
-
-    %{auth: auth, user: user} = Enum.find(args.replicas, fn e -> e.replica_type == :write end)
+    {{_type, _tenant}, pool_user, _mode, _db_name, _search_path} = args.id
+    auth = Supavisor.Manager.get_auth(args.id)
 
     state = %{
       tenant: tenant,
       auth: auth,
-      user: user,
-      key: {:secrets, tenant, user},
-      ttl: args[:ttl] || :timer.hours(24),
+      user: pool_user,
+      ttl: :timer.hours(24),
       conn: nil,
       check_ref: check()
     }
 
-    Logger.metadata(project: tenant, user: user)
+    Logger.metadata(project: tenant, user: pool_user)
     {:ok, state, {:continue, :init_conn}}
   end
 
@@ -107,19 +106,21 @@ defmodule Supavisor.SecretChecker do
         secrets = Map.put(secret, :alias, auth.alias)
 
         update_cache =
-          case Cachex.get(Supavisor.Cache, state.key) do
-            {:ok, {:cached, {_, {old_method, old_secrets}}}} ->
-              method != old_method or secrets != old_secrets.()
+          case Supavisor.SecretCache.get_validation_secrets(state.tenant, state.user) do
+            {:ok, {old_method, old_secrets_fn}} ->
+              method != old_method or
+                Map.delete(secrets, :client_key) != Map.delete(old_secrets_fn.(), :client_key)
 
-            other ->
-              Logger.error("Failed to get cache: #{inspect(other)}")
+            _other ->
               true
           end
 
         if update_cache do
           Logger.info("Secrets changed or not present, updating cache")
-          value = {:ok, {method, fn -> secrets end}}
-          Cachex.put(Supavisor.Cache, state.key, {:cached, value}, expire: :timer.hours(24))
+
+          Supavisor.SecretCache.put_validation_secrets(state.tenant, state.user, method, fn ->
+            secrets
+          end)
         end
 
         {:ok, {method, fn -> secret end}}

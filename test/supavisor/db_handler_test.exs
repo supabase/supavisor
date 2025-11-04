@@ -35,6 +35,39 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
+  defmodule FakeManager do
+    use GenServer
+
+    def start_link(config) do
+      GenServer.start_link(__MODULE__, config)
+    end
+
+    def init(config) do
+      # Register with the expected name
+      Registry.register(Supavisor.Registry.Tenants, {:manager, config.id}, nil)
+      {:ok, config}
+    end
+
+    def handle_call(:get_config, _from, state) do
+      config = %{
+        id: state.id,
+        auth: state.auth,
+        user: state.user,
+        tenant: state.tenant,
+        mode: state.mode,
+        replica_type: state.replica_type,
+        log_level: state.log_level,
+        tenant_feature_flags: state.tenant_feature_flags
+      }
+
+      {:reply, config, state}
+    end
+
+    def handle_call(:get_auth, _from, state) do
+      {:reply, state.auth, state}
+    end
+  end
+
   defp sockpair do
     {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
     {:ok, {address, port}} = :inet.sockname(listen)
@@ -57,25 +90,29 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "init/1" do
     test "starts with correct state" do
-      args = %{
+      auth = %{secrets: {:password, fn -> %{user: "user", db_user: "user"} end}}
+
+      manager_config = %{
         id: @id,
-        auth: %{},
+        auth: auth,
         tenant: {:single, "test_tenant"},
-        user_alias: "test_user_alias",
         user: "user",
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        reconnect_retries: 5,
         tenant_feature_flags: %{}
       }
+
+      {:ok, _manager} = start_supervised({FakeManager, manager_config})
+
+      args = %{id: @id}
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
       assert next_event == :internal
       assert data.sock == nil
       assert data.caller == nil
-      assert data.auth == args.auth
-      assert data.tenant == args.tenant
+      assert data.auth == auth
+      assert data.tenant == manager_config.tenant
       assert data.db_state == nil
       assert data.parameter_status == %{}
       assert data.nonce == nil
@@ -88,7 +125,7 @@ defmodule Supavisor.DbHandlerTest do
       {:ok, sock} = :gen_tcp.listen(0, mode: :binary, active: false)
       {:ok, {host, port}} = :inet.sockname(sock)
 
-      secrets = fn -> %{user: "some user", db_user: "some user"} end
+      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
 
       auth = %{
         host: host,
@@ -132,7 +169,7 @@ defmodule Supavisor.DbHandlerTest do
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
       {host, port} = {{127, 0, 0, 1}, 12345}
 
-      secrets = fn -> %{user: "some user", db_user: "some user"} end
+      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
 
       auth = %{
         id: @id,
@@ -181,7 +218,7 @@ defmodule Supavisor.DbHandlerTest do
         :gen_tcp.send(recv, <<?N>>)
       end)
 
-      secrets = fn -> %{user: "some user", db_user: "some user"} end
+      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
 
       auth = %{
         host: host,
@@ -252,7 +289,7 @@ defmodule Supavisor.DbHandlerTest do
         auth: %{
           user: "user",
           require_user: false,
-          secrets: fn -> %{user: "user", password: "pass"} end
+          secrets: {:auth_query, fn -> %{user: "user", password: "pass"} end}
         },
         sock: {:gen_tcp, send},
         nonce: "some nonce"
@@ -305,7 +342,7 @@ defmodule Supavisor.DbHandlerTest do
       data = %{
         auth: %{
           user: "user",
-          secrets: fn -> secrets end,
+          secrets: {:auth_query, fn -> secrets end},
           require_user: false,
           nonce: "nonce12345"
         },
@@ -388,7 +425,7 @@ defmodule Supavisor.DbHandlerTest do
       content: content
     } do
       auth = %{
-        secrets: fn -> %{secret: "9e2e8a8fce0afe2d60bd8207455192cd"} end,
+        secrets: {:auth_query_md5, fn -> %{secret: "9e2e8a8fce0afe2d60bd8207455192cd"} end},
         method: :other
       }
 

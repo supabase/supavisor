@@ -246,38 +246,45 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "change role password" do
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
 
-    try do
-      conn = fn pass ->
-        "postgresql://dev_postgres_password_test.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
-      end
-
-      first_pass = conn.(db_conf[:password])
-      new_pass = conn.("postgres_new")
-
-      assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
-
-      assert [%Postgrex.Result{rows: [["1"]]}] =
-               P.SimpleConnection.call(pid, {:query, "select 1;"})
-
-      :gen_statem.stop(pid)
-
-      P.query(origin, "alter user dev_postgres_password_test with password 'postgres_new';", [])
-
-      assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
-
-      assert [%Postgrex.Result{rows: [["1"]]}] =
-               P.SimpleConnection.call(pid, {:query, "select 1;"})
-
-      :gen_statem.stop(pid)
-    after
-      P.query(
-        origin,
-        "alter user dev_postgres_password_test with password '#{db_conf[:password]}';",
-        []
-      )
+    conn = fn pass ->
+      "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
     end
+
+    first_pass = conn.(db_conf[:password])
+    new_pass = conn.("postgres_new")
+
+    assert {:ok, first_conn} = parse_uri(first_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+
+    # First attempt with new password should fail (cache not updated yet)
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"" <> _,
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
+            }} = parse_uri(new_pass) |> single_connection()
+
+    # Second attempt should succeed (cache was updated by the failed attempt)
+    assert {:ok, second_conn} = parse_uri(new_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(second_conn, {:query, "select 1;"})
+
+    # First connection should still be up: we don't terminate the pool anymore when the secrets change
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    :gen_statem.stop(first_conn)
+    :gen_statem.stop(second_conn)
   end
 
   test "try old password after password change" do

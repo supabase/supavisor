@@ -46,18 +46,18 @@ defmodule Supavisor.ClientHandler.Auth do
   end
 
   def get_user_secrets(id, info, db_user, tenant_or_alias) do
-    cache_key = {:secrets, tenant_or_alias, db_user}
+    cache_key = {:secrets_for_validation, tenant_or_alias, db_user}
 
     fetch_fn = fn _key ->
       case fetch_secrets_from_database(id, info, db_user) do
-        {:ok, _} = resp -> {:commit, {:cached, resp}, ttl: @default_secrets_ttl}
+        {:ok, secrets} -> {:commit, {:cached, secrets}, ttl: @default_secrets_ttl}
         {:error, _} = resp -> {:ignore, resp}
       end
     end
 
     case Cachex.fetch(Supavisor.Cache, cache_key, fetch_fn) do
-      {:ok, {:cached, value}} -> value
-      {:commit, {:cached, value}, _opts} -> value
+      {:ok, {:cached, value}} -> {:ok, value}
+      {:commit, {:cached, value}, _opts} -> {:ok, value}
       {:ignore, resp} -> resp
     end
   end
@@ -145,34 +145,50 @@ defmodule Supavisor.ClientHandler.Auth do
     {message, signatures}
   end
 
-  ## Retry Logic
+  ## Cache Update Logic (No Retry)
 
   @doc """
-  Handles complete retry logic and returns whether to retry and new secrets if available.
+  Checks if secrets have changed and updates cache if needed
 
-  Encapsulates the decision between cached vs fresh secrets based on refresh limits.
+  This is used to detect password changes and refresh the cache (and the pool)
+  for future connections
   """
-  @spec handle_auth_retry(
+  @spec check_and_update_secrets(
           auth_method(),
           term(),
           Supavisor.id(),
           map(),
           String.t(),
           String.t(),
-          auth_secrets()
-        ) ::
-          {:should_retry, auth_secrets()} | :no_retry
-  def handle_auth_retry(method, reason, client_id, info, tenant, user, current_secrets) do
-    if should_retry_authentication?(method, reason, client_id) do
-      if Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
-        check_cached_secrets(client_id, info, user, tenant, current_secrets)
-      else
-        check_fresh_secrets(client_id, info, user, tenant, user, current_secrets)
+          function()
+        ) :: :ok
+  def check_and_update_secrets(method, reason, client_id, info, tenant, user, current_secrets_fn) do
+    key = {:secrets_check, tenant, user}
+
+    if method != :password and reason == :wrong_password and
+         not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
+      case fetch_secrets_from_database(client_id, info, user) do
+        {:ok, {method2, secrets2}} ->
+          current_secrets = current_secrets_fn.()
+          new_secrets = secrets2.()
+
+          if method != method2 or
+               Map.delete(current_secrets, :client_key) != Map.delete(new_secrets, :client_key) do
+            Logger.warning("ClientHandler: Update secrets")
+            Supavisor.SecretCache.put_check(tenant, user, method2, secrets2)
+            Supavisor.SecretCache.put_validation_secrets(tenant, user, method2, secrets2)
+          else
+            Logger.debug("ClientHandler: Cache the same #{inspect(key)}")
+          end
+
+        other ->
+          Logger.error("ClientHandler: Auth secrets check error: #{inspect(other)}")
       end
     else
-      Logger.debug("ClientHandler: No retry condition met")
-      :no_retry
+      Logger.debug("ClientHandler: No cache check needed")
     end
+
+    :ok
   end
 
   ## Message Parsing
@@ -337,69 +353,6 @@ defmodule Supavisor.ClientHandler.Auth do
     end
   end
 
-  @spec should_retry_authentication?(auth_method(), term(), Supavisor.id()) :: boolean()
-  defp should_retry_authentication?(method, reason, client_id) do
-    method != :password and reason == :wrong_password and
-      not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id)
-  end
-
-  @spec check_cached_secrets(
-          Supavisor.id(),
-          map(),
-          String.t(),
-          String.t(),
-          auth_secrets()
-        ) :: secrets_check_result()
-  defp check_cached_secrets(id, info, db_user, tenant_or_alias, current_secrets) do
-    case get_user_secrets(id, info, db_user, tenant_or_alias) do
-      {:ok, new_secrets} ->
-        if secrets_changed?(current_secrets, new_secrets) do
-          Logger.warning("ClientHandler: Secrets changed, should retry authentication")
-          {:should_retry, new_secrets}
-        else
-          Logger.debug("ClientHandler: Secrets unchanged")
-          :no_retry
-        end
-
-      {:error, reason} ->
-        Logger.error("ClientHandler: Error retrieving cached secrets: #{inspect(reason)}")
-        :no_retry
-    end
-  end
-
-  @spec check_fresh_secrets(
-          Supavisor.id(),
-          map(),
-          String.t(),
-          String.t(),
-          String.t(),
-          auth_secrets()
-        ) :: secrets_check_result()
-  defp check_fresh_secrets(id, info, db_user, tenant, user, current_secrets) do
-    case fetch_secrets_from_database(id, info, db_user) do
-      {:ok, new_secrets} = value ->
-        if secrets_changed?(current_secrets, new_secrets) do
-          Logger.warning("ClientHandler: Fresh secrets differ, should retry authentication")
-          update_secrets_cache(tenant, user, value)
-          {:should_retry, new_secrets}
-        else
-          Logger.debug("ClientHandler: Fresh secrets same as current")
-          :no_retry
-        end
-
-      {:error, reason} ->
-        Logger.error("ClientHandler: Error fetching fresh secrets: #{inspect(reason)}")
-        :no_retry
-    end
-  end
-
-  @spec update_secrets_cache(String.t(), String.t(), term()) :: {:ok, term()}
-  defp update_secrets_cache(tenant, user, value) do
-    cache_key = {:secrets_check, tenant, user}
-    Cachex.put(Supavisor.Cache, cache_key, {:cached, value}, ttl: 5_000)
-    Cachex.update(Supavisor.Cache, {:secrets, tenant, user}, {:cached, value})
-  end
-
   defp build_ssl_options(%{upstream_ssl: true, upstream_verify: :peer} = tenant) do
     [
       verify: :verify_peer,
@@ -411,9 +364,5 @@ defmodule Supavisor.ClientHandler.Auth do
 
   defp build_ssl_options(_tenant) do
     [verify: :verify_none]
-  end
-
-  defp secrets_changed?({method1, secrets1}, {method2, secrets2}) do
-    method1 != method2 or Map.delete(secrets1.(), :client_key) != secrets2.()
   end
 end
