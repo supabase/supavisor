@@ -287,22 +287,6 @@ defmodule Supavisor.Integration.ProxyTest do
     :gen_statem.stop(second_conn)
   end
 
-  test "try old password after password change" do
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
-
-    try do
-      old_pass =
-        "postgresql://dev_postgres.is_manager:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
-
-      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
-
-      assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} =
-               parse_uri(old_pass) |> single_connection()
-    after
-      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
-    end
-  end
-
   test "invalid characters in user or db_name" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 

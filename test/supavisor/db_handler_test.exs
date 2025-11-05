@@ -90,13 +90,19 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "init/1" do
     test "starts with correct state" do
-      auth = %{secrets: {:password, fn -> %{user: "user", db_user: "user"} end}}
+      method = :password
+      secrets = fn -> %{user: "user", db_user: "user"} end
+      auth = %{secrets: {method, secrets}}
+      tenant = "test_tenant"
+      user = "user"
+
+      Supavisor.SecretCache.put_upstream_auth_secrets(tenant, user, method, secrets)
 
       manager_config = %{
         id: @id,
         auth: auth,
-        tenant: {:single, "test_tenant"},
-        user: "user",
+        tenant: {:single, tenant},
+        user: user,
         mode: :transaction,
         replica_type: :single,
         log_level: nil,

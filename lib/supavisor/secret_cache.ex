@@ -105,6 +105,13 @@ defmodule Supavisor.SecretCache do
   end
 
   @doc """
+  Clean upstream secrets
+  """
+  def clean_upstream_secrets(tenant, user) do
+    Cachex.del(Supavisor.Cache, {:secrets_for_upstream_auth, tenant, user})
+  end
+
+  @doc """
   Invalidates all cached secrets for a tenant/user across the cluster.
   """
   def invalidate(tenant, user) do

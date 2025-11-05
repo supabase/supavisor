@@ -23,7 +23,6 @@ defmodule Supavisor.ClientHandler.Auth do
           salt: binary() | nil,
           signatures: map() | nil
         }
-  @type secrets_check_result :: {:should_retry, term()} | :no_retry
 
   ## Secret Management
 
@@ -163,8 +162,6 @@ defmodule Supavisor.ClientHandler.Auth do
           function()
         ) :: :ok
   def check_and_update_secrets(method, reason, client_id, info, tenant, user, current_secrets_fn) do
-    key = {:secrets_check, tenant, user}
-
     if method != :password and reason == :wrong_password and
          not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
       case fetch_secrets_from_database(client_id, info, user) do
@@ -175,10 +172,8 @@ defmodule Supavisor.ClientHandler.Auth do
           if method != method2 or
                Map.delete(current_secrets, :client_key) != Map.delete(new_secrets, :client_key) do
             Logger.warning("ClientHandler: Update secrets")
-            Supavisor.SecretCache.put_check(tenant, user, method2, secrets2)
             Supavisor.SecretCache.put_validation_secrets(tenant, user, method2, secrets2)
-          else
-            Logger.debug("ClientHandler: Cache the same #{inspect(key)}")
+            Supavisor.SecretCache.clean_upstream_secrets(tenant, user)
           end
 
         other ->

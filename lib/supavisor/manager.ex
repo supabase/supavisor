@@ -158,11 +158,13 @@ defmodule Supavisor.Manager do
 
     replica_type = Map.get(tenant_record, :replica_type, :write)
 
-    # Populate cache with initial secrets only if missing
-    # Use put_both if client_key exists, otherwise just validation secrets
+    # Populate cache with initial secrets
+    # - For :password method, always cache both validation and upstream secrets
+    # - For :auth_query method, only cache both if client_key exists (SCRAM credentials)
+    #   otherwise just cache validation secrets (upstream will be cached by ClientHandler)
     secrets_map = secrets.()
 
-    if Map.has_key?(secrets_map, :client_key) do
+    if method == :password or Map.has_key?(secrets_map, :client_key) do
       Supavisor.SecretCache.put_both(tenant, user, method, secrets)
     else
       Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, method, secrets)
