@@ -15,12 +15,6 @@ defmodule Supavisor.ClientHandler.Auth do
 
   @type auth_method :: :password | :auth_query | :auth_query_md5
   @type auth_secrets :: {auth_method(), function()}
-  @type auth_challenge :: %{
-          method: auth_method(),
-          secrets: function(),
-          salt: binary() | nil,
-          signatures: map() | nil
-        }
 
   ## Secret Management
 

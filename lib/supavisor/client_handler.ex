@@ -240,11 +240,19 @@ defmodule Supavisor.ClientHandler do
                 case Auth.get_user_secrets(data.id, info, user, tenant_or_alias) do
                   {:ok, auth_secrets} ->
                     Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
-                    {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
+
+                    {:keep_state, new_data,
+                     {:next_event, :internal, {:handle, auth_secrets, info}}}
 
                   {:error, reason} ->
                     Supavisor.CircuitBreaker.record_failure(tenant_or_alias, :get_secrets)
-                    Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason}, :handshake)
+
+                    Error.maybe_log_and_send_error(
+                      sock,
+                      {:error, :auth_error, reason},
+                      :handshake
+                    )
+
                     Telem.client_join(:fail, id)
                     {:stop, :normal}
                 end
@@ -314,7 +322,7 @@ defmodule Supavisor.ClientHandler do
          {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
       manager_ref = Process.monitor(opts.workers.manager)
       data = Map.merge(data, opts.workers)
-      db_connection = maybe_checkout(:both, :on_connect, data)
+      db_connection = maybe_checkout(:on_connect, data)
 
       data = %{
         data
@@ -649,7 +657,7 @@ defmodule Supavisor.ClientHandler do
 
   # Any message when idle - checkout and send to db
   def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
-    db_connection = maybe_checkout(:both, :on_query, data)
+    db_connection = maybe_checkout(:on_query, data)
 
     {:next_state, :busy,
      %{data | db_connection: db_connection, query_start: System.monotonic_time()},
@@ -736,15 +744,15 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  @spec maybe_checkout(:both, :on_connect | :on_query, map) :: Data.db_connection()
-  defp maybe_checkout(_, _, %{mode: mode, db_connection: {pool, db_pid, db_sock}})
+  @spec maybe_checkout(:on_connect | :on_query, map) :: Data.db_connection()
+  defp maybe_checkout(_, %{mode: mode, db_connection: {pool, db_pid, db_sock}})
        when is_pid(db_pid) and mode in [:session, :proxy] do
     {pool, db_pid, db_sock}
   end
 
-  defp maybe_checkout(_, :on_connect, %{mode: :transaction}), do: nil
+  defp maybe_checkout(:on_connect, %{mode: :transaction}), do: nil
 
-  defp maybe_checkout(_, _, data) do
+  defp maybe_checkout(_, data) do
     start = System.monotonic_time(:microsecond)
 
     with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout),

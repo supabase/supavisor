@@ -447,7 +447,8 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Circuit breaker open: Unable to establish connection to upstream database",
+                message:
+                  "Circuit breaker open: Unable to establish connection to upstream database",
                 pg_code: "XX000",
                 severity: "FATAL",
                 unknown: "FATAL"
