@@ -66,6 +66,10 @@ defmodule Supavisor.DbHandlerTest do
     def handle_call(:get_auth, _from, state) do
       {:reply, state.auth, state}
     end
+
+    def handle_cast({:terminate_pool, _error}, state) do
+      {:noreply, state}
+    end
   end
 
   defp sockpair do
@@ -195,6 +199,7 @@ defmodule Supavisor.DbHandlerTest do
                  sock: nil,
                  id: @id,
                  proxy: false,
+                 tenant: {:single, "some tenant"},
                  reconnect_retries: 0
                })
 
@@ -204,6 +209,7 @@ defmodule Supavisor.DbHandlerTest do
                  sock: nil,
                  id: @id,
                  proxy: false,
+                 tenant: {:single, "some tenant"},
                  reconnect_retries: 5
                })
     end

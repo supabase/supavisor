@@ -235,13 +235,27 @@ defmodule Supavisor.ClientHandler do
           true ->
             new_data = set_tenant_info(data, info, user, id, db_name)
 
-            case Auth.get_user_secrets(data.id, info, user, tenant_or_alias) do
-              {:ok, auth_secrets} ->
-                Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
-                {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
+            case Supavisor.CircuitBreaker.check(tenant_or_alias, :get_secrets) do
+              :ok ->
+                case Auth.get_user_secrets(data.id, info, user, tenant_or_alias) do
+                  {:ok, auth_secrets} ->
+                    Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
+                    {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
 
-              {:error, reason} ->
-                Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason}, :handshake)
+                  {:error, reason} ->
+                    Supavisor.CircuitBreaker.record_failure(tenant_or_alias, :get_secrets)
+                    Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason}, :handshake)
+                    Telem.client_join(:fail, id)
+                    {:stop, :normal}
+                end
+
+              {:error, :circuit_open, blocked_until} ->
+                Error.maybe_log_and_send_error(
+                  sock,
+                  {:error, :circuit_breaker_open, :get_secrets, blocked_until},
+                  :handshake
+                )
+
                 Telem.client_join(:fail, id)
                 {:stop, :normal}
             end
@@ -286,7 +300,8 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _state, data) do
     Logger.debug("ClientHandler: Subscribe to tenant #{inspect(data.id)}")
 
-    with {:ok, sup} <-
+    with :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
+         {:ok, sup} <-
            Supavisor.start_dist(data.id, data.auth_secrets,
              availability_zone: data.tenant_availability_zone,
              log_level: nil
@@ -317,6 +332,15 @@ defmodule Supavisor.ClientHandler do
 
       {:keep_state, data, next}
     else
+      {:error, :circuit_open, blocked_until} ->
+        Error.maybe_log_and_send_error(
+          data.sock,
+          {:error, :circuit_breaker_open, :db_connection, blocked_until}
+        )
+
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
+
       {:error, :max_clients_reached} ->
         Error.maybe_log_and_send_error(data.sock, {:error, :max_clients_reached})
         Telem.client_join(:fail, data.id)

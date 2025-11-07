@@ -407,6 +407,56 @@ defmodule Supavisor.Integration.ProxyTest do
     GenServer.stop(origin)
   end
 
+  test "circuit breaker blocks get_secrets after failures" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_secrets"
+
+    for _ <- 1..5 do
+      Supavisor.CircuitBreaker.record_failure(tenant, :get_secrets)
+    end
+
+    url =
+      "postgresql://postgres.#{tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Circuit breaker open: Failed to retrieve database credentials",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = parse_uri(url) |> single_connection()
+
+    Supavisor.CircuitBreaker.clear(tenant, :get_secrets)
+  end
+
+  test "circuit breaker blocks db_connection after failures" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_db_conn"
+
+    for _ <- 1..100 do
+      Supavisor.CircuitBreaker.record_failure(tenant, :db_connection)
+    end
+
+    url =
+      "postgresql://#{db_conf[:username]}.#{tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Circuit breaker open: Unable to establish connection to upstream database",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = parse_uri(url) |> single_connection()
+
+    Supavisor.CircuitBreaker.clear(tenant, :db_connection)
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,

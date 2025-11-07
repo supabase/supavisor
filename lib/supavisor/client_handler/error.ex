@@ -234,6 +234,16 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
+  defp process({:error, :circuit_breaker_open, operation, blocked_until}, _context) do
+    explanation = Supavisor.CircuitBreaker.explanation(operation)
+    message = "Circuit breaker open for operation: #{operation}, blocked until: #{blocked_until}"
+
+    %{
+      error: Server.error_message("XX000", "Circuit breaker open: #{explanation}"),
+      log_message: message
+    }
+  end
+
   defp process(error, context) do
     message =
       case context do

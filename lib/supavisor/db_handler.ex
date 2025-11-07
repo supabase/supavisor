@@ -184,7 +184,7 @@ defmodule Supavisor.DbHandler do
 
               {:error, reason} ->
                 Logger.error("DbHandler: Send startup error #{inspect(reason)}")
-                maybe_reconnect(reason, data)
+                handle_connection_failure(reason, data)
             end
 
           {:error, reason} ->
@@ -197,7 +197,7 @@ defmodule Supavisor.DbHandler do
           "DbHandler: Connection failed #{inspect(other)} to #{inspect(auth.host)}:#{inspect(auth.port)}"
         )
 
-        maybe_reconnect(other, data)
+        handle_connection_failure(other, data)
     end
   end
 
@@ -820,5 +820,14 @@ defmodule Supavisor.DbHandler do
       _other ->
         raise "Upstream connection secrets not found"
     end
+  end
+
+  defp handle_connection_failure(reason, data) do
+    unless data.proxy do
+      {_, tenant} = data.tenant
+      Supavisor.CircuitBreaker.record_failure(tenant, :db_connection)
+    end
+
+    maybe_reconnect(reason, data)
   end
 end
