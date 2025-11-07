@@ -287,6 +287,40 @@ defmodule Supavisor.Integration.ProxyTest do
     :gen_statem.stop(second_conn)
   end
 
+  test "change role password for bypass user skips validation cache" do
+    Code.ensure_loaded(Supavisor.SecretCache)
+    :recon_trace.calls({Supavisor.SecretCache, :_, :_}, 100) |> IO.inspect(label: :huh)
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
+
+    conn = fn pass ->
+      "postgresql://bypass_user.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
+    end
+
+    first_pass = conn.(db_conf[:password])
+    new_pass = conn.("postgres_new")
+
+    assert {:ok, first_conn} = parse_uri(first_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    P.query(origin, "alter user bypass_user with password 'postgres_new';", [])
+
+    # For bypass users, first attempt with new password should succeed immediately
+    # because validation secrets are not cached
+    assert {:ok, second_conn} = parse_uri(new_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(second_conn, {:query, "select 1;"})
+
+    # First connection should still be up
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    :gen_statem.stop(first_conn)
+    :gen_statem.stop(second_conn)
+  end
+
   test "invalid characters in user or db_name" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 

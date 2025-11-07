@@ -6,6 +6,16 @@ defmodule Supavisor.SecretCache do
 
   1. Validation secrets: used by ClientHandler to validate incoming client authentication
   2. Upstream secrets: used by DbHandler to authenticate TO the upstream database
+
+  ## Cache Bypass
+
+  Certain users can be configured to bypass validation secret caching via the
+  `CACHE_BYPASS_USERS` environment variable (comma-separated list of usernames).
+
+  For bypass users:
+  - Validation secrets are never cached (always fetched fresh from the database)
+  - Upstream auth secrets are still cached (required for database connections)
+  - Useful for users with temporary passwords or frequently changing credentials
   """
 
   require Logger
@@ -26,6 +36,37 @@ defmodule Supavisor.SecretCache do
   end
 
   @doc """
+  Fetches validation secrets with cache support and fallback function.
+
+  Uses Cachex.fetch which provides mutex guarantees to avoid multiple concurrent
+  fetches. For bypass users, always calls the fetch function directly.
+  """
+  def fetch_validation_secrets(tenant, user, fetch_fn) do
+    if should_bypass_cache?(user) do
+      fetch_fn.()
+    else
+      cache_key = {:secrets_for_validation, tenant, user}
+
+      cachex_fetch_fn = fn _key ->
+        case fetch_fn.() do
+          {:ok, {method, secrets_fn} = secrets} ->
+            put_validation_secrets(tenant, user, method, secrets_fn)
+            {:commit, {:cached, secrets}, ttl: @default_secrets_ttl}
+
+          {:error, _} = resp ->
+            {:ignore, resp}
+        end
+      end
+
+      case Cachex.fetch(Supavisor.Cache, cache_key, cachex_fetch_fn) do
+        {:ok, {:cached, value}} -> {:ok, value}
+        {:commit, {:cached, value}, _opts} -> {:ok, value}
+        {:ignore, resp} -> resp
+      end
+    end
+  end
+
+  @doc """
   Gets auth secrets to authenticate to the upstream database.
   """
   def get_upstream_auth_secrets(tenant, user) do
@@ -39,21 +80,27 @@ defmodule Supavisor.SecretCache do
   end
 
   @doc """
-  Caches validation secrets
+  Caches validation secrets.
+
+  For users in the cache bypass list, this function does nothing (no caching occurs).
   """
   def put_validation_secrets(tenant, user, method, secrets_fn) do
-    secrets_map = secrets_fn.()
+    if should_bypass_cache?(user) do
+      :ok
+    else
+      secrets_map = secrets_fn.()
 
-    validation_secrets_fn = fn ->
-      Map.delete(secrets_map, :client_key)
+      validation_secrets_fn = fn ->
+        Map.delete(secrets_map, :client_key)
+      end
+
+      validation_key = {:secrets_for_validation, tenant, user}
+      validation_value = {method, validation_secrets_fn}
+
+      Cachex.put(Supavisor.Cache, validation_key, {:cached, validation_value},
+        ttl: @default_secrets_ttl
+      )
     end
-
-    validation_key = {:secrets_for_validation, tenant, user}
-    validation_value = {method, validation_secrets_fn}
-
-    Cachex.put(Supavisor.Cache, validation_key, {:cached, validation_value},
-      ttl: @default_secrets_ttl
-    )
   end
 
   @doc """
@@ -72,6 +119,9 @@ defmodule Supavisor.SecretCache do
   Caches both validation and upstream auth secrets.
 
   Used when you have secrets with client_key and want to cache both versions.
+
+  For users in the cache bypass list, only caches upstream auth secrets (validation
+  secrets are skipped).
   """
   def put_both(tenant, user, method, secrets_with_client_key_fn) do
     put_validation_secrets(tenant, user, method, secrets_with_client_key_fn)
@@ -120,5 +170,11 @@ defmodule Supavisor.SecretCache do
       Cachex.del(Supavisor.Cache, {:secrets_for_upstream_auth, tenant, user})
       Cachex.del(Supavisor.Cache, {:secrets_check, tenant, user})
     end)
+  end
+
+  @doc false
+  defp should_bypass_cache?(user) do
+    bypass_users = Application.get_env(:supavisor, :cache_bypass_users, [])
+    user in bypass_users
   end
 end

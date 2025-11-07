@@ -13,8 +13,6 @@ defmodule Supavisor.ClientHandler.Auth do
 
   alias Supavisor.{Helpers, Protocol.Server}
 
-  @default_secrets_ttl :timer.hours(24)
-
   @type auth_method :: :password | :auth_query | :auth_query_md5
   @type auth_secrets :: {auth_method(), function()}
   @type auth_challenge :: %{
@@ -45,20 +43,11 @@ defmodule Supavisor.ClientHandler.Auth do
   end
 
   def get_user_secrets(id, info, db_user, tenant_or_alias) do
-    cache_key = {:secrets_for_validation, tenant_or_alias, db_user}
-
-    fetch_fn = fn _key ->
-      case fetch_secrets_from_database(id, info, db_user) do
-        {:ok, secrets} -> {:commit, {:cached, secrets}, ttl: @default_secrets_ttl}
-        {:error, _} = resp -> {:ignore, resp}
-      end
+    fetch_fn = fn ->
+      fetch_secrets_from_database(id, info, db_user)
     end
 
-    case Cachex.fetch(Supavisor.Cache, cache_key, fetch_fn) do
-      {:ok, {:cached, value}} -> {:ok, value}
-      {:commit, {:cached, value}, _opts} -> {:ok, value}
-      {:ignore, resp} -> resp
-    end
+    Supavisor.SecretCache.fetch_validation_secrets(tenant_or_alias, db_user, fetch_fn)
   end
 
   ## Authentication Validation
