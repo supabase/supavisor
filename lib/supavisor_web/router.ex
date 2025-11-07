@@ -45,6 +45,13 @@ defmodule SupavisorWeb.Router do
     put("/tenants/:external_id", TenantController, :update)
     delete("/tenants/:external_id", TenantController, :delete)
     get("/tenants/:external_id/terminate", TenantController, :terminate)
+
+    post(
+      "/tenants/:external_id/update_auth_credentials",
+      TenantController,
+      :update_auth_credentials
+    )
+
     get("/health", TenantController, :health)
 
     get("/clusters/:alias", ClusterController, :show)

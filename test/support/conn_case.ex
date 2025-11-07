@@ -22,17 +22,23 @@ defmodule SupavisorWeb.ConnCase do
       # Import conveniences for testing with connections
       import Plug.Conn
       import Phoenix.ConnTest
+      import Phoenix.VerifiedRoutes
       import SupavisorWeb.ConnCase
 
       alias SupavisorWeb.Router.Helpers, as: Routes
 
       # The default endpoint for testing
       @endpoint SupavisorWeb.Endpoint
+      @router SupavisorWeb.Router
     end
   end
 
   setup tags do
     Supavisor.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
+  end
+
+  def assert_schema(data, schema_name) do
+    OpenApiSpex.TestAssertions.assert_schema(data, schema_name, SupavisorWeb.ApiSpec.spec())
   end
 end

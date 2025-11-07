@@ -5,6 +5,7 @@ defmodule SupavisorWeb.UserView do
     %{
       db_user_alias: user.db_user_alias,
       db_user: user.db_user,
+      db_password: user.db_password,
       pool_size: user.pool_size,
       is_manager: user.is_manager,
       mode_type: user.mode_type,
