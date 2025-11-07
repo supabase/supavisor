@@ -53,6 +53,10 @@ defmodule Supavisor.ClientHandler do
   @spec db_status(pid(), :ready_for_query) :: :ok
   def db_status(pid, status), do: :gen_statem.cast(pid, {:db_status, status})
 
+  @spec send_error_and_terminate(pid(), iodata()) :: :ok
+  def send_error_and_terminate(pid, error_message),
+    do: :gen_statem.cast(pid, {:send_error_and_terminate, error_message})
+
   @impl true
   def init(_), do: :ignore
 
@@ -323,6 +327,12 @@ defmodule Supavisor.ClientHandler do
         Telem.client_join(:fail, data.id)
         {:stop, :normal}
 
+      {:error, :terminating, error} ->
+        error_message = Server.encode_error_message(error)
+        HandlerHelpers.sock_send(data.sock, error_message)
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
+
       :proxy ->
         case Proxy.prepare_proxy_connection(data) do
           {:ok, updated_data} ->
@@ -462,6 +472,11 @@ defmodule Supavisor.ClientHandler do
 
     {:next_state, :idle, %{data | db_connection: db_connection, stats: stats},
      handle_actions(data)}
+  end
+
+  def handle_event(:cast, {:send_error_and_terminate, error_message}, _state, data) do
+    HandlerHelpers.sock_send(data.sock, error_message)
+    {:stop, :normal}
   end
 
   def handle_event(:info, {sock_error, _sock, msg}, _state, _data)

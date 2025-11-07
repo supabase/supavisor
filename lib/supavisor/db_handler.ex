@@ -239,6 +239,26 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Auth error #{inspect(error)}")
         {:stop, :invalid_password, data}
 
+      {:error_response, %{"S" => "FATAL", "C" => "3D000"} = error} ->
+        Logger.error("DbHandler: Database does not exist: #{inspect(error)}")
+        encode_and_forward_error(error, data)
+
+        unless data.proxy do
+          Supavisor.Manager.terminate_pool(data.id, error)
+        end
+
+        {:stop, :normal, data}
+
+      {:error_response, %{"S" => "FATAL", "C" => "42501"} = error} ->
+        Logger.error("DbHandler: Insufficient privilege: #{inspect(error)}")
+        encode_and_forward_error(error, data)
+
+        unless data.proxy do
+          Supavisor.Manager.terminate_pool(data.id, error)
+        end
+
+        {:stop, :normal, data}
+
       {:error_response, error} ->
         Logger.error("DbHandler: Error response during auth: #{inspect(error)}")
         encode_and_forward_error(error, data)

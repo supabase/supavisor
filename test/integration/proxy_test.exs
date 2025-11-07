@@ -288,8 +288,6 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "change role password for bypass user skips validation cache" do
-    Code.ensure_loaded(Supavisor.SecretCache)
-    :recon_trace.calls({Supavisor.SecretCache, :_, :_}, 100) |> IO.inspect(label: :huh)
     %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
 
     conn = fn pass ->
@@ -354,6 +352,59 @@ defmodule Supavisor.Integration.ProxyTest do
     with {:error, {error, _}} <- start_supervised({SingleConnection, opts}) do
       {:error, error}
     end
+  end
+
+  test "connect to deleted database returns proper error" do
+    %{origin: origin, db_conf: db_conf} =
+      setup_tenant_connections(List.first(@tenants))
+
+    tenant = List.first(@tenants)
+    test_db = "test_db_#{:erlang.unique_integer([:positive])}"
+
+    P.query!(origin, "CREATE DATABASE #{test_db}", [])
+
+    assert {:ok, test_proxy} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: Application.get_env(:supavisor, :proxy_port_transaction),
+               database: test_db,
+               password: db_conf[:password],
+               username: db_conf[:username] <> "." <> tenant
+             )
+
+    assert %P.Result{rows: [[1]]} = P.query!(test_proxy, "SELECT 1", [])
+    GenServer.stop(test_proxy)
+
+    pool_sup_pid =
+      Supavisor.get_global_sup(
+        {{:single, tenant}, db_conf[:username], :transaction, test_db, nil}
+      )
+
+    assert is_pid(pool_sup_pid)
+    assert Process.alive?(pool_sup_pid)
+
+    P.query!(origin, "DROP DATABASE #{test_db} WITH (FORCE)", [])
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, _} =
+                 single_connection(
+                   hostname: db_conf[:hostname],
+                   port: Application.get_env(:supavisor, :proxy_port_transaction),
+                   database: test_db,
+                   password: db_conf[:password],
+                   username: db_conf[:username] <> "." <> tenant
+                 )
+
+        Process.sleep(200)
+      end)
+
+    assert log =~
+             ~r/Postgrex\.Protocol.*FATAL 3D000.*database "#{Regex.escape(test_db)}" does not exist/
+
+    refute Process.alive?(pool_sup_pid)
+
+    GenServer.stop(origin)
   end
 
   defp parse_uri(uri) do

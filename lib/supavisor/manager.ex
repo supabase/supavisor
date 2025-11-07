@@ -68,6 +68,15 @@ defmodule Supavisor.Manager do
     GenServer.call(manager, :get_config)
   end
 
+  @doc """
+  Terminates the pool and notifies all subscribed clients
+  """
+  @spec terminate_pool(pid | Supavisor.id(), map()) :: :ok
+  def terminate_pool(manager_or_id, error) do
+    manager = resolve_manager(manager_or_id)
+    GenServer.cast(manager, {:terminate_pool, error})
+  end
+
   # Helper to resolve manager PID from either PID or ID
   defp resolve_manager(pid) when is_pid(pid), do: pid
 
@@ -180,13 +189,13 @@ defmodule Supavisor.Manager do
       default_parameter_status: ps,
       max_clients: max_clients,
       idle_timeout: client_idle_timeout,
-      # Store configuration in Manager instead of pool
       auth: auth,
       mode: mode,
       replica_type: replica_type,
       pool_size: pool_size,
       log_level: args.log_level,
-      tenant_feature_flags: feature_flags
+      tenant_feature_flags: feature_flags,
+      terminating_error: nil
     }
 
     Logger.metadata(project: tenant, user: user, type: type, db_name: db_name)
@@ -196,10 +205,15 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
+  def handle_call({:subscribe, _pid}, _, %{terminating_error: error} = state)
+      when not is_nil(error) do
+    Logger.warning("Rejecting subscription to terminating pool #{inspect(state.id)}")
+    {:reply, {:error, :terminating, error}, state}
+  end
+
   def handle_call({:subscribe, pid}, _, state) do
     Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect(state.id)}")
 
-    # don't limit if max_clients is null
     {reply, new_state} =
       if :ets.info(state.tid, :size) < state.max_clients or Supavisor.mode(state.id) == :session do
         :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
@@ -254,6 +268,27 @@ defmodule Supavisor.Manager do
 
   def handle_call(:get_parameter_status, _, state) do
     {:reply, state.parameter_status, state}
+  end
+
+  @impl true
+  def handle_cast({:terminate_pool, error}, state) do
+    Logger.warning("Terminating pool #{inspect(state.id)} due to error: #{inspect(error)}")
+
+    client_pids = :ets.tab2list(state.tid) |> Enum.map(fn {_ref, pid, _time} -> pid end)
+
+    error_message = Server.encode_error_message(error)
+
+    for pid <- client_pids do
+      Supavisor.ClientHandler.send_error_and_terminate(pid, error_message)
+    end
+
+    # Use a task to stop the pool supervisor to avoid deadlock, since the Manager
+    # is a child of the TenantSupervisor that Supavisor.stop/1 will terminate
+    Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
+      Supavisor.stop(state.id)
+    end)
+
+    {:noreply, %{state | terminating_error: error}}
   end
 
   @impl true

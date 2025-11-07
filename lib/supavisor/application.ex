@@ -103,6 +103,7 @@ defmodule Supavisor.Application do
       Supavisor.ErlSysMon,
       Supavisor.Health,
       Supavisor.CacheRefreshLimiter,
+      {Task.Supervisor, name: Supavisor.PoolTerminator},
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
       {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
