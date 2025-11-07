@@ -31,11 +31,7 @@ defmodule Supavisor.ClientHandler.Error do
     end
   end
 
-  @spec process(term(), term()) :: %{
-          required(:error) => binary(),
-          optional(:log_message) => String.t(),
-          optional(:send_ready_for_query) => boolean()
-        }
+  @spec process(term(), term()) :: map()
   defp process({:error, :max_prepared_statements}, _context) do
     message_text =
       "max prepared statements limit reached. Limit: #{PreparedStatements.client_limit()} per connection"

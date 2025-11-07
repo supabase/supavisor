@@ -131,7 +131,6 @@ defmodule Supavisor.SecretCache do
   @doc """
   Caches validation secrets only if missing.
   """
-  # TODO: is this really necessary?
   def put_validation_secrets_if_missing(tenant, user, method, secrets_fn) do
     validation_key = {:secrets_for_validation, tenant, user}
 

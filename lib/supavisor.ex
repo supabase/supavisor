@@ -81,7 +81,10 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe_local(pid, id) :: {:ok, subscribe_opts} | {:error, any()}
+  @spec subscribe_local(pid, id) ::
+          {:ok, subscribe_opts}
+          | {:error, :max_clients_reached}
+          | {:error, :terminating, term()}
   def subscribe_local(pid, id) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
@@ -89,7 +92,10 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe(pid, id, pid) :: {:ok, subscribe_opts} | {:error, any()}
+  @spec subscribe(pid, id, pid) ::
+          {:ok, subscribe_opts}
+          | {:error, :max_clients_reached}
+          | {:error, :terminating, term()}
   def subscribe(sup, id, pid \\ self()) do
     dest_node = node(sup)
 

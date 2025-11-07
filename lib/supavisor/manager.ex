@@ -27,7 +27,10 @@ defmodule Supavisor.Manager do
   Upon subscription, a client "joins" a pool. From this point, it's an active connection and
   it may receive updates destined to the pool.
   """
-  @spec subscribe(pid, pid) :: {:ok, iodata() | [], integer} | {:error, :max_clients_reached}
+  @spec subscribe(pid, pid) ::
+          {:ok, iodata() | [], integer}
+          | {:error, :max_clients_reached}
+          | {:error, :terminating, term()}
   def subscribe(manager, pid) do
     GenServer.call(manager, {:subscribe, pid})
   end

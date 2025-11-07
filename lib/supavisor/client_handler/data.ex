@@ -3,6 +3,8 @@ defmodule Supavisor.ClientHandler.Data do
   Data structure for ClientHandler gen_statem.
   """
 
+  @type db_connection :: nil | {pool :: pid() | nil, db_pid :: pid(), db_sock :: term()}
+
   defstruct [
     :id,
     :sock,
