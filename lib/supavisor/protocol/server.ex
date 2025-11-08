@@ -458,9 +458,12 @@ defmodule Supavisor.Protocol.Server do
 
       # We only do light validation on the fields in the payload. The only field we use at the
       # moment is `user`. If that's missing, this is a bad payload.
-      if Map.has_key?(map, "user"),
-        do: {:ok, map},
-        else: {:error, :bad_startup_payload}
+      if Map.has_key?(map, "user") do
+        {:ok, map}
+      else
+        Logger.error("Bad startup payload: #{inspect(payload, limit: 200)}")
+        {:error, :bad_startup_payload}
+      end
     end
   end
 end
