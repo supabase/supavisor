@@ -400,7 +400,7 @@ defmodule Supavisor.Integration.ProxyTest do
       end)
 
     assert log =~
-             ~r/Postgrex\.Protocol.*FATAL 3D000.*database "#{Regex.escape(test_db)}" does not exist/
+             ~r/SingleConnection.*FATAL 3D000.*database "#{Regex.escape(test_db)}" does not exist/
 
     refute Process.alive?(pool_sup_pid)
 
@@ -456,6 +456,27 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = parse_uri(url) |> single_connection()
 
     Supavisor.CircuitBreaker.clear(tenant, :db_connection)
+  end
+
+  test "connect with non-manager user via secondary port" do
+    %{db_conf: db_conf} = setup_tenant_connections("is_manager")
+
+    # Connect as dev_postgres (non-manager user) via secondary port
+    # The manager user is db_conf[:username] (postgres), but we're connecting as dev_postgres
+    url =
+      "postgresql://dev_postgres.is_manager:postgres@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :secondary_proxy_port)}/postgres"
+
+    assert {:ok, conn} = parse_uri(url) |> single_connection()
+
+    # Verify the connection works and we're connected as dev_postgres
+    assert [%Postgrex.Result{rows: [["dev_postgres"]]}] =
+             P.SimpleConnection.call(conn, {:query, "select current_user;"})
+
+    # Verify we can run queries
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(conn, {:query, "select 1;"})
+
+    :gen_statem.stop(conn)
   end
 
   defp parse_uri(uri) do

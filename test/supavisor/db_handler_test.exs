@@ -273,7 +273,15 @@ defmodule Supavisor.DbHandlerTest do
         auth: %{
           password: fn -> "some_password" end,
           user: "some_user",
-          method: :password
+          method: :password,
+          secrets:
+            {:password,
+             fn ->
+               %Supavisor.ClientHandler.Auth.PasswordSecrets{
+                 user: "some_user",
+                 password: "some_password"
+               }
+             end}
         },
         sock: {:gen_tcp, a}
       }
@@ -343,9 +351,11 @@ defmodule Supavisor.DbHandlerTest do
       {a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      secrets = %{
+      secrets = %Supavisor.ClientHandler.Auth.SASLSecrets{
         user: "user",
-        password: "password",
+        digest: "SCRAM-SHA-256",
+        iterations: 4096,
+        salt: "salt",
         client_key: :binary.copy(<<1>>, 32),
         stored_key: :binary.copy(<<2>>, 32),
         server_key: :binary.copy(<<3>>, 32)
@@ -356,6 +366,7 @@ defmodule Supavisor.DbHandlerTest do
           user: "user",
           secrets: {:auth_query, fn -> secrets end},
           require_user: false,
+          method: :auth_query,
           nonce: "nonce12345"
         },
         sock: {:gen_tcp, a},
@@ -419,7 +430,15 @@ defmodule Supavisor.DbHandlerTest do
       auth = %{
         password: fn -> "some_password" end,
         user: "some_user",
-        method: :password
+        method: :password,
+        secrets:
+          {:password,
+           fn ->
+             %Supavisor.ClientHandler.Auth.PasswordSecrets{
+               user: "some_user",
+               password: "some_password"
+             }
+           end}
       }
 
       data = Map.put(data, :auth, auth)
@@ -437,8 +456,15 @@ defmodule Supavisor.DbHandlerTest do
       content: content
     } do
       auth = %{
-        secrets: {:auth_query_md5, fn -> %{secret: "9e2e8a8fce0afe2d60bd8207455192cd"} end},
-        method: :other
+        secrets:
+          {:auth_query_md5,
+           fn ->
+             %Supavisor.ClientHandler.Auth.MD5Secrets{
+               user: "some_user",
+               password: "9e2e8a8fce0afe2d60bd8207455192cd"
+             }
+           end},
+        method: :auth_query_md5
       }
 
       data = Map.put(data, :auth, auth)

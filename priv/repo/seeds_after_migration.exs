@@ -54,28 +54,25 @@ end
             "mode_type" => "transaction"
           },
           %{
-            "db_user_alias" => "transaction",
-            "db_user" => db_conf[:username],
-            "db_password" => db_conf[:password],
+            "db_user" => "transaction",
+            "db_password" => "postgres",
             "pool_size" => 3,
             "max_clients" => 100,
             "mode_type" => "transaction"
           },
           %{
-            "db_user_alias" => "session",
-            "db_user" => db_conf[:username],
-            "db_password" => db_conf[:password],
+            "db_user" => "session",
+            "db_password" => "postgres",
             "pool_size" => 1,
             "mode_type" => "session",
             "max_clients" => 100,
             "pool_checkout_timeout" => 500
           },
           %{
-            "db_user_alias" => "max_clients",
-            "db_user" => db_conf[:username],
-            "db_password" => db_conf[:password],
+            "db_user" => "max_clients",
+            "db_password" => "postgres",
             "pool_size" => 1,
-            "max_clients" => -1,
+            "max_clients" => 0,
             "mode_type" => "transaction",
             "pool_checkout_timeout" => 500
           }
@@ -173,6 +170,12 @@ end
       "create user dev_postgres_password_test with password 'postgres';",
       "drop user if exists bypass_user;",
       "create user bypass_user with password 'postgres';",
+      "drop user if exists transaction;",
+      "create user transaction with password 'postgres';",
+      "drop user if exists session;",
+      "create user session with password 'postgres';",
+      "drop user if exists max_clients;",
+      "create user max_clients with password 'postgres';",
       "drop table if exists \"public\".\"test\";",
       "create sequence if not exists test_id_seq;",
       "create table \"public\".\"test\" (

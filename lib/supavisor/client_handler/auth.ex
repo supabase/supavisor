@@ -13,6 +13,26 @@ defmodule Supavisor.ClientHandler.Auth do
 
   alias Supavisor.{Helpers, Protocol.Server}
 
+  defmodule PasswordSecrets do
+    @moduledoc "Secrets for password authentication (plaintext password)"
+    defstruct [:user, :password]
+  end
+
+  defmodule SASLSecrets do
+    @moduledoc "Secrets for SCRAM-SHA-256 authentication"
+    defstruct [:user, :client_key, :server_key, :digest, :iterations, :salt, :stored_key]
+  end
+
+  defmodule MD5Secrets do
+    @moduledoc "Secrets for MD5 authentication"
+    defstruct [:user, :password]
+  end
+
+  defmodule ManagerSecrets do
+    @moduledoc "Secrets for manager user (used by SecretChecker to run auth_query)"
+    defstruct [:db_user, :db_password]
+  end
+
   @type auth_method :: :password | :auth_query | :auth_query_md5
   @type auth_secrets :: {auth_method(), function()}
 
@@ -32,7 +52,11 @@ defmodule Supavisor.ClientHandler.Auth do
         _db_user,
         _tenant_or_alias
       ) do
-    secrets = %{db_user: user.db_user, password: user.db_password, alias: user.db_user_alias}
+    secrets = %PasswordSecrets{
+      user: user.db_user,
+      password: user.db_password
+    }
+
     {:ok, {:password, fn -> secrets end}}
   end
 
@@ -94,7 +118,7 @@ defmodule Supavisor.ClientHandler.Auth do
     {client_final_message, server_proof} =
       Helpers.get_client_final(
         :password,
-        secret_fn.().password,
+        secret_fn.(),
         server_first_parts,
         nonce,
         user,
@@ -307,8 +331,13 @@ defmodule Supavisor.ClientHandler.Auth do
           )
 
           with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
-            auth_type = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-            {:ok, {auth_type, fn -> Map.put(secret, :alias, user.db_user_alias) end}}
+            auth_type =
+              case secret do
+                %MD5Secrets{} -> :auth_query_md5
+                %SASLSecrets{} -> :auth_query
+              end
+
+            {:ok, {auth_type, fn -> secret end}}
           end
         rescue
           exception ->

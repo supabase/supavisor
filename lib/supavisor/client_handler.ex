@@ -885,6 +885,7 @@ defmodule Supavisor.ClientHandler do
       user: user,
       password: info.user.db_password,
       require_user: info.tenant.require_user,
+      method: proxy_type,
       upstream_ssl: info.tenant.upstream_ssl,
       upstream_tls_ca: info.tenant.upstream_tls_ca,
       upstream_verify: info.tenant.upstream_verify

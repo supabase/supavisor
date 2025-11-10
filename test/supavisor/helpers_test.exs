@@ -15,12 +15,13 @@ defmodule Supavisor.HelpersTest do
 
       expected =
         {:ok,
-         %{
+         %Supavisor.ClientHandler.Auth.SASLSecrets{
            digest: "SCRAM-SHA-256",
            iterations: 4000,
            salt: "salt",
            stored_key: "storedKey",
            server_key: "serverKey",
+           client_key: "storedKey",
            user: user
          }}
 
@@ -30,7 +31,10 @@ defmodule Supavisor.HelpersTest do
     test "parses md5 secrets correctly" do
       secret = "supersecret"
       user = "user@example.com"
-      expected = {:ok, %{digest: :md5, secret: secret, user: user}}
+
+      expected =
+        {:ok, %Supavisor.ClientHandler.Auth.MD5Secrets{password: secret, user: user}}
+
       assert Helpers.parse_secret("md5supersecret", user) == expected
     end
 

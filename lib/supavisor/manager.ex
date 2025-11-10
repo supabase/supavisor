@@ -54,15 +54,6 @@ defmodule Supavisor.Manager do
   end
 
   @doc """
-  Get the current auth config for a pool
-  """
-  @spec get_auth(pid | Supavisor.id()) :: map()
-  def get_auth(manager_or_id) do
-    manager = resolve_manager(manager_or_id)
-    GenServer.call(manager, :get_auth)
-  end
-
-  @doc """
   Get the current config for a pool
   """
   @spec get_config(pid | Supavisor.id()) :: map()
@@ -97,28 +88,32 @@ defmodule Supavisor.Manager do
     Helpers.set_log_level(args.log_level)
     tid = :ets.new(__MODULE__, [:protected])
 
-    {{type, tenant}, _user, mode, db_name, _search_path} = args.id
+    {{type, tenant}, user, mode, db_name, _search_path} = args.id
     {method, secrets} = args.secrets
 
-    # Fetch tenant configuration from database/cache
-    secrets_map = secrets.()
-    user = secrets_map[:alias] || secrets_map[:user]
-
-    replicas =
+    {tenant_record, replica_type} =
       case type do
-        :single -> Tenants.get_pool_config_cache(tenant, user)
-        :cluster -> Tenants.get_cluster_config(tenant, user)
+        :single ->
+          tenants = Tenants.get_pool_config_cache(tenant, user)
+          {List.first(tenants), :write}
+
+        :cluster ->
+          case Tenants.get_cluster_config(tenant, user) do
+            {:error, reason} ->
+              raise "Failed to get cluster config: #{inspect(reason)}"
+
+            cluster_tenants ->
+              selected =
+                Enum.find(cluster_tenants, fn ct -> ct.type == :write end) ||
+                  List.first(cluster_tenants)
+
+              case selected do
+                %Tenants.ClusterTenants{tenant: t, type: rt} -> {t, rt}
+                nil -> raise "No cluster tenant configuration found"
+              end
+          end
       end
 
-    # Get the write replica configuration (or first if no write exists)
-    tenant_record =
-      case Enum.find(replicas, fn e -> Map.get(e, :replica_type) == :write end) do
-        %Tenants.ClusterTenants{tenant: t} -> t
-        %Tenants.Tenant{} = t -> t
-        nil -> List.first(replicas)
-      end
-
-    # Extract configuration from tenant record
     %{
       db_host: db_host,
       db_port: db_port,
@@ -126,57 +121,39 @@ defmodule Supavisor.Manager do
       auth_query: auth_query,
       default_parameter_status: ps,
       ip_version: ip_ver,
-      default_pool_size: def_pool_size,
-      default_max_clients: def_max_clients,
+      default_pool_size: default_pool_size,
+      default_max_clients: default_max_clients,
       client_idle_timeout: client_idle_timeout,
       sni_hostname: sni_hostname,
-      feature_flags: feature_flags,
-      users: [
-        %{
-          db_user: db_user,
-          db_password: db_pass,
-          pool_size: pool_size,
-          db_user_alias: alias,
-          max_clients: max_clients
-        }
-      ]
+      feature_flags: feature_flags
     } = tenant_record
 
-    {pool_size, max_clients} =
-      if method == :auth_query do
-        {def_pool_size, def_max_clients}
-      else
-        {pool_size, max_clients}
-      end
+    user_config = List.first(tenant_record.users)
+    pool_size = (user_config && user_config.pool_size) || default_pool_size
+    max_clients = (user_config && user_config.max_clients) || default_max_clients
 
-    # Build auth configuration
     auth = %{
       host: String.to_charlist(db_host),
       sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
-      user: db_user,
-      alias: alias,
+      user: user,
       auth_query: auth_query,
       database: if(db_name != nil, do: db_name, else: db_database),
-      password: fn -> db_pass end,
       application_name: "Supavisor",
       ip_version: Helpers.ip_version(ip_ver, db_host),
       upstream_ssl: tenant_record.upstream_ssl,
       upstream_verify: tenant_record.upstream_verify,
       upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
       require_user: tenant_record.require_user,
-      method: method
+      method: method,
+      secrets: args.secrets
     }
 
-    replica_type = Map.get(tenant_record, :replica_type, :write)
+    secrets_struct = secrets.()
 
-    # Populate cache with initial secrets
-    # - For :password method, always cache both validation and upstream secrets
-    # - For :auth_query method, only cache both if client_key exists (SCRAM credentials)
-    #   otherwise just cache validation secrets (upstream will be cached by ClientHandler)
-    secrets_map = secrets.()
+    alias Supavisor.ClientHandler.Auth
 
-    if method == :password or Map.has_key?(secrets_map, :client_key) do
+    if method == :password or match?(%Auth.SASLSecrets{}, secrets_struct) do
       Supavisor.SecretCache.put_both(tenant, user, method, secrets)
     else
       Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, method, secrets)
@@ -248,10 +225,6 @@ defmodule Supavisor.Manager do
 
   def handle_call({:set_parameter_status, _ps}, _, state) do
     {:reply, :ok, state}
-  end
-
-  def handle_call(:get_auth, _, state) do
-    {:reply, state.auth, state}
   end
 
   def handle_call(:get_config, _, state) do

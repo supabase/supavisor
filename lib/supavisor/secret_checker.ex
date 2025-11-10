@@ -43,12 +43,35 @@ defmodule Supavisor.SecretChecker do
 
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
-    tenant = Supavisor.tenant(args.id)
-    {{_type, _tenant}, pool_user, _mode, _db_name, _search_path} = args.id
-    auth = Supavisor.Manager.get_auth(args.id)
+    {{_type, tenant_external_id}, pool_user, _mode, db_name, _search_path} = args.id
+
+    # Get tenant and manager user to build auth config
+    tenant = Supavisor.Tenants.get_tenant_by_external_id(tenant_external_id)
+    manager_secrets = Supavisor.Tenants.get_manager_user_cache(tenant_external_id)
+
+    auth =
+      if manager_secrets do
+        %{
+          host: String.to_charlist(tenant.db_host),
+          sni_hostname: if(tenant.sni_hostname != nil, do: to_charlist(tenant.sni_hostname)),
+          port: tenant.db_port,
+          user: manager_secrets.db_user,
+          manager_secrets: manager_secrets,
+          auth_query: tenant.auth_query,
+          database: if(db_name != nil, do: db_name, else: tenant.db_database),
+          password: fn -> manager_secrets.db_password end,
+          application_name: "Supavisor",
+          ip_version: Supavisor.Helpers.ip_version(tenant.ip_version, tenant.db_host),
+          upstream_ssl: tenant.upstream_ssl,
+          upstream_verify: tenant.upstream_verify,
+          upstream_tls_ca: Supavisor.Helpers.upstream_cert(tenant.upstream_tls_ca)
+        }
+      else
+        nil
+      end
 
     state = %{
-      tenant: tenant,
+      tenant: tenant_external_id,
       auth: auth,
       user: pool_user,
       ttl: :timer.hours(24),
@@ -60,11 +83,18 @@ defmodule Supavisor.SecretChecker do
     {:ok, state, {:continue, :init_conn}}
   end
 
+  def handle_continue(:init_conn, %{auth: nil} = state) do
+    # No auth config (require_user: true tenant), skip connection setup
+    {:noreply, state}
+  end
+
   def handle_continue(:init_conn, %{auth: auth} = state) do
     {:ok, conn} = start_postgrex_connection(auth)
-    # kill the postgrex connection if the current process exits unexpectedly
-    Process.link(conn)
     {:noreply, %{state | conn: conn}}
+  end
+
+  def handle_info(:check, %{auth: nil} = state) do
+    {:noreply, %{state | check_ref: check()}}
   end
 
   def handle_info(:check, state) do
@@ -86,16 +116,21 @@ defmodule Supavisor.SecretChecker do
     do: Process.send_after(self(), :check, interval + jitter())
 
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
+    alias Supavisor.ClientHandler.Auth
+
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
-        method = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-        secrets = Map.put(secret, :alias, auth.alias)
+        method =
+          case secret do
+            %Auth.MD5Secrets{} -> :auth_query_md5
+            %Auth.SASLSecrets{} -> :auth_query
+          end
 
         update_cache =
           case Supavisor.SecretCache.get_validation_secrets(state.tenant, state.user) do
             {:ok, {old_method, old_secrets_fn}} ->
               method != old_method or
-                Map.delete(secrets, :client_key) != Map.delete(old_secrets_fn.(), :client_key)
+                Map.delete(secret, :client_key) != Map.delete(old_secrets_fn.(), :client_key)
 
             _other ->
               true
@@ -105,7 +140,7 @@ defmodule Supavisor.SecretChecker do
           Logger.info("Secrets changed or not present, updating cache")
 
           Supavisor.SecretCache.put_validation_secrets(state.tenant, state.user, method, fn ->
-            secrets
+            secret
           end)
         end
 
@@ -114,6 +149,10 @@ defmodule Supavisor.SecretChecker do
       other ->
         Logger.error("Failed to get secret: #{inspect(other)}")
     end
+  end
+
+  def handle_call(:get_secrets, _from, %{auth: nil} = state) do
+    {:reply, {:error, :no_auth_config}, state}
   end
 
   def handle_call(:get_secrets, _from, state) do

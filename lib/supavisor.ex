@@ -326,7 +326,7 @@ defmodule Supavisor do
     Logger.info("Starting pool(s) for #{inspect(id)}")
 
     secrets_map = elem(secrets, 1).()
-    user = secrets_map[:alias] || secrets_map[:user]
+    user = secrets_map.user
 
     case type do
       :single -> Tenants.get_pool_config_cache(tenant, user)
@@ -339,15 +339,21 @@ defmodule Supavisor do
           Enum.map(replicas, fn replica ->
             case replica do
               %Tenants.ClusterTenants{tenant: tenant, type: type} ->
+                first_user = List.first(tenant.users)
+
                 %{
                   replica_type: type,
-                  pool_size: tenant.users |> List.first() |> Map.get(:pool_size)
+                  pool_size:
+                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size)
                 }
 
               %Tenants.Tenant{} = tenant ->
+                first_user = List.first(tenant.users)
+
                 %{
                   replica_type: :write,
-                  pool_size: tenant.users |> List.first() |> Map.get(:pool_size)
+                  pool_size:
+                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size)
                 }
             end
           end)

@@ -525,12 +525,7 @@ defmodule Supavisor.DbHandler do
   defp get_user(auth) do
     {_method, secrets_fn} = auth.secrets
     secrets_map = secrets_fn.()
-
-    if auth.require_user do
-      secrets_map.db_user
-    else
-      secrets_map.user
-    end
+    secrets_map.user
   end
 
   @spec handle_auth_pkts(map(), map(), map()) :: any()
@@ -585,41 +580,21 @@ defmodule Supavisor.DbHandler do
          %{payload: {:authentication_server_first_message, server_first}},
          _,
          data
-       )
-       when data.auth.require_user == false do
+       ) do
     nonce = data.nonce
     server_first_parts = Helpers.parse_server_first(server_first, nonce)
 
+    {_method, secrets_fn} = data.auth.secrets
+    secrets = secrets_fn.()
+
     {client_final_message, server_proof} =
       Helpers.get_client_final(
-        :auth_query,
-        auth_secrets(data.auth),
+        data.auth.method,
+        secrets,
         server_first_parts,
         nonce,
-        auth_secrets(data.auth).user,
+        secrets.user,
         "biws"
-      )
-
-    bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-    :ok = HandlerHelpers.sock_send(data.sock, bin)
-
-    {:authentication_server_first_message, server_proof}
-  end
-
-  defp handle_auth_pkts(
-         %{payload: {:authentication_server_first_message, server_first}},
-         _,
-         data
-       ) do
-    nonce = data.nonce
-    server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
-
-    {client_final_message, server_proof} =
-      :pgo_scram.get_client_final(
-        server_first_parts,
-        nonce,
-        data.auth.user,
-        auth_secrets(data.auth).password
       )
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
@@ -645,11 +620,14 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
+    {_method, secrets_fn} = data.auth.secrets
+    secrets = secrets_fn.()
+
     digest =
       if data.auth.method == :password do
-        Helpers.md5([data.auth.password.(), data.auth.user])
+        Helpers.md5([secrets.password, secrets.user])
       else
-        auth_secrets(data.auth).secret
+        secrets.password
       end
 
     payload = ["md5", Helpers.md5([digest, salt]), 0]
@@ -661,7 +639,10 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    payload = <<data.auth.password.()::binary, 0>>
+    {_method, secrets_fn} = data.auth.secrets
+    secrets = secrets_fn.()
+
+    payload = <<secrets.password::binary, 0>>
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
     :ok = HandlerHelpers.sock_send(data.sock, bin)
     :authentication_cleartext
@@ -805,11 +786,6 @@ defmodule Supavisor.DbHandler do
       err ->
         err
     end
-  end
-
-  defp auth_secrets(auth) do
-    {_method, fun} = auth.secrets
-    fun.()
   end
 
   defp get_auth_with_secrets(auth, tenant, user) do
