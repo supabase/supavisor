@@ -603,6 +603,11 @@ defmodule Supavisor.ClientHandler do
     Logger.metadata(state: new_state)
 
     case {old_state, new_state} do
+      # This is emitted on initialization
+      {:handshake, :handshake} ->
+        {:next_state, new_state, data}
+
+      # We are not interested in idle->busy->idle transitions
       {:idle, :busy} ->
         {:next_state, new_state, data}
 
