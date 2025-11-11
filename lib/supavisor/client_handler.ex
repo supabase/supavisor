@@ -618,7 +618,8 @@ defmodule Supavisor.ClientHandler do
           %{duration: time_in_previous_state},
           %{
             from_state: old_state,
-            to_state: new_state
+            to_state: new_state,
+            tenant: data.tenant
           }
         )
 

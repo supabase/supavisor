@@ -173,6 +173,17 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client_handler, :stopped, :all],
           description: "The total number of stopped client_handler.",
           tags: @tags
+        ),
+        distribution(
+          [:supavisor, :client_handler, :state, :duration],
+          event_name: [:supavisor, :client_handler, :state],
+          measurement: :duration,
+          description: "Duration spent in each client_handler state.",
+          tags: [:tenant, :from_state, :to_state],
+          unit: {:native, :millisecond},
+          reporter_options: [
+            peep_bucket_calculator: Buckets
+          ]
         )
       ]
     )
