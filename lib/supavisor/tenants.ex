@@ -468,7 +468,7 @@ defmodule Supavisor.Tenants do
       join: t in Tenant,
       on: u.tenant_external_id == t.external_id,
       where:
-        (u.db_user == ^user and t.require_user == true) or
+        u.db_user == ^user or
           (t.require_user == false and u.is_manager == true),
       select: {u, t}
     )
