@@ -14,7 +14,7 @@ defmodule Supavisor.SecretCacheTest do
     method = :auth_query
     secrets_fn = fn -> %{password: "secret123", client_key: "key123"} end
 
-    SecretCache.put_both(tenant, user, method, secrets_fn)
+    SecretCache.put_both(tenant, user, method, secrets_fn, :infinity)
 
     # Validation secrets not cached
     assert {:error, :not_found} = SecretCache.get_validation_secrets(tenant, user)
@@ -29,7 +29,7 @@ defmodule Supavisor.SecretCacheTest do
     method = :auth_query
     secrets_fn = fn -> %{password: "secret123", client_key: "key123"} end
 
-    SecretCache.put_both(tenant, user, method, secrets_fn)
+    SecretCache.put_both(tenant, user, method, secrets_fn, :infinity)
 
     assert {:ok, {^method, _}} = SecretCache.get_validation_secrets(tenant, user)
     assert {:ok, {^method, _}} = SecretCache.get_upstream_auth_secrets(tenant, user)

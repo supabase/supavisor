@@ -154,7 +154,7 @@ defmodule Supavisor.Manager do
     alias Supavisor.ClientHandler.Auth
 
     if method == :password or match?(%Auth.SASLSecrets{}, secrets_struct) do
-      Supavisor.SecretCache.put_both(tenant, user, method, secrets)
+      Supavisor.SecretCache.put_both(tenant, user, method, secrets, :infinity)
     else
       Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, method, secrets)
     end
@@ -289,6 +289,13 @@ defmodule Supavisor.Manager do
   def handle_info(msg, state) do
     Logger.warning("Undefined msg: #{inspect(msg, pretty: true)}")
     {:noreply, state}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    {{_type, tenant}, user, _mode, _db, _search} = state.id
+    Supavisor.SecretCache.clean_upstream_secrets(tenant, user)
+    :ok
   end
 
   ## Internal functions

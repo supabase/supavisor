@@ -112,30 +112,42 @@ defmodule Supavisor.SecretCache do
   end
 
   @doc """
-  Caches upstream auth secrets
+  Caches upstream auth secrets with the specified TTL.
   """
-  def put_upstream_auth_secrets(tenant, user, method, secrets_with_client_key_fn) do
+  def put_upstream_auth_secrets(
+        tenant,
+        user,
+        method,
+        secrets_with_client_key_fn,
+        upstream_secrets_ttl
+      ) do
     Logger.info("put_upstream_auth_secrets(#{tenant}, #{user})")
     upstream_auth_key = {:secrets_for_upstream_auth, tenant, user}
     upstream_auth_value = {method, secrets_with_client_key_fn}
 
-    Cachex.put(Supavisor.Cache, upstream_auth_key, {:cached, upstream_auth_value},
-      ttl: @default_secrets_ttl
-    )
+    cache_opts =
+      case upstream_secrets_ttl do
+        :infinity -> []
+        ttl_ms -> [ttl: ttl_ms]
+      end
+
+    Cachex.put(Supavisor.Cache, upstream_auth_key, {:cached, upstream_auth_value}, cache_opts)
   end
 
   @doc """
   Caches both validation and upstream auth secrets.
-
-  Used when you have secrets with client_key and want to cache both versions.
-
-  For users in the cache bypass list, only caches upstream auth secrets (validation
-  secrets are skipped).
   """
-  def put_both(tenant, user, method, secrets_with_client_key_fn) do
+  def put_both(tenant, user, method, secrets_with_client_key_fn, upstream_secrets_ttl) do
     Logger.info("put_both(#{tenant}, #{user})")
     put_validation_secrets(tenant, user, method, secrets_with_client_key_fn)
-    put_upstream_auth_secrets(tenant, user, method, secrets_with_client_key_fn)
+
+    put_upstream_auth_secrets(
+      tenant,
+      user,
+      method,
+      secrets_with_client_key_fn,
+      upstream_secrets_ttl
+    )
   end
 
   @doc """

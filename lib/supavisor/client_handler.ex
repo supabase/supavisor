@@ -706,7 +706,15 @@ defmodule Supavisor.ClientHandler do
     final_secrets = Auth.prepare_final_secrets(secrets, client_key)
 
     {{_type, tenant}, user, _mode, _db, _search} = data.id
-    Supavisor.SecretCache.put_upstream_auth_secrets(tenant, user, method, final_secrets)
+    upstream_secrets_ttl = upstream_secrets_ttl(data.mode)
+
+    Supavisor.SecretCache.put_upstream_auth_secrets(
+      tenant,
+      user,
+      method,
+      final_secrets,
+      upstream_secrets_ttl
+    )
 
     Logger.info("ClientHandler: Connection authenticated")
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
@@ -723,6 +731,9 @@ defmodule Supavisor.ClientHandler do
      %{data | auth_context: nil, auth_secrets: {method, final_secrets}, auth: auth},
      {:next_event, :internal, conn_type}}
   end
+
+  defp upstream_secrets_ttl(:proxy), do: :timer.hours(24)
+  defp upstream_secrets_ttl(_mode), do: :infinity
 
   defp handle_auth_failure(sock, reason, data, context) do
     auth_context = data.auth_context

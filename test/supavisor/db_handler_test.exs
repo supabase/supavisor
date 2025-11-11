@@ -100,7 +100,7 @@ defmodule Supavisor.DbHandlerTest do
       tenant = "test_tenant"
       user = "user"
 
-      Supavisor.SecretCache.put_upstream_auth_secrets(tenant, user, method, secrets)
+      Supavisor.SecretCache.put_upstream_auth_secrets(tenant, user, method, secrets, :infinity)
 
       manager_config = %{
         id: @id,
