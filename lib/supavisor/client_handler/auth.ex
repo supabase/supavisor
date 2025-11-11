@@ -12,26 +12,7 @@ defmodule Supavisor.ClientHandler.Auth do
   require Logger
 
   alias Supavisor.{Helpers, Protocol.Server}
-
-  defmodule PasswordSecrets do
-    @moduledoc "Secrets for password authentication (plaintext password)"
-    defstruct [:user, :password]
-  end
-
-  defmodule SASLSecrets do
-    @moduledoc "Secrets for SCRAM-SHA-256 authentication"
-    defstruct [:user, :client_key, :server_key, :digest, :iterations, :salt, :stored_key]
-  end
-
-  defmodule MD5Secrets do
-    @moduledoc "Secrets for MD5 authentication"
-    defstruct [:user, :password]
-  end
-
-  defmodule ManagerSecrets do
-    @moduledoc "Secrets for manager user (used by SecretChecker to run auth_query)"
-    defstruct [:db_user, :db_password]
-  end
+  alias Supavisor.ClientHandler.Auth.{MD5Secrets, PasswordSecrets, SASLSecrets}
 
   @type auth_method :: :password | :auth_query | :auth_query_md5
   @type auth_secrets :: {auth_method(), function()}
