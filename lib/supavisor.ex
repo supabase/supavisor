@@ -189,7 +189,9 @@ defmodule Supavisor do
 
     Enum.reduce(keys, [], fn
       {:metrics, ^tenant} = key, acc -> del.(key, acc)
-      {:secrets, ^tenant, ^user} = key, acc -> del.(key, acc)
+      {:secrets_for_validation, ^tenant, ^user} = key, acc -> del.(key, acc)
+      {:secrets_for_upstream_auth, ^tenant, ^user} = key, acc -> del.(key, acc)
+      {:secrets_check, ^tenant, ^user} = key, acc -> del.(key, acc)
       {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
       {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
       {:pool_config_cache, ^tenant, ^user} = key, acc -> del.(key, acc)
@@ -211,7 +213,9 @@ defmodule Supavisor do
         {:entry, key, _, _, _result}, acc ->
           case key do
             {:metrics, ^tenant} -> del.(key, acc)
-            {:secrets, ^tenant, _} -> del.(key, acc)
+            {:secrets_for_validation, ^tenant, _} -> del.(key, acc)
+            {:secrets_for_upstream_auth, ^tenant, _} -> del.(key, acc)
+            {:secrets_check, ^tenant, _} -> del.(key, acc)
             {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
             {:tenant_cache, ^tenant, _} -> del.(key, acc)
             {:pool_config_cache, ^tenant, _} -> del.(key, acc)
