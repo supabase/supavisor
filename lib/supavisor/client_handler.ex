@@ -458,7 +458,7 @@ defmodule Supavisor.ClientHandler do
       if state == :idle or data.mode == :proxy do
         :info
       else
-        :warning
+        :error
       end
 
     Logger.log(
