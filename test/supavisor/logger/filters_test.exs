@@ -7,7 +7,7 @@ defmodule Supavisor.Logger.FiltersTest do
   doctest @subject
 
   describe "filter_auth_error" do
-    test "log events without auth_log metadata are ignored" do
+    test "log events without auth_error metadata are ignored" do
       log_event = %{
         msg: {:string, "foo bar"},
         level: :info,
@@ -17,12 +17,12 @@ defmodule Supavisor.Logger.FiltersTest do
       assert :ignore == @subject.filter_auth_error(log_event, nil)
     end
 
-    test "log events with auth_log: true are accepted" do
+    test "log events with auth_error: true are accepted" do
       log_event = %{
         msg: {:string, "foo bar"},
         level: :info,
         meta: %{
-          auth_log: true
+          auth_error: true
         }
       }
 

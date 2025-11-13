@@ -9,7 +9,7 @@ defmodule Supavisor.Logger.Filters do
   @spec filter_auth_error(:logger.log_event(), term()) :: :logger.filter_return()
   def filter_auth_error(log_event, _states) do
     case log_event do
-      %{meta: %{auth_log: true}} ->
+      %{meta: %{auth_error: true}} ->
         log_event
 
       _ ->
