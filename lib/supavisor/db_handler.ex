@@ -243,7 +243,7 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Database does not exist: #{inspect(error)}")
         encode_and_forward_error(error, data)
 
-        unless data.proxy do
+        if not data.proxy do
           Supavisor.Manager.terminate_pool(data.id, error)
         end
 
@@ -253,7 +253,7 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Insufficient privilege: #{inspect(error)}")
         encode_and_forward_error(error, data)
 
-        unless data.proxy do
+        if not data.proxy do
           Supavisor.Manager.terminate_pool(data.id, error)
         end
 
@@ -799,7 +799,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp handle_connection_failure(reason, data) do
-    unless data.proxy do
+    if not data.proxy do
       {_, tenant} = data.tenant
       Supavisor.CircuitBreaker.record_failure(tenant, :db_connection)
     end
