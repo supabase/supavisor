@@ -254,7 +254,7 @@ if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
          ),
        filter_default: :stop,
        filters: [
-         exchange: {&Supavisor.Logger.Filters.filter_client_handler/2, :exchange}
+         exchange: {&Supavisor.Logger.Filters.filter_auth_error/2, nil}
        ],
        config: %{
          file: to_charlist(path),

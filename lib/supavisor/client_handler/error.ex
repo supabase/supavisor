@@ -19,9 +19,10 @@ defmodule Supavisor.ClientHandler.Error do
     message = Map.fetch!(error_actions, :error)
     log_message = Map.get(error_actions, :log_message)
     send_ready_for_query = Map.get(error_actions, :send_ready_for_query, false)
+    auth_error = Map.get(error_actions, :auth_error, false)
 
     if log_message do
-      Logger.error("ClientHandler: #{log_message}")
+      Logger.error("ClientHandler: #{log_message}", auth_error: auth_error)
     end
 
     if send_ready_for_query do
@@ -109,13 +110,16 @@ defmodule Supavisor.ClientHandler.Error do
   defp process({:error, :tenant_not_found, reason, type, user, tenant_or_alias}, _context) do
     %{
       error: Server.error_message("XX000", "Tenant or user not found"),
-      log_message: "User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}"
+      log_message: "User not found: #{inspect(reason)} #{inspect({type, user, tenant_or_alias})}",
+      auth_error: true
     }
   end
 
   defp process({:error, :auth_error, :wrong_password, user}, _context) do
     %{
-      error: Server.error_message("28P01", "password authentication failed for user \"#{user}\"")
+      error: Server.error_message("28P01", "password authentication failed for user \"#{user}\""),
+      log_message: "Exchange error: password authentication failed for user \"#{user}\"",
+      auth_error: true
     }
   end
 
