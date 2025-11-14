@@ -455,10 +455,15 @@ defmodule Supavisor.ClientHandler do
   def handle_event(_, {closed, _}, state, data)
       when closed in [:tcp_closed, :ssl_closed] do
     level =
-      if state == :idle or data.mode == :proxy do
-        :info
-      else
-        :error
+      cond do
+        state == :idle or data.mode == :proxy ->
+          :info
+
+        state == :handshake ->
+          :warning
+
+        true ->
+          :error
       end
 
     Logger.log(
