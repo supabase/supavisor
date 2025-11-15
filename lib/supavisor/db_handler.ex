@@ -170,6 +170,11 @@ defmodule Supavisor.DbHandler do
 
     case :gen_tcp.connect(auth.host, auth.port, sock_opts) do
       {:ok, sock} ->
+        # Ensure buffer >= recbuf to avoid unnecessary copying
+        # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
+        {:ok, [{:recbuf, recbuf}]} = :inet.getopts(sock, [:recbuf])
+        :ok = :inet.setopts(sock, buffer: recbuf)
+
         Logger.debug("DbHandler: auth #{inspect(auth, pretty: true)}")
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
