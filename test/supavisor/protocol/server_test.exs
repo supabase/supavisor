@@ -27,9 +27,6 @@ defmodule Supavisor.Protocol.ServerTest do
                     117, 116, 104, 46, 99, 0, 76, 51, 51, 53, 0, 82, 97, 117, 116, 104, 95, 102,
                     97, 105, 108, 101, 100, 0, 0>>
 
-  @read_only_bin <<69, 0, 0, 0, 37, 83, 69, 82, 82, 79, 82, 0, 86, 69, 82, 82, 79, 82, 0, 67, 50,
-                   53, 48, 48, 54, 0, 77, 114, 101, 97, 100, 32, 111, 110, 108, 121, 0, 0>>
-
   test "encode_parameter_status/1" do
     result = Server.encode_parameter_status(@initial_data)
 
@@ -74,15 +71,15 @@ defmodule Supavisor.Protocol.ServerTest do
                 tag: :error_response,
                 len: 112,
                 bin: @auth_bin_error,
-                payload: [
-                  "SFATAL",
-                  "VFATAL",
-                  "C28P01",
-                  "Mpassword authentication failed for user \"test_wrong_user\"",
-                  "Fauth.c",
-                  "L335",
-                  "Rauth_failed"
-                ]
+                payload: %{
+                  "S" => "FATAL",
+                  "V" => "FATAL",
+                  "C" => "28P01",
+                  "M" => "password authentication failed for user \"test_wrong_user\"",
+                  "F" => "auth.c",
+                  "L" => "335",
+                  "R" => "auth_failed"
+                }
               }
             ], ""} = Server.decode(@auth_bin_error)
   end
@@ -191,14 +188,18 @@ defmodule Supavisor.Protocol.ServerTest do
   end
 
   test "encode_error_message/1" do
-    message = ["SFATAL", "VFATAL", "C28P01", "Mpassword authentication failed"]
+    message = %{
+      "S" => "FATAL",
+      "V" => "FATAL",
+      "C" => "28P01",
+      "M" => "password authentication failed"
+    }
+
     result = Server.encode_error_message(message) |> IO.iodata_to_binary()
 
     assert result ==
-             <<69, 0, 0, 0, 58, 83, 70, 65, 84, 65, 76, 0, 86, 70, 65, 84, 65, 76, 0, 67, 50, 56,
-               80, 48, 49, 0, 77, 112, 97, 115, 115, 119, 111, 114, 100, 32, 97, 117, 116, 104,
-               101, 110, 116, 105, 99, 97, 116, 105, 111, 110, 32, 102, 97, 105, 108, 101, 100, 0,
-               0>>
+             <<?E, 0, 0, 0, ?:, ?C, "28P01", 0, ?M, "password authentication failed", 0, ?S,
+               "FATAL", 0, ?V, "FATAL", 0, 0>>
   end
 
   test "decode_startup_packet/1" do
@@ -233,17 +234,6 @@ defmodule Supavisor.Protocol.ServerTest do
 
     assert Server.decode_startup_packet(<<0, 0, 0, 8, 0, 3, 0, 0>>) ==
              {:error, :bad_startup_payload}
-  end
-
-  test "has_read_only_error?/1" do
-    {:ok, read_only_pkts, ""} = Server.decode(@read_only_bin)
-    {:ok, auth_error_pkts, ""} = Server.decode(@auth_bin_error)
-
-    assert Server.has_read_only_error?(read_only_pkts) == true
-    assert Server.has_read_only_error?(auth_error_pkts ++ read_only_pkts) == true
-
-    assert Server.has_read_only_error?(auth_error_pkts) == false
-    assert Server.has_read_only_error?([]) == false
   end
 
   test "scram_request/0" do

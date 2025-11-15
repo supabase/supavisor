@@ -6,15 +6,9 @@ defmodule Supavisor.TenantSupervisor do
   alias Supavisor.Manager
   alias Supavisor.SecretChecker
 
-  def start_link(%{replicas: [%{mode: mode}]} = args)
-      when mode in [:transaction, :session] do
-    meta = Supavisor.get_local_server(args.id, mode)
-    name = {:via, :syn, {:tenants, args.id, meta}}
-    Supervisor.start_link(__MODULE__, args, name: name)
-  end
-
   def start_link(args) do
-    name = {:via, :syn, {:tenants, args.id}}
+    meta = Supavisor.get_local_server(args.id)
+    name = {:via, :syn, {:tenants, args.id, meta}}
     Supervisor.start_link(__MODULE__, args, name: name)
   end
 
@@ -30,12 +24,17 @@ defmodule Supavisor.TenantSupervisor do
 
         %{
           id: {:pool, id},
-          start: {:poolboy, :start_link, [pool_spec(id, e), e]},
+          start:
+            {:poolboy, :start_link, [pool_spec(id, e.replica_type, e.pool_size), %{id: args.id}]},
           restart: :temporary
         }
       end)
 
-    children = [{Manager, args}, {SecretChecker, args} | pools]
+    # Pass only minimal args to Manager and SecretChecker
+    manager_args = %{id: args.id, secrets: args.secrets, log_level: args.log_level}
+    secret_checker_args = %{id: args.id}
+
+    children = [{Manager, manager_args}, {SecretChecker, secret_checker_args} | pools]
 
     map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
@@ -55,12 +54,12 @@ defmodule Supavisor.TenantSupervisor do
     }
   end
 
-  @spec pool_spec(tuple, map) :: Keyword.t()
-  defp pool_spec(id, args) do
-    {size, overflow} = {1, args.pool_size}
+  @spec pool_spec(tuple, atom, integer) :: Keyword.t()
+  defp pool_spec(id, replica_type, pool_size) do
+    {size, overflow} = {1, pool_size}
 
     [
-      name: {:via, Registry, {Supavisor.Registry.Tenants, id, args.replica_type}},
+      name: {:via, Registry, {Supavisor.Registry.Tenants, id, replica_type}},
       worker_module: Supavisor.DbHandler,
       size: size,
       max_overflow: overflow,

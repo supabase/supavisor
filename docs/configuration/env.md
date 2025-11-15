@@ -20,20 +20,20 @@ This document provides a categorized list of all environment variables used in S
 
 ## 1. Core Configuration
 
-| Variable                      | Description                                                 | Default Value | Required |
-| ----------------------------- | ----------------------------------------------------------- | ------------- | -------- |
-| `PROXY_PORT_TRANSACTION`      | Transaction pool port                                       | `6543`        | No       |
-| `PROXY_PORT_SESSION`          | Session pool port                                           | `5432`        | No       |
-| `PROXY_PORT`                  | Internal proxy port                                         | `5412`        | No       |
-| `RECONNECT_ON_DB_CLOSE`       | Enable reconnection on close                                | `false`       | No       |
-| `RECONNECT_RETRIES`           | Number of reconnection attempts. -1 for infinity            | `5`           | No       |
-| `SUBSCRIBE_RETRIES`           | Number of subscription retries                              | `20`          | No       |
-| `SWITCH_ACTIVE_COUNT`         | Switch active connection count                              | `100`         | No       |
-| `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                                | -             | No       |
-| `GLOBAL_DOWNSTREAM_CERT_PATH` | Downstream certificate path                                 | -             | No       |
-| `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                                 | -             | No       |
-| `SESSION_PROXY_PORTS`         | Comma-separated list of ports for session proxy shards    | `12100,12101,12102,12103` | No |
-| `TRANSACTION_PROXY_PORTS`     | Comma-separated list of ports for transaction proxy shards | `12104,12105,12106,12107` | No |
+| Variable                      | Description                                                | Default Value             | Required |
+| ----------------------------- | ---------------------------------------------------------- | ------------------------- | -------- |
+| `PROXY_PORT_TRANSACTION`      | Transaction pool port                                      | `6543`                    | No       |
+| `PROXY_PORT_SESSION`          | Session pool port                                          | `5432`                    | No       |
+| `PROXY_PORT`                  | Internal proxy port                                        | `5412`                    | No       |
+| `RECONNECT_ON_DB_CLOSE`       | Enable reconnection on close                               | `false`                   | No       |
+| `RECONNECT_RETRIES`           | Number of reconnection attempts. -1 for infinity           | `5`                       | No       |
+| `SUBSCRIBE_RETRIES`           | Number of subscription retries                             | `20`                      | No       |
+| `SWITCH_ACTIVE_COUNT`         | Switch active connection count                             | `100`                     | No       |
+| `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                               | -                         | No       |
+| `GLOBAL_DOWNSTREAM_CERT_PATH` | Downstream certificate path                                | -                         | No       |
+| `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                                | -                         | No       |
+| `SESSION_PROXY_PORTS`         | Comma-separated list of ports for session proxy shards     | `12100,12101,12102,12103` | No       |
+| `TRANSACTION_PROXY_PORTS`     | Comma-separated list of ports for transaction proxy shards | `12104,12105,12106,12107` | No       |
 
 ### Feature Flags
 
@@ -57,14 +57,15 @@ This document provides a categorized list of all environment variables used in S
 
 ### Security
 
-| Variable                  | Description                                    | Default Value | Required             |
-| ------------------------- | ---------------------------------------------- | ------------- | -------------------- |
-| `JWT_CLAIM_VALIDATORS`    | JWT claim validators configuration             | `{}`          | No                   |
-| `API_JWT_SECRET`          | Secret for API JWT authentication              | -             | No                   |
-| `METRICS_JWT_SECRET`      | Secret for metrics JWT authentication          | -             | No                   |
-| `API_TOKEN_BLOCKLIST`     | Comma-separated list of blocked API tokens     | -             | No                   |
-| `METRICS_TOKEN_BLOCKLIST` | Comma-separated list of blocked metrics tokens | -             | No                   |
-| `VAULT_ENC_KEY`           | Encryption key for Vault                       | -             | Yes (if using Vault) |
+| Variable                  | Description                                                     | Default Value | Required             |
+| ------------------------- | --------------------------------------------------------------- | ------------- | -------------------- |
+| `JWT_CLAIM_VALIDATORS`    | JWT claim validators configuration                              | `{}`          | No                   |
+| `API_JWT_SECRET`          | Secret for API JWT authentication                               | -             | No                   |
+| `METRICS_JWT_SECRET`      | Secret for metrics JWT authentication                           | -             | No                   |
+| `API_TOKEN_BLOCKLIST`     | Comma-separated list of blocked API tokens                      | -             | No                   |
+| `METRICS_TOKEN_BLOCKLIST` | Comma-separated list of blocked metrics tokens                  | -             | No                   |
+| `CACHE_BYPASS_USERS`      | Comma-separated list of users to skip validation secret caching | -             | No                   |
+| `VAULT_ENC_KEY`           | Encryption key for Vault                                        | -             | Yes (if using Vault) |
 
 ### Metrics
 

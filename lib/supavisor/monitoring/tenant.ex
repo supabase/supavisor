@@ -87,23 +87,23 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       :supavisor_tenant_client_event_metrics,
       [
         distribution(
-          [:supavisor, :pool, :checkout, :duration, :local, :us],
+          [:supavisor, :pool, :checkout, :duration, :local],
           event_name: [:supavisor, :pool, :checkout, :stop, :local],
           measurement: :duration,
           description: "Duration of the checkout local process in the tenant db pool.",
           tags: @tags,
-          unit: {:native, :microsecond},
+          unit: {:microsecond, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
           ]
         ),
         distribution(
-          [:supavisor, :pool, :checkout, :duration, :remote, :us],
+          [:supavisor, :pool, :checkout, :duration, :remote],
           event_name: [:supavisor, :pool, :checkout, :stop, :remote],
           measurement: :duration,
           description: "Duration of the checkout remote process in the tenant db pool.",
           tags: @tags,
-          unit: {:native, :microsecond},
+          unit: {:microsecond, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
           ]
@@ -173,6 +173,17 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client_handler, :stopped, :all],
           description: "The total number of stopped client_handler.",
           tags: @tags
+        ),
+        distribution(
+          [:supavisor, :client_handler, :state, :duration],
+          event_name: [:supavisor, :client_handler, :state],
+          measurement: :duration,
+          description: "Duration spent in each client_handler state.",
+          tags: [:tenant, :from_state, :to_state],
+          unit: {:native, :millisecond},
+          reporter_options: [
+            peep_bucket_calculator: Buckets
+          ]
         )
       ]
     )

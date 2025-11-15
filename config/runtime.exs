@@ -187,6 +187,10 @@ if config_env() != :test do
     reconnect_retries: reconnect_retries,
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
+    cache_bypass_users:
+      System.get_env("CACHE_BYPASS_USERS", "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1),
     node_host: System.get_env("NODE_IP", "127.0.0.1")
 
   config :supavisor, Supavisor.FeatureFlag, %{
@@ -250,7 +254,7 @@ if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
          ),
        filter_default: :stop,
        filters: [
-         exchange: {&Supavisor.Logger.Filters.filter_client_handler/2, :exchange}
+         exchange: {&Supavisor.Logger.Filters.filter_auth_error/2, nil}
        ],
        config: %{
          file: to_charlist(path),
