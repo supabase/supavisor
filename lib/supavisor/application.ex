@@ -106,7 +106,6 @@ defmodule Supavisor.Application do
       Supavisor.Health,
       Supavisor.CacheRefreshLimiter,
       Supavisor.CircuitBreaker.Janitor,
-      Supavisor.SecretJanitor,
       {Task.Supervisor, name: Supavisor.PoolTerminator},
       {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
       {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},

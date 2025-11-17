@@ -67,7 +67,7 @@ defmodule Supavisor.DbHandlerTest do
       {:reply, state.auth, state}
     end
 
-    def handle_cast({:terminate_pool, _error}, state) do
+    def handle_cast({:shutdown_with_error, _error}, state) do
       {:noreply, state}
     end
   end
@@ -100,7 +100,11 @@ defmodule Supavisor.DbHandlerTest do
       tenant = "test_tenant"
       user = "user"
 
-      Supavisor.SecretCache.put_upstream_auth_secrets(tenant, user, method, secrets, :infinity)
+      # Set up tenant cache for the @id
+      table = :ets.new(:tenant_cache, [:set, :public])
+      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+
+      Supavisor.SecretCache.put_upstream_auth_secrets(@id, method, secrets)
 
       manager_config = %{
         id: @id,

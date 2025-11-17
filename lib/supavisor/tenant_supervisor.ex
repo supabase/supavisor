@@ -5,6 +5,7 @@ defmodule Supavisor.TenantSupervisor do
   require Logger
   alias Supavisor.Manager
   alias Supavisor.SecretChecker
+  alias Supavisor.Terminator
 
   def start_link(args) do
     meta = Supavisor.get_local_server(args.id)
@@ -33,13 +34,15 @@ defmodule Supavisor.TenantSupervisor do
     manager_args = %{id: args.id, secrets: args.secrets, log_level: args.log_level}
     secret_checker_args = %{id: args.id}
     cache_args = %{id: args.id}
+    terminator_args = %{id: args.id}
 
-    children = [
-      {Supavisor.TenantCache, cache_args},
-      {Manager, manager_args},
-      {SecretChecker, secret_checker_args}
-      | pools
-    ]
+    children =
+      [
+        {Supavisor.TenantCache, cache_args},
+        {Manager, manager_args},
+        {SecretChecker, secret_checker_args}
+        | pools
+      ] ++ [{Terminator, terminator_args}]
 
     map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)

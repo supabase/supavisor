@@ -57,6 +57,9 @@ defmodule Supavisor.ClientHandler do
   def send_error_and_terminate(pid, error_message),
     do: :gen_statem.cast(pid, {:send_error_and_terminate, error_message})
 
+  @spec graceful_shutdown(pid()) :: :ok
+  def graceful_shutdown(pid), do: :gen_statem.cast(pid, :graceful_shutdown)
+
   @impl true
   def init(_), do: :ignore
 
@@ -520,6 +523,17 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
+  def handle_event(:cast, :graceful_shutdown, :busy, _data) do
+    {:keep_state_and_data, :postpone}
+  end
+
+  def handle_event(:cast, :graceful_shutdown, _state, data) do
+    # Some clients will just show `tcp_closed` unless we send a ReadyForQuery after the fatal error
+    HandlerHelpers.sock_send(data.sock, Server.encode_error_message(Server.admin_shutdown()))
+
+    {:stop, :normal}
+  end
+
   def handle_event(:info, {sock_error, _sock, msg}, state, _data)
       when sock_error in [:tcp_error, :ssl_error] do
     Logger.error("ClientHandler: Socket error: #{inspect(msg)}, state was #{state}")
@@ -727,16 +741,11 @@ defmodule Supavisor.ClientHandler do
   defp handle_auth_success(sock, {method, secrets}, client_key, data) do
     final_secrets = Auth.prepare_final_secrets(secrets, client_key)
 
-    {{_type, tenant}, user, _mode, _db, _search} = data.id
-    upstream_secrets_ttl = upstream_secrets_ttl(data.mode)
-
-    Supavisor.SecretCache.put_upstream_auth_secrets(
-      tenant,
-      user,
-      method,
-      final_secrets,
-      upstream_secrets_ttl
-    )
+    # Only store in TenantCache for pool modes (transaction/session)
+    # For proxy mode, secrets are passed directly to DbHandler via data.auth
+    if data.mode != :proxy do
+      Supavisor.SecretCache.put_upstream_auth_secrets(data.id, method, final_secrets)
+    end
 
     Logger.info("ClientHandler: Connection authenticated")
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
@@ -753,9 +762,6 @@ defmodule Supavisor.ClientHandler do
      %{data | auth_context: nil, auth_secrets: {method, final_secrets}, auth: auth},
      {:next_event, :internal, conn_type}}
   end
-
-  defp upstream_secrets_ttl(:proxy), do: :timer.hours(24)
-  defp upstream_secrets_ttl(_mode), do: :infinity
 
   defp handle_auth_failure(sock, reason, data, context) do
     auth_context = data.auth_context

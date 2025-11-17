@@ -61,8 +61,11 @@ defmodule Supavisor do
   @spec stop(id) :: :ok | {:error, :tenant_not_found}
   def stop(id) do
     case get_global_sup(id) do
-      nil -> {:error, :tenant_not_found}
-      pid -> Supervisor.stop(pid)
+      nil ->
+        {:error, :tenant_not_found}
+
+      pid ->
+        Supervisor.stop(pid)
     end
   end
 
@@ -190,7 +193,6 @@ defmodule Supavisor do
     Enum.reduce(keys, [], fn
       {:metrics, ^tenant} = key, acc -> del.(key, acc)
       {:secrets_for_validation, ^tenant, ^user} = key, acc -> del.(key, acc)
-      {:secrets_for_upstream_auth, ^tenant, ^user} = key, acc -> del.(key, acc)
       {:secrets_check, ^tenant, ^user} = key, acc -> del.(key, acc)
       {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
       {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
@@ -214,7 +216,6 @@ defmodule Supavisor do
           case key do
             {:metrics, ^tenant} -> del.(key, acc)
             {:secrets_for_validation, ^tenant, _} -> del.(key, acc)
-            {:secrets_for_upstream_auth, ^tenant, _} -> del.(key, acc)
             {:secrets_check, ^tenant, _} -> del.(key, acc)
             {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
             {:tenant_cache, ^tenant, _} -> del.(key, acc)

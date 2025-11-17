@@ -121,7 +121,14 @@ defmodule Supavisor.DbHandler do
     {_, tenant} = config.tenant
     Logger.metadata(project: tenant, user: config.user, mode: config.mode)
 
-    auth = get_auth_with_secrets(config.auth, tenant, config.user)
+    auth =
+      if config[:proxy] do
+        # Proxy mode: secrets already in config.auth from ClientHandler
+        config.auth
+      else
+        # Pool mode: fetch secrets from TenantCache
+        get_auth_with_secrets(config.auth, id)
+      end
 
     data =
       %{
@@ -249,7 +256,7 @@ defmodule Supavisor.DbHandler do
         encode_and_forward_error(error, data)
 
         if not data.proxy do
-          Supavisor.Manager.terminate_pool(data.id, error)
+          Supavisor.Manager.shutdown_with_error(data.id, error)
         end
 
         {:stop, :normal, data}
@@ -259,7 +266,7 @@ defmodule Supavisor.DbHandler do
         encode_and_forward_error(error, data)
 
         if not data.proxy do
-          Supavisor.Manager.terminate_pool(data.id, error)
+          Supavisor.Manager.shutdown_with_error(data.id, error)
         end
 
         {:stop, :normal, data}
@@ -793,8 +800,8 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  defp get_auth_with_secrets(auth, tenant, user) do
-    case Supavisor.SecretCache.get_upstream_auth_secrets(tenant, user) do
+  defp get_auth_with_secrets(auth, id) do
+    case Supavisor.SecretCache.get_upstream_auth_secrets(id) do
       {:ok, upstream_auth_secrets} ->
         Map.put(auth, :secrets, upstream_auth_secrets)
 

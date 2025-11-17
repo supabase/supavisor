@@ -2,37 +2,52 @@ defmodule Supavisor.SecretCacheTest do
   use ExUnit.Case, async: false
 
   alias Supavisor.SecretCache
+  alias Supavisor.TenantCache
 
   setup do
     Cachex.clear(Supavisor.Cache)
     :ok
   end
 
+  defp setup_tenant_cache(id) do
+    table = :ets.new(:tenant_cache, [:set, :public])
+    Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
+    table
+  end
+
   test "bypass users skip validation cache but keep upstream cache" do
     tenant = "test_tenant"
     user = "bypass_user"
+    id = {{:single, tenant}, user, :transaction, "postgres", nil}
     method = :auth_query
     secrets_fn = fn -> %{password: "secret123", client_key: "key123"} end
 
-    SecretCache.put_both(tenant, user, method, secrets_fn, :infinity)
+    setup_tenant_cache(id)
 
-    # Validation secrets not cached
+    SecretCache.put_validation_secrets(tenant, user, method, secrets_fn)
+    SecretCache.put_upstream_auth_secrets(id, method, secrets_fn)
+
+    # Validation secrets not cached for bypass users
     assert {:error, :not_found} = SecretCache.get_validation_secrets(tenant, user)
 
     # Upstream secrets still cached
-    assert {:ok, {^method, _}} = SecretCache.get_upstream_auth_secrets(tenant, user)
+    assert {:ok, {^method, _}} = SecretCache.get_upstream_auth_secrets(id)
   end
 
   test "normal users cache both types of secrets" do
     tenant = "test_tenant"
     user = "normal_user"
+    id = {{:single, tenant}, user, :transaction, "postgres", nil}
     method = :auth_query
     secrets_fn = fn -> %{password: "secret123", client_key: "key123"} end
 
-    SecretCache.put_both(tenant, user, method, secrets_fn, :infinity)
+    setup_tenant_cache(id)
+
+    SecretCache.put_validation_secrets(tenant, user, method, secrets_fn)
+    SecretCache.put_upstream_auth_secrets(id, method, secrets_fn)
 
     assert {:ok, {^method, _}} = SecretCache.get_validation_secrets(tenant, user)
-    assert {:ok, {^method, _}} = SecretCache.get_upstream_auth_secrets(tenant, user)
+    assert {:ok, {^method, _}} = SecretCache.get_upstream_auth_secrets(id)
   end
 
   test "put_validation_secrets skips caching for bypass users" do
@@ -84,5 +99,32 @@ defmodule Supavisor.SecretCacheTest do
     # Second call should use cache (fetch_fn not called again)
     assert {:ok, {^method, _}} = SecretCache.fetch_validation_secrets(tenant, user, fetch_fn)
     refute_receive :fetch_called
+  end
+
+  test "upstream secrets stored in tenant cache are accessible" do
+    tenant = "test_tenant"
+    user = "normal_user"
+    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+    method = :password
+    secrets_fn = fn -> %{password: "secret123", client_key: "key123"} end
+
+    setup_tenant_cache(id)
+
+    SecretCache.put_upstream_auth_secrets(id, method, secrets_fn)
+
+    # Should be able to retrieve from tenant cache
+    assert {:ok, {^method, ^secrets_fn}} = SecretCache.get_upstream_auth_secrets(id)
+
+    # Verify it's actually in the ETS table
+    assert {:ok, {^method, ^secrets_fn}} = TenantCache.get_upstream_auth_secrets(id)
+  end
+
+  test "upstream secrets not found returns error" do
+    tenant = "test_tenant"
+    user = "normal_user"
+    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+
+    # No tenant cache registered
+    assert {:error, :not_found} = SecretCache.get_upstream_auth_secrets(id)
   end
 end

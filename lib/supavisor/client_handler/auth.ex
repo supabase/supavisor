@@ -161,7 +161,6 @@ defmodule Supavisor.ClientHandler.Auth do
                Map.delete(current_secrets, :client_key) != Map.delete(new_secrets, :client_key) do
             Logger.warning("ClientHandler: Update secrets")
             Supavisor.SecretCache.put_validation_secrets(tenant, user, method2, secrets2)
-            Supavisor.SecretCache.clean_upstream_secrets(tenant, user)
           end
 
         other ->

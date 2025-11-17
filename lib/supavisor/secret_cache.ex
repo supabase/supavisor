@@ -73,16 +73,11 @@ defmodule Supavisor.SecretCache do
   @doc """
   Gets auth secrets to authenticate to the upstream database.
   """
-  def get_upstream_auth_secrets(tenant, user) do
+  def get_upstream_auth_secrets(id) do
+    {{_type, tenant}, user, _mode, _db, _search} = id
     Logger.info("get_upstream_auth_secrets(#{tenant}, #{user})")
 
-    case Cachex.get(Supavisor.Cache, {:secrets_for_upstream_auth, tenant, user}) do
-      {:ok, {:cached, {method, secrets_fn}}} ->
-        {:ok, {method, secrets_fn}}
-
-      _other ->
-        {:error, :not_found}
-    end
+    Supavisor.TenantCache.get_upstream_auth_secrets(id)
   end
 
   @doc """
@@ -112,42 +107,13 @@ defmodule Supavisor.SecretCache do
   end
 
   @doc """
-  Caches upstream auth secrets with the specified TTL.
+  Caches upstream auth secrets in the tenant-specific cache.
   """
-  def put_upstream_auth_secrets(
-        tenant,
-        user,
-        method,
-        secrets_with_client_key_fn,
-        upstream_secrets_ttl
-      ) do
+  def put_upstream_auth_secrets(id, method, secrets_with_client_key_fn) do
+    {{_type, tenant}, user, _mode, _db, _search} = id
     Logger.info("put_upstream_auth_secrets(#{tenant}, #{user})")
-    upstream_auth_key = {:secrets_for_upstream_auth, tenant, user}
-    upstream_auth_value = {method, secrets_with_client_key_fn}
 
-    cache_opts =
-      case upstream_secrets_ttl do
-        :infinity -> []
-        ttl_ms -> [ttl: ttl_ms]
-      end
-
-    Cachex.put(Supavisor.Cache, upstream_auth_key, {:cached, upstream_auth_value}, cache_opts)
-  end
-
-  @doc """
-  Caches both validation and upstream auth secrets.
-  """
-  def put_both(tenant, user, method, secrets_with_client_key_fn, upstream_secrets_ttl) do
-    Logger.info("put_both(#{tenant}, #{user})")
-    put_validation_secrets(tenant, user, method, secrets_with_client_key_fn)
-
-    put_upstream_auth_secrets(
-      tenant,
-      user,
-      method,
-      secrets_with_client_key_fn,
-      upstream_secrets_ttl
-    )
+    Supavisor.TenantCache.put_upstream_auth_secrets(id, {method, secrets_with_client_key_fn})
   end
 
   @doc """
@@ -177,14 +143,6 @@ defmodule Supavisor.SecretCache do
   end
 
   @doc """
-  Clean upstream secrets
-  """
-  def clean_upstream_secrets(tenant, user) do
-    Logger.info("clean_upstream_secrets(#{tenant}, #{user})")
-    Cachex.del(Supavisor.Cache, {:secrets_for_upstream_auth, tenant, user})
-  end
-
-  @doc """
   Invalidates all cached secrets for a tenant/user across the cluster.
   """
   def invalidate(tenant, user) do
@@ -192,7 +150,6 @@ defmodule Supavisor.SecretCache do
 
     :erpc.multicast([node() | Node.list()], fn ->
       Cachex.del(Supavisor.Cache, {:secrets_for_validation, tenant, user})
-      Cachex.del(Supavisor.Cache, {:secrets_for_upstream_auth, tenant, user})
       Cachex.del(Supavisor.Cache, {:secrets_check, tenant, user})
     end)
   end

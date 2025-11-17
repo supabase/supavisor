@@ -191,6 +191,17 @@ defmodule Supavisor.Protocol.Server do
   @spec terminate_message :: binary()
   def terminate_message, do: @terminate_message
 
+  @spec admin_shutdown :: map()
+  def admin_shutdown do
+    # PostgreSQL error code 57P01: admin_shutdown
+    %{
+      "S" => "FATAL",
+      "V" => "FATAL",
+      "C" => "57P01",
+      "M" => "terminating connection due to administrator command"
+    }
+  end
+
   @spec scram_request :: iodata()
   def scram_request, do: @scram_request
 
