@@ -30,17 +30,22 @@ defmodule Supavisor.TenantSupervisor do
         }
       end)
 
-    # Pass only minimal args to Manager and SecretChecker
     manager_args = %{id: args.id, secrets: args.secrets, log_level: args.log_level}
     secret_checker_args = %{id: args.id}
+    cache_args = %{id: args.id}
 
-    children = [{Manager, manager_args}, {SecretChecker, secret_checker_args} | pools]
+    children = [
+      {Supavisor.TenantCache, cache_args},
+      {Manager, manager_args},
+      {SecretChecker, secret_checker_args}
+      | pools
+    ]
 
     map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
 
     Supervisor.init(children,
-      strategy: :one_for_all,
+      strategy: :one_for_one,
       max_restarts: 10,
       max_seconds: 60
     )

@@ -12,6 +12,6 @@ defmodule Supavisor.ClientHandler.HTTP do
       "HTTP/1.1 204 OK\r\nx-app-version: #{Application.spec(:supavisor, :vsn)}\r\n\r\n"
     )
 
-    {:stop, {:shutdown, :http_request}}
+    {:stop, :normal}
   end
 end

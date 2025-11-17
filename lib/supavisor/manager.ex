@@ -3,7 +3,7 @@ defmodule Supavisor.Manager do
   The Manager is responsible for managing the config and parameter status for a pool
   """
 
-  use GenServer, restart: :transient
+  use GenServer
   require Logger
 
   alias Supavisor.Protocol.Server
@@ -159,12 +159,14 @@ defmodule Supavisor.Manager do
       Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, method, secrets)
     end
 
+    persisted_ps = Supavisor.TenantCache.get_parameter_status(args.id)
+
     state = %{
       id: args.id,
       check_ref: check_subscribers(),
       tid: tid,
       tenant: tenant,
-      parameter_status: [],
+      parameter_status: persisted_ps,
       wait_ps: [],
       default_parameter_status: ps,
       max_clients: max_clients,
@@ -215,6 +217,7 @@ defmodule Supavisor.Manager do
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
     encoded_ps = Server.encode_parameter_status(ps)
     maybe_update_parameter_status(state.tenant, ps, state.default_parameter_status)
+    Supavisor.TenantCache.put_parameter_status(state.id, encoded_ps)
 
     for pid <- state.wait_ps do
       send(pid, {:parameter_status, encoded_ps})
@@ -258,11 +261,7 @@ defmodule Supavisor.Manager do
       Supavisor.ClientHandler.send_error_and_terminate(pid, error_message)
     end
 
-    # Use a task to stop the pool supervisor to avoid deadlock, since the Manager
-    # is a child of the TenantSupervisor that Supavisor.stop/1 will terminate
-    Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
-      Supavisor.stop(state.id)
-    end)
+    async_stop_sup(state)
 
     {:noreply, %{state | terminating_error: error}}
   end
@@ -279,8 +278,8 @@ defmodule Supavisor.Manager do
 
     if :ets.info(state.tid, :size) == 0 do
       Logger.info("No subscribers for pool #{inspect(state.id)}, shutting down")
-      Supavisor.stop(state.id)
-      {:stop, :normal}
+      async_stop_sup(state)
+      {:noreply, state}
     else
       {:noreply, %{state | check_ref: check_subscribers()}}
     end
@@ -334,5 +333,13 @@ defmodule Supavisor.Manager do
 
         :ok
     end
+  end
+
+  # Use a task to stop the pool supervisor to avoid deadlock, since the Manager
+  # is a child of the TenantSupervisor that Supavisor.stop/1 will terminate
+  defp async_stop_sup(state) do
+    Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
+      Supavisor.stop(state.id)
+    end)
   end
 end

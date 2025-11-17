@@ -37,6 +37,7 @@ defmodule Supavisor.ClientHandler.Data do
     :heartbeat_interval,
     :connection_start,
     :state_entered_at,
-    :subscribe_retries
+    :subscribe_retries,
+    :client_ready
   ]
 end

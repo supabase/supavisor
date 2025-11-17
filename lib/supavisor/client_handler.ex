@@ -333,12 +333,16 @@ defmodule Supavisor.ClientHandler do
 
       Registry.register(@clients_registry, data.id, started_at: System.monotonic_time())
 
-      next =
-        if opts.ps == [],
-          do: {:timeout, 10_000, :wait_ps},
-          else: {:next_event, :internal, {:greetings, opts.ps}}
+      cond do
+        data.client_ready ->
+          {:next_state, :idle, data, handle_actions(data)}
 
-      {:keep_state, data, next}
+        opts.ps == [] ->
+          {:keep_state, data, {:timeout, 10_000, :wait_ps}}
+
+        true ->
+          {:keep_state, data, {:next_event, :internal, {:greetings, opts.ps}}}
+      end
     else
       {:error, :circuit_open, blocked_until} ->
         Error.maybe_log_and_send_error(
@@ -415,7 +419,7 @@ defmodule Supavisor.ClientHandler do
     :ok = Cancel.listen_cancel_query(pid, key)
     :ok = HandlerHelpers.sock_send(sock, msg)
     Telem.client_connection_time(data.connection_start, data.id)
-    {:next_state, :idle, data, handle_actions(data)}
+    {:next_state, :idle, %{data | client_ready: true}, handle_actions(data)}
   end
 
   def handle_event(:timeout, :subscribe, _state, _) do
@@ -490,7 +494,7 @@ defmodule Supavisor.ClientHandler do
       {_, :shutdown} -> {:stop, {:shutdown, :manager_shutdown}}
       {:idle, _} -> {:next_state, :connecting, data, {:next_event, :internal, :subscribe}}
       {:connecting, _} -> {:keep_state_and_data, {:next_event, :internal, :subscribe}}
-      {:busy, _} -> {:stop, {:shutdown, :manager_down}}
+      {:busy, _} -> {:keep_state_and_data, :postpone}
     end
   end
 
@@ -516,11 +520,11 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  def handle_event(:info, {sock_error, _sock, msg}, _state, _data)
+  def handle_event(:info, {sock_error, _sock, msg}, state, _data)
       when sock_error in [:tcp_error, :ssl_error] do
-    Logger.error("ClientHandler: Socket error: #{inspect(msg)}")
+    Logger.error("ClientHandler: Socket error: #{inspect(msg)}, state was #{state}")
 
-    {:stop, {:shutdown, {:socket_error, msg}}}
+    {:stop, :normal}
   end
 
   def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
@@ -657,8 +661,8 @@ defmodule Supavisor.ClientHandler do
     {:keep_state, data, handle_actions(data)}
   end
 
-  # Sync in other states - send to db
-  def handle_event(_kind, {proto, _, <<?S, 4::32, _::binary>> = msg}, _state, data)
+  # Sync when busy - send to db
+  def handle_event(_kind, {proto, _, <<?S, 4::32, _::binary>> = msg}, :busy, data)
       when proto in @proto do
     Logger.debug("ClientHandler: Receive sync")
     :ok = sock_send(msg, data)
@@ -681,9 +685,16 @@ defmodule Supavisor.ClientHandler do
       {:ok, updated_data} ->
         {:keep_state, updated_data}
 
-      {:error, reason} ->
-        {:stop, {:shutdown, reason}}
+      # Handle data already handles the errors, so we are fine to just ignore them
+      # and terminate
+      {:error, _reason} ->
+        {:stop, :normal}
     end
+  end
+
+  # Any message when connecting - postpone
+  def handle_event(_kind, {proto, _socket, _msg}, :connecting, _data) when proto in @proto do
+    {:keep_state_and_data, :postpone}
   end
 
   def handle_event(type, content, state, _data) do
