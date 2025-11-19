@@ -140,10 +140,11 @@ defmodule Supavisor.Protocol.Server do
     [<<?E, IO.iodata_length(message) + 4::32>>, message]
   end
 
-  @spec encode_error_message(list()) :: iodata()
-  def encode_error_message(message) when is_list(message) do
-    message = Enum.join(message, <<0>>) <> <<0, 0>>
-    [<<?E, byte_size(message) + 4::32>>, message]
+  @spec encode_error_message(map()) :: iodata()
+  def encode_error_message(error_map) when is_map(error_map) do
+    sorted_fields = Enum.sort(error_map)
+    message = [Enum.map(sorted_fields, fn {char, content} -> [char, content, <<0>>] end), <<0>>]
+    [<<?E, IO.iodata_length(message) + 4::32>>, message]
   end
 
   @spec encode_parameter_status(map) :: iodata()
@@ -184,19 +185,22 @@ defmodule Supavisor.Protocol.Server do
 
   def decode_startup_packet(_), do: {:error, :bad_startup_payload}
 
-  @spec has_read_only_error?(list()) :: boolean
-  def has_read_only_error?(pkts) do
-    Enum.any?(pkts, fn
-      %{payload: ["SERROR", "VERROR", "C25006" | _]} -> true
-      _ -> false
-    end)
-  end
-
   @spec application_name :: binary()
   def application_name, do: @application_name
 
   @spec terminate_message :: binary()
   def terminate_message, do: @terminate_message
+
+  @spec admin_shutdown :: map()
+  def admin_shutdown do
+    # PostgreSQL error code 57P01: admin_shutdown
+    %{
+      "S" => "FATAL",
+      "V" => "FATAL",
+      "C" => "57P01",
+      "M" => "terminating connection due to administrator command"
+    }
+  end
 
   @spec scram_request :: iodata()
   def scram_request, do: @scram_request
@@ -343,9 +347,17 @@ defmodule Supavisor.Protocol.Server do
   defp decode_payload(:data_row, _payload), do: nil
 
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
-  @spec decode_payload(:error_response, binary()) :: [binary()]
-  defp decode_payload(:error_response, payload),
-    do: String.split(payload, <<0>>, trim: true)
+  @spec decode_payload(:error_response, binary()) :: %{String.t() => String.t()}
+  defp decode_payload(:error_response, payload) do
+    fields = String.split(payload, <<0>>, trim: true)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      case field do
+        <<char::binary-1, content::binary>> -> Map.put(acc, char, content)
+        _ -> acc
+      end
+    end)
+  end
 
   @spec decode_payload(:password_message, binary()) ::
           {:scram_sha_256, map()} | {:md5, binary()} | :undefined
@@ -457,9 +469,12 @@ defmodule Supavisor.Protocol.Server do
 
       # We only do light validation on the fields in the payload. The only field we use at the
       # moment is `user`. If that's missing, this is a bad payload.
-      if Map.has_key?(map, "user"),
-        do: {:ok, map},
-        else: {:error, :bad_startup_payload}
+      if Map.has_key?(map, "user") do
+        {:ok, map}
+      else
+        Logger.error("Bad startup payload: #{inspect(payload, limit: 200)}")
+        {:error, :bad_startup_payload}
+      end
     end
   end
 end

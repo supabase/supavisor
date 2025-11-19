@@ -22,6 +22,7 @@ config :supavisor,
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJibG9ja2VkIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.y-V3D1N2e8UTXc5PJzmV9cqMteq0ph2wl0yt42akQgA"
   ],
   metrics_blocklist: [],
+  cache_bypass_users: ["bypass_user", "temp_user"],
   node_host: System.get_env("NODE_IP", "127.0.0.1"),
   availability_zone: System.get_env("AVAILABILITY_ZONE"),
   session_proxy_ports:

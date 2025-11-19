@@ -61,8 +61,11 @@ defmodule Supavisor do
   @spec stop(id) :: :ok | {:error, :tenant_not_found}
   def stop(id) do
     case get_global_sup(id) do
-      nil -> {:error, :tenant_not_found}
-      pid -> Supervisor.stop(pid)
+      nil ->
+        {:error, :tenant_not_found}
+
+      pid ->
+        Supervisor.stop(pid)
     end
   end
 
@@ -81,7 +84,10 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe_local(pid, id) :: {:ok, subscribe_opts} | {:error, any()}
+  @spec subscribe_local(pid, id) ::
+          {:ok, subscribe_opts}
+          | {:error, :max_clients_reached}
+          | {:error, :terminating, term()}
   def subscribe_local(pid, id) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
@@ -89,7 +95,10 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe(pid, id, pid) :: {:ok, subscribe_opts} | {:error, any()}
+  @spec subscribe(pid, id, pid) ::
+          {:ok, subscribe_opts}
+          | {:error, :max_clients_reached}
+          | {:error, :terminating, term()}
   def subscribe(sup, id, pid \\ self()) do
     dest_node = node(sup)
 
@@ -183,7 +192,8 @@ defmodule Supavisor do
 
     Enum.reduce(keys, [], fn
       {:metrics, ^tenant} = key, acc -> del.(key, acc)
-      {:secrets, ^tenant, ^user} = key, acc -> del.(key, acc)
+      {:secrets_for_validation, ^tenant, ^user} = key, acc -> del.(key, acc)
+      {:secrets_check, ^tenant, ^user} = key, acc -> del.(key, acc)
       {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
       {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
       {:pool_config_cache, ^tenant, ^user} = key, acc -> del.(key, acc)
@@ -205,7 +215,8 @@ defmodule Supavisor do
         {:entry, key, _, _, _result}, acc ->
           case key do
             {:metrics, ^tenant} -> del.(key, acc)
-            {:secrets, ^tenant, _} -> del.(key, acc)
+            {:secrets_for_validation, ^tenant, _} -> del.(key, acc)
+            {:secrets_check, ^tenant, _} -> del.(key, acc)
             {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
             {:tenant_cache, ^tenant, _} -> del.(key, acc)
             {:pool_config_cache, ^tenant, _} -> del.(key, acc)
@@ -319,7 +330,8 @@ defmodule Supavisor do
       ) do
     Logger.info("Starting pool(s) for #{inspect(id)}")
 
-    user = elem(secrets, 1).().alias
+    secrets_map = elem(secrets, 1).()
+    user = secrets_map.user
 
     case type do
       :single -> Tenants.get_pool_config_cache(tenant, user)
@@ -327,21 +339,34 @@ defmodule Supavisor do
     end
     |> case do
       [_ | _] = replicas ->
-        opts =
+        # Extract only minimal info needed for pool creation
+        replicas_info =
           Enum.map(replicas, fn replica ->
             case replica do
               %Tenants.ClusterTenants{tenant: tenant, type: type} ->
-                Map.put(tenant, :replica_type, type)
+                first_user = List.first(tenant.users)
+
+                %{
+                  replica_type: type,
+                  pool_size:
+                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size)
+                }
 
               %Tenants.Tenant{} = tenant ->
-                Map.put(tenant, :replica_type, :write)
+                first_user = List.first(tenant.users)
+
+                %{
+                  replica_type: :write,
+                  pool_size:
+                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size)
+                }
             end
-            |> supervisor_args(id, secrets, log_level)
           end)
 
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
-          {Supavisor.TenantSupervisor, %{id: id, replicas: opts, log_level: log_level}}
+          {Supavisor.TenantSupervisor,
+           %{id: id, replicas: replicas_info, secrets: secrets, log_level: log_level}}
         )
         |> case do
           {:error, {:already_started, pid}} -> {:ok, pid}
@@ -356,52 +381,6 @@ defmodule Supavisor do
   end
 
   ## Internal functions
-
-  defp supervisor_args(
-         tenant_record,
-         {tenant, user, mode, db_name, _search_path} = id,
-         {method, secrets},
-         log_level
-       ) do
-    %{
-      default_parameter_status: ps,
-      default_pool_size: def_pool_size,
-      default_max_clients: def_max_clients,
-      client_idle_timeout: client_idle_timeout,
-      replica_type: replica_type,
-      feature_flags: feature_flags,
-      users: [
-        %{
-          pool_size: pool_size,
-          max_clients: max_clients
-        }
-      ]
-    } = tenant_record
-
-    {pool_size, max_clients} =
-      if method == :auth_query do
-        {def_pool_size, def_max_clients}
-      else
-        {pool_size, max_clients}
-      end
-
-    auth = build_auth(tenant_record, db_name, method, secrets)
-
-    %{
-      id: id,
-      tenant: tenant,
-      replica_type: replica_type,
-      user: user,
-      auth: auth,
-      pool_size: pool_size,
-      mode: mode,
-      default_parameter_status: ps,
-      max_clients: max_clients,
-      client_idle_timeout: client_idle_timeout,
-      log_level: log_level,
-      tenant_feature_flags: feature_flags
-    }
-  end
 
   @spec set_parameter_status(id, [{binary, binary}]) ::
           :ok | {:error, :not_found}
@@ -420,8 +399,8 @@ defmodule Supavisor do
     end
   end
 
-  @spec get_local_server(id, atom) :: map()
-  def get_local_server(id, mode) do
+  @spec get_local_server(id) :: map()
+  def get_local_server({_, _, mode, _, _} = id) do
     host = Application.get_env(:supavisor, :node_host)
 
     ports =
@@ -437,45 +416,4 @@ defmodule Supavisor do
   @spec count_pools(String.t()) :: non_neg_integer()
   def count_pools(tenant),
     do: Registry.count_match(Supavisor.Registry.TenantSups, tenant, :_)
-
-  @doc """
-  Builds an auth configuration map from tenant record data.
-  """
-  @spec build_auth(map(), String.t() | nil, atom(), secrets()) :: map()
-  def build_auth(tenant_record, db_name, method, secrets, app_name \\ "Supavisor") do
-    %{
-      db_host: db_host,
-      db_port: db_port,
-      db_database: db_database,
-      auth_query: auth_query,
-      ip_version: ip_ver,
-      sni_hostname: sni_hostname,
-      users: [
-        %{
-          db_user: db_user,
-          db_password: db_pass,
-          db_user_alias: alias
-        }
-      ]
-    } = tenant_record
-
-    %{
-      host: to_charlist(db_host),
-      sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
-      port: db_port,
-      user: db_user,
-      alias: alias,
-      auth_query: auth_query,
-      database: if(db_name != nil, do: db_name, else: db_database),
-      password: fn -> db_pass end,
-      application_name: app_name,
-      ip_version: Helpers.ip_version(ip_ver, db_host),
-      upstream_ssl: tenant_record.upstream_ssl,
-      upstream_verify: tenant_record.upstream_verify,
-      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
-      require_user: tenant_record.require_user,
-      method: method,
-      secrets: secrets
-    }
-  end
 end

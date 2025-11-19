@@ -35,6 +35,43 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
     end
   end
 
+  describe "client_handler state transitions" do
+    setup ctx do
+      create_instance([__MODULE__, ctx.line])
+    end
+
+    test "emits state transition events", ctx do
+      tenant = ctx.external_id
+      ref = attach_handler([:supavisor, :client_handler, :state])
+
+      start_supervised!(
+        {SingleConnection,
+         hostname: "localhost",
+         port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+         database: ctx.db,
+         username: ctx.user,
+         password: "postgres"}
+      )
+
+      assert_receive {^ref, {[:supavisor, :client_handler, :state], %{duration: _}, meta}}
+      assert %{from_state: :handshake, to_state: :auth_scram_first_wait, tenant: ^tenant} = meta
+
+      assert_receive {^ref, {[:supavisor, :client_handler, :state], %{duration: _}, meta}}
+
+      assert %{
+               from_state: :auth_scram_first_wait,
+               to_state: :auth_scram_final_wait,
+               tenant: ^tenant
+             } = meta
+
+      assert_receive {^ref, {[:supavisor, :client_handler, :state], %{duration: _}, meta}}
+      assert %{from_state: :auth_scram_final_wait, to_state: :connecting, tenant: ^tenant} = meta
+
+      assert_receive {^ref, {[:supavisor, :client_handler, :state], %{duration: _}, meta}}
+      assert %{from_state: :connecting, to_state: :idle, tenant: ^tenant} = meta
+    end
+  end
+
   describe "execute_client_connections_lifetime" do
     setup ctx do
       create_instance([__MODULE__, ctx.line])
