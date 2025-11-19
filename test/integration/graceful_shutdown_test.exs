@@ -147,8 +147,16 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       assert :ok = Manager.graceful_shutdown(id, 100)
       assert_receive {:DOWN, ^ref, :process, ^client_pid, _reason}, 1000
 
-      # Task returns error due to interrupted query
-      assert {:error, %Postgrex.Error{postgres: %{code: :admin_shutdown}}} =
+      # TODO: postgrex gives us `tcp recv: closed` unless we send a ReadyForQuery
+      # afterwards. Meanwhile, `psql` will complain if we **do** send the ReadyForQuery
+      # message. Need to check in more clients and see how to handle this the best
+      # assert {:error, %Postgrex.Error{postgres: %{code: :admin_shutdown}}} =
+      assert {:error,
+              %DBConnection.ConnectionError{
+                message: "tcp recv: closed",
+                severity: :error,
+                reason: :error
+              }} =
                Task.await(query_task)
     end
 
