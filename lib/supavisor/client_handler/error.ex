@@ -199,8 +199,14 @@ defmodule Supavisor.ClientHandler.Error do
   end
 
   defp process({:error, :db_handler_exited, pid, reason}, _context) do
+    message =
+      case reason do
+        :db_termination -> "Connection to database closed. Check logs for more information"
+        other -> "DbHandler exited. Check logs for more information."
+      end
+
     %{
-      error: Server.error_message("XX000", "DbHandler exited"),
+      error: Server.error_message("XX000", message),
       log_message: "DbHandler #{inspect(pid)} exited #{inspect(reason)}"
     }
   end
