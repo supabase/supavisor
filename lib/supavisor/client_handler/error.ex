@@ -202,7 +202,7 @@ defmodule Supavisor.ClientHandler.Error do
     message =
       case reason do
         :db_termination -> "Connection to database closed. Check logs for more information"
-        other -> "DbHandler exited. Check logs for more information."
+        _ -> "DbHandler exited. Check logs for more information."
       end
 
     %{
