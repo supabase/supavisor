@@ -49,7 +49,8 @@ defmodule Supavisor.ClientHandler.Error do
 
     %{
       error: Server.error_message("XX000", message_text),
-      log_message: message_text
+      log_message: message_text,
+      send_ready_for_query: true
     }
   end
 
