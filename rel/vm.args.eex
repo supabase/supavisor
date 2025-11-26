@@ -23,8 +23,8 @@
 -kernel inet_dist_listen_max 21000
 
 # Distribution socket options:
-# send buffer - 4.2MB
-# receive buffer - 6.3MB
+# send buffer - 256KB
+# receive buffer - 512KB
 # buffer - set to receive buffer
--kernel inet_dist_connect_options [{sndbuf,4194304},{recbuf,6291456},{buffer,6291456},{nodelay,true}]
--kernel inet_dist_listen_options [{sndbuf,4194304},{recbuf,6291456},{buffer,6291456},{nodelay,true}]
+-kernel inet_dist_connect_options [{sndbuf,256000},{recbuf,512000},{buffer,512000},{nodelay,true}]
+-kernel inet_dist_listen_options [{sndbuf,256000},{recbuf,512000},{buffer,512000},{nodelay,true}]
