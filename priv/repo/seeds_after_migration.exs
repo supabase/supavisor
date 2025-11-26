@@ -71,7 +71,7 @@ end
           %{
             "db_user" => "max_clients",
             "db_password" => "postgres",
-            "pool_size" => 1,
+            "pool_size" => 2,
             "max_clients" => 0,
             "mode_type" => "transaction",
             "pool_checkout_timeout" => 500

@@ -191,6 +191,16 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
+  defp process({:error, :max_clients_reached_session}, _context) do
+    message =
+      "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size"
+
+    %{
+      error: Server.error_message("XX000", message),
+      log_message: message
+    }
+  end
+
   defp process({:error, :max_pools_reached}, _context) do
     %{
       error: Server.error_message("XX000", "Max pools count reached"),
@@ -222,7 +232,7 @@ defmodule Supavisor.ClientHandler.Error do
   end
 
   defp process({:error, :transaction_timeout}, _context) do
-    message = "Unable to check out process from the pool due to timeout"
+    message = "Unable to check out connection from the pool due to timeout"
 
     %{
       error: Server.error_message("XX000", message),

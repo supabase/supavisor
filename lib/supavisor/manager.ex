@@ -205,8 +205,10 @@ defmodule Supavisor.Manager do
   def handle_call({:subscribe, pid}, _, state) do
     Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect(state.id)}")
 
+    limit = if state.mode == :session, do: state.pool_size, else: state.max_clients
+
     {reply, new_state} =
-      if :ets.info(state.tid, :size) < state.max_clients or Supavisor.mode(state.id) == :session do
+      if :ets.info(state.tid, :size) < limit do
         :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
 
         case state.parameter_status do

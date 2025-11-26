@@ -235,6 +235,18 @@ defmodule Supavisor.ClientHandler do
             Telem.client_join(:fail, id)
             {:stop, :normal}
 
+          check_max_clients_reached(id, info, data.mode) ->
+            error =
+              if data.mode == :session do
+                {:error, :max_clients_reached_session}
+              else
+                {:error, :max_clients_reached}
+              end
+
+            Error.maybe_log_and_send_error(sock, error)
+            Telem.client_join(:fail, id)
+            {:stop, :normal}
+
           true ->
             new_data = set_tenant_info(data, info, user, id, db_name)
 
@@ -959,5 +971,24 @@ defmodule Supavisor.ClientHandler do
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
         auth: auth
     }
+  end
+
+  defp check_max_clients_reached(id, info, mode) do
+    limit =
+      if mode == :session do
+        info.user.pool_size || info.tenant.default_pool_size
+      else
+        info.user.max_clients || info.tenant.default_max_clients
+      end
+
+    case Registry.lookup(Supavisor.Registry.ManagerTables, id) do
+      [{_pid, tid}] ->
+        current_clients = :ets.info(tid, :size)
+
+        current_clients >= limit
+
+      _ ->
+        false
+    end
   end
 end
