@@ -291,20 +291,33 @@ defmodule Supavisor.ClientHandler do
       ) do
     Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(method)}")
 
-    case method do
-      :auth_query_md5 ->
-        auth_context = Auth.create_auth_context(method, secrets, info)
-        :ok = HandlerHelpers.sock_send(sock, Server.md5_request(auth_context.salt))
+    case Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error) do
+      :ok ->
+        case method do
+          :auth_query_md5 ->
+            auth_context = Auth.create_auth_context(method, secrets, info)
+            :ok = HandlerHelpers.sock_send(sock, Server.md5_request(auth_context.salt))
 
-        {:next_state, :auth_md5_wait, %{data | auth_context: auth_context},
-         {:timeout, 15_000, :auth_timeout}}
+            {:next_state, :auth_md5_wait, %{data | auth_context: auth_context},
+             {:timeout, 15_000, :auth_timeout}}
 
-      _scram_method ->
-        :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
-        auth_context = Auth.create_auth_context(method, secrets, info)
+          _scram_method ->
+            :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
+            auth_context = Auth.create_auth_context(method, secrets, info)
 
-        {:next_state, :auth_scram_first_wait, %{data | auth_context: auth_context},
-         {:timeout, 15_000, :auth_timeout}}
+            {:next_state, :auth_scram_first_wait, %{data | auth_context: auth_context},
+             {:timeout, 15_000, :auth_timeout}}
+        end
+
+      {:error, :circuit_open, blocked_until} ->
+        Error.maybe_log_and_send_error(
+          sock,
+          {:error, :circuit_breaker_open, :auth_error, blocked_until},
+          :handshake
+        )
+
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
     end
   end
 
@@ -777,6 +790,8 @@ defmodule Supavisor.ClientHandler do
       data.user,
       auth_context.secrets
     )
+
+    Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
 
     Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason, data.user}, context)
     Telem.client_join(:fail, data.id)

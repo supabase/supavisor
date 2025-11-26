@@ -458,6 +458,42 @@ defmodule Supavisor.Integration.ProxyTest do
     Supavisor.CircuitBreaker.clear(tenant, :db_connection)
   end
 
+  test "circuit breaker blocks auth after 10 failed password attempts" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_auth"
+
+    url =
+      "postgresql://#{db_conf[:username]}.#{tenant}:wrong_password@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    # First 10 attempts should fail with authentication error
+    for _ <- 1..10 do
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :invalid_password,
+                  message: "password authentication failed for user \"" <> _,
+                  severity: "FATAL",
+                  pg_code: "28P01"
+                }
+              }} = parse_uri(url) |> single_connection()
+    end
+
+    # 11th attempt should fail with circuit breaker error
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Circuit breaker open: Too many authentication errors",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = parse_uri(url) |> single_connection()
+
+    # Clean up - clear circuit breaker for this tenant+IP
+    Supavisor.CircuitBreaker.clear({tenant, "127.0.0.1"}, :auth_error)
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,

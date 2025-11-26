@@ -21,6 +21,12 @@ defmodule Supavisor.CircuitBreaker do
       window_seconds: 300,
       block_seconds: 600,
       explanation: "Unable to establish connection to upstream database"
+    },
+    auth_error: %{
+      max_failures: 10,
+      window_seconds: 300,
+      block_seconds: 600,
+      explanation: "Too many authentication errors"
     }
   }
 
@@ -33,18 +39,18 @@ defmodule Supavisor.CircuitBreaker do
   end
 
   @doc """
-  Records a failure for a given tenant and operation.
+  Records a failure for a given key and operation.
   """
-  @spec record_failure(String.t(), atom()) :: :ok
-  def record_failure(tenant, operation) when is_binary(tenant) and is_atom(operation) do
+  @spec record_failure(term(), atom()) :: :ok
+  def record_failure(key, operation) when is_atom(operation) do
     now = System.system_time(:second)
-    key = {tenant, operation}
+    ets_key = {key, operation}
 
-    case :ets.lookup(@table, key) do
+    case :ets.lookup(@table, ets_key) do
       [] ->
-        :ets.insert(@table, {key, %{failures: [now], blocked_until: nil}})
+        :ets.insert(@table, {ets_key, %{failures: [now], blocked_until: nil}})
 
-      [{^key, state}] ->
+      [{^ets_key, state}] ->
         threshold = Map.fetch!(@thresholds, operation)
         window_start = now - threshold.window_seconds
 
@@ -55,7 +61,7 @@ defmodule Supavisor.CircuitBreaker do
             block_until = now + threshold.block_seconds
 
             Logger.warning(
-              "Circuit breaker opened for tenant=#{tenant} operation=#{operation} until=#{block_until}"
+              "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{block_until}"
             )
 
             block_until
@@ -63,43 +69,43 @@ defmodule Supavisor.CircuitBreaker do
             state.blocked_until
           end
 
-        :ets.insert(@table, {key, %{failures: recent_failures, blocked_until: blocked_until}})
+        :ets.insert(@table, {ets_key, %{failures: recent_failures, blocked_until: blocked_until}})
     end
 
     :ok
   end
 
   @doc """
-  Checks if a circuit breaker is open for a given tenant and operation.
+  Checks if a circuit breaker is open for a given key and operation.
   Returns :ok if operation is allowed, {:error, :circuit_open, blocked_until} otherwise.
   """
-  @spec check(String.t(), atom()) :: :ok | {:error, :circuit_open, integer()}
-  def check(tenant, operation) when is_binary(tenant) and is_atom(operation) do
+  @spec check(term(), atom()) :: :ok | {:error, :circuit_open, integer()}
+  def check(key, operation) when is_atom(operation) do
     now = System.system_time(:second)
-    key = {tenant, operation}
+    ets_key = {key, operation}
 
-    case :ets.lookup(@table, key) do
+    case :ets.lookup(@table, ets_key) do
       [] ->
         :ok
 
-      [{^key, %{blocked_until: nil}}] ->
+      [{^ets_key, %{blocked_until: nil}}] ->
         :ok
 
-      [{^key, %{blocked_until: blocked_until}}] when blocked_until > now ->
+      [{^ets_key, %{blocked_until: blocked_until}}] when blocked_until > now ->
         {:error, :circuit_open, blocked_until}
 
-      [{^key, state}] ->
-        :ets.insert(@table, {key, %{state | blocked_until: nil}})
+      [{^ets_key, state}] ->
+        :ets.insert(@table, {ets_key, %{state | blocked_until: nil}})
         :ok
     end
   end
 
   @doc """
-  Clears circuit breaker state for a tenant and operation.
+  Clears circuit breaker state for a key and operation.
   """
-  @spec clear(String.t(), atom()) :: :ok
-  def clear(tenant, operation) when is_binary(tenant) and is_atom(operation) do
-    :ets.delete(@table, {tenant, operation})
+  @spec clear(term(), atom()) :: :ok
+  def clear(key, operation) when is_atom(operation) do
+    :ets.delete(@table, {key, operation})
     :ok
   end
 

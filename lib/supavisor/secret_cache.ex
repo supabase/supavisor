@@ -70,7 +70,6 @@ defmodule Supavisor.SecretCache do
   Gets auth secrets to authenticate to the upstream database.
   """
   def get_upstream_auth_secrets(id) do
-    {{_type, tenant}, user, _mode, _db, _search} = id
     Supavisor.TenantCache.get_upstream_auth_secrets(id)
   end
 
@@ -102,7 +101,6 @@ defmodule Supavisor.SecretCache do
   Caches upstream auth secrets in the tenant-specific cache.
   """
   def put_upstream_auth_secrets(id, method, secrets_with_client_key_fn) do
-    {{_type, tenant}, user, _mode, _db, _search} = id
     Supavisor.TenantCache.put_upstream_auth_secrets(id, {method, secrets_with_client_key_fn})
   end
 

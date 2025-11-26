@@ -113,7 +113,7 @@ end)
 end)
 
 # Create tenants for circuit breaker tests
-["circuit_breaker_secrets", "circuit_breaker_db_conn"]
+["circuit_breaker_secrets", "circuit_breaker_db_conn", "circuit_breaker_auth"]
 |> Enum.each(fn tenant ->
   if !Tenants.get_tenant_by_external_id(tenant) do
     {:ok, _} =
