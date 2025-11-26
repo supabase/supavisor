@@ -50,7 +50,7 @@ defmodule Supavisor.E2ECase do
                feature_flags: %{"named_prepared_statements" => true},
                users: [
                  %{
-                   "pool_size" => 15,
+                   "pool_size" => 200,
                    "db_user" => "postgres",
                    "db_password" => "postgres",
                    "is_manager" => true,
