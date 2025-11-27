@@ -179,42 +179,42 @@ defmodule Supavisor.Monitoring.PromEx do
         {:"=:=", {:map_get, {:const, name}, :"$1"}, {:const, value}}
       end
 
-    {_, store} = Peep.Persistent.storage(__metrics_collector_name__())
+    %Peep.Persistent{storage: {_, store}, ids_to_metrics: itm} =
+      Peep.Persistent.fetch(__metrics_collector_name__())
 
     store
     |> List.wrap()
     |> Enum.flat_map(fn tid ->
       :ets.select(tid, [{{{:_, :"$1", :_}, :_}, match, [:"$_"]}])
     end)
-    |> group_metrics(%{})
+    |> group_metrics(itm, %{})
   end
 
   # Copied from Peep. Probably will work only with ETS storage (that we
   # currently use).
   # To be removed if Peep will accept feature request for similar functionality,
   # see: https://github.com/rkallos/peep/issues/35
-  defp group_metrics([], acc) do
+  defp group_metrics([], _itm, acc) do
     acc
   end
 
-  defp group_metrics([metric | rest], acc) do
-    acc2 = group_metric(metric, acc)
-    group_metrics(rest, acc2)
+  defp group_metrics([metric | rest], itm, acc) do
+    acc2 = group_metric(metric, itm, acc)
+    group_metrics(rest, itm, acc2)
   end
 
-  defp group_metric({{%Metrics.Counter{} = metric, tags, _}, value}, acc) do
+  defp group_metric({{id, tags, _}, value}, itm, acc) do
+    %{^id => metric} = itm
     update_in(acc, [Access.key(metric, %{}), Access.key(tags, 0)], &(&1 + value))
   end
 
-  defp group_metric({{%Metrics.Sum{} = metric, tags, _}, value}, acc) do
-    update_in(acc, [Access.key(metric, %{}), Access.key(tags, 0)], &(&1 + value))
-  end
-
-  defp group_metric({{%Metrics.LastValue{} = metric, tags}, value}, acc) do
-    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
-  end
-
-  defp group_metric({{%Metrics.Distribution{} = metric, tags}, atomics}, acc) do
+  defp group_metric({{id, tags}, %Storage.Atomics{} = atomics}, itm, acc) do
+    %{^id => metric} = itm
     put_in(acc, [Access.key(metric, %{}), Access.key(tags)], Storage.Atomics.values(atomics))
+  end
+
+  defp group_metric({{id, tags}, value}, itm, acc) do
+    %{^id => metric} = itm
+    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
   end
 end
