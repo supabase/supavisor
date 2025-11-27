@@ -199,7 +199,7 @@ defmodule Supavisor.Integration.ProxyTest do
                [{~c"x-app-version", Application.spec(:supavisor, :vsn)}], []}}
   end
 
-  test "checks that client_handler is idle and db_pid is nil for transaction mode" do
+  test "checks that client_handler is idle and db_connection is nil for transaction mode" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
     url =
@@ -216,9 +216,9 @@ defmodule Supavisor.Integration.ProxyTest do
       |> :ets.tab2list()
 
     assert {state, map} = :sys.get_state(client_pid)
-    assert %{db_pid: db_pid} = map
+    assert %{db_connection: db_connection} = map
 
-    assert {:idle, nil} = {state, db_pid}
+    assert {:idle, nil} = {state, db_connection}
     :gen_statem.stop(pid)
   end
 
@@ -246,50 +246,77 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "change role password" do
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
 
-    try do
-      conn = fn pass ->
-        "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
-      end
-
-      first_pass = conn.(db_conf[:password])
-      new_pass = conn.("postgres_new")
-
-      assert {:ok, pid} = parse_uri(first_pass) |> single_connection()
-
-      assert [%Postgrex.Result{rows: [["1"]]}] =
-               P.SimpleConnection.call(pid, {:query, "select 1;"})
-
-      :gen_statem.stop(pid)
-
-      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
-
-      assert {:ok, pid} = parse_uri(new_pass) |> single_connection()
-
-      assert [%Postgrex.Result{rows: [["1"]]}] =
-               P.SimpleConnection.call(pid, {:query, "select 1;"})
-
-      :gen_statem.stop(pid)
-    after
-      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
+    conn = fn pass ->
+      "postgresql://dev_postgres.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
     end
+
+    first_pass = conn.(db_conf[:password])
+    new_pass = conn.("postgres_new")
+
+    assert {:ok, first_conn} = parse_uri(first_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
+
+    # First attempt with new password should fail (cache not updated yet)
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"" <> _,
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
+            }} = parse_uri(new_pass) |> single_connection()
+
+    # Second attempt should succeed (cache was updated by the failed attempt)
+    assert {:ok, second_conn} = parse_uri(new_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(second_conn, {:query, "select 1;"})
+
+    # First connection should still be up: we don't terminate the pool anymore when the secrets change
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    :gen_statem.stop(first_conn)
+    :gen_statem.stop(second_conn)
   end
 
-  test "try old password after password change" do
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+  test "change role password for bypass user skips validation cache" do
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
 
-    try do
-      old_pass =
-        "postgresql://dev_postgres.is_manager:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
-
-      P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
-
-      assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} =
-               parse_uri(old_pass) |> single_connection()
-    after
-      P.query(origin, "alter user dev_postgres with password '#{db_conf[:password]}';", [])
+    conn = fn pass ->
+      "postgresql://bypass_user.is_manager:#{pass}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres?sslmode=disable"
     end
+
+    first_pass = conn.(db_conf[:password])
+    new_pass = conn.("postgres_new")
+
+    assert {:ok, first_conn} = parse_uri(first_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    P.query(origin, "alter user bypass_user with password 'postgres_new';", [])
+
+    # For bypass users, first attempt with new password should succeed immediately
+    # because validation secrets are not cached
+    assert {:ok, second_conn} = parse_uri(new_pass) |> single_connection()
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(second_conn, {:query, "select 1;"})
+
+    # First connection should still be up
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    :gen_statem.stop(first_conn)
+    :gen_statem.stop(second_conn)
   end
 
   test "invalid characters in user or db_name" do
@@ -310,36 +337,6 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = parse_uri(url) |> single_connection()
   end
 
-  test "active_count doesn't block" do
-    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
-    port = Application.get_env(:supavisor, :proxy_port_session)
-
-    connection_opts =
-      Keyword.merge(db_conf,
-        username: db_conf[:username] <> ".proxy_tenant1",
-        port: port
-      )
-
-    assert {:ok, pid} = single_connection(connection_opts)
-
-    id = {{:single, "proxy_tenant1"}, db_conf[:username], :session, db_conf[:database], nil}
-    [{client_pid, _}] = Registry.lookup(Supavisor.Registry.TenantClients, id)
-
-    P.SimpleConnection.call(pid, {:query, "select 1;"})
-    {_, %{active_count: active_count}} = :sys.get_state(client_pid)
-    assert active_count >= 1
-
-    Enum.each(0..200, fn _ ->
-      P.SimpleConnection.call(pid, {:query, "select 1;"})
-    end)
-
-    assert [
-             %Postgrex.Result{
-               command: :select
-             }
-           ] = P.SimpleConnection.call(pid, {:query, "select 1;"})
-  end
-
   defp single_connection(db_conf, c_port \\ nil) when is_list(db_conf) do
     port = c_port || db_conf[:port]
 
@@ -355,6 +352,146 @@ defmodule Supavisor.Integration.ProxyTest do
     with {:error, {error, _}} <- start_supervised({SingleConnection, opts}) do
       {:error, error}
     end
+  end
+
+  test "connect to deleted database returns proper error" do
+    %{origin: origin, db_conf: db_conf} =
+      setup_tenant_connections(List.first(@tenants))
+
+    tenant = List.first(@tenants)
+    test_db = "test_db_#{:erlang.unique_integer([:positive])}"
+
+    P.query!(origin, "CREATE DATABASE #{test_db}", [])
+
+    assert {:ok, test_proxy} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: Application.get_env(:supavisor, :proxy_port_transaction),
+               database: test_db,
+               password: db_conf[:password],
+               username: db_conf[:username] <> "." <> tenant
+             )
+
+    assert %P.Result{rows: [[1]]} = P.query!(test_proxy, "SELECT 1", [])
+    GenServer.stop(test_proxy)
+
+    pool_sup_pid =
+      Supavisor.get_global_sup(
+        {{:single, tenant}, db_conf[:username], :transaction, test_db, nil}
+      )
+
+    assert is_pid(pool_sup_pid)
+    assert Process.alive?(pool_sup_pid)
+
+    P.query!(origin, "DROP DATABASE #{test_db} WITH (FORCE)", [])
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, _} =
+                 single_connection(
+                   hostname: db_conf[:hostname],
+                   port: Application.get_env(:supavisor, :proxy_port_transaction),
+                   database: test_db,
+                   password: db_conf[:password],
+                   username: db_conf[:username] <> "." <> tenant
+                 )
+
+        Process.sleep(200)
+      end)
+
+    assert log =~
+             ~r/SingleConnection.*FATAL 3D000.*database "#{Regex.escape(test_db)}" does not exist/
+
+    refute Process.alive?(pool_sup_pid)
+
+    GenServer.stop(origin)
+  end
+
+  test "circuit breaker blocks get_secrets after failures" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_secrets"
+
+    for _ <- 1..5 do
+      Supavisor.CircuitBreaker.record_failure(tenant, :get_secrets)
+    end
+
+    url =
+      "postgresql://postgres.#{tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Circuit breaker open: Failed to retrieve database credentials",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = parse_uri(url) |> single_connection()
+
+    Supavisor.CircuitBreaker.clear(tenant, :get_secrets)
+  end
+
+  test "circuit breaker blocks db_connection after failures" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_db_conn"
+
+    for _ <- 1..100 do
+      Supavisor.CircuitBreaker.record_failure(tenant, :db_connection)
+    end
+
+    url =
+      "postgresql://#{db_conf[:username]}.#{tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message:
+                  "Circuit breaker open: Unable to establish connection to upstream database",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = parse_uri(url) |> single_connection()
+
+    Supavisor.CircuitBreaker.clear(tenant, :db_connection)
+  end
+
+  test "circuit breaker blocks auth after 10 failed password attempts" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_auth"
+
+    url =
+      "postgresql://#{db_conf[:username]}.#{tenant}:wrong_password@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    # First 10 attempts should fail with authentication error
+    for _ <- 1..10 do
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :invalid_password,
+                  message: "password authentication failed for user \"" <> _,
+                  severity: "FATAL",
+                  pg_code: "28P01"
+                }
+              }} = parse_uri(url) |> single_connection()
+    end
+
+    # 11th attempt should fail with circuit breaker error
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "Circuit breaker open: Too many authentication errors",
+                pg_code: "XX000",
+                severity: "FATAL",
+                unknown: "FATAL"
+              }
+            }} = parse_uri(url) |> single_connection()
+
+    # Clean up - clear circuit breaker for this tenant+IP
+    Supavisor.CircuitBreaker.clear({tenant, "127.0.0.1"}, :auth_error)
   end
 
   defp parse_uri(uri) do

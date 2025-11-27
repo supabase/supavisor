@@ -67,6 +67,7 @@ defmodule Supavisor.Logger.LogflareFormatter do
 
     metadata =
       meta
+      |> Map.delete(:auth_error)
       |> Map.merge(%{
         context: context,
         level: level

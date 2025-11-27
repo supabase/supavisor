@@ -6,6 +6,7 @@ defmodule Supavisor.Tenants do
   import Ecto.Query, warn: false
   alias Supavisor.Repo
 
+  alias Supavisor.ClientHandler.Auth.ManagerSecrets
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
   alias Supavisor.Tenants.Tenant
@@ -140,12 +141,46 @@ defmodule Supavisor.Tenants do
     end
   end
 
+  @spec get_manager_user(String.t()) :: User.t() | nil
+  def get_manager_user(external_id) do
+    from(u in User,
+      where: u.tenant_external_id == ^external_id and u.is_manager == true
+    )
+    |> Repo.one()
+  end
+
+  @spec get_manager_user_cache(String.t()) :: ManagerSecrets.t() | nil
+  def get_manager_user_cache(external_id, ttl \\ :timer.hours(24)) do
+    ttl = if is_nil(ttl), do: :timer.hours(24), else: ttl
+    cache_key = {:manager_user_cache, external_id}
+
+    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+           {:commit, {:cached, get_manager_user(external_id)}, ttl: ttl}
+         end) do
+      {_, {:cached, nil}} ->
+        nil
+
+      {_, {:cached, nil}, _} ->
+        nil
+
+      {_, {:cached, user}} ->
+        %ManagerSecrets{
+          db_user: user.db_user,
+          db_password: user.db_password
+        }
+
+      {_, {:cached, user}, _} ->
+        %ManagerSecrets{
+          db_user: user.db_user,
+          db_password: user.db_password
+        }
+    end
+  end
+
   def get_pool_config(external_id, user) do
     from(t in Tenant,
       left_join: u in User,
-      on:
-        u.tenant_external_id == t.external_id and
-          (u.db_user_alias == ^user or (is_nil(u.db_user_alias) and u.db_user == ^user)),
+      on: u.tenant_external_id == t.external_id and u.db_user == ^user,
       where: t.external_id == ^external_id,
       preload: [users: u]
     )
@@ -168,7 +203,7 @@ defmodule Supavisor.Tenants do
   def get_cluster_config(external_id, user) do
     case Repo.all(ClusterTenants, cluster_alias: external_id) do
       [%{cluster_alias: cluster_alias, active: true} | _] ->
-        user = from(u in User, where: u.db_user_alias == ^user)
+        user = from(u in User, where: u.db_user == ^user)
         tenant = from(t in Tenant, preload: [users: ^user])
 
         from(ct in ClusterTenants,
@@ -433,7 +468,7 @@ defmodule Supavisor.Tenants do
       join: t in Tenant,
       on: u.tenant_external_id == t.external_id,
       where:
-        (u.db_user_alias == ^user and t.require_user == true) or
+        u.db_user == ^user or
           (t.require_user == false and u.is_manager == true),
       select: {u, t}
     )
