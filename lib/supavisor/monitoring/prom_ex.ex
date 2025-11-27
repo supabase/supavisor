@@ -43,7 +43,8 @@ defmodule Supavisor.Monitoring.PromEx do
       Peep.child_spec(
         name: name,
         metrics: Enum.map(metrics, &extent_tags(&1, global_tags_keys)),
-        global_tags: global_tags
+        global_tags: global_tags,
+        storage: :striped
       )
     end
 
@@ -173,6 +174,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   defp sum_merge(a, b), do: Map.merge(a, b, fn _, a, b -> a + b end)
 
+  # Works only with striped storage
   def fetch_metrics_for(tags) do
     match =
       for {name, value} <- tags do
@@ -183,15 +185,14 @@ defmodule Supavisor.Monitoring.PromEx do
       Peep.Persistent.fetch(__metrics_collector_name__())
 
     store
-    |> List.wrap()
+    |> Tuple.to_list()
     |> Enum.flat_map(fn tid ->
       :ets.select(tid, [{{{:_, :"$1", :_}, :_}, match, [:"$_"]}])
     end)
     |> group_metrics(itm, %{})
   end
 
-  # Copied from Peep. Probably will work only with ETS storage (that we
-  # currently use).
+  # Copied from Peep.
   # To be removed if Peep will accept feature request for similar functionality,
   # see: https://github.com/rkallos/peep/issues/35
   defp group_metrics([], _itm, acc) do

@@ -6,6 +6,7 @@ defmodule Supavisor.MetricsCleaner do
 
   @interval :timer.minutes(30)
   @name __MODULE__
+  @tenant_registry_table :syn_registry_by_name_tenants
 
   def start_link(args),
     do: GenServer.start_link(__MODULE__, args, name: @name)
@@ -61,15 +62,15 @@ defmodule Supavisor.MetricsCleaner do
 
   defp check, do: Process.send_after(self(), :check, @interval)
 
+  # Assumes peep storage is `:striped`
   defp loop_and_cleanup_metrics_table do
-    {_, tids} = Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
+    %Peep.Persistent{storage: {_, tids}} =
+      Peep.Persistent.fetch(Supavisor.Monitoring.PromEx.Metrics)
 
     tids
-    |> List.wrap()
+    |> Tuple.to_list()
     |> Enum.sum_by(&clean_table/1)
   end
-
-  @tenant_registry_table :syn_registry_by_name_tenants
 
   defp clean_table(tid) do
     func =
