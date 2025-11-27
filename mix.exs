@@ -53,7 +53,7 @@ defmodule Supavisor.MixProject do
       {:phoenix_live_view, "~> 1.0"},
       {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_poller, "~> 1.0"},
-      {:peep, "~> 4.2", override: true},
+      {:peep, "~> 4.2 and >= 4.2.1", override: true},
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
       {:cloak_ecto, "~> 1.3.0"},
