@@ -32,7 +32,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   defmodule Buckets do
     @moduledoc false
     use Peep.Buckets.Custom,
-      buckets: [1, 5, 10, 100, 1_000, 5_000, 10_000]
+      buckets: [1, 5, 10, 100, 500, 1_000, 2_500, 5_000, 10_000, 15_000]
   end
 
   defmodule ClientConnectionLifetimeBuckets do
