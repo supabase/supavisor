@@ -23,6 +23,7 @@ config :supavisor, SupavisorWeb.Endpoint,
   server: true,
   http: [
     port: String.to_integer(System.get_env("PORT") || "4000"),
+    compress: true,
     transport_options: [
       max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
       num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
