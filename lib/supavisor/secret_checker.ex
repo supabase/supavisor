@@ -128,7 +128,7 @@ defmodule Supavisor.SecretChecker do
       {:ok, secret} ->
         method =
           case {t.use_jit, secret} do
-            {true, %Auth.PasswordSecrets{}} -> :auth_query_jit
+            {true, %Auth.SASLSecrets{}} -> :auth_query_jit
             {_, %Auth.MD5Secrets{}} -> :auth_query_md5
             {_, %Auth.SASLSecrets{}} -> :auth_query
           end
