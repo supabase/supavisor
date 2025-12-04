@@ -187,7 +187,7 @@ defmodule Supavisor.Monitoring.PromEx do
     store
     |> Tuple.to_list()
     |> Enum.flat_map(fn tid ->
-      :ets.select(tid, [{{{:_, :"$1", :_}, :_}, match, [:"$_"]}])
+      :ets.select(tid, [{{{:_, :"$1"}, :_}, match, [:"$_"]}])
     end)
     |> group_metrics(itm, %{})
   end
@@ -204,11 +204,6 @@ defmodule Supavisor.Monitoring.PromEx do
     group_metrics(rest, itm, acc2)
   end
 
-  defp group_metric({{id, tags, _}, value}, itm, acc) do
-    %{^id => metric} = itm
-    update_in(acc, [Access.key(metric, %{}), Access.key(tags, 0)], &(&1 + value))
-  end
-
   defp group_metric({{id, tags}, %Storage.Atomics{} = atomics}, itm, acc) do
     %{^id => metric} = itm
     put_in(acc, [Access.key(metric, %{}), Access.key(tags)], Storage.Atomics.values(atomics))
@@ -216,6 +211,13 @@ defmodule Supavisor.Monitoring.PromEx do
 
   defp group_metric({{id, tags}, value}, itm, acc) do
     %{^id => metric} = itm
-    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
+
+    case value do
+      {_timestamp, value} ->
+        put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
+
+      value ->
+        put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
+    end
   end
 end
