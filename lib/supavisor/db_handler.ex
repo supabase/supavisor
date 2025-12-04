@@ -447,6 +447,11 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  @impl true
+  def format_status(status) do
+    Map.put(status, :queue, [])
+  end
+
   @spec encode_and_forward_error(map(), map()) :: :ok | :noop
   defp encode_and_forward_error(message, data) do
     case data do

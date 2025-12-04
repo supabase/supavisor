@@ -782,6 +782,11 @@ defmodule Supavisor.ClientHandler do
     Logger.log(level, "ClientHandler: terminating with reason #{inspect(reason)}")
   end
 
+  @impl true
+  def format_status(status) do
+    Map.put(status, :queue, [])
+  end
+
   ## Internal functions
 
   defp handle_auth_success(sock, {method, secrets}, client_key, data) do
