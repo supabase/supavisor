@@ -584,7 +584,8 @@ defmodule Supavisor.Integration.ProxyTest do
     assert {:ok, conn} = single_connection(connection_opts)
     assert [%P.Result{rows: [["1"]]}] = P.SimpleConnection.call(conn, {:query, "select 1;"})
 
-    tenant_id = {{:single, "proxy_tenant1"}, "no_warm_pool_user", :session, db_conf[:database], nil}
+    tenant_id =
+      {{:single, "proxy_tenant1"}, "no_warm_pool_user", :session, db_conf[:database], nil}
 
     # Pool should have workers while connected
     assert count_pool_workers(tenant_id) > 0
