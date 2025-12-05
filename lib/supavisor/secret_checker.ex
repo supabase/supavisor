@@ -4,6 +4,7 @@ defmodule Supavisor.SecretChecker do
   use GenServer
   require Logger
 
+  alias Supavisor.ClientHandler.Auth
   alias Supavisor.Helpers
 
   @interval :timer.seconds(15)
@@ -116,8 +117,6 @@ defmodule Supavisor.SecretChecker do
     do: Process.send_after(self(), :check, interval + jitter())
 
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
-    alias Supavisor.ClientHandler.Auth
-
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
         method =
@@ -148,6 +147,7 @@ defmodule Supavisor.SecretChecker do
 
       other ->
         Logger.error("Failed to get secret: #{inspect(other)}")
+        other
     end
   end
 

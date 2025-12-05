@@ -38,18 +38,13 @@ defmodule Supavisor.Monitoring.PromEx do
     @impl true
     def child_spec(name, metrics) do
       global_tags = :logger.get_primary_config().metadata
-      global_tags_keys = Map.keys(global_tags)
 
       Peep.child_spec(
         name: name,
-        metrics: Enum.map(metrics, &extent_tags(&1, global_tags_keys)),
+        metrics: metrics,
         global_tags: global_tags,
         storage: :striped
       )
-    end
-
-    defp extent_tags(%{tags: tags} = metric, global_tags) do
-      %{metric | tags: tags ++ global_tags}
     end
   end
 
@@ -119,11 +114,21 @@ defmodule Supavisor.Monitoring.PromEx do
     Peep.get_all_metrics(__metrics_collector_name__())
   end
 
+  def fetch_metrics_compressed do
+    fetch_metrics()
+    |> :erlang.term_to_binary(compressed: 6)
+  end
+
   def fetch_tenant_metrics(tenant) do
     case Cachex.get(Supavisor.Cache, {:metrics, tenant}) do
       {_, metrics} when is_map(metrics) -> metrics
       _ -> %{}
     end
+  end
+
+  def fetch_tenant_metrics_compressed(tenant) do
+    fetch_tenant_metrics(tenant)
+    |> :erlang.term_to_binary(compressed: 6)
   end
 
   def fetch_cluster_metrics do
@@ -141,17 +146,17 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec fetch_node_metrics(atom()) :: map()
-  defp fetch_node_metrics(node), do: do_fetch(node, :fetch_metrics, [])
+  defp fetch_node_metrics(node), do: do_fetch(node, :fetch_metrics_compressed, [])
 
   @spec fetch_node_tenant_metrics(atom(), String.t()) :: map()
   defp fetch_node_tenant_metrics(node, tenant),
-    do: do_fetch(node, :fetch_tenant_metrics, [tenant])
+    do: do_fetch(node, :fetch_tenant_metrics_compressed, [tenant])
 
   @spec do_fetch(node(), atom(), list()) :: map()
   defp do_fetch(node, f, a) do
     case :rpc.call(node, __MODULE__, f, a, 25_000) do
-      map when is_map(map) ->
-        map
+      binary when is_binary(binary) ->
+        :erlang.binary_to_term(binary)
 
       {:badrpc, reason} ->
         Logger.error(
