@@ -665,7 +665,7 @@ defmodule Supavisor.ClientHandler do
   # Authentication timeout handler
   def handle_event(:timeout, :auth_timeout, auth_state, data)
       when auth_state in [:auth_md5_wait, :auth_scram_first_wait, :auth_scram_final_wait] do
-    handle_auth_failure(data.sock, {:timeout, auth_state}, data, auth_state)
+    handle_auth_failure(data.sock, :timeout, data, auth_state)
   end
 
   def handle_event(:enter, old_state, new_state, data) do
@@ -830,7 +830,6 @@ defmodule Supavisor.ClientHandler do
     )
 
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
-
     Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason, data.user}, context)
     Telem.client_join(:fail, data.id)
     {:stop, :normal}

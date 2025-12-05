@@ -123,15 +123,19 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
-  defp process({:error, :auth_error, {:timeout, _message}, _user}, _context) do
+  defp process({:error, :auth_error, :timeout, _user}, context) do
     %{
-      error: Server.error_message("08006", "connection failure during authentication")
+      error: Server.error_message("08006", "connection failure during authentication"),
+      log_message:
+        "Timeout while waiting for message in state #{auth_context_description(context)}"
     }
   end
 
-  defp process({:error, :auth_error, {:unexpected_message, _details}, _user}, _context) do
+  defp process({:error, :auth_error, {:unexpected_message, details}, _user}, context) do
     %{
-      error: Server.error_message("08P01", "protocol violation during authentication")
+      error: Server.error_message("08P01", "protocol violation during authentication"),
+      log_message:
+        "#{auth_context_description(context)} unexpected message during authentication: #{inspect(details)}"
     }
   end
 
@@ -153,18 +157,11 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
-  defp process({:error, :auth_error, {:timeout, _}}, context) do
-    log_message =
-      case context do
-        :auth_md5_wait -> "Timeout while waiting for MD5 password"
-        :auth_scram_first_wait -> "Timeout while waiting for first SCRAM message"
-        :auth_scram_final_wait -> "Timeout while waiting for final SCRAM message"
-        _ -> "Authentication timeout"
-      end
-
+  defp process({:error, :auth_error, :timeout}, context) do
     %{
       error: Server.error_message("08006", "connection failure during authentication"),
-      log_message: log_message
+      log_message:
+        "Timeout while waiting for message in state #{auth_context_description(context)}"
     }
   end
 
@@ -179,9 +176,13 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
-  defp process({:error, :auth_error, reason}, _context) do
+  defp process({:error, :auth_error, reason}, context) do
+    message =
+      "Authentication error, reason: #{inspect(reason)}, context: #{auth_context_description(context)}"
+
     %{
-      error: Server.error_message("XX000", "Authentication error, reason: #{inspect(reason)}")
+      error: Server.error_message("XX000", message),
+      log_message: message
     }
   end
 
@@ -273,6 +274,7 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
+  defp auth_context_description(:handshake), do: "Handshake"
   defp auth_context_description(:auth_md5_wait), do: "MD5"
   defp auth_context_description(:auth_scram_first_wait), do: "SCRAM first"
   defp auth_context_description(:auth_scram_final_wait), do: "SCRAM final"
