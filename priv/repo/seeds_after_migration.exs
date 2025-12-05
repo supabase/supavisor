@@ -75,6 +75,14 @@ end
             "max_clients" => 0,
             "mode_type" => "transaction",
             "pool_checkout_timeout" => 500
+          },
+          %{
+            "db_user" => "no_warm_pool_user",
+            "db_password" => "postgres",
+            "pool_size" => 5,
+            "mode_type" => "session",
+            "max_clients" => 100,
+            "pool_checkout_timeout" => 500
           }
         ]
       }
@@ -176,6 +184,8 @@ end
       "create user session with password 'postgres';",
       "drop user if exists max_clients;",
       "create user max_clients with password 'postgres';",
+      "drop user if exists no_warm_pool_user;",
+      "create user no_warm_pool_user with password 'postgres';",
       "drop table if exists \"public\".\"test\";",
       "create sequence if not exists test_id_seq;",
       "create table \"public\".\"test\" (

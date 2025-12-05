@@ -65,6 +65,7 @@ This document provides a categorized list of all environment variables used in S
 | `API_TOKEN_BLOCKLIST`     | Comma-separated list of blocked API tokens                      | -             | No                   |
 | `METRICS_TOKEN_BLOCKLIST` | Comma-separated list of blocked metrics tokens                  | -             | No                   |
 | `CACHE_BYPASS_USERS`      | Comma-separated list of users to skip validation secret caching | -             | No                   |
+| `NO_WARM_POOL_USERS`      | Comma-separated list of users with no warm pool (min size 0)    | -             | No                   |
 | `VAULT_ENC_KEY`           | Encryption key for Vault                                        | -             | Yes (if using Vault) |
 
 ### Metrics

@@ -192,6 +192,10 @@ if config_env() != :test do
       System.get_env("CACHE_BYPASS_USERS", "")
       |> String.split(",", trim: true)
       |> Enum.map(&String.trim/1),
+    no_warm_pool_users:
+      System.get_env("NO_WARM_POOL_USERS", "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1),
     node_host: System.get_env("NODE_IP", "127.0.0.1")
 
   config :supavisor, Supavisor.FeatureFlag, %{

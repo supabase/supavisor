@@ -64,7 +64,10 @@ defmodule Supavisor.TenantSupervisor do
 
   @spec pool_spec(tuple, atom, integer) :: Keyword.t()
   defp pool_spec(id, replica_type, pool_size) do
-    {size, overflow} = {1, pool_size}
+    {:pool, _replica_type, _index, tenant_id} = id
+    {{_type, _tenant}, user, _mode, _db_name, _search_path} = tenant_id
+    min_size = if no_warm_pool_user?(user), do: 0, else: 1
+    {size, overflow} = {min_size, pool_size}
 
     [
       name: {:via, Registry, {Supavisor.Registry.Tenants, id, replica_type}},
@@ -74,5 +77,11 @@ defmodule Supavisor.TenantSupervisor do
       strategy: :lifo,
       idle_timeout: :timer.minutes(5)
     ]
+  end
+
+  @doc false
+  defp no_warm_pool_user?(user) do
+    no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
+    user in no_warm_pool_users
   end
 end
