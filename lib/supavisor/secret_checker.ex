@@ -233,4 +233,9 @@ defmodule Supavisor.SecretChecker do
         :erpc.call(node(pid), fun)
     end
   end
+
+  @doc """
+  Test function for soft deployment
+  """
+  def test_deploy, do: :deploy_ok
 end

@@ -81,4 +81,9 @@ defmodule Supavisor.TenantSupervisor do
     no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
     user in no_warm_pool_users
   end
+
+  @doc """
+  Test function for soft deployment
+  """
+  def test_deploy, do: :deploy_ok
 end

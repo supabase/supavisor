@@ -1017,4 +1017,9 @@ defmodule Supavisor.ClientHandler do
         false
     end
   end
+
+  @doc """
+  Test function for soft deployment
+  """
+  def test_deploy, do: :deploy_ok
 end

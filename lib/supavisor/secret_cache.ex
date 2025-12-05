@@ -144,4 +144,9 @@ defmodule Supavisor.SecretCache do
     bypass_users = Application.get_env(:supavisor, :cache_bypass_users, [])
     user in bypass_users
   end
+
+  @doc """
+  Test function for soft deployment
+  """
+  def test_deploy, do: :deploy_ok
 end

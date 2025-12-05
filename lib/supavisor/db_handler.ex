@@ -823,4 +823,9 @@ defmodule Supavisor.DbHandler do
 
     maybe_reconnect(reason, data)
   end
+
+  @doc """
+  Test function for soft deployment
+  """
+  def test_deploy, do: :deploy_ok
 end

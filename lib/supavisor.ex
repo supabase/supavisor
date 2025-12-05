@@ -416,4 +416,9 @@ defmodule Supavisor do
   @spec count_pools(String.t()) :: non_neg_integer()
   def count_pools(tenant),
     do: Registry.count_match(Supavisor.Registry.TenantSups, tenant, :_)
+
+  @doc """
+  Test function for soft deployment
+  """
+  def test_deploy, do: :deploy_ok
 end
