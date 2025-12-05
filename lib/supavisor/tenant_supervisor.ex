@@ -16,6 +16,7 @@ defmodule Supavisor.TenantSupervisor do
   @impl true
   def init(%{replicas: replicas} = args) do
     {{type, tenant}, user, mode, db_name, search_path} = args.id
+    min_size = if no_warm_pool_user?(user), do: 0, else: 1
 
     pools =
       replicas
@@ -26,7 +27,8 @@ defmodule Supavisor.TenantSupervisor do
         %{
           id: {:pool, id},
           start:
-            {:poolboy, :start_link, [pool_spec(id, e.replica_type, e.pool_size), %{id: args.id}]},
+            {:poolboy, :start_link,
+             [pool_spec(id, e.replica_type, min_size, e.pool_size), %{id: args.id}]},
           restart: :temporary
         }
       end)
@@ -62,18 +64,13 @@ defmodule Supavisor.TenantSupervisor do
     }
   end
 
-  @spec pool_spec(tuple, atom, integer) :: Keyword.t()
-  defp pool_spec(id, replica_type, pool_size) do
-    {:pool, _replica_type, _index, tenant_id} = id
-    {{_type, _tenant}, user, _mode, _db_name, _search_path} = tenant_id
-    min_size = if no_warm_pool_user?(user), do: 0, else: 1
-    {size, overflow} = {min_size, pool_size}
-
+  @spec pool_spec(tuple, atom, integer, integer) :: Keyword.t()
+  defp pool_spec(id, replica_type, min_size, pool_size) do
     [
       name: {:via, Registry, {Supavisor.Registry.Tenants, id, replica_type}},
       worker_module: Supavisor.DbHandler,
-      size: size,
-      max_overflow: overflow,
+      size: min_size,
+      max_overflow: pool_size,
       strategy: :lifo,
       idle_timeout: :timer.minutes(5)
     ]
