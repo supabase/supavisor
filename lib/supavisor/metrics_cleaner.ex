@@ -41,6 +41,7 @@ defmodule Supavisor.MetricsCleaner do
 
     :telemetry.span([:supavisor, :metrics_cleaner], %{}, fn ->
       count = loop_and_cleanup_metrics_table()
+      Logger.info("Cleaned #{count} orphaned metrics")
       {[], %{orphaned_metrics: count}, %{}}
     end)
 
@@ -86,9 +87,7 @@ defmodule Supavisor.MetricsCleaner do
              } <- elem(key, 1),
              [] <-
                :ets.lookup(@tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) do
-          Logger.warning("Found orphaned metric: #{inspect(key)}")
           :ets.delete(tid, key)
-
           acc + 1
         else
           _ -> acc
