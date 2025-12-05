@@ -97,7 +97,7 @@ defmodule Supavisor.Helpers do
     Postgrex.query!(conn, auth_query, [user])
   catch
     _error, reason ->
-      {:error, "Authentication query failed: #{inspect(reason)}"}
+      {:error, "Authentication query failed: #{humanize_postgrex_error(reason)}"}
   else
     %{columns: [_, _], rows: [[^user, secret]]} ->
       parse_secret(secret, user)
@@ -109,6 +109,21 @@ defmodule Supavisor.Helpers do
     %{columns: columns} ->
       {:error,
        "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
+  end
+
+  defp humanize_postgrex_error(%DBConnection.ConnectionError{message: message, reason: reason}) do
+    case reason do
+      :queue_timeout -> "Connection to database not available"
+      :error -> message
+    end
+  end
+
+  defp humanize_postgrex_error(%Postgrex.Error{postgres: %{message: message}}) do
+    message
+  end
+
+  defp humanize_postgrex_error(reason) do
+    inspect(reason)
   end
 
   @spec parse_secret(String.t(), String.t()) ::

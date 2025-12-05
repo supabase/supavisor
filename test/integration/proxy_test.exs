@@ -4,7 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
 
   alias Postgrex, as: P
-  alias Supavisor.Support.Cluster
+  alias Supavisor.Support.{Cluster, SSLHelper}
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
 
@@ -492,6 +492,81 @@ defmodule Supavisor.Integration.ProxyTest do
 
     # Clean up - clear circuit breaker for this tenant+IP
     Supavisor.CircuitBreaker.clear({tenant, "127.0.0.1"}, :auth_error)
+  end
+
+  test "handles fatal TLS alert by terminating connection" do
+    # Setup SSL certificates for testing
+    {:ok, _cert_path, _key_path} = SSLHelper.configure_test_ssl()
+
+    # Save original SSL config to restore later
+    original_cert = Application.get_env(:supavisor, :global_downstream_cert)
+    original_key = Application.get_env(:supavisor, :global_downstream_key)
+
+    on_exit(fn ->
+      # Restore original SSL configuration
+      Application.put_env(:supavisor, :global_downstream_cert, original_cert)
+      Application.put_env(:supavisor, :global_downstream_key, original_key)
+    end)
+
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = List.first(@tenants)
+    port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+    # Establish an SSL connection at the socket level
+    {:ok, tcp_socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+    # Send SSL request message
+    ssl_request = <<8::32, 80_877_103::32>>
+    :ok = :gen_tcp.send(tcp_socket, ssl_request)
+
+    # Server should respond with 'S' for SSL support
+    {:ok, <<"S">>} = :gen_tcp.recv(tcp_socket, 1, 5000)
+
+    # Upgrade to SSL
+    {:ok, ssl_socket} =
+      :ssl.connect(tcp_socket, [verify: :verify_none, active: false], 5000)
+
+    # Send startup message with authentication
+    username = db_conf[:username] <> "." <> tenant
+    database = db_conf[:database]
+
+    startup_params = [
+      {"user", username},
+      {"database", database}
+    ]
+
+    startup_message =
+      IO.iodata_to_binary([
+        for {key, value} <- startup_params do
+          [key, 0, value, 0]
+        end,
+        0
+      ])
+
+    packet = <<byte_size(startup_message) + 8::32, 196_608::32, startup_message::binary>>
+    :ok = :ssl.send(ssl_socket, packet)
+
+    # Receive authentication challenge
+    {:ok, _auth_response} = :ssl.recv(ssl_socket, 0, 5000)
+
+    # Get underlying TCP socket and send malformed data to trigger a FATAL alert from server
+    {:sslsocket, {:gen_tcp, tcp_port, _tls_sender, _opts}, _pids} = ssl_socket
+
+    # Send garbage data directly to TCP socket to corrupt the TLS stream
+    # This will cause the server to send a FATAL alert (Bad Record MAC or Decode Error)
+    garbage = :crypto.strong_rand_bytes(100)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        :gen_tcp.send(tcp_port, garbage)
+        # Give time for server to process and send FATAL alert back
+        Process.sleep(500)
+      end)
+
+    # Check that we logged the fatal TLS alert and terminated
+    # The server will generate a FATAL alert in response to the corrupted data
+    assert log =~ "Received fatal TLS alert"
+    assert log =~ "terminating connection"
   end
 
   defp parse_uri(uri) do

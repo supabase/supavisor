@@ -478,6 +478,27 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
+  # TLS alert handling: WARNING alerts keep the connection alive, FATAL alerts terminate it.
+  # For FATAL alerts, Erlang doesn't send ssl_closed, so we must terminate here.
+  # The alert level is only available by parsing the message string ("Warning - " or "Fatal - ").
+  def handle_event(:info, {:ssl_error, sock, {:tls_alert, {_reason, msg}}}, _, %{sock: {_, sock}}) do
+    msg_string = to_string(msg)
+
+    if String.contains?(msg_string, "Fatal -") do
+      Logger.warning(
+        "ClientHandler: Received fatal TLS alert: #{msg_string}, terminating connection"
+      )
+
+      {:stop, :normal}
+    else
+      Logger.warning(
+        "ClientHandler: Received TLS warning alert: #{msg_string}, keeping connection alive"
+      )
+
+      :keep_state_and_data
+    end
+  end
+
   def handle_event(:info, {:ssl_error, sock, reason}, _, %{sock: {_, sock}}) do
     Logger.error("ClientHandler: TLS error #{inspect(reason)}")
     :keep_state_and_data
@@ -759,6 +780,11 @@ defmodule Supavisor.ClientHandler do
       end
 
     Logger.log(level, "ClientHandler: terminating with reason #{inspect(reason)}")
+  end
+
+  @impl true
+  def format_status(status) do
+    Map.put(status, :queue, [])
   end
 
   ## Internal functions

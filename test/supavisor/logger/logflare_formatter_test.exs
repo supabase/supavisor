@@ -128,4 +128,67 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
     assert event["metadata"]["context"]["function"] ==
              "#{elem(__ENV__.function, 0)}/#{elem(__ENV__.function, 1)}"
   end
+
+  test "crash_reason with mixed types is normalized" do
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+
+    line = __ENV__.line + 3
+
+    spawn(fn ->
+      :error = Enum.random([:ok])
+    end)
+
+    Process.sleep(100)
+
+    events = FakeLogger.get(pid)
+    assert length(events) > 0
+
+    [event] = events
+    assert {:ok, decoded} = JSON.decode(event)
+
+    crash_reason = decoded["metadata"]["context"]["crash_reason"]
+
+    file = Path.relative_to_cwd(__ENV__.file)
+
+    assert crash_reason == %{
+             "__exception__" => true,
+             "exception" => "MatchError",
+             "term" => "ok",
+             "stacktrace" => [
+               "#{file}:#{line}: anonymous fn/0 in #{inspect(__ENV__.module)}.\"#{elem(__ENV__.function, 0)}\"/#{elem(__ENV__.function, 1)}"
+             ]
+           }
+  end
+
+  test "erlang error crash_reason is normalized" do
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+
+    line = __ENV__.line + 3
+
+    spawn(fn ->
+      :erlang.error(:some_erlang_error)
+    end)
+
+    Process.sleep(100)
+
+    events = FakeLogger.get(pid)
+    assert length(events) > 0
+
+    [event] = events
+    assert {:ok, decoded} = JSON.decode(event)
+
+    crash_reason = decoded["metadata"]["context"]["crash_reason"]
+
+    file = Path.relative_to_cwd(__ENV__.file)
+
+    assert crash_reason == %{
+             "__exception__" => true,
+             "exception" => "ErlangError",
+             "original" => "some_erlang_error",
+             "reason" => nil,
+             "stacktrace" => [
+               "#{file}:#{line}: anonymous fn/0 in #{inspect(__ENV__.module)}.\"#{elem(__ENV__.function, 0)}\"/#{elem(__ENV__.function, 1)}"
+             ]
+           }
+  end
 end
