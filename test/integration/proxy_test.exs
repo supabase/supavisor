@@ -569,6 +569,66 @@ defmodule Supavisor.Integration.ProxyTest do
     assert log =~ "terminating connection"
   end
 
+  test "no warm pool user has empty pool after disconnect in session mode" do
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_session),
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: "no_warm_pool_user.proxy_tenant1"
+    ]
+
+    # Connect and execute a query
+    assert {:ok, conn} = single_connection(connection_opts)
+    assert [%P.Result{rows: [["1"]]}] = P.SimpleConnection.call(conn, {:query, "select 1;"})
+
+    tenant_id =
+      {{:single, "proxy_tenant1"}, "no_warm_pool_user", :session, db_conf[:database], nil}
+
+    # Pool should have workers while connected
+    assert count_pool_workers(tenant_id) > 0
+
+    # Disconnect
+    :gen_statem.stop(conn)
+    Process.sleep(100)
+
+    # For no_warm_pool_user, pool should be empty after disconnect
+    assert count_pool_workers(tenant_id) == 0
+  end
+
+  defp count_pool_workers(tenant_id) do
+    tenant_id
+    |> Supavisor.get_global_sup()
+    |> get_poolboy_workers()
+    |> length()
+  end
+
+  defp get_poolboy_workers(tenant_sup) do
+    tenant_sup
+    |> Supervisor.which_children()
+    |> Enum.filter(&match?({:pool, _}, elem(&1, 0)))
+    |> Enum.flat_map(fn {_id, pool_pid, _type, _modules} ->
+      pool_pid
+      |> Process.info()
+      |> Kernel.get_in([:links])
+      |> Enum.find(&poolboy_supervisor?/1)
+      |> case do
+        nil -> []
+        poolboy_sup -> Supervisor.which_children(poolboy_sup)
+      end
+      |> Enum.filter(&is_pid(elem(&1, 1)))
+    end)
+  end
+
+  defp poolboy_supervisor?(pid) do
+    case Process.info(pid)[:dictionary][:"$initial_call"] do
+      {:supervisor, :poolboy_sup, _} -> true
+      _ -> false
+    end
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,
