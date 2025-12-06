@@ -143,7 +143,6 @@ defmodule Supavisor.DbHandler do
         nonce: nil,
         server_proof: nil,
         stats: %{},
-        client_stats: %{},
         prepared_statements: MapSet.new(),
         proxy: Map.get(config, :proxy, false),
         stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
@@ -311,28 +310,20 @@ defmodule Supavisor.DbHandler do
 
     if String.ends_with?(bin, Server.ready_for_query()) do
       HandlerHelpers.activate(data.sock)
+      ClientHandler.db_status(data.caller, :ready_for_query)
+      data = handle_server_messages(bin, data)
 
-      {_, stats} =
-        if data.mode == :proxy,
-          do: {nil, data.stats},
-          else: Telem.network_usage(:db, data.sock, data.id, data.stats)
+      case data.mode do
+        :transaction ->
+          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+          {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
 
-      # in transaction mode, we need to notify the client when the transaction is finished,
-      # after which it will unlink the direct db connection process from itself.
-      if data.mode == :transaction do
-        ClientHandler.db_status(data.caller, :ready_for_query)
-        data = handle_server_messages(bin, data)
+        :proxy ->
+          {:keep_state, data}
 
-        {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
-      else
-        data = handle_server_messages(bin, data)
-
-        {_, client_stats} =
-          if data.mode == :proxy,
-            do: {nil, data.client_stats},
-            else: Telem.network_usage(:client, data.client_sock, data.id, data.client_stats)
-
-        {:keep_state, %{data | stats: stats, client_stats: client_stats}}
+        :session ->
+          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+          {:keep_state, %{data | stats: stats}}
       end
     else
       data = handle_server_messages(bin, data)
