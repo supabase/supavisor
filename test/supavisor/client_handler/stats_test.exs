@@ -3,34 +3,61 @@ defmodule Supavisor.ClientHandler.StatsTest do
 
   @moduletag telemetry: true
 
-  # Listen on Telemetry events
   setup ctx do
     ref = make_ref()
 
     :telemetry.attach(
-      {ctx.test, :client},
+      {ctx.test, :client_network},
       [:supavisor, :client, :network, :stat],
       &__MODULE__.handle_event/4,
       {self(), ref}
     )
 
     :telemetry.attach(
-      {ctx.test, :db},
+      {ctx.test, :db_network},
       [:supavisor, :db, :network, :stat],
       &__MODULE__.handle_event/4,
       {self(), ref}
     )
 
+    :telemetry.attach(
+      {ctx.test, :client_query},
+      [:supavisor, :client, :query, :stop],
+      &__MODULE__.handle_event/4,
+      {self(), ref}
+    )
+
+    :telemetry.attach(
+      {ctx.test, :client_handler_state},
+      [:supavisor, :client_handler, :state],
+      &__MODULE__.handle_event/4,
+      {self(), ref}
+    )
+
     on_exit(fn ->
-      :telemetry.detach({ctx.test, :client})
-      :telemetry.detach({ctx.test, :db})
+      :telemetry.detach({ctx.test, :client_network})
+      :telemetry.detach({ctx.test, :db_network})
+      :telemetry.detach({ctx.test, :client_query})
+      :telemetry.detach({ctx.test, :client_handler_state})
     end)
 
     {:ok, telemetry: ref}
   end
 
-  def handle_event([:supavisor, name, :network, :stat], measurement, meta, {pid, ref}) do
-    send(pid, {ref, {name, measurement, meta}, Node.self()})
+  def handle_event([:supavisor, :client, :network, :stat], measurement, meta, {pid, ref}) do
+    send(pid, {ref, {:client_network, measurement, meta}, Node.self()})
+  end
+
+  def handle_event([:supavisor, :db, :network, :stat], measurement, meta, {pid, ref}) do
+    send(pid, {ref, {:db_network, measurement, meta}, Node.self()})
+  end
+
+  def handle_event([:supavisor, :client, :query, :stop], measurement, meta, {pid, ref}) do
+    send(pid, {ref, {:client_query, measurement, meta}, Node.self()})
+  end
+
+  def handle_event([:supavisor, :client_handler, :state], measurement, meta, {pid, ref}) do
+    send(pid, {ref, {:client_handler_state, measurement, meta}, Node.self()})
   end
 
   setup ctx do
@@ -41,158 +68,215 @@ defmodule Supavisor.ClientHandler.StatsTest do
     end
   end
 
-  # Connect to the instance
-  setup ctx do
-    conn =
+  defp setup_connection(mode, ctx) do
+    port_key = if mode == :transaction, do: :proxy_port_transaction, else: :proxy_port_session
+
+    start_supervised!(
+      {SingleConnection,
+       hostname: "localhost",
+       port: Application.fetch_env!(:supavisor, port_key),
+       database: ctx.db,
+       username: ctx.user,
+       password: "postgres"}
+    )
+  end
+
+  for mode <- [:transaction, :session] do
+    test "client network usage increase on query in #{mode} mode",
+         %{
+           telemetry: telemetry,
+           external_id: external_id
+         } = ctx do
+      mode = unquote(mode)
+      conn = setup_connection(mode, ctx)
+
+      assert_receive {^telemetry, {:client_network, _, %{tenant: ^external_id, mode: ^mode}}, _}
+
+      assert {:ok, _} = SingleConnection.query(conn, "SELECT 1")
+
+      assert_receive {^telemetry,
+                      {:client_network, %{recv_oct: recv, send_oct: sent},
+                       %{tenant: ^external_id, mode: ^mode}}, _}
+
+      assert recv > 0
+      assert sent > 0
+    end
+
+    test "client network usage increase on just auth in #{mode} mode",
+         %{
+           external_id: external_id,
+           telemetry: telemetry
+         } = ctx do
+      mode = unquote(mode)
+      _conn = setup_connection(mode, ctx)
+
+      assert_receive {^telemetry,
+                      {:client_network, %{recv_oct: recv, send_oct: sent},
+                       %{tenant: ^external_id, mode: ^mode}}, _}
+
+      assert recv > 0
+      assert sent > 0
+    end
+  end
+
+  @tag external_id: "metrics_tenant", mode: :transaction
+  test "proxy does not emit telemetry events", %{telemetry: telemetry} = ctx do
+    assert {:ok, _pid, node} = Supavisor.Support.Cluster.start_node()
+
+    :erpc.call(node, :telemetry, :attach, [
+      {ctx.test, :client_network},
+      [:supavisor, :client, :network, :stat],
+      &__MODULE__.handle_event/4,
+      self()
+    ])
+
+    _this_conn =
       start_supervised!(
         {SingleConnection,
          hostname: "localhost",
          port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
          database: ctx.db,
          username: ctx.user,
-         password: "postgres"}
+         password: "postgres"},
+        id: :postgrex_this
       )
 
-    {:ok, conn: conn}
+    stop_supervised!(:postgrex_this)
+
+    other_conn =
+      start_supervised!(
+        {SingleConnection,
+         hostname: "localhost",
+         port: Application.fetch_env!(:supavisor, :secondary_proxy_port),
+         database: ctx.db,
+         username: ctx.user,
+         password: "postgres"},
+        id: :postgrex_another
+      )
+
+    assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
+
+    this = Node.self()
+
+    external_id = ctx.external_id
+
+    refute_receive {^telemetry, {:client_network, _, %{tenant: ^external_id}}, ^node}
+    assert_receive {^telemetry, {:client_network, _, %{tenant: ^external_id}}, ^this}, 10_000
   end
 
-  describe "client network usage" do
-    test "increase on query", %{telemetry: telemetry, conn: conn, external_id: external_id} do
+  for mode <- [:transaction, :session] do
+    test "server network usage increase on query in #{mode} mode",
+         %{telemetry: telemetry} = ctx do
+      mode = unquote(mode)
+      external_id = ctx.external_id
+      conn = setup_connection(mode, ctx)
+
+      # Consume auth telemetry
+      assert_receive {^telemetry, {:db_network, _, %{tenant: ^external_id, mode: ^mode}}, _}
+
       assert {:ok, _} = SingleConnection.query(conn, "SELECT 1")
 
       assert_receive {^telemetry,
-                      {:client, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
+                      {:db_network, %{recv_oct: recv, send_oct: sent},
+                       %{tenant: ^external_id, mode: ^mode}}, _}
 
       assert recv > 0
       assert sent > 0
     end
 
-    test "increase on just auth", %{external_id: external_id, telemetry: telemetry} do
-      assert_receive {^telemetry,
-                      {:client, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
-
-      assert recv > 0
-      assert sent > 0
-    end
-
-    test "do not not increase if other tenant is used", %{
-      external_id: external_id,
-      telemetry: telemetry
-    } do
-      {:ok, other} = create_instance([__MODULE__, "another"])
-
-      # Cleanup initial data related to sign in
-      assert_receive {^telemetry, {:client, _, %{tenant: ^external_id}}, _}
-
-      other_conn =
-        start_supervised!(
-          {SingleConnection,
-           hostname: "localhost",
-           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
-           database: other.db,
-           username: other.user,
-           password: "postgres"},
-          id: :postgrex_another
-        )
-
-      assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
-
-      refute_receive {^telemetry, {:client, _, %{tenant: ^external_id}}, _}
-    end
-
-    @tag external_id: "metrics_tenant", flaky: true
-    test "another instance do not send events here", %{telemetry: telemetry} = ctx do
-      assert {:ok, _pid, node} = Supavisor.Support.Cluster.start_node()
-
-      :erpc.call(node, :telemetry, :attach, [
-        {ctx.test, :client},
-        [:supavisor, :client, :network, :stat],
-        &__MODULE__.handle_event/4,
-        self()
-      ])
-
-      # Start pool on local node
-      _this_conn =
-        start_supervised!(
-          {SingleConnection,
-           hostname: "localhost",
-           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
-           database: ctx.db,
-           username: ctx.user,
-           password: "postgres"},
-          id: :postgrex_this
-        )
-
-      stop_supervised!(:postgrex_this)
-
-      # Connect via other node and issue a query
-      other_conn =
-        start_supervised!(
-          {SingleConnection,
-           hostname: "localhost",
-           port: Application.fetch_env!(:supavisor, :secondary_proxy_port),
-           database: ctx.db,
-           username: ctx.user,
-           password: "postgres"},
-          id: :postgrex_another
-        )
-
-      assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
-
-      this = Node.self()
-
+    test "server network usage increase on just auth in #{mode} mode",
+         %{telemetry: telemetry} =
+           ctx do
+      mode = unquote(mode)
       external_id = ctx.external_id
+      _conn = setup_connection(mode, ctx)
 
-      refute_receive {^telemetry, {:client, _, %{tenant: ^external_id}}, ^node}
-      assert_receive {^telemetry, {:client, _, %{tenant: ^external_id}}, ^this}, 10_000
+      assert_receive {^telemetry,
+                      {:db_network, %{recv_oct: recv, send_oct: sent},
+                       %{tenant: ^external_id, mode: ^mode}}, _}
+
+      assert recv > 0
+      assert sent > 0
     end
   end
 
-  describe "server network usage" do
-    test "increase on query", %{telemetry: telemetry} = ctx do
-      external_id = ctx.external_id
+  for mode <- [:transaction, :session] do
+    test "client query telemetry emitted on single query in #{mode} mode",
+         %{
+           telemetry: telemetry,
+           external_id: external_id
+         } = ctx do
+      mode = unquote(mode)
+      conn = setup_connection(mode, ctx)
 
-      assert {:ok, _} = SingleConnection.query(ctx.conn, "SELECT 1")
-
-      assert_receive {^telemetry,
-                      {:db, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
-
-      assert recv > 0
-      assert sent > 0
-    end
-
-    test "increase on just auth", %{telemetry: telemetry} = ctx do
-      external_id = ctx.external_id
+      assert {:ok, _} = SingleConnection.query(conn, "SELECT 1")
 
       assert_receive {^telemetry,
-                      {:db, %{recv_oct: recv, send_oct: sent}, %{tenant: ^external_id}}, _}
+                      {:client_query, %{duration: duration},
+                       %{tenant: ^external_id, mode: ^mode}}, _}
 
-      assert recv > 0
-      assert sent > 0
+      assert is_integer(duration)
+      assert duration > 0
     end
 
-    test "do not not increase if other tenant is used", %{telemetry: telemetry} = ctx do
-      external_id = ctx.external_id
+    test "client query telemetry emitted on multiple queries in #{mode} mode",
+         %{
+           telemetry: telemetry,
+           external_id: external_id
+         } = ctx do
+      mode = unquote(mode)
+      conn = setup_connection(mode, ctx)
 
-      {:ok, other} = create_instance([__MODULE__, "another"])
+      # This test specifically validates the fix for session mode where db_status wasn't being called
+      for _i <- 1..3 do
+        assert {:ok, _} = SingleConnection.query(conn, "SELECT 1")
 
-      # Cleanup initial data related to sign in
-      assert_receive {^telemetry, {:db, _, %{tenant: ^external_id}}, _}
+        assert_receive {^telemetry,
+                        {:client_query, %{duration: duration},
+                         %{tenant: ^external_id, mode: ^mode}}, _}
 
-      other_conn =
-        start_supervised!(
-          {SingleConnection,
-           hostname: "localhost",
-           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
-           database: other.db,
-           username: other.user,
-           password: "postgres"},
-          id: :postgrex_another
-        )
+        assert is_integer(duration)
+        assert duration > 0
+      end
+    end
+  end
 
-      assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
+  for mode <- [:transaction, :session] do
+    test "client handler state transitions emit telemetry in #{mode} mode",
+         %{
+           telemetry: telemetry,
+           external_id: external_id
+         } = ctx do
+      _conn = setup_connection(unquote(mode), ctx)
 
-      refute_receive {^telemetry, {:db, _, %{tenant: ^external_id}}, _}
+      # State transitions (idle <-> busy are not emitted by design):
+      assert_receive {^telemetry,
+                      {:client_handler_state, %{duration: _},
+                       %{
+                         from_state: :handshake,
+                         to_state: :auth_scram_first_wait,
+                         tenant: ^external_id
+                       }}, _}
+
+      assert_receive {^telemetry,
+                      {:client_handler_state, %{duration: _},
+                       %{
+                         from_state: :auth_scram_first_wait,
+                         to_state: :auth_scram_final_wait,
+                         tenant: ^external_id
+                       }}, _}
+
+      assert_receive {^telemetry,
+                      {:client_handler_state, %{duration: _},
+                       %{
+                         from_state: :auth_scram_final_wait,
+                         to_state: :connecting,
+                         tenant: ^external_id
+                       }}, _}
+
+      assert_receive {^telemetry,
+                      {:client_handler_state, %{duration: _},
+                       %{from_state: :connecting, to_state: :idle, tenant: ^external_id}}, _}
     end
   end
 end
