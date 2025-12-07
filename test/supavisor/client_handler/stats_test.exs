@@ -131,6 +131,13 @@ defmodule Supavisor.ClientHandler.StatsTest do
       {self(), telemetry}
     ])
 
+    :erpc.call(other_node, :telemetry, :attach, [
+      {ctx.test, :db_network},
+      [:supavisor, :db, :network, :stat],
+      &TelemetryHelper.handle_event/4,
+      {self(), telemetry}
+    ])
+
     # Ensures we start the pool on the local node
     _this_conn =
       start_supervised!(
@@ -168,6 +175,10 @@ defmodule Supavisor.ClientHandler.StatsTest do
                    10_000
 
     refute_receive {^telemetry, {:client_network, _, %{tenant: ^external_id}}, ^this_node}, 2_500
+
+    # Verify db_network telemetry is emitted from this_node only
+    assert_receive {^telemetry, {:db_network, _, %{tenant: ^external_id}}, ^this_node}
+    refute_receive {^telemetry, {:db_network, _, %{tenant: ^external_id}}, ^other_node}, 2_500
 
     # Verify query telemetry is received on both nodes with correct proxy metadata
     assert_receive {^telemetry, {:client_query, _, %{tenant: ^external_id, proxy: false}},
