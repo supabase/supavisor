@@ -1,6 +1,8 @@
 defmodule Supavisor.ClientHandler.StatsTest do
   use Supavisor.E2ECase, async: false
 
+  alias Supavisor.TelemetryHelper
+
   @moduletag telemetry: true
 
   setup ctx do
@@ -9,28 +11,28 @@ defmodule Supavisor.ClientHandler.StatsTest do
     :telemetry.attach(
       {ctx.test, :client_network},
       [:supavisor, :client, :network, :stat],
-      &__MODULE__.handle_event/4,
+      &TelemetryHelper.handle_event/4,
       {self(), ref}
     )
 
     :telemetry.attach(
       {ctx.test, :db_network},
       [:supavisor, :db, :network, :stat],
-      &__MODULE__.handle_event/4,
+      &TelemetryHelper.handle_event/4,
       {self(), ref}
     )
 
     :telemetry.attach(
       {ctx.test, :client_query},
       [:supavisor, :client, :query, :stop],
-      &__MODULE__.handle_event/4,
+      &TelemetryHelper.handle_event/4,
       {self(), ref}
     )
 
     :telemetry.attach(
       {ctx.test, :client_handler_state},
       [:supavisor, :client_handler, :state],
-      &__MODULE__.handle_event/4,
+      &TelemetryHelper.handle_event/4,
       {self(), ref}
     )
 
@@ -42,22 +44,6 @@ defmodule Supavisor.ClientHandler.StatsTest do
     end)
 
     {:ok, telemetry: ref}
-  end
-
-  def handle_event([:supavisor, :client, :network, :stat], measurement, meta, {pid, ref}) do
-    send(pid, {ref, {:client_network, measurement, meta}, Node.self()})
-  end
-
-  def handle_event([:supavisor, :db, :network, :stat], measurement, meta, {pid, ref}) do
-    send(pid, {ref, {:db_network, measurement, meta}, Node.self()})
-  end
-
-  def handle_event([:supavisor, :client, :query, :stop], measurement, meta, {pid, ref}) do
-    send(pid, {ref, {:client_query, measurement, meta}, Node.self()})
-  end
-
-  def handle_event([:supavisor, :client_handler, :state], measurement, meta, {pid, ref}) do
-    send(pid, {ref, {:client_handler_state, measurement, meta}, Node.self()})
   end
 
   setup ctx do
@@ -79,6 +65,14 @@ defmodule Supavisor.ClientHandler.StatsTest do
        username: ctx.user,
        password: "postgres"}
     )
+  end
+
+  defp flush_mailbox(ref) do
+    receive do
+      {^ref, _, _} -> flush_mailbox(ref)
+    after
+      100 -> :ok
+    end
   end
 
   for mode <- [:transaction, :session] do
@@ -120,16 +114,24 @@ defmodule Supavisor.ClientHandler.StatsTest do
   end
 
   @tag external_id: "metrics_tenant", mode: :transaction
-  test "proxy does not emit telemetry events", %{telemetry: telemetry} = ctx do
-    assert {:ok, _pid, node} = Supavisor.Support.Cluster.start_node()
+  test "proxy telemetry events", %{telemetry: telemetry} = ctx do
+    assert {:ok, _pid, other_node} = Supavisor.Support.Cluster.start_node()
 
-    :erpc.call(node, :telemetry, :attach, [
+    :erpc.call(other_node, :telemetry, :attach, [
       {ctx.test, :client_network},
       [:supavisor, :client, :network, :stat],
-      &__MODULE__.handle_event/4,
-      self()
+      &TelemetryHelper.handle_event/4,
+      {self(), telemetry}
     ])
 
+    :erpc.call(other_node, :telemetry, :attach, [
+      {ctx.test, :client_query},
+      [:supavisor, :client, :query, :stop],
+      &TelemetryHelper.handle_event/4,
+      {self(), telemetry}
+    ])
+
+    # Ensures we start the pool on the local node
     _this_conn =
       start_supervised!(
         {SingleConnection,
@@ -143,7 +145,10 @@ defmodule Supavisor.ClientHandler.StatsTest do
 
     stop_supervised!(:postgrex_this)
 
-    other_conn =
+    # Flush any telemetry from the first connection
+    flush_mailbox(telemetry)
+
+    proxied_conn =
       start_supervised!(
         {SingleConnection,
          hostname: "localhost",
@@ -154,14 +159,22 @@ defmodule Supavisor.ClientHandler.StatsTest do
         id: :postgrex_another
       )
 
-    assert {:ok, _} = SingleConnection.query(other_conn, "SELECT 1")
+    assert {:ok, _} = SingleConnection.query(proxied_conn, "SELECT 1")
 
-    this = Node.self()
-
+    this_node = Node.self()
     external_id = ctx.external_id
 
-    refute_receive {^telemetry, {:client_network, _, %{tenant: ^external_id}}, ^node}
-    assert_receive {^telemetry, {:client_network, _, %{tenant: ^external_id}}, ^this}, 10_000
+    assert_receive {^telemetry, {:client_network, _, %{tenant: ^external_id}}, ^other_node},
+                   10_000
+
+    refute_receive {^telemetry, {:client_network, _, %{tenant: ^external_id}}, ^this_node}, 2_500
+
+    # Verify query telemetry is received on both nodes with correct proxy metadata
+    assert_receive {^telemetry, {:client_query, _, %{tenant: ^external_id, proxy: false}},
+                    ^this_node}
+
+    assert_receive {^telemetry, {:client_query, _, %{tenant: ^external_id, proxy: true}},
+                    ^other_node}
   end
 
   for mode <- [:transaction, :session] do
