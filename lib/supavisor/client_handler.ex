@@ -558,7 +558,7 @@ defmodule Supavisor.ClientHandler do
         do: {nil, data.stats},
         else: Telem.network_usage(:client, data.sock, data.id, data.stats)
 
-    Telem.client_query_time(data.query_start, data.id)
+    Telem.client_query_time(data.query_start, data.id, data.mode == :proxy)
 
     {:next_state, :idle, %{data | db_connection: db_connection, stats: stats},
      handle_actions(data)}
