@@ -157,20 +157,7 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
-<<<<<<< HEAD
   defp process({:error, :auth_error, :timeout}, context) do
-=======
-  defp process({:error, :auth_error, {:timeout, _}}, context) do
-    log_message =
-      case context do
-        :auth_md5_wait -> "Timeout while waiting for MD5 password"
-        :auth_password_wait -> "Timeout while waiting for password"
-        :auth_scram_first_wait -> "Timeout while waiting for first SCRAM message"
-        :auth_scram_final_wait -> "Timeout while waiting for final SCRAM message"
-        _ -> "Authentication timeout"
-      end
-
->>>>>>> b759523 (fix: check cache for secret)
     %{
       error: Server.error_message("08006", "connection failure during authentication"),
       log_message:

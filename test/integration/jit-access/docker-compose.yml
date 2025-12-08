@@ -1,0 +1,41 @@
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    volumes:
+      - jitlib:/out
+    command: ["true"]
+
+  db:
+    image: supabase/postgres:17.6.1.062
+    depends_on:
+      - builder
+    volumes:
+      - jitlib:/usr/lib/security/
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./pam.d/postgresql:/etc/pam.d/postgres
+      - ./pam.d/postgresql:/etc/pam.d/postgresql
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_prepared_transactions=2000
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PASSWORD: postgres
+      PAM_MODULE_PATH: /usr/lib/security/pam_jit_pg.so
+    networks:
+      - appnet
+
+  api:
+    build:
+      context: ./jit_api_service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080" # optional: expose to host
+    networks:
+      - appnet
+
+volumes:
+  jitlib:
+
+networks:
+  appnet:
