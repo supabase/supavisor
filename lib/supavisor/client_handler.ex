@@ -564,6 +564,10 @@ defmodule Supavisor.ClientHandler do
      handle_actions(data)}
   end
 
+  def handle_event(:cast, {:db_status, :ready_for_query}, :idle, _) do
+    :keep_state_and_data
+  end
+
   def handle_event(:cast, {:send_error_and_terminate, error_message}, _state, data) do
     HandlerHelpers.sock_send(data.sock, error_message)
     {:stop, :normal}
