@@ -1,0 +1,15 @@
+[package]
+name = "peepers2"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "peepers2"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.36.1"
+ryu = "1.0"
+itoa = "1.0"
+rustc-hash = "2.0"

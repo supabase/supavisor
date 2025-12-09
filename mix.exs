@@ -84,6 +84,7 @@ defmodule Supavisor.MixProject do
       # Benchmarking and performance
       {:benchee, "~> 1.3", only: :dev},
       {:eflambe, "~> 0.3.1", only: :dev},
+      {:qtrace, "~> 1.0"},
 
       # Test utilities
       {:excoveralls, ">= 0.0.0", only: [:dev, :test]},

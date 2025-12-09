@@ -10,6 +10,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   alias Peep.Storage
   alias PromEx.Plugins
+  alias Supavisor.Monitoring.{Peepers, Peepers2}
   alias Supavisor.PromEx.Plugins.{Cluster, OsMon, Tenant}
   alias Telemetry.Metrics
 
@@ -73,6 +74,30 @@ defmodule Supavisor.Monitoring.PromEx do
     |> Peep.Prometheus.export()
   end
 
+  def get_metrics_foldl do
+    fetch_metrics_foldl()
+    |> Peep.Prometheus.export()
+  end
+
+  @spec get_metrics_rustler() :: iodata()
+  def get_metrics_rustler do
+    m = fetch_metrics()
+
+    m
+    |> Peepers.prometheus_export()
+  end
+
+  @spec get_metrics_rustler_foldl() :: iodata()
+  def get_metrics_rustler_foldl do
+    fetch_metrics_foldl()
+    |> Peepers.prometheus_export()
+  end
+
+  @spec get_metrics_peepers2() :: iodata()
+  def get_metrics_peepers2 do
+    Peepers2.get_metrics(__metrics_collector_name__())
+  end
+
   @spec get_cluster_metrics() :: iodata()
   def get_cluster_metrics do
     fetch_cluster_metrics()
@@ -112,6 +137,10 @@ defmodule Supavisor.Monitoring.PromEx do
 
   def fetch_metrics do
     Peep.get_all_metrics(__metrics_collector_name__())
+  end
+
+  def fetch_metrics_foldl do
+    Supavisor.Monitoring.PeepFoldl.get_all_metrics(__metrics_collector_name__())
   end
 
   def fetch_metrics_compressed do

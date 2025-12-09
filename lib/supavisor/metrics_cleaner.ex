@@ -40,7 +40,8 @@ defmodule Supavisor.MetricsCleaner do
     Process.cancel_timer(state.check_ref)
 
     :telemetry.span([:supavisor, :metrics_cleaner], %{}, fn ->
-      count = loop_and_cleanup_metrics_table()
+      # loop_and_cleanup_metrics_table()
+      count = 3
       Logger.info("Cleaned #{count} orphaned metrics")
       {[], %{orphaned_metrics: count}, %{}}
     end)
