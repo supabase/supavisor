@@ -11,7 +11,7 @@ defmodule Supavisor.CircuitBreaker do
 
   @thresholds %{
     get_secrets: %{
-      max_failures: 5,
+      max_failures: 20,
       window_seconds: 600,
       block_seconds: 600,
       explanation: "Failed to retrieve database credentials"
