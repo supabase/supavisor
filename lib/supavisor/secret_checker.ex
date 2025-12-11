@@ -47,7 +47,7 @@ defmodule Supavisor.SecretChecker do
     {{_type, tenant_external_id}, pool_user, _mode, db_name, _search_path} = args.id
 
     # Get tenant and manager user to build auth config
-    tenant = Supavisor.Tenants.get_tenant_by_external_id(tenant_external_id)
+    tenant = Supavisor.Tenants.get_tenant_cache(tenant_external_id, nil)
     manager_secrets = Supavisor.Tenants.get_manager_user_cache(tenant_external_id)
 
     auth =
