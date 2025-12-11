@@ -1,23 +1,20 @@
-use rustler::{Env, ListIterator, NifResult, ResourceArc, Term};
 use rustc_hash::FxHashMap;
+use rustler::{Env, ListIterator, NifResult, Term};
 use std::collections::HashMap;
 
 // ============================================================================
-// Resource that holds aggregated metrics
+// Struct that holds aggregated metrics (with lifetime)
 // ============================================================================
 
-pub struct AggregatedMetrics {
+struct AggregatedMetrics<'a> {
     // Store metric keys once, use indices to reference them
     metric_keys: Vec<MetricKey>,
     // Map from metric index to tag->value map
-    counters: FxHashMap<usize, FxHashMap<TagsKey, i64>>,
-    sums: FxHashMap<usize, FxHashMap<TagsKey, i64>>,
-    last_values: FxHashMap<usize, FxHashMap<TagsKey, MetricValue>>,
-    distributions: FxHashMap<usize, FxHashMap<TagsKey, FxHashMap<String, i64>>>,
+    counters: FxHashMap<usize, FxHashMap<TagsKey<'a>, i64>>,
+    sums: FxHashMap<usize, FxHashMap<TagsKey<'a>, i64>>,
+    last_values: FxHashMap<usize, FxHashMap<TagsKey<'a>, MetricValue>>,
+    distributions: FxHashMap<usize, FxHashMap<TagsKey<'a>, FxHashMap<String, i64>>>,
 }
-
-// Implement the Resource trait for AggregatedMetrics
-impl rustler::Resource for AggregatedMetrics {}
 
 // ============================================================================
 // Key types for organizing metrics
@@ -27,41 +24,52 @@ impl rustler::Resource for AggregatedMetrics {}
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 struct MetricKey {
     name_parts: Vec<String>,
-    formatted_name: String,  // Pre-computed formatted name for Prometheus
+    formatted_name: String, // Pre-computed formatted name for Prometheus
     description: String,
     reporter_options: Vec<(String, String)>,
 }
 
-// Tags as a pre-formatted Prometheus label string for fast hashing and export
-// Format: "key1=\"value1\",key2=\"value2\"" (sorted, escaped)
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-struct TagsKey {
-    formatted: String,
+// Tags stored as a Term
+// Uses Term's built-in equality and phash2 for hashing
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct TagsKey<'a> {
+    // The raw term representing the tags map
+    term: Term<'a>,
 }
 
-impl TagsKey {
-    // Create TagsKey directly from Elixir term, formatting to Prometheus immediately
-    // Uses a reusable Vec buffer to avoid allocations
-    fn from_term_with_buffer(tags_term: Term, tags_vec: &mut Vec<(String, String)>) -> NifResult<Self> {
-        let map_iter = rustler::types::MapIterator::new(tags_term)
-            .ok_or_else(|| rustler::Error::Term(Box::new("Tags is not a map")))?;
+impl<'a> TagsKey<'a> {
+    // Create TagsKey from a term
+    fn from_term(term: Term<'a>) -> Self {
+        Self { term }
+    }
 
-        // Reuse the vec - just clear it
-        tags_vec.clear();
-        for (key_term, value_term) in map_iter {
-            let key = decode_tag_key(key_term)?;
-            let value = decode_tag_value(value_term)?;
-            tags_vec.push((key, value));
+    fn is_empty(&self) -> bool {
+        // Check if the map is empty
+        if let Some(iter) = rustler::types::MapIterator::new(self.term) {
+            iter.count() == 0
+        } else {
+            true
+        }
+    }
+
+    // Convert the term to a Prometheus label string
+    fn to_prometheus_labels(&self) -> String {
+        let mut tags: Vec<(String, String)> = Vec::new();
+
+        if let Some(map_iter) = rustler::types::MapIterator::new(self.term) {
+            for (key_term, value_term) in map_iter {
+                if let Ok(key) = decode_tag_key(key_term) {
+                    if let Ok(value) = decode_tag_value(value_term) {
+                        tags.push((key, value));
+                    }
+                }
+            }
         }
 
-        // Sort for consistent ordering (unstable is faster and sufficient here)
-        tags_vec.sort_unstable();
+        tags.sort_unstable();
 
-        // Pre-allocate string capacity (rough estimate: 20 chars per tag)
-        let mut formatted = String::with_capacity(tags_vec.len() * 20);
-
-        // Format to Prometheus label format immediately
-        for (i, (key, value)) in tags_vec.iter().enumerate() {
+        let mut formatted = String::with_capacity(tags.len() * 20);
+        for (i, (key, value)) in tags.iter().enumerate() {
             if i > 0 {
                 formatted.push(',');
             }
@@ -71,15 +79,14 @@ impl TagsKey {
             formatted.push('"');
         }
 
-        Ok(Self { formatted })
+        formatted
     }
+}
 
-    fn is_empty(&self) -> bool {
-        self.formatted.is_empty()
-    }
-
-    fn as_str(&self) -> &str {
-        &self.formatted
+impl<'a> std::hash::Hash for TagsKey<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Use Erlang's phash2 for consistent hashing
+        self.term.hash_phash2().hash(state);
     }
 }
 
@@ -208,7 +215,11 @@ fn decode_tag_value(term: Term) -> NifResult<String> {
     if let Ok(list_iter) = term.decode::<ListIterator>() {
         let elements: Vec<Term> = list_iter.collect();
         if !elements.is_empty() {
-            if let Ok(numbers) = elements.iter().map(|elem| elem.decode::<i64>()).collect::<Result<Vec<_>, _>>() {
+            if let Ok(numbers) = elements
+                .iter()
+                .map(|elem| elem.decode::<i64>())
+                .collect::<Result<Vec<_>, _>>()
+            {
                 return Ok(numbers.iter().map(|&n| n as u8 as char).collect::<String>());
             }
         }
@@ -231,7 +242,9 @@ fn decode_metric_value_i64(term: Term) -> NifResult<i64> {
         return Ok(f as i64);
     }
 
-    Err(rustler::Error::Term(Box::new("Failed to decode metric value as i64")))
+    Err(rustler::Error::Term(Box::new(
+        "Failed to decode metric value as i64",
+    )))
 }
 
 // Helper: Decode any term to a string (atom, string, integer, etc.)
@@ -378,10 +391,9 @@ fn parse_metric_struct(metric_struct: Term) -> NifResult<(TelemetryMetricType, M
         }
     }
 
-    let metric_type = TelemetryMetricType::from_struct_name(&struct_name)
-        .ok_or_else(|| {
-            rustler::Error::Term(Box::new(format!("Unknown metric type: {}", struct_name)))
-        })?;
+    let metric_type = TelemetryMetricType::from_struct_name(&struct_name).ok_or_else(|| {
+        rustler::Error::Term(Box::new(format!("Unknown metric type: {}", struct_name)))
+    })?;
 
     // Pre-compute the formatted name once during parsing
     let formatted_name = format_name(&name_parts);
@@ -404,7 +416,8 @@ fn decode_buckets_map(buckets_term: Term) -> NifResult<FxHashMap<String, i64>> {
 
     for (key_term, value_term) in map_iter {
         let key = decode_term_to_string(key_term)?;
-        let value: i64 = value_term.decode()
+        let value: i64 = value_term
+            .decode()
             .map_err(|_| rustler::Error::Term(Box::new("Failed to decode bucket count")))?;
         buckets.insert(key, value);
     }
@@ -413,15 +426,15 @@ fn decode_buckets_map(buckets_term: Term) -> NifResult<FxHashMap<String, i64>> {
 }
 
 // ============================================================================
-// NIF: Aggregate preprocessed metrics
+// NIF: Aggregate and export preprocessed metrics
 // ============================================================================
 
-#[rustler::nif]
-fn aggregate_metrics<'a>(
+#[rustler::nif(schedule = "DirtyCpu")]
+fn aggregate_and_export<'a>(
     env: Env<'a>,
     preprocessed_data: Term<'a>,
     itm_map: Term<'a>,
-) -> NifResult<ResourceArc<AggregatedMetrics>> {
+) -> NifResult<String> {
     let start = std::time::Instant::now();
 
     let mut counters = FxHashMap::default();
@@ -460,11 +473,9 @@ fn aggregate_metrics<'a>(
     let mut item_count = 0;
     let mut time_tuple_decode = std::time::Duration::ZERO;
     let mut time_metric_lookup = std::time::Duration::ZERO;
-    let mut time_tags_decode = std::time::Duration::ZERO;
+    let mut time_tags_copy = std::time::Duration::ZERO;
     let mut time_value_decode = std::time::Duration::ZERO;
     let mut time_hashmap_insert = std::time::Duration::ZERO;
-
-    let mut tags_vec_buffer: Vec<(String, String)> = Vec::with_capacity(10);
 
     for item in list_iter {
         item_count += 1;
@@ -474,9 +485,7 @@ fn aggregate_metrics<'a>(
             .map_err(|_| rustler::Error::Term(Box::new("Expected tuple")))?;
 
         if tuple.len() != 4 {
-            return Err(rustler::Error::Term(Box::new(
-                "Expected 4-element tuple",
-            )));
+            return Err(rustler::Error::Term(Box::new("Expected 4-element tuple")));
         }
 
         let _metric_type_atom = tuple[0]
@@ -487,7 +496,8 @@ fn aggregate_metrics<'a>(
         let value_term = tuple[3];
 
         // Decode metric_id as u64 to use as cache key
-        let metric_id: u64 = metric_id_term.decode()
+        let metric_id: u64 = metric_id_term
+            .decode()
             .map_err(|_| rustler::Error::Term(Box::new("Failed to decode metric_id")))?;
         time_tuple_decode += t0.elapsed();
 
@@ -509,8 +519,9 @@ fn aggregate_metrics<'a>(
         time_metric_lookup += t1.elapsed();
 
         let t2 = std::time::Instant::now();
-        let tags_key = TagsKey::from_term_with_buffer(tags_term, &mut tags_vec_buffer)?;
-        time_tags_decode += t2.elapsed();
+        // Create TagsKey directly from the term
+        let tags_key = TagsKey::from_term(tags_term);
+        time_tags_copy += t2.elapsed();
 
         let t3 = std::time::Instant::now();
         match metric_type {
@@ -579,9 +590,7 @@ fn aggregate_metrics<'a>(
                     .entry(metric_key_idx)
                     .or_insert_with(FxHashMap::default);
 
-                let bucket_map = dist_map
-                    .entry(tags_key)
-                    .or_insert_with(FxHashMap::default);
+                let bucket_map = dist_map.entry(tags_key).or_insert_with(FxHashMap::default);
 
                 for (bucket, count) in buckets {
                     bucket_map
@@ -602,14 +611,18 @@ fn aggregate_metrics<'a>(
         distributions,
     };
 
-    eprintln!("[PEEPERS2] Aggregation decode+process took: {:?}", decode_start.elapsed());
+    eprintln!(
+        "[PEEPERS2] Aggregation decode+process took: {:?}",
+        decode_start.elapsed()
+    );
     eprintln!("[PEEPERS2]   - Tuple decode: {:?}", time_tuple_decode);
     eprintln!("[PEEPERS2]   - Metric lookup: {:?}", time_metric_lookup);
-    eprintln!("[PEEPERS2]   - Tags decode: {:?}", time_tags_decode);
+    eprintln!("[PEEPERS2]   - Tags copy: {:?}", time_tags_copy);
     eprintln!("[PEEPERS2]   - Value decode: {:?}", time_value_decode);
     eprintln!("[PEEPERS2]   - HashMap insert: {:?}", time_hashmap_insert);
     eprintln!("[PEEPERS2] Total aggregation time: {:?}", start.elapsed());
-    eprintln!("[PEEPERS2] Processed {} items, cached {} unique metrics",
+    eprintln!(
+        "[PEEPERS2] Processed {} items, cached {} unique metrics",
         item_count,
         metric_cache.len()
     );
@@ -620,7 +633,8 @@ fn aggregate_metrics<'a>(
         aggregated.distributions.len()
     );
 
-    Ok(ResourceArc::new(aggregated))
+    // Now export the aggregated metrics
+    export_aggregated_metrics(aggregated)
 }
 
 // ============================================================================
@@ -714,7 +728,12 @@ fn format_labels_inline(tags: &HashMap<String, String>, output: &mut String) {
 }
 
 // Helper: Format value inline
-fn format_value_inline(value: &MetricValue, output: &mut String, ryu_buffer: &mut ryu::Buffer, itoa_buffer: &mut itoa::Buffer) {
+fn format_value_inline(
+    value: &MetricValue,
+    output: &mut String,
+    ryu_buffer: &mut ryu::Buffer,
+    itoa_buffer: &mut itoa::Buffer,
+) {
     match value {
         MetricValue::Integer(i) => {
             output.push_str(itoa_buffer.format(*i));
@@ -736,11 +755,10 @@ fn format_value_inline(value: &MetricValue, output: &mut String, ryu_buffer: &mu
 }
 
 // ============================================================================
-// NIF: Export aggregated metrics to Prometheus format
+// Export aggregated metrics to Prometheus format
 // ============================================================================
 
-#[rustler::nif(schedule = "DirtyCpu")]
-fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifResult<String> {
+fn export_aggregated_metrics(aggregated: AggregatedMetrics) -> NifResult<String> {
     let start = std::time::Instant::now();
     eprintln!("[PEEPERS2] Starting export...");
 
@@ -768,7 +786,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push_str(metric_name);
             if !tags_key.is_empty() {
                 output.push('{');
-                output.push_str(tags_key.as_str());
+                output.push_str(&tags_key.to_prometheus_labels());
                 output.push('}');
             }
             output.push(' ');
@@ -776,7 +794,10 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push('\n');
         }
     }
-    eprintln!("[PEEPERS2] Counters export took: {:?}", counters_start.elapsed());
+    eprintln!(
+        "[PEEPERS2] Counters export took: {:?}",
+        counters_start.elapsed()
+    );
 
     let sums_start = std::time::Instant::now();
     // Export sums
@@ -801,7 +822,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push_str(metric_name);
             if !tags_key.is_empty() {
                 output.push('{');
-                output.push_str(tags_key.as_str());
+                output.push_str(&tags_key.to_prometheus_labels());
                 output.push('}');
             }
             output.push(' ');
@@ -834,7 +855,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push_str(metric_name);
             if !tags_key.is_empty() {
                 output.push('{');
-                output.push_str(tags_key.as_str());
+                output.push_str(&tags_key.to_prometheus_labels());
                 output.push('}');
             }
             output.push(' ');
@@ -842,7 +863,10 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push('\n');
         }
     }
-    eprintln!("[PEEPERS2] Last values export took: {:?}", last_values_start.elapsed());
+    eprintln!(
+        "[PEEPERS2] Last values export took: {:?}",
+        last_values_start.elapsed()
+    );
 
     let distributions_start = std::time::Instant::now();
     // Export distributions
@@ -862,7 +886,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
 
         for (tags_key, buckets) in series {
             let has_labels = !tags_key.is_empty();
-            let labels_str = tags_key.as_str();
+            let labels_str = tags_key.to_prometheus_labels();
 
             // Parse buckets
             let mut bucket_list: Vec<(f64, i64)> = Vec::new();
@@ -896,7 +920,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
                 output.push_str(metric_name);
                 output.push_str("_bucket{");
                 if has_labels {
-                    output.push_str(labels_str);
+                    output.push_str(&labels_str);
                     output.push_str(",le=\"");
                 } else {
                     output.push_str("le=\"");
@@ -911,7 +935,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push_str(metric_name);
             output.push_str("_bucket{");
             if has_labels {
-                output.push_str(labels_str);
+                output.push_str(&labels_str);
                 output.push_str(",le=\"+Inf\"} ");
             } else {
                 output.push_str("le=\"+Inf\"} ");
@@ -924,7 +948,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push_str("_sum");
             if has_labels {
                 output.push('{');
-                output.push_str(labels_str);
+                output.push_str(&labels_str);
                 output.push('}');
             }
             output.push(' ');
@@ -936,7 +960,7 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
             output.push_str("_count");
             if has_labels {
                 output.push('{');
-                output.push_str(labels_str);
+                output.push_str(&labels_str);
                 output.push('}');
             }
             output.push(' ');
@@ -947,9 +971,16 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
 
     output.push_str("# EOF\n");
 
-    eprintln!("[PEEPERS2] Distributions export took: {:?}", distributions_start.elapsed());
+    eprintln!(
+        "[PEEPERS2] Distributions export took: {:?}",
+        distributions_start.elapsed()
+    );
     eprintln!("[PEEPERS2] Total export time: {:?}", start.elapsed());
-    eprintln!("[PEEPERS2] Output size: {} bytes ({:.2} MB)", output.len(), output.len() as f64 / 1024.0 / 1024.0);
+    eprintln!(
+        "[PEEPERS2] Output size: {} bytes ({:.2} MB)",
+        output.len(),
+        output.len() as f64 / 1024.0 / 1024.0
+    );
 
     Ok(output)
 }
@@ -958,8 +989,4 @@ fn export_aggregated_metrics(aggregated: ResourceArc<AggregatedMetrics>) -> NifR
 // Rustler initialization
 // ============================================================================
 
-fn on_load(env: rustler::Env, _: rustler::Term) -> bool {
-    env.register::<AggregatedMetrics>().is_ok()
-}
-
-rustler::init!("Elixir.Supavisor.Monitoring.Peepers2", load = on_load);
+rustler::init!("Elixir.Supavisor.Monitoring.Peepers2");

@@ -4,10 +4,10 @@ defmodule Supavisor.Monitoring.Peepers2 do
 
   This module provides a complete Rust-based pipeline for metrics processing:
   1. Preprocess ETS data in Elixir (extract atomics values for distributions)
-  2. Aggregate metrics in Rust using a resource
-  3. Export directly from the Rust resource to Prometheus format
+  2. Aggregate and export metrics in a single Rust NIF call
 
-  This approach is significantly faster than the Elixir-based aggregation.
+  This approach is significantly faster than the Elixir-based aggregation
+  and avoids converting tags to strings during aggregation (only during export).
   """
 
   use Rustler, otp_app: :supavisor, crate: "peepers2"
@@ -16,20 +16,16 @@ defmodule Supavisor.Monitoring.Peepers2 do
   alias Telemetry.Metrics
 
   @doc """
-  Aggregate preprocessed metrics into a Rust resource.
+  Aggregate and export preprocessed metrics to Prometheus format.
 
   Takes a list of preprocessed metrics (from preprocess_metrics/2) and the itm map,
-  returns a Rust resource containing the aggregated data.
-  """
-  def aggregate_metrics(_preprocessed_data, _itm_map), do: :erlang.nif_error(:nif_not_loaded)
+  aggregates them in Rust, and returns a string in Prometheus exposition format.
 
-  @doc """
-  Export aggregated metrics to Prometheus text format.
-
-  Takes the aggregated metrics resource and returns a binary string
-  in Prometheus exposition format.
+  This is a single NIF call that performs both aggregation and export for maximum
+  performance. Tags are stored as terms during aggregation and only converted to
+  strings once during export.
   """
-  def export_aggregated_metrics(_aggregated_resource), do: :erlang.nif_error(:nif_not_loaded)
+  def aggregate_and_export(_preprocessed_data, _itm_map), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc """
   Get all metrics from Peep storage and export to Prometheus format.
@@ -38,11 +34,9 @@ defmodule Supavisor.Monitoring.Peepers2 do
   """
   def get_metrics(name) do
     case Peep.Persistent.fetch(name) do
-      %Peep.Persistent{storage: {_storage_mod, storage}, ids_to_metrics: itm} = p ->
+      %Peep.Persistent{storage: {_storage_mod, storage}, ids_to_metrics: itm} ->
         preprocessed = preprocess_metrics(storage, itm)
-
-        aggregate_metrics(preprocessed, itm)
-        |> export_aggregated_metrics()
+        aggregate_and_export(preprocessed, itm)
 
       _ ->
         ""
