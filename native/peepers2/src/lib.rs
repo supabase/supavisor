@@ -85,8 +85,9 @@ impl<'a> TagsKey<'a> {
 
 impl<'a> std::hash::Hash for TagsKey<'a> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Use Erlang's phash2 for consistent hashing
-        self.term.hash_phash2().hash(state);
+        // Use Erlang's internal hash for faster hashing
+        // Salt of 0 is fine since we only use this for HashMap lookups
+        self.term.hash_internal(0).hash(state);
     }
 }
 

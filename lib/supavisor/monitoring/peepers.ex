@@ -19,4 +19,16 @@ defmodule Supavisor.Monitoring.Peepers do
       "# HELP http_requests_total Total HTTP requests\\n# TYPE http_requests_total counter\\n..."
   """
   def prometheus_export(_metrics_map), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc """
+  Escapes a label value for Prometheus format.
+  Escapes: ", \\, and newline characters.
+  """
+  def escape_label(_value), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc """
+  Escapes help text for Prometheus format.
+  Escapes: \\ and newline characters.
+  """
+  def escape_help(_value), do: :erlang.nif_error(:nif_not_loaded)
 end

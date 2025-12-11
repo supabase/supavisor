@@ -97,6 +97,7 @@ IO.puts("Verifying output consistency...")
 elixir_output = PromEx.get_metrics() |> IO.iodata_to_binary()
 rust_output = PromEx.get_metrics_rustler() |> IO.iodata_to_binary()
 peepers2_output = PromEx.get_metrics_peepers2() |> IO.iodata_to_binary()
+rust_escape_output = PromEx.get_metrics_rust_escape() |> IO.iodata_to_binary()
 
 # Helper to normalize float formatting differences (e.g., "1.0e4" vs "10000")
 normalize_floats = fn line ->
@@ -141,6 +142,7 @@ end
 elixir_lines = String.split(elixir_output, "\n") |> Enum.map(normalize_floats) |> sort_prometheus_output.()
 rust_lines = String.split(rust_output, "\n") |> Enum.map(normalize_floats) |> sort_prometheus_output.()
 peepers2_lines = String.split(peepers2_output, "\n") |> Enum.map(normalize_floats) |> sort_prometheus_output.()
+rust_escape_lines = String.split(rust_escape_output, "\n") |> Enum.map(normalize_floats) |> sort_prometheus_output.()
 
 # Compare Elixir vs Rust
 # if elixir_lines == rust_lines do
@@ -253,6 +255,12 @@ Benchee.run(
     end,
     "Peepers2 (tab2list + Rust aggregation + Rust export)" => fn ->
       PromEx.get_metrics_peepers2()
+    end,
+    "Rust escape (tab2list + Elixir export + Rust escape)" => fn ->
+      PromEx.get_metrics_rust_escape()
+    end,
+    "Rust escape (foldl + Elixir export + Rust escape)" => fn ->
+      PromEx.get_metrics_rust_escape_foldl()
     end
   },
   warmup: 2,

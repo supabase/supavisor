@@ -10,7 +10,7 @@ defmodule Supavisor.Monitoring.PromEx do
 
   alias Peep.Storage
   alias PromEx.Plugins
-  alias Supavisor.Monitoring.{Peepers, Peepers2}
+  alias Supavisor.Monitoring.{Peepers, Peepers2, StreamingMetrics}
   alias Supavisor.PromEx.Plugins.{Cluster, OsMon, Tenant}
   alias Telemetry.Metrics
 
@@ -96,6 +96,30 @@ defmodule Supavisor.Monitoring.PromEx do
   @spec get_metrics_peepers2() :: iodata()
   def get_metrics_peepers2 do
     Peepers2.get_metrics(__metrics_collector_name__())
+  end
+
+  @spec get_metrics_rust_escape() :: iodata()
+  def get_metrics_rust_escape do
+    fetch_metrics()
+    |> Supavisor.Monitoring.PeepRustEscape.export()
+  end
+
+  @spec get_metrics_rust_escape_foldl() :: iodata()
+  def get_metrics_rust_escape_foldl do
+    fetch_metrics_foldl()
+    |> Supavisor.Monitoring.PeepRustEscape.export()
+  end
+
+  @doc """
+  Returns a stream of metrics chunks for low-memory consumption.
+
+  Each chunk is a Prometheus-formatted section for a single metric.
+  This allows processing metrics one at a time instead of loading
+  all metrics into memory at once.
+  """
+  @spec stream_metrics() :: Enumerable.t()
+  def stream_metrics do
+    StreamingMetrics.stream_metrics(__metrics_collector_name__())
   end
 
   @spec get_cluster_metrics() :: iodata()

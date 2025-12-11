@@ -719,4 +719,43 @@ fn extract_prometheus_type(opts_term: Term) -> Option<PrometheusType> {
     None
 }
 
-rustler::init!("Elixir.Supavisor.Monitoring.Peepers");
+// ============================================================================
+// String Escaping NIFs - for use with Elixir Prometheus exporter
+// ============================================================================
+
+/// Escape a label value for Prometheus format.
+/// Escapes: ", \, and newline
+#[rustler::nif]
+fn escape_label(value: String) -> String {
+    let mut result = String::with_capacity(value.len() + 10);
+
+    for ch in value.chars() {
+        match ch {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            _ => result.push(ch),
+        }
+    }
+
+    result
+}
+
+/// Escape help text for Prometheus format.
+/// Escapes: \ and newline
+#[rustler::nif]
+fn escape_help(value: String) -> String {
+    let mut result = String::with_capacity(value.len() + 10);
+
+    for ch in value.chars() {
+        match ch {
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            _ => result.push(ch),
+        }
+    }
+
+    result
+}
+
+rustler::init!("Elixir.Supavisor.Monitoring.Peepers", [prometheus_export, escape_label, escape_help]);

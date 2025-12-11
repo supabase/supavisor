@@ -86,9 +86,9 @@ defmodule Supavisor.MetricsTest do
         # Print progress every 5000 entries
         total_entry = (tenant_id - 1) * queries_per_tenant + query_num
 
-        if rem(total_entry, 5000) == 0 do
-          IO.puts("  Processed #{total_entry} entries...")
-        end
+        # if rem(total_entry, 5000) == 0 do
+        #  # IO.puts("  Processed #{total_entry} entries...")
+        # end
 
         :ok
       end,
