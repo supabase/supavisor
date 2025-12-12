@@ -48,10 +48,8 @@ defmodule Peep.ETSCache do
 
     buckets_as_floats =
       Map.drop(buckets, [:sum, :infinity])
-      |> IO.inspect(label: :before)
       |> Enum.map(fn {bucket_string, count} -> {String.to_float(bucket_string), count} end)
       |> Enum.sort()
-      |> IO.inspect(label: :after)
 
     {prefix_sums, count} = prefix_sums(buckets_as_floats)
 
