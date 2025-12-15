@@ -216,21 +216,19 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, {:terminate_with_error, error, pool_action}, _state, data) do
     Logger.debug("DbHandler: Transitioning to terminating_with_error state")
 
-    # Shutdown pool with error if requested and not in proxy mode
     if pool_action == :shutdown_pool and not data.proxy do
       Supavisor.Manager.shutdown_with_error(data.id, error)
     end
 
-    # Forward error to client if already checked out
     # If not checked out yet, the postponed checkout will handle sending the error
     if data.client_sock != nil do
       encode_and_forward_error(error, data)
     end
 
-    # Send a cast to finalize termination after postponed events are processed
+    # Use cast to allow postponed events to be processed first
     :gen_statem.cast(self(), :finalize_termination)
 
-    # Transition to terminating_with_error state, which will handle postponed checkout calls
+    # This state will handle postponed checkout calls by returning the error
     {:next_state, :terminating_with_error, %{data | terminating_error: error}}
   end
 
@@ -373,8 +371,6 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
-
-    # Return the error map to the caller (ClientHandler) so it can encode and send it
     {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
   end
 
@@ -382,7 +378,6 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
-      # In proxy mode, send parameter_status to caller if we have it
       if data.mode == :proxy do
         bin_ps = Server.encode_parameter_status(data.parameter_status)
         send(caller, {:parameter_status, bin_ps})
