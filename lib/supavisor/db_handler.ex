@@ -56,7 +56,7 @@ defmodule Supavisor.DbHandler do
   Returns the server socket, which the client may write messages directly to.
   """
   @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
-          {:ok, Supavisor.sock()} | {:error, {:exit, term()}}
+          {:ok, Supavisor.sock()} | {:error, {:exit, term()}} | {:error, map()}
   def checkout(pid, sock, caller, timeout \\ 15_000) do
     :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
   catch
