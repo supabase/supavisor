@@ -27,7 +27,7 @@ defmodule Supavisor.DbHandler do
     Protocol.Server
   }
 
-  @type state :: :connect | :authentication | :idle | :busy
+  @type state :: :connect | :authentication | :idle | :busy | :terminating_with_error
 
   @reconnect_timeout 2_500
   @reconnect_timeout_proxy 500
@@ -56,7 +56,7 @@ defmodule Supavisor.DbHandler do
   Returns the server socket, which the client may write messages directly to.
   """
   @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
-          {:ok, Supavisor.sock()} | {:error, {:exit, term()}}
+          {:ok, Supavisor.sock()} | {:error, {:exit, term()}} | {:error, map()}
   def checkout(pid, sock, caller, timeout \\ 15_000) do
     :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
   catch
@@ -150,7 +150,8 @@ defmodule Supavisor.DbHandler do
         replica_type: config.replica_type,
         caller: Map.get(config, :caller) || nil,
         client_sock: Map.get(config, :client_sock) || nil,
-        reconnect_retries: 0
+        reconnect_retries: 0,
+        terminating_error: nil
       }
 
     Telem.handler_action(:db_handler, :started, id)
@@ -212,6 +213,30 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  def handle_event(:internal, {:terminate_with_error, error, pool_action}, _state, data) do
+    Logger.debug("DbHandler: Transitioning to terminating_with_error state")
+
+    if pool_action == :shutdown_pool and not data.proxy do
+      Supavisor.Manager.shutdown_with_error(data.id, error)
+    end
+
+    # If not checked out yet, the postponed checkout will handle sending the error
+    if data.client_sock != nil do
+      encode_and_forward_error(error, data)
+    end
+
+    # Use cast to allow postponed events to be processed first
+    :gen_statem.cast(self(), :finalize_termination)
+
+    # This state will handle postponed checkout calls by returning the error
+    {:next_state, :terminating_with_error, %{data | terminating_error: error}}
+  end
+
+  def handle_event(:cast, :finalize_termination, :terminating_with_error, _data) do
+    Logger.debug("DbHandler: Stopping from terminating_with_error state")
+    {:stop, :normal}
+  end
+
   def handle_event(:state_timeout, :connect, _state, data) do
     retry = data.reconnect_retries
     Logger.warning("DbHandler: Reconnect #{retry} to DB")
@@ -248,32 +273,27 @@ defmodule Supavisor.DbHandler do
         reason = error["M"] || "Authentication failed"
         handle_authentication_error(data, reason)
         Logger.error("DbHandler: Auth error #{inspect(error)}")
-        {:stop, :invalid_password, data}
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
 
       {:error_response, %{"S" => "FATAL", "C" => "3D000"} = error} ->
         Logger.error("DbHandler: Database does not exist: #{inspect(error)}")
-        encode_and_forward_error(error, data)
 
-        if not data.proxy do
-          Supavisor.Manager.shutdown_with_error(data.id, error)
-        end
-
-        {:stop, :normal, data}
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
 
       {:error_response, %{"S" => "FATAL", "C" => "42501"} = error} ->
         Logger.error("DbHandler: Insufficient privilege: #{inspect(error)}")
-        encode_and_forward_error(error, data)
 
-        if not data.proxy do
-          Supavisor.Manager.shutdown_with_error(data.id, error)
-        end
-
-        {:stop, :normal, data}
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
 
       {:error_response, error} ->
         Logger.error("DbHandler: Error response during auth: #{inspect(error)}")
-        encode_and_forward_error(error, data)
-        {:stop, :normal}
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
 
       {:ready_for_query, acc} ->
         ps = acc.ps
@@ -282,10 +302,7 @@ defmodule Supavisor.DbHandler do
           "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
         )
 
-        if data.mode == :proxy do
-          bin_ps = Server.encode_parameter_status(ps)
-          send(data.caller, {:parameter_status, bin_ps})
-        else
+        if data.mode != :proxy do
           Supavisor.set_parameter_status(data.id, ps)
         end
 
@@ -352,10 +369,20 @@ defmodule Supavisor.DbHandler do
     {:keep_state, data, {:reply, from, :ok}}
   end
 
+  def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
+    Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
+    {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
+  end
+
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
+      if data.mode == :proxy do
+        bin_ps = Server.encode_parameter_status(data.parameter_status)
+        send(caller, {:parameter_status, bin_ps})
+      end
+
       {:next_state, :busy, %{data | client_sock: sock, caller: caller},
        {:reply, from, {:ok, data.sock}}}
     else
@@ -373,7 +400,9 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
-    Logger.error("DbHandler: Connection closed when state was #{state}")
+    if state != :terminating_with_error do
+      Logger.error("DbHandler: Db connection closed when state was #{state}")
+    end
 
     if Application.get_env(:supavisor, :reconnect_on_db_close),
       do: {:next_state, :connect, data, {:state_timeout, reconnect_timeout(data), :connect}},
@@ -416,9 +445,8 @@ defmodule Supavisor.DbHandler do
   end
 
   @impl true
-  def terminate(:shutdown, _state, data) do
+  def terminate(_reason, :terminating_with_error, data) do
     Telem.handler_action(:db_handler, :stopped, data.id)
-    :ok
   end
 
   def terminate(reason, state, data) do

@@ -39,9 +39,7 @@ defmodule Supavisor.ClientHandler.Proxy do
       replica_type: :write,
       mode: :proxy,
       proxy: true,
-      log_level: nil,
-      caller: self(),
-      client_sock: data.sock
+      log_level: nil
     }
   end
 end
