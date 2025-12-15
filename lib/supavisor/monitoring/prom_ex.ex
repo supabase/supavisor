@@ -42,8 +42,7 @@ defmodule Supavisor.Monitoring.PromEx do
       Peep.child_spec(
         name: name,
         metrics: metrics,
-        global_tags: global_tags,
-        storage: :striped
+        global_tags: global_tags
       )
     end
   end
@@ -179,7 +178,6 @@ defmodule Supavisor.Monitoring.PromEx do
 
   defp sum_merge(a, b), do: Map.merge(a, b, fn _, a, b -> a + b end)
 
-  # Works only with striped storage
   def fetch_metrics_for(tags) do
     match =
       for {name, value} <- tags do
@@ -190,14 +188,20 @@ defmodule Supavisor.Monitoring.PromEx do
       Peep.Persistent.fetch(__metrics_collector_name__())
 
     store
-    |> Tuple.to_list()
+    |> List.wrap()
     |> Enum.flat_map(fn tid ->
-      :ets.select(tid, [{{{:_, :"$1"}, :_}, match, [:"$_"]}])
+      :ets.select(tid, [
+        # Counter/Sum (3-tuple keys)
+        {{{:_, :"$1", :_}, :_}, match, [:"$_"]},
+        # LastValue/Distribution (2-tuple keys)
+        {{{:_, :"$1"}, :_}, match, [:"$_"]}
+      ])
     end)
     |> group_metrics(itm, %{})
   end
 
-  # Copied from Peep.
+  # Copied from Peep. Probably will work only with ETS storage (that we
+  # currently use).
   # To be removed if Peep will accept feature request for similar functionality,
   # see: https://github.com/rkallos/peep/issues/35
   defp group_metrics([], _itm, acc) do
@@ -209,6 +213,11 @@ defmodule Supavisor.Monitoring.PromEx do
     group_metrics(rest, itm, acc2)
   end
 
+  defp group_metric({{id, tags, _}, value}, itm, acc) do
+    %{^id => metric} = itm
+    update_in(acc, [Access.key(metric, %{}), Access.key(tags, 0)], &(&1 + value))
+  end
+
   defp group_metric({{id, tags}, %Storage.Atomics{} = atomics}, itm, acc) do
     %{^id => metric} = itm
     put_in(acc, [Access.key(metric, %{}), Access.key(tags)], Storage.Atomics.values(atomics))
@@ -216,13 +225,6 @@ defmodule Supavisor.Monitoring.PromEx do
 
   defp group_metric({{id, tags}, value}, itm, acc) do
     %{^id => metric} = itm
-
-    case value do
-      {_timestamp, value} ->
-        put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
-
-      value ->
-        put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
-    end
+    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
   end
 end
