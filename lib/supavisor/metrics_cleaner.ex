@@ -63,37 +63,46 @@ defmodule Supavisor.MetricsCleaner do
 
   defp check, do: Process.send_after(self(), :check, @interval)
 
-  # Assumes peep storage is `:striped`
   defp loop_and_cleanup_metrics_table do
-    %Peep.Persistent{storage: {_, tids}} =
-      Peep.Persistent.fetch(Supavisor.Monitoring.PromEx.Metrics)
+    {_, tids} = Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
 
     tids
-    |> Tuple.to_list()
+    |> List.wrap()
     |> Enum.sum_by(&clean_table/1)
   end
 
   defp clean_table(tid) do
-    func =
+    :ets.foldl(
       fn {key, _val}, acc ->
         # We use elem/2 instead of pattern matching because the key may be a tuple with size 2 or 3
-        with %{
-               type: type,
-               mode: mode,
-               user: user,
-               tenant: tenant,
-               db_name: db,
-               search_path: search_path
-             } <- elem(key, 1),
-             [] <-
-               :ets.lookup(@tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) do
+        tags = elem(key, 1)
+
+        if tags[:tenant] && tenant_down?(tags) do
           :ets.delete(tid, key)
           acc + 1
         else
-          _ -> acc
+          acc
         end
-      end
-
-    :ets.foldl(func, 0, tid)
+      end,
+      0,
+      tid
+    )
   end
+
+  defp tenant_down?(%{
+         type: type,
+         mode: mode,
+         user: user,
+         tenant: tenant,
+         db_name: db,
+         search_path: search_path
+       }) do
+    :ets.lookup(@tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) == []
+  end
+
+  defp tenant_down?(%{tenant: tenant}) do
+    Registry.lookup(Supavisor.Registry.TenantSups, tenant) == []
+  end
+
+  defp tenant_down?(_), do: false
 end
