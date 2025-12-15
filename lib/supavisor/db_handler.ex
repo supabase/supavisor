@@ -445,8 +445,8 @@ defmodule Supavisor.DbHandler do
   end
 
   @impl true
-  def terminate(_reason, :terminating_with_error, _data) do
-    :ok
+  def terminate(_reason, :terminating_with_error, data) do
+    Telem.handler_action(:db_handler, :stopped, data.id)
   end
 
   def terminate(reason, state, data) do
