@@ -9,7 +9,7 @@ defmodule Supavisor.SynHandlerTest do
 
   @tag cluster: true
   test "resolving conflict" do
-    {:ok, peer, node2} = Cluster.start_node_unclustered(:peer.random_name(), 1)
+    {:ok, peer, node2} = Cluster.start_node_unclustered(:peer.random_name())
 
     secret = %Supavisor.ClientHandler.Auth.PasswordSecrets{
       user: "postgres",

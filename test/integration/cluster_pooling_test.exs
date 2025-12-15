@@ -5,13 +5,35 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
 
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
+  alias Cluster.PortConfig
 
   @tag cluster: true, flaky: true
   test "nodes start unclustered then cluster and pools work across all nodes" do
     db_conf = Application.get_env(:supavisor, Repo)
 
-    {:ok, peer1, node1} = Cluster.start_node_unclustered(:test_node_1, 1)
-    {:ok, peer2, node2} = Cluster.start_node_unclustered(:test_node_2, 2)
+    {:ok, peer1, node1} =
+      Cluster.start_node_unclustered(
+        :test_node_1,
+        %PortConfig{
+          proxy_port_transaction: 7658,
+          proxy_port_session: 7659,
+          proxy_port: 7660,
+          session_proxy_ports: [13100, 13101, 13102, 13103],
+          transaction_proxy_ports: [13104, 13105, 13106, 13107]
+        }
+      )
+
+    {:ok, peer2, node2} =
+      Cluster.start_node_unclustered(
+        :test_node_2,
+        %PortConfig{
+          proxy_port_transaction: 7661,
+          proxy_port_session: 7662,
+          proxy_port: 7663,
+          session_proxy_ports: [14100, 14101, 14102, 14103],
+          transaction_proxy_ports: [14104, 14105, 14106, 14107]
+        }
+      )
 
     # Verify nodes are NOT clustered initially
     refute node1 in Node.list(:connected)

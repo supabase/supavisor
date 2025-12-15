@@ -3,40 +3,74 @@ defmodule Supavisor.Support.Cluster do
   This module provides functionality to help handle distributive mode for testing.
   """
 
-  def start_node(name \\ :peer.random_name()) do
-    start_peer_node(name, clustered: true)
+  defmodule PortConfig do
+    @moduledoc """
+    Configuration for ports used by a peer node in tests.
+    """
+    defstruct proxy_port_transaction: 7655,
+              proxy_port_session: 7656,
+              proxy_port: 7657,
+              session_proxy_ports: [13100, 13101, 13102, 13103],
+              transaction_proxy_ports: [13104, 13105, 13106, 13107]
+
+    @type t :: %__MODULE__{
+            proxy_port_transaction: pos_integer(),
+            proxy_port_session: pos_integer(),
+            proxy_port: pos_integer(),
+            session_proxy_ports: [pos_integer()],
+            transaction_proxy_ports: [pos_integer()]
+          }
   end
 
-  def start_node_unclustered(name \\ :peer.random_name(), port_offset \\ 0) do
-    start_peer_node(name, clustered: false, port_offset: port_offset)
+  def start_node(name \\ :peer.random_name(), port_config \\ %PortConfig{}) do
+    start_peer_node(name, clustered: true, port_config: port_config)
+  end
+
+  def start_node_unclustered(name \\ :peer.random_name(), port_config \\ %PortConfig{}) do
+    start_peer_node(name, clustered: false, port_config: port_config)
   end
 
   defp start_peer_node(name, opts) do
     clustered = Keyword.get(opts, :clustered, true)
-    port_offset = Keyword.get(opts, :port_offset, 0)
+    port_config = Keyword.get(opts, :port_config, %PortConfig{})
 
     {:ok, pid, node} = create_peer(name)
     setup_peer_logging(pid)
-    apply_peer_config(pid, clustered, port_offset)
+    apply_peer_config(pid, clustered, port_config)
     :peer.call(pid, Application, :ensure_all_started, [:supavisor])
 
     {:ok, pid, node}
   end
 
   defp create_peer(name) do
-    ExUnit.Callbacks.start_supervised(%{
-      id: {:peer, name},
-      start:
-        {:peer, :start_link,
-         [
-           %{
-             name: name,
-             host: ~c"127.0.0.1",
-             longnames: true,
-             connection: :standard_io
-           }
-         ]}
-    })
+    result =
+      ExUnit.Callbacks.start_supervised(%{
+        id: {:peer, name},
+        start:
+          {:peer, :start_link,
+           [
+             %{
+               name: name,
+               host: ~c"127.0.0.1",
+               longnames: true,
+               connection: :standard_io
+             }
+           ]}
+      })
+
+    case result do
+      {:ok, pid, _node} = success ->
+        ExUnit.Callbacks.on_exit(fn ->
+          if Process.alive?(pid) do
+            :peer.stop(pid)
+          end
+        end)
+
+        success
+
+      error ->
+        error
+    end
   end
 
   defp setup_peer_logging(pid) do
@@ -49,10 +83,10 @@ defmodule Supavisor.Support.Cluster do
     true = :peer.call(pid, :code, :set_path, [:code.get_path()])
   end
 
-  defp apply_peer_config(pid, clustered, port_offset) do
+  defp apply_peer_config(pid, clustered, port_config) do
     for {app_name, _, _} <- Application.loaded_applications() do
       for {key, val} <- Application.get_all_env(app_name) do
-        new_val = transform_config_value({app_name, key}, val, clustered, port_offset)
+        new_val = transform_config_value({app_name, key}, val, clustered, port_config)
         :peer.call(pid, Application, :put_env, [app_name, key, new_val])
       end
     end
@@ -62,21 +96,39 @@ defmodule Supavisor.Support.Cluster do
          {:supavisor, :proxy_port_transaction},
          _val,
          _clustered,
-         port_offset
+         %PortConfig{proxy_port_transaction: port}
        ) do
-    Application.get_env(:supavisor, :secondary_proxy_port) + port_offset
+    port
+  end
+
+  defp transform_config_value(
+         {:supavisor, :proxy_port_session},
+         _val,
+         _clustered,
+         %PortConfig{proxy_port_session: port}
+       ) do
+    port
+  end
+
+  defp transform_config_value(
+         {:supavisor, :proxy_port},
+         _val,
+         _clustered,
+         %PortConfig{proxy_port: port}
+       ) do
+    port
   end
 
   defp transform_config_value(
          {:supavisor, SupavisorWeb.Endpoint},
          val,
          _clustered,
-         _port_offset
+         _port_config
        ) do
     put_in(val[:http], ip: {127, 0, 0, 1}, port: 0)
   end
 
-  defp transform_config_value({:supavisor, :region}, _val, _clustered, _port_offset) do
+  defp transform_config_value({:supavisor, :region}, _val, _clustered, _port_config) do
     "usa"
   end
 
@@ -84,7 +136,7 @@ defmodule Supavisor.Support.Cluster do
          {:supavisor, :availability_zone},
          _val,
          _clustered,
-         _port_offset
+         _port_config
        ) do
     "ap-southeast-1c"
   end
@@ -93,36 +145,31 @@ defmodule Supavisor.Support.Cluster do
          {:supavisor, :session_proxy_ports},
          _val,
          _clustered,
-         port_offset
+         %PortConfig{session_proxy_ports: ports}
        ) do
-    apply_port_offset(:session_proxy_ports, port_offset)
+    ports
   end
 
   defp transform_config_value(
          {:supavisor, :transaction_proxy_ports},
          _val,
          _clustered,
-         port_offset
+         %PortConfig{transaction_proxy_ports: ports}
        ) do
-    apply_port_offset(:transaction_proxy_ports, port_offset)
+    ports
   end
 
   defp transform_config_value(
          {:libcluster, :topologies},
          _val,
          clustered,
-         _port_offset
+         _port_config
        )
        when not clustered do
     []
   end
 
-  defp transform_config_value(_key, val, _clustered, _port_offset) do
+  defp transform_config_value(_key, val, _clustered, _port_config) do
     val
-  end
-
-  defp apply_port_offset(port_config_key, port_offset) do
-    Application.get_env(:supavisor, port_config_key)
-    |> Enum.map(&(&1 + port_offset * 200))
   end
 end
