@@ -68,27 +68,20 @@ defmodule Supavisor.Application do
          Supavisor.ClientHandler}
       ] ++ session_shards ++ transaction_shards
 
-    for {key, port, opts, handler} <- proxy_ports do
-      case :ranch.start_listener(
-             key,
-             :ranch_tcp,
-             %{
-               max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "75000"),
-               num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-               socket_opts: [port: port, keepalive: true]
-             },
-             handler,
-             opts
-           ) do
-        {:ok, _ref} ->
-          Logger.notice(
-            "Proxy started #{opts.mode}(local=#{opts.local}) on port #{:ranch.get_port(key)}"
-          )
-
-        error ->
-          Logger.error("Proxy on #{port} not started because of #{inspect(error)}")
+    ranch_listeners =
+      for {key, port, opts, handler} <- proxy_ports do
+        :ranch.child_spec(
+          key,
+          :ranch_tcp,
+          %{
+            max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "75000"),
+            num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+            socket_opts: [port: port, keepalive: true]
+          },
+          handler,
+          opts
+        )
       end
-    end
 
     :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants, :availability_zone])
@@ -101,39 +94,40 @@ defmodule Supavisor.Application do
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
-    children = [
-      Supavisor.ErlSysMon,
-      Supavisor.Health,
-      Supavisor.CacheRefreshLimiter,
-      Supavisor.CircuitBreaker.Janitor,
-      {Task.Supervisor, name: Supavisor.PoolTerminator},
-      {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
-      {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
-      {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
-      {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
-      {Registry,
-       keys: :duplicate,
-       name: Supavisor.Registry.TenantClients,
-       partitions: System.schedulers_online()},
-      {Registry,
-       keys: :duplicate,
-       name: Supavisor.Registry.TenantProxyClients,
-       partitions: System.schedulers_online()},
-      {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
-      Supavisor.Repo,
-      # Start the Telemetry supervisor
-      SupavisorWeb.Telemetry,
-      # Start the PubSub system
-      {Phoenix.PubSub, name: Supavisor.PubSub},
-      {
-        PartitionSupervisor,
-        child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
-      },
-      Supavisor.Vault,
+    children =
+      [
+        Supavisor.ErlSysMon,
+        Supavisor.Health,
+        Supavisor.CacheRefreshLimiter,
+        Supavisor.CircuitBreaker.Janitor,
+        {Task.Supervisor, name: Supavisor.PoolTerminator},
+        {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
+        {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
+        {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
+        {Registry, keys: :duplicate, name: Supavisor.Registry.TenantSups},
+        {Registry,
+         keys: :duplicate,
+         name: Supavisor.Registry.TenantClients,
+         partitions: System.schedulers_online()},
+        {Registry,
+         keys: :duplicate,
+         name: Supavisor.Registry.TenantProxyClients,
+         partitions: System.schedulers_online()},
+        {Cluster.Supervisor, [topologies, [name: Supavisor.ClusterSupervisor]]},
+        Supavisor.Repo,
+        # Start the Telemetry supervisor
+        SupavisorWeb.Telemetry,
+        # Start the PubSub system
+        {Phoenix.PubSub, name: Supavisor.PubSub},
+        {
+          PartitionSupervisor,
+          child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
+        },
+        Supavisor.Vault,
 
-      # Start the Endpoint (http/https)
-      SupavisorWeb.Endpoint
-    ]
+        # Start the Endpoint (http/https)
+        SupavisorWeb.Endpoint
+      ] ++ ranch_listeners
 
     Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
 
