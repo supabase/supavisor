@@ -2,6 +2,7 @@ defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
   alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Protocol.Server
 
   # import Mock
   @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
@@ -388,28 +389,91 @@ defmodule Supavisor.DbHandlerTest do
   describe "handle_event/4 info tcp error_response" do
     test "handles server invalid password" do
       bin =
-        <<?E, 51::32, "SFATAL", 0, "VFATAL", 0, "C28P01", 0, "wrong", 0, "something", 0, "auth",
-          0, "error", 0>>
+        Server.error_message("28P01", "password authentication failed") |> IO.iodata_to_binary()
 
       {_a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      data = %{id: @id, mode: :session, user: "some user"}
+      data = %{
+        id: @id,
+        mode: :session,
+        user: "some user",
+        client_sock: nil,
+        terminating_error: nil
+      }
 
-      assert {:stop, :invalid_password, ^data} =
+      # Step 1: Receive error from DB, should prepare to terminate
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
                Db.handle_event(:info, content, :authentication, data)
+
+      assert error == %{
+               "C" => "28P01",
+               "M" => "password authentication failed",
+               "S" => "FATAL",
+               "V" => "FATAL"
+             }
+
+      # Step 2: Process internal event, should transition to terminating_with_error
+      assert {:next_state, :terminating_with_error, new_data} =
+               Db.handle_event(
+                 :internal,
+                 {:terminate_with_error, error, :keep_pool},
+                 :authentication,
+                 data
+               )
+
+      assert new_data.terminating_error == error
+
+      # Verify the cast was sent to self
+      assert_received {:"$gen_cast", :finalize_termination}
+
+      # Step 3: Process finalize_termination cast, should stop
+      assert {:stop, :normal} =
+               Db.handle_event(:cast, :finalize_termination, :terminating_with_error, new_data)
     end
 
-    test "encodes and forwards server error" do
-      bin = <<?E, 4::32>>
+    test "encodes and forwards server error to client socket" do
+      bin = Server.error_message("XX000", "generic error") |> IO.iodata_to_binary()
       {send, recv} = sockpair()
       content = {:tcp, recv, bin}
 
-      assert {:stop, :normal} =
-               Db.handle_event(:info, content, :authentication, %{client_sock: {:gen_tcp, send}})
+      data = %{
+        id: @id,
+        mode: :session,
+        user: "some user",
+        client_sock: {:gen_tcp, send},
+        terminating_error: nil
+      }
 
-      # The implementation adds a null terminator
-      assert {:ok, <<?E, 5::32, 0>>} = :gen_tcp.recv(recv, 0, 1000)
+      # Step 1: Receive error from DB, should prepare to terminate
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
+               Db.handle_event(:info, content, :authentication, data)
+
+      assert error == %{"C" => "XX000", "M" => "generic error", "S" => "FATAL", "V" => "FATAL"}
+
+      # Step 2: Process internal event, should forward error to client and transition to terminating_with_error
+      assert {:next_state, :terminating_with_error, new_data} =
+               Db.handle_event(
+                 :internal,
+                 {:terminate_with_error, error, :keep_pool},
+                 :authentication,
+                 data
+               )
+
+      assert new_data.terminating_error == error
+
+      # Verify error was sent to client socket
+      expected_error_bin = Server.encode_error_message(error) |> IO.iodata_to_binary()
+      assert {:ok, ^expected_error_bin} = :gen_tcp.recv(recv, 0, 1000)
+
+      # Verify the cast was sent to self
+      assert_received {:"$gen_cast", :finalize_termination}
+
+      # Step 3: Process finalize_termination cast, should stop
+      assert {:stop, :normal} =
+               Db.handle_event(:cast, :finalize_termination, :terminating_with_error, new_data)
     end
   end
 

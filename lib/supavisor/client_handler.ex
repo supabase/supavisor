@@ -430,6 +430,15 @@ defmodule Supavisor.ClientHandler do
       {:error, {:exit, {:timeout, _}}} ->
         timeout_error(data)
 
+      {:error, %{"S" => "FATAL"} = error_map} ->
+        Logger.debug(
+          "ClientHandler: Received error from DbHandler checkout (proxy): #{inspect(error_map)}"
+        )
+
+        error_message = Server.encode_error_message(error_map)
+        HandlerHelpers.sock_send(data.sock, error_message)
+        {:stop, :normal}
+
       # Errors are already forwarded to the client socket, so we can safely ignore them
       # here.
       {:error, {:exit, {reason, _}}} ->
@@ -859,6 +868,15 @@ defmodule Supavisor.ClientHandler do
     else
       {:error, {:exit, {:timeout, _}}} ->
         timeout_error(data)
+
+      {:error, %{"S" => "FATAL"} = error_map} ->
+        Logger.debug(
+          "ClientHandler: Received error from DbHandler checkout: #{inspect(error_map)}"
+        )
+
+        error_message = Server.encode_error_message(error_map)
+        HandlerHelpers.sock_send(data.sock, error_message)
+        {:stop, :normal}
 
       {:error, {:exit, e}} ->
         exit(e)
