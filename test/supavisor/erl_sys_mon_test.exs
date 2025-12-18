@@ -54,4 +54,28 @@ defmodule Supavisor.ErlSysMonTest do
 
     assert {:error, {:already_started, ^pid}} = ErlSysMon.start_link([])
   end
+
+  test "logs port monitor events" do
+    monitor_pid = Process.whereis(ErlSysMon)
+    assert is_pid(monitor_pid)
+
+    test_port = Port.open({:spawn, "sleep 10"}, [:binary])
+
+    msg = {:monitor, test_port, :busy_port, []}
+
+    log =
+      capture_log(fn ->
+        send(monitor_pid, msg)
+        Process.sleep(100)
+      end)
+
+    assert log =~ "Alert: :busy_port"
+    assert log =~ "Port: #{inspect(test_port)}"
+    assert log =~ "Meta: []"
+    assert log =~ "Name: ~c\"sleep 10\""
+    assert log =~ "Connected:"
+    assert log =~ "Links:"
+    assert log =~ "Input bytes: 0"
+    assert log =~ "Output bytes: 0"
+  end
 end

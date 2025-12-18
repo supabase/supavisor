@@ -35,8 +35,13 @@ defmodule Supavisor.ErlSysMon do
     {:noreply, state}
   end
 
+  def handle_info({:monitor, port, _type, _meta} = msg, state) when is_port(port) do
+    log_port_info(msg, port)
+    {:noreply, state}
+  end
+
   def handle_info(msg, state) do
-    Logger.warning("#{__MODULE__} message: " <> inspect(msg))
+    Logger.warning("#{inspect(__MODULE__)} message: " <> inspect(msg))
     {:noreply, state}
   end
 
@@ -72,12 +77,12 @@ defmodule Supavisor.ErlSysMon do
         format_initial_call(initial_call)
 
     Logger.warning([
-      "#{__MODULE__} Alert: #{inspect(type)}\n",
+      "#{inspect(__MODULE__)} Alert: #{inspect(type)}\n",
       "PID: #{inspect(pid)}\n",
       "Process: #{process_name}\n",
       "Meta: #{inspect(meta)}\n",
-      "Initial call: #{format_initial_call(initial_call)}\n",
-      "Ancestors: #{inspect(ancestors)}\n",
+      format_optional_field("Initial call", format_initial_call(initial_call)),
+      format_optional_field("Ancestors", ancestors),
       "Message queue length: #{inspect(message_queue_len)}\n",
       "Total heap size: #{format_heap_size(total_heap_size)}\n",
       "Stacktrace:\n",
@@ -85,7 +90,7 @@ defmodule Supavisor.ErlSysMon do
     ])
   rescue
     _ ->
-      Logger.warning("#{__MODULE__} message: " <> inspect(msg))
+      Logger.warning("#{inspect(__MODULE__)} message: " <> inspect(msg))
   end
 
   defp extract_pid_info({:dictionary, dict}) when is_list(dict) do
@@ -127,4 +132,33 @@ defmodule Supavisor.ErlSysMon do
   defp format_initial_call({:supervisor, mod, arity}), do: Exception.format_mfa(mod, :init, arity)
   defp format_initial_call({m, f, a}), do: Exception.format_mfa(m, f, a)
   defp format_initial_call(nil), do: nil
+
+  defp format_optional_field(_label, nil), do: []
+  defp format_optional_field(label, value), do: ["#{label}: #{inspect(value)}\n"]
+
+  defp log_port_info({:monitor, port, type, meta} = msg, port) do
+    port_info = Port.info(port) || []
+
+    name = Keyword.get(port_info, :name)
+    connected = Keyword.get(port_info, :connected)
+    links = Keyword.get(port_info, :links)
+    input = Keyword.get(port_info, :input)
+    output = Keyword.get(port_info, :output)
+    queue_size = Keyword.get(port_info, :queue_size)
+
+    Logger.warning([
+      "#{inspect(__MODULE__)} Alert: #{inspect(type)}\n",
+      "Port: #{inspect(port)}\n",
+      "Meta: #{inspect(meta)}\n",
+      format_optional_field("Name", name),
+      format_optional_field("Connected", connected),
+      format_optional_field("Links", links),
+      format_optional_field("Input bytes", input),
+      format_optional_field("Output bytes", output),
+      format_optional_field("Queue size", queue_size)
+    ])
+  rescue
+    _ ->
+      Logger.warning("#{inspect(__MODULE__)} message: " <> inspect(msg))
+  end
 end
