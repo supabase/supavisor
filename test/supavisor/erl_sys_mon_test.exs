@@ -13,23 +13,36 @@ defmodule Supavisor.ErlSysMonTest do
     [
       :busy_dist_port,
       :busy_port,
-      {:long_gc, 250},
-      {:long_schedule, 100},
+      {:long_gc, 500},
+      {:long_schedule, 500},
       {:long_message_queue, {0, 1_000}},
       {:large_heap, 3_276_800}
     ]
     |> Enum.each(&assert &1 in settings)
 
-    test_msg = {:monitor, self(), :test_pid, :busy_port}
+    victim_pid = start_supervised!({Agent, fn -> :ok end}, id: :test_victim)
+    Process.register(victim_pid, :test_victim)
+
+    msg =
+      {:monitor, victim_pid, :long_message_queue,
+       [message_queue_len: 5000, current_function: {:gen_server, :loop, 3}]}
 
     log =
       capture_log(fn ->
-        send(pid, test_msg)
+        send(pid, msg)
         Process.sleep(100)
       end)
 
-    assert log =~ "Supavisor.ErlSysMon message:"
-    assert log =~ inspect(test_msg)
+    assert log =~ "Alert: :long_message_queue"
+    assert log =~ "PID: #{inspect(victim_pid)}"
+    assert log =~ "Process: :test_victim"
+    assert log =~ "message_queue_len: 5000"
+    assert log =~ "current_function:"
+    assert log =~ ":gen_server"
+    assert log =~ "Message queue length: 0"
+    assert log =~ "Total heap size:"
+    assert log =~ "MB"
+    assert log =~ "Stacktrace:"
 
     Process.exit(pid, :normal)
   end
