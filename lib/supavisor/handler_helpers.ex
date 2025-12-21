@@ -23,9 +23,6 @@ defmodule Supavisor.HandlerHelpers do
   @spec active_once(Supavisor.sock()) :: :ok | {:error, term}
   def active_once(sock), do: setopts(sock, active: :once)
 
-  @spec activate(Supavisor.sock()) :: :ok | {:error, term}
-  def activate(sock), do: setopts(sock, active: true)
-
   @spec try_ssl_handshake(Supavisor.tcp_sock(), boolean) ::
           {:ok, Supavisor.sock()} | {:error, term()}
   def try_ssl_handshake(sock, true) do
