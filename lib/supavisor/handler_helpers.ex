@@ -70,12 +70,6 @@ defmodule Supavisor.HandlerHelpers do
 
   def try_get_sni(_), do: nil
 
-  @spec reset_active_count(%{sock: Supavisor.sock()}) :: 0
-  def reset_active_count(%{sock: sock}) do
-    activate(sock)
-    0
-  end
-
   @spec parse_user_info(map) ::
           {:cluster | :single, {String.t() | nil, String.t(), String.t() | nil}}
   def parse_user_info(%{"user" => user, "options" => %{"reference" => ref}} = payload) do
