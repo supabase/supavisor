@@ -23,9 +23,6 @@ defmodule Supavisor.HandlerHelpers do
   @spec active_once(Supavisor.sock()) :: :ok | {:error, term}
   def active_once(sock), do: setopts(sock, active: :once)
 
-  @spec activate(Supavisor.sock()) :: :ok | {:error, term}
-  def activate(sock), do: setopts(sock, active: true)
-
   @spec try_ssl_handshake(Supavisor.tcp_sock(), boolean) ::
           {:ok, Supavisor.sock()} | {:error, term()}
   def try_ssl_handshake(sock, true) do
@@ -72,12 +69,6 @@ defmodule Supavisor.HandlerHelpers do
   end
 
   def try_get_sni(_), do: nil
-
-  @spec reset_active_count(%{sock: Supavisor.sock()}) :: 0
-  def reset_active_count(%{sock: sock}) do
-    activate(sock)
-    0
-  end
 
   @spec parse_user_info(map) ::
           {:cluster | :single, {String.t() | nil, String.t(), String.t() | nil}}
