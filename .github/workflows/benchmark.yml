@@ -47,6 +47,12 @@ jobs:
       - name: Build release
         run: METRICS_DISABLED=false make prod_rel
 
+      - name: Install pgbench, perf and FlameGraph tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-contrib linux-tools-generic linux-tools-common
+          git clone https://github.com/brendangregg/FlameGraph.git /tmp/FlameGraph
+
       - name: Start PostgreSQL
         run: |
           docker-compose -f docker-compose.db.yml up -d
@@ -56,12 +62,6 @@ jobs:
       - name: Initialize TPCC database
         run: |
           PGPASSWORD=postgres pgbench -i -h 127.0.0.1 -p 6432 -U postgres -d postgres
-
-      - name: Install perf and FlameGraph tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y linux-tools-generic linux-tools-common
-          git clone https://github.com/brendangregg/FlameGraph.git /tmp/FlameGraph
 
       - name: Start Supavisor release
         run: |
