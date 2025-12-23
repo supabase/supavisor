@@ -65,7 +65,7 @@ jobs:
 
       - name: Start Supavisor release
         run: |
-          make prod_start_rel &
+          make prod_start_daemon
           # Wait for Supavisor to be ready
           sleep 10
 

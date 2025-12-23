@@ -132,6 +132,20 @@ prod_start_rel:
 	DB_POOL_SIZE="5" \
 	_build/prod/rel/supavisor/bin/supavisor start_iex
 
+prod_start_daemon:
+	MIX_ENV=prod \
+	NODE_NAME="node1" \
+	NODE_IP="127.0.0.1" \
+	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \
+	API_JWT_SECRET=dev \
+	METRICS_JWT_SECRET=dev \
+	REGION=eu \
+	FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000 \
+	SECRET_KEY_BASE="dev" \
+	CLUSTER_POSTGRES="true" \
+	DB_POOL_SIZE="5" \
+	_build/prod/rel/supavisor/bin/supavisor start
+
 prod_start_rel2:
 	MIX_ENV=prod \
 	NODE_NAME=node2 \
