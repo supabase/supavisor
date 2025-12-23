@@ -48,4 +48,10 @@ defmodule Supavisor.ClientHandlerTest do
       assert :keep_state_and_data == @subject.handle_event(:info, error, nil, data)
     end
   end
+
+  test "code_change adds monitor for TLS connections" do
+  end
+
+  test "code_change adds monitor for plain connections" do
+  end
 end
