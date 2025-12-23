@@ -9,7 +9,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
   LANG: C.UTF-8
   LC_ALL: C.UTF-8
 
