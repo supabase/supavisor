@@ -1,0 +1,236 @@
+name: Benchmark
+
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  benchmark:
+    name: Run benchmark (${{ matrix.branch }})
+    if: github.event.label.name == 'bench'
+    runs-on: u22-arm-runner
+    strategy:
+      matrix:
+        branch: [main, pr]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch == 'main' && 'main' || github.event.pull_request.head.sha }}
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27.2.1'
+          elixir-version: '1.18.2'
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: METRICS_DISABLED=false make prod_rel
+
+      - name: Start PostgreSQL
+        run: |
+          docker-compose -f docker-compose.db.yml up -d
+          # Wait for PostgreSQL to be ready
+          timeout 30 bash -c 'until docker exec supavisor-db pg_isready -U postgres; do sleep 1; done'
+
+      - name: Initialize TPCC database
+        run: |
+          PGPASSWORD=postgres pgbench -i -h 127.0.0.1 -p 6432 -U postgres -d postgres
+
+      - name: Install perf and FlameGraph tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-tools-generic linux-tools-common
+          git clone https://github.com/brendangregg/FlameGraph.git /tmp/FlameGraph
+
+      - name: Start Supavisor release
+        run: |
+          make prod_start_rel &
+          # Wait for Supavisor to be ready
+          sleep 10
+
+      - name: Run vanilla TPCC benchmark
+        run: |
+          PGPASSWORD=postgres pgbench \
+            -h 127.0.0.1 -p 6432 -U postgres -d postgres \
+            -S -n -T 30 \
+            -j 4 -c 50 \
+            -P 5 -M extended \
+            > ${{ matrix.branch }}-vanilla-results.txt 2>&1
+
+          cat ${{ matrix.branch }}-vanilla-results.txt
+
+      - name: Run TPCC benchmark with perf
+        run: |
+          # Get BEAM PID
+          BEAM_PID=$(pgrep -f "beam.smp")
+          echo "BEAM PID: $BEAM_PID"
+
+          # Start perf recording in background
+          sudo perf record -F 99 -p $BEAM_PID --call-graph dwarf -o ${{ matrix.branch }}-perf.data -- sleep 30 &
+          PERF_PID=$!
+
+          # Run benchmark
+          PGPASSWORD=postgres pgbench \
+            -h 127.0.0.1 -p 6432 -U postgres -d postgres \
+            -S -n -T 30 \
+            -j 4 -c 50 \
+            -P 5 -M extended \
+            > ${{ matrix.branch }}-perf-results.txt 2>&1
+
+          # Wait for perf to finish
+          wait $PERF_PID
+
+          cat ${{ matrix.branch }}-perf-results.txt
+
+      - name: Generate flamegraph
+        run: |
+          sudo perf script -i ${{ matrix.branch }}-perf.data | \
+            /tmp/FlameGraph/stackcollapse-perf.pl | \
+            /tmp/FlameGraph/flamegraph.pl > ${{ matrix.branch }}-flamegraph.svg
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.branch }}-benchmark-results
+          path: |
+            ${{ matrix.branch }}-vanilla-results.txt
+            ${{ matrix.branch }}-perf-results.txt
+            ${{ matrix.branch }}-flamegraph.svg
+
+      - name: Stop Supavisor
+        if: always()
+        run: |
+          _build/prod/rel/supavisor/bin/supavisor stop || true
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: |
+          docker-compose -f docker-compose.db.yml down
+
+  report:
+    name: Post benchmark results
+    needs: benchmark
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Download main results
+        uses: actions/download-artifact@v4
+        with:
+          name: main-benchmark-results
+          path: main-results
+
+      - name: Download PR results
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-benchmark-results
+          path: pr-results
+
+      - name: Read benchmark results
+        id: results
+        run: |
+          echo "MAIN_VANILLA<<EOF" >> $GITHUB_OUTPUT
+          cat main-results/main-vanilla-results.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "MAIN_PERF<<EOF" >> $GITHUB_OUTPUT
+          cat main-results/main-perf-results.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "PR_VANILLA<<EOF" >> $GITHUB_OUTPUT
+          cat pr-results/pr-vanilla-results.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "PR_PERF<<EOF" >> $GITHUB_OUTPUT
+          cat pr-results/pr-perf-results.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Encode flamegraphs as base64
+        id: flamegraphs
+        run: |
+          echo "MAIN_FLAME<<EOF" >> $GITHUB_OUTPUT
+          base64 -w 0 main-results/main-flamegraph.svg >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "PR_FLAME<<EOF" >> $GITHUB_OUTPUT
+          base64 -w 0 pr-results/pr-flamegraph.svg >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const mainFlame = Buffer.from('${{ steps.flamegraphs.outputs.MAIN_FLAME }}', 'base64').toString('utf-8');
+            const prFlame = Buffer.from('${{ steps.flamegraphs.outputs.PR_FLAME }}', 'base64').toString('utf-8');
+
+            const comment = `## Benchmark Results
+
+            ### Main Branch
+
+            #### Vanilla TPCC Select-Only (30s)
+            \`\`\`
+            ${{ steps.results.outputs.MAIN_VANILLA }}
+            \`\`\`
+
+            #### With Perf
+            \`\`\`
+            ${{ steps.results.outputs.MAIN_PERF }}
+            \`\`\`
+
+            <details>
+            <summary>Main Branch Flamegraph</summary>
+
+            ${mainFlame}
+
+            </details>
+
+            ---
+
+            ### PR Branch
+
+            #### Vanilla TPCC Select-Only (30s)
+            \`\`\`
+            ${{ steps.results.outputs.PR_VANILLA }}
+            \`\`\`
+
+            #### With Perf
+            \`\`\`
+            ${{ steps.results.outputs.PR_PERF }}
+            \`\`\`
+
+            <details>
+            <summary>PR Branch Flamegraph</summary>
+
+            ${prFlame}
+
+            </details>`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });

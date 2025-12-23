@@ -112,9 +112,11 @@ dev_start_rel:
 	DB_POOL_SIZE="5" \
 	_build/prod/rel/supavisor/bin/supavisor start_iex
 
+METRICS_DISABLED ?= true
+
 prod_rel:
-	MIX_ENV=prod METRICS_DISABLED=true mix compile && \
-	MIX_ENV=prod METRICS_DISABLED=true mix release supavisor
+	MIX_ENV=prod METRICS_DISABLED=$(METRICS_DISABLED) mix compile && \
+	MIX_ENV=prod METRICS_DISABLED=$(METRICS_DISABLED) mix release supavisor
 
 prod_start_rel:
 	MIX_ENV=prod \
