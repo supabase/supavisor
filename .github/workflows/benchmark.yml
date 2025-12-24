@@ -18,6 +18,7 @@ jobs:
     if: github.event.label.name == 'bench'
     runs-on: u22-arm-runner
     strategy:
+      fail-fast: false
       matrix:
         branch: [main, pr]
 
@@ -131,6 +132,7 @@ jobs:
   report:
     name: Post benchmark results
     needs: benchmark
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -138,12 +140,14 @@ jobs:
     steps:
       - name: Download main results
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: main-benchmark-results
           path: main-results
 
       - name: Download PR results
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: pr-benchmark-results
           path: pr-results
@@ -152,40 +156,67 @@ jobs:
         id: results
         run: |
           echo "MAIN_VANILLA<<EOF" >> $GITHUB_OUTPUT
-          cat main-results/main-vanilla-results.txt >> $GITHUB_OUTPUT
+          if [ -f main-results/main-vanilla-results.txt ]; then
+            cat main-results/main-vanilla-results.txt >> $GITHUB_OUTPUT
+          else
+            echo "Benchmark failed - no results available" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
           echo "MAIN_PERF<<EOF" >> $GITHUB_OUTPUT
-          cat main-results/main-perf-results.txt >> $GITHUB_OUTPUT
+          if [ -f main-results/main-perf-results.txt ]; then
+            cat main-results/main-perf-results.txt >> $GITHUB_OUTPUT
+          else
+            echo "Benchmark failed - no results available" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
           echo "PR_VANILLA<<EOF" >> $GITHUB_OUTPUT
-          cat pr-results/pr-vanilla-results.txt >> $GITHUB_OUTPUT
+          if [ -f pr-results/pr-vanilla-results.txt ]; then
+            cat pr-results/pr-vanilla-results.txt >> $GITHUB_OUTPUT
+          else
+            echo "Benchmark failed - no results available" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
           echo "PR_PERF<<EOF" >> $GITHUB_OUTPUT
-          cat pr-results/pr-perf-results.txt >> $GITHUB_OUTPUT
+          if [ -f pr-results/pr-perf-results.txt ]; then
+            cat pr-results/pr-perf-results.txt >> $GITHUB_OUTPUT
+          else
+            echo "Benchmark failed - no results available" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Encode flamegraphs as base64
         id: flamegraphs
         run: |
           echo "MAIN_FLAME<<EOF" >> $GITHUB_OUTPUT
-          base64 -w 0 main-results/main-flamegraph.svg >> $GITHUB_OUTPUT
+          if [ -f main-results/main-flamegraph.svg ]; then
+            base64 -w 0 main-results/main-flamegraph.svg >> $GITHUB_OUTPUT
+          else
+            echo "" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
           echo "PR_FLAME<<EOF" >> $GITHUB_OUTPUT
-          base64 -w 0 pr-results/pr-flamegraph.svg >> $GITHUB_OUTPUT
+          if [ -f pr-results/pr-flamegraph.svg ]; then
+            base64 -w 0 pr-results/pr-flamegraph.svg >> $GITHUB_OUTPUT
+          else
+            echo "" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Post PR comment
         uses: actions/github-script@v7
         with:
           script: |
-            const mainFlame = Buffer.from('${{ steps.flamegraphs.outputs.MAIN_FLAME }}', 'base64').toString('utf-8');
-            const prFlame = Buffer.from('${{ steps.flamegraphs.outputs.PR_FLAME }}', 'base64').toString('utf-8');
+            const mainFlameB64 = '${{ steps.flamegraphs.outputs.MAIN_FLAME }}';
+            const prFlameB64 = '${{ steps.flamegraphs.outputs.PR_FLAME }}';
 
-            const comment = `## Benchmark Results
+            const mainFlame = mainFlameB64 ? Buffer.from(mainFlameB64, 'base64').toString('utf-8') : '';
+            const prFlame = prFlameB64 ? Buffer.from(prFlameB64, 'base64').toString('utf-8') : '';
+
+            let comment = `## Benchmark Results
 
             ### Main Branch
 
@@ -198,14 +229,20 @@ jobs:
             \`\`\`
             ${{ steps.results.outputs.MAIN_PERF }}
             \`\`\`
+            `;
 
+            if (mainFlame) {
+              comment += `
             <details>
             <summary>Main Branch Flamegraph</summary>
 
             ${mainFlame}
 
             </details>
+            `;
+            }
 
+            comment += `
             ---
 
             ### PR Branch
@@ -219,13 +256,17 @@ jobs:
             \`\`\`
             ${{ steps.results.outputs.PR_PERF }}
             \`\`\`
+            `;
 
+            if (prFlame) {
+              comment += `
             <details>
             <summary>PR Branch Flamegraph</summary>
 
             ${prFlame}
 
             </details>`;
+            }
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
