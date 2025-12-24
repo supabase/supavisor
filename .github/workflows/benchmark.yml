@@ -75,8 +75,8 @@ jobs:
 
       - name: Start Supavisor release
         run: |
+          export SUPAVISOR_LOG_FILE_PATH=/tmp/supavisor.log
           make prod_start_daemon
-          # Wait for Supavisor to be ready
           sleep 10
 
       - name: Create tenant for benchmark
@@ -106,6 +106,10 @@ jobs:
               ]
             }
           }'
+
+          echo ""
+          echo "Supavisor logs:"
+          cat /tmp/supavisor.log
 
       - name: Run vanilla TPCC benchmark
         run: |
