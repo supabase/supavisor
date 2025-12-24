@@ -144,7 +144,7 @@ prod_start_daemon:
 	SECRET_KEY_BASE="dev" \
 	CLUSTER_POSTGRES="true" \
 	DB_POOL_SIZE="5" \
-	_build/prod/rel/supavisor/bin/supavisor start
+	_build/prod/rel/supavisor/bin/supavisor daemon
 
 prod_start_rel2:
 	MIX_ENV=prod \
