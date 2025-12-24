@@ -16,7 +16,7 @@ jobs:
   benchmark:
     name: Run benchmark (${{ matrix.branch }})
     if: github.event.label.name == 'bench'
-    runs-on: u22-arm-runner
+    runs-on: u24-arm-runner
     strategy:
       fail-fast: false
       matrix:
