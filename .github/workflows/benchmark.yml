@@ -16,7 +16,7 @@ jobs:
   benchmark:
     name: Run benchmark (${{ matrix.branch }})
     if: github.event.label.name == 'bench'
-    runs-on: u24-arm-runner
+    runs-on: u22-arm-runner
     strategy:
       fail-fast: false
       matrix:
@@ -31,8 +31,8 @@ jobs:
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
         with:
-          otp-version: '27.2.1'
-          elixir-version: '1.18.2'
+          otp-version: "27.2.1"
+          elixir-version: "1.18.2"
 
       - name: Cache Mix dependencies
         uses: actions/cache@v4
@@ -44,6 +44,15 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Check available perf packages
+        run: |
+          echo "Kernel version:"
+          uname -r
+          echo ""
+          echo "Available linux-tools packages:"
+          sudo apt-get update
+          apt-cache search linux-tools | sort
 
       - name: Build release
         run: METRICS_DISABLED=false make prod_rel
