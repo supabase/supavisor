@@ -59,9 +59,8 @@ jobs:
 
       - name: Install pgbench, perf and FlameGraph tools
         run: |
-          sudo apt-get update
           sudo apt-get install -y postgresql-contrib
-          sudo apt-get install -y linux-tools-aws
+          sudo apt-get install -y linux-tools-common linux-tools-generic
           git clone https://github.com/brendangregg/FlameGraph.git /tmp/FlameGraph
 
       - name: Start PostgreSQL
