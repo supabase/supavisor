@@ -109,17 +109,22 @@ jobs:
 
       - name: Run vanilla TPCC benchmark
         run: |
+          set +e
           PGPASSWORD=postgres pgbench \
             postgres://postgres.sys@localhost:6543/postgres?sslmode=disable \
             -S -n -T 30 \
             -j 8 -c 30 \
             -P 10 -M extended \
             > ${{ matrix.branch }}-vanilla-results.txt 2>&1
+          BENCH_EXIT=$?
+          set -e
 
           cat ${{ matrix.branch }}-vanilla-results.txt
+          exit $BENCH_EXIT
 
       - name: Run TPCC benchmark with perf
         run: |
+          set +e
           # Get BEAM PID
           BEAM_PID=$(pgrep -f "beam.smp")
           echo "BEAM PID: $BEAM_PID"
@@ -135,11 +140,14 @@ jobs:
             -j 8 -c 30 \
             -P 10 -M extended \
             > ${{ matrix.branch }}-perf-results.txt 2>&1
+          BENCH_EXIT=$?
 
           # Wait for perf to finish
           wait $PERF_PID
+          set -e
 
           cat ${{ matrix.branch }}-perf-results.txt
+          exit $BENCH_EXIT
 
       - name: Generate flamegraph
         run: |
