@@ -73,6 +73,9 @@ jobs:
         run: |
           PGPASSWORD=postgres pgbench -i -h 127.0.0.1 -p 6432 -U postgres -d postgres
 
+      - name: Run database migrations
+        run: make db_migrate
+
       - name: Start Supavisor release
         run: |
           export SUPAVISOR_LOG_FILE_PATH=/tmp/supavisor.log
