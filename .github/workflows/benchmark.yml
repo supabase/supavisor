@@ -108,6 +108,7 @@ jobs:
           }'
 
           echo ""
+          sleep 2
           echo "Supavisor logs:"
           cat /tmp/supavisor.log
 
