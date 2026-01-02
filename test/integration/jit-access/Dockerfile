@@ -1,5 +1,7 @@
 FROM ubuntu:24.04 as builder
 
+ARG TARGETARCH
+
 RUN apt-get update && apt-get install -y \
     git \
     build-essential \
@@ -11,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 # Verify pam_modules.h exists
 RUN test -f /usr/include/security/pam_modules.h
 
-RUN curl -fsSL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz -o /tmp/go.tar.gz \
+RUN curl -fsSL https://go.dev/dl/go1.24.5.linux-${TARGETARCH}.tar.gz -o /tmp/go.tar.gz \
     && tar -C /usr/local -xzf /tmp/go.tar.gz \
     && rm /tmp/go.tar.gz
 
