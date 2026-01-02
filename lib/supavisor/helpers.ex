@@ -522,4 +522,14 @@ defmodule Supavisor.Helpers do
         {:error, {:unexpected_status, status}}
     end
   end
+
+  def get_peer_address(socket) do
+    case socket do
+      {:sslsocket, _, _} ->
+        :ssl.peername(socket)
+
+      _ ->
+        :inet.peername(socket)
+    end
+  end
 end

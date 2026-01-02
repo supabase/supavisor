@@ -241,6 +241,11 @@ defmodule Supavisor.ClientHandler do
             Telem.client_join(:fail, id)
             {:stop, :normal}
 
+          !data.local and info.tenant.use_jit and !data.ssl ->
+            Error.maybe_log_and_send_error(sock, {:error, :ssl_required, user})
+            Telem.client_join(:fail, id)
+            {:stop, :normal}
+
           HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] ->
             Error.maybe_log_and_send_error(sock, {:error, :address_not_allowed, addr})
             Telem.client_join(:fail, id)
@@ -640,7 +645,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {proto, socket, bin}, :auth_password_wait, data)
       when proto in @proto do
     auth_context = data.auth_context
-    {:ok, {ip, _port}} = :inet.peername(socket)
+    {:ok, {ip, _port}} = Helpers.get_peer_address(socket)
 
     with {:ok, cls_password} <- Auth.parse_auth_message(bin, auth_context.method),
          {:ok, key, method} <-

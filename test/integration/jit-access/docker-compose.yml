@@ -9,7 +9,9 @@ services:
     command: ["true"]
 
   db:
-    image: supabase/postgres:17.6.1.062
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
     depends_on:
       - builder
     volumes:
@@ -17,7 +19,10 @@ services:
       - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
       - ./pam.d/postgresql:/etc/pam.d/postgres
       - ./pam.d/postgresql:/etc/pam.d/postgresql
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_prepared_transactions=2000
+      - ./postgres/certs/server.crt:/tmp/server.crt
+      - ./postgres/certs/server.key:/tmp/server.key
+      - ./postgres/certs/ca.crt:/tmp/ca.crt
+    command: postgres
     environment:
       POSTGRES_HOST: /var/run/postgresql
       POSTGRES_PASSWORD: postgres

@@ -8,6 +8,9 @@ defmodule Supavisor.DockerComposeCase do
   end
 
   setup_all do
+    # Generate certificates if they don't exist
+    ensure_certificates()
+
     # Start docker compose services
     start_docker_compose()
 
@@ -17,9 +20,49 @@ defmodule Supavisor.DockerComposeCase do
     on_exit(fn ->
       nil
       stop_docker_compose()
+      cleanup_certificates()
     end)
 
     :ok
+  end
+
+  defp ensure_certificates do
+    cert_dir = Path.expand("../integration/jit-access/postgres/certs", __DIR__)
+    ca_cert = Path.join(cert_dir, "ca.crt")
+
+    unless File.exists?(ca_cert) do
+      IO.puts("Generating test certificates...")
+
+      {output, exit_code} =
+        System.cmd("#{cert_dir}/generate_test_certs.sh", [cert_dir])
+
+      if exit_code != 0 do
+        raise "Failed to generate certificates: #{output}"
+      end
+
+      IO.puts("✓ Certificates generated")
+    end
+  end
+
+  defp cleanup_certificates do
+    cert_dir = Path.expand("../integration/jit-access/postgres/certs", __DIR__)
+    IO.puts("Removing test certificates from #{cert_dir}/...")
+
+    if File.dir?(cert_dir) do
+      [
+        cert_dir <> "/*.key",
+        cert_dir <> "/*.crt",
+        cert_dir <> "/*.csr",
+        cert_dir <> "/*.srl",
+        cert_dir <> "/*.ext"
+      ]
+      |> Enum.flat_map(&Path.wildcard/1)
+      |> Enum.each(&File.rm!/1)
+
+      IO.puts("✓ Certificates removed successfully")
+    else
+      IO.puts("No certificates directory found at #{cert_dir}")
+    end
   end
 
   def start_docker_compose do
