@@ -1,6 +1,5 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
-
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 testCases = [
     {
@@ -59,6 +58,13 @@ class SimpleHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         self.wfile.write(response_bytes)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"healthy"}')
 
     # Silence logging
     def log_message(self, format, *args):
