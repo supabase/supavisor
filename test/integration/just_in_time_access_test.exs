@@ -7,6 +7,13 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   alias Postgrex, as: P
 
   setup do
+    cert_dir = Path.expand("./jit-access/postgres/certs", __DIR__)
+    cert_path = Path.join(cert_dir, "server.crt")
+    key_path = Path.join(cert_dir, "server.key")
+
+    Application.put_env(:supavisor, :global_downstream_cert, cert_path)
+    Application.put_env(:supavisor, :global_downstream_key, key_path)
+
     db_conf =
       :supavisor
       |> Application.get_env(Supavisor.Repo)
@@ -21,6 +28,14 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   defp setup_tenant(db_conf) do
     tenant_id = "update_creds_tenant_#{System.unique_integer([:positive])}"
+    cert_dir = Path.expand("./jit-access/postgres/certs", __DIR__)
+    ca_path = Path.join(cert_dir, "ca.crt")
+
+    ca_der =
+      File.read!(ca_path)
+      |> :public_key.pem_decode()
+      |> hd()
+      |> elem(1)
 
     {:ok, _tenant} =
       Supavisor.Tenants.create_tenant(%{
@@ -31,6 +46,10 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
         require_user: false,
         auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
         default_parameter_status: %{"server_version" => "15.0"},
+        upstream_tls_ca: ca_der,
+        upstream_ssl: true,
+        upstream_verify: :peer,
+        enforce_ssl: false,
         use_jit: true,
         jit_api_url: "http://localhost:8080/projects/odvmrtdcoyfyvfrdxzsj/database/jit",
         users: [
@@ -44,7 +63,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
         ]
       })
 
-    tenant_id
+    {tenant_id, ca_path}
   end
 
   test "health check endpoint returns 200" do
@@ -55,7 +74,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   end
 
   test "valid credentials work directly", %{db_conf: db_conf} do
-    tenant_id = setup_tenant(db_conf)
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     try do
       assert {:ok, proxy} =
@@ -64,7 +83,12 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
                  port: Application.get_env(:supavisor, :proxy_port_transaction),
                  database: db_conf[:database],
                  password: db_conf[:password],
-                 username: "#{db_conf[:username]}.#{tenant_id}"
+                 username: "#{db_conf[:username]}.#{tenant_id}",
+                 ssl: true,
+                 ssl_opts: [
+                   verify: :verify_peer,
+                   cacertfile: ca_cert
+                 ]
                )
 
       assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
@@ -76,7 +100,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   end
 
   test "access token fails incorrect token", %{db_conf: db_conf} do
-    tenant_id = setup_tenant(db_conf)
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     error =
       capture_log(fn ->
@@ -87,7 +111,12 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
               port: Application.get_env(:supavisor, :proxy_port_transaction),
               database: db_conf[:database],
               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb84120000",
-              username: "#{db_conf[:username]}.#{tenant_id}"
+              username: "#{db_conf[:username]}.#{tenant_id}",
+              ssl: true,
+              ssl_opts: [
+                verify: :verify_peer,
+                cacertfile: ca_cert
+              ]
             )
 
           Postgrex.query!(proxy, "SELECT 1", [])
@@ -100,8 +129,38 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     Supavisor.Tenants.delete_tenant_by_external_id(tenant_id)
   end
 
-  test "access token fails on bad role token", %{db_conf: db_conf} do
-    tenant_id = setup_tenant(db_conf)
+  test "password auth fails for bad password", %{db_conf: db_conf} do
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
+
+    error =
+      capture_log(fn ->
+        assert_raise DBConnection.ConnectionError, fn ->
+          {:ok, proxy} =
+            Postgrex.start_link(
+              hostname: db_conf[:hostname],
+              port: Application.get_env(:supavisor, :proxy_port_transaction),
+              database: db_conf[:database],
+              password: "fdsjalkfjdsaou40180cxv",
+              username: "postgres.#{tenant_id}",
+              ssl: true,
+              ssl_opts: [
+                verify: :verify_peer,
+                cacertfile: ca_cert
+              ]
+            )
+
+          Postgrex.query!(proxy, "SELECT 1", [])
+        end
+      end)
+
+    assert error =~ "FATAL 28P01 (invalid_password)"
+    assert error =~ "password authentication failed for user \"postgres\""
+
+    Supavisor.Tenants.delete_tenant_by_external_id(tenant_id)
+  end
+
+  test "jit access fails if not tls", %{db_conf: db_conf} do
+    {tenant_id, _ca_cert} = setup_tenant(db_conf)
 
     error =
       capture_log(fn ->
@@ -112,21 +171,21 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
               port: Application.get_env(:supavisor, :proxy_port_transaction),
               database: db_conf[:database],
               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb84100000",
-              username: "supabase_admin.#{tenant_id}"
+              username: "postgres.#{tenant_id}",
+              ssl: false
             )
 
           Postgrex.query!(proxy, "SELECT 1", [])
         end
       end)
 
-    assert error =~ "FATAL 28P01 (invalid_password)"
-    assert error =~ "password authentication failed for user \"supabase_admin\""
+    assert error =~ "FATAL XX000 (internal_error) SSL connection is required"
 
     Supavisor.Tenants.delete_tenant_by_external_id(tenant_id)
   end
 
   test "access token auth works", %{db_conf: db_conf} do
-    tenant_id = setup_tenant(db_conf)
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     try do
       assert {:ok, proxy} =
@@ -135,7 +194,12 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
                  port: Application.get_env(:supavisor, :proxy_port_transaction),
                  database: db_conf[:database],
                  password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-                 username: "#{db_conf[:username]}.#{tenant_id}"
+                 username: "#{db_conf[:username]}.#{tenant_id}",
+                 ssl: true,
+                 ssl_opts: [
+                   verify: :verify_peer,
+                   cacertfile: ca_cert
+                 ]
                )
 
       assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
