@@ -22,6 +22,8 @@ services:
       POSTGRES_HOST: /var/run/postgresql
       POSTGRES_PASSWORD: postgres
       PAM_MODULE_PATH: /usr/lib/security/pam_jit_pg.so
+    ports:
+      - "7543:5432"
     networks:
       - appnet
 
