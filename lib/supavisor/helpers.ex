@@ -401,9 +401,8 @@ defmodule Supavisor.Helpers do
     peername_fn =
       if match?({:sslsocket, _, _}, socket), do: &:ssl.peername/1, else: &:inet.peername/1
 
-    with {:ok, {ip, _port}} <- peername_fn.(socket) do
-      List.to_string(:inet.ntoa(ip))
-    else
+    case peername_fn.(socket) do
+      {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
       _ -> "undefined"
     end
   end
