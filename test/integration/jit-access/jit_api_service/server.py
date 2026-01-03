@@ -1,5 +1,19 @@
 import json
+import logging
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Configure logging for Docker (outputs to stdout/stderr)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ],
+    force=True
+)
+
+logger = logging.getLogger(__name__)
 
 testCases = [
     {
@@ -41,6 +55,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         resp_code = 401  # default
         response_bytes = json.dumps({"message": "failed authorization"}).encode()
 
+        logger.info(f"POST request from {self.client_address[0]} - Auth token: {auth[:10]}, Data: {json.dumps(data)}")
         # Build response
         for case in testCases:
             if auth == case.get("auth"):
@@ -48,9 +63,9 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 response_bytes = json.dumps(case.get("response").get("data")).encode(
                     "utf-8"
                 )
+                logger.info(f"Auth test case {auth} - ResponseCode: {resp_code}, ResponseData: {response_bytes}")
                 break
 
-        print(f"Got connection {auth}")
         # Send response
         self.send_response(resp_code)
         self.send_header("Content-Type", "application/json")
@@ -61,6 +76,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
+            logger.info(f"GET health from {self.client_address[0]}")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
