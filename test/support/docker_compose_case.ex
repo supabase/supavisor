@@ -1,4 +1,9 @@
 defmodule Supavisor.DockerComposeCase do
+  @moduledoc """
+  Sets up and manages lifecycle of various Docker containers
+  required by an integration test.
+  """
+
   use ExUnit.CaseTemplate
 
   using do

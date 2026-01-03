@@ -645,7 +645,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {proto, socket, bin}, :auth_password_wait, data)
       when proto in @proto do
     auth_context = data.auth_context
-    {:ok, {ip, _port}} = Helpers.get_peer_address(socket)
+    rhost = Helpers.peer_ip(socket)
 
     with {:ok, cls_password} <- Auth.parse_auth_message(bin, auth_context.method),
          {:ok, key, method} <-
@@ -654,7 +654,7 @@ defmodule Supavisor.ClientHandler do
              auth_context.info.tenant,
              auth_context.secrets,
              cls_password,
-             ip
+             rhost
            ) do
       handle_auth_success(
         data.sock,

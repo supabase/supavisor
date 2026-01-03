@@ -83,14 +83,12 @@ defmodule Supavisor.ClientHandler.Auth do
       else: {:error, :wrong_password}
   end
 
-  def validate_credentials(:auth_query_jit, tenant, secrets, password, ip) do
+  def validate_credentials(:auth_query_jit, tenant, secrets, password, rhost) do
     # check if incomming password looks like PAT or a JWT
     # otherwise handle as password,
     secret = secrets.()
 
     if Helpers.token_matches?(password) do
-      rhost = ip |> :inet.ntoa() |> to_string()
-
       case Helpers.check_user_has_jit_role(tenant.jit_api_url, password, secret.user, rhost) do
         {:ok, true} ->
           # set a fake client_key incase upstream switches away from pam mid auth

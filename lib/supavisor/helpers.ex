@@ -398,9 +398,13 @@ defmodule Supavisor.Helpers do
 
   @spec peer_ip(:gen_tcp.socket()) :: String.t()
   def peer_ip(socket) do
-    case :inet.peername(socket) do
-      {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
-      _error -> "undefined"
+    peername_fn =
+      if match?({:sslsocket, _, _}, socket), do: &:ssl.peername/1, else: &:inet.peername/1
+
+    with {:ok, {ip, _port}} <- peername_fn.(socket) do
+      List.to_string(:inet.ntoa(ip))
+    else
+      _ -> "undefined"
     end
   end
 
@@ -520,16 +524,6 @@ defmodule Supavisor.Helpers do
 
       status ->
         {:error, {:unexpected_status, status}}
-    end
-  end
-
-  def get_peer_address(socket) do
-    case socket do
-      {:sslsocket, _, _} ->
-        :ssl.peername(socket)
-
-      _ ->
-        :inet.peername(socket)
     end
   end
 end
