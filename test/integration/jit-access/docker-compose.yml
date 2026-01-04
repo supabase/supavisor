@@ -22,6 +22,7 @@ services:
       - ./postgres/certs/server.crt:/tmp/server.crt
       - ./postgres/certs/server.key:/tmp/server.key
       - ./postgres/certs/ca.crt:/tmp/ca.crt
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     command: postgres
     environment:
       POSTGRES_HOST: /var/run/postgresql
