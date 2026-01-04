@@ -28,7 +28,18 @@ testCases = [
         },
     },
     {
-        "auth": "sbp_04fee3d26b63d9a3557c72a1b9902cbb84100000",
+        "auth": "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c000",
+        "expected_role": "postgres",
+        "response": {
+            "code": 200,
+            "data": {
+                "user_id": "087f4b1c-da1c-4172-92c5-1ace925079ea",
+                "user_role": {"role": "otherrole"},
+            },
+        },
+    },
+    {
+        "auth": "sbp_04fee3d26b63d9a3557c72a1b9902cbb84100001",
         "expected_role": "supabase_admin",
         "response": {"code": 403, "data": ""},
     },
