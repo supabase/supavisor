@@ -73,7 +73,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     assert response.body == %{"status" => "healthy"}
   end
 
-  test "valid credentials work directly", %{db_conf: db_conf} do
+  test "valid credentials work directly (scram-sha256)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     try do
@@ -99,7 +99,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     end
   end
 
-  test "invalid credentials rejected", %{db_conf: db_conf} do
+  test "invalid credentials rejected (scram-sha256)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     error =
@@ -422,6 +422,36 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     assert error =~ "FATAL 28P01 (invalid_password)"
     assert error =~ "password authentication failed for user \"postgres\""
     GenServer.stop(proxyp)
+    Supavisor.Tenants.delete_tenant_by_external_id(tenant_id)
+  end
+
+  test "api error results in failed auth", %{db_conf: db_conf} do
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
+
+    error =
+      capture_log(fn ->
+        assert_raise DBConnection.ConnectionError, fn ->
+          {:ok, proxy} =
+            Postgrex.start_link(
+              hostname: db_conf[:hostname],
+              port: Application.get_env(:supavisor, :proxy_port_transaction),
+              database: db_conf[:database],
+              password: "sbp_4444e3d26b63d9a3557c72a1b9902cbb84121111",
+              username: "postgres.#{tenant_id}",
+              ssl: true,
+              ssl_opts: [
+                verify: :verify_peer,
+                cacertfile: ca_cert
+              ]
+            )
+
+          Postgrex.query!(proxy, "SELECT 1", [])
+        end
+      end)
+
+    assert error =~ "FATAL 28P01 (invalid_password)"
+    assert error =~ "password authentication failed for user \"postgres\""
+
     Supavisor.Tenants.delete_tenant_by_external_id(tenant_id)
   end
 end
