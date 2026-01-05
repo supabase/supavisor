@@ -276,6 +276,7 @@ defmodule Supavisor.ClientHandler.Error do
 
   defp auth_context_description(:handshake), do: "Handshake"
   defp auth_context_description(:auth_md5_wait), do: "MD5"
+  defp auth_context_description(:auth_password_wait), do: "PASSWORD"
   defp auth_context_description(:auth_scram_first_wait), do: "SCRAM first"
   defp auth_context_description(:auth_scram_final_wait), do: "SCRAM final"
   defp auth_context_description(_), do: "Unknown"
