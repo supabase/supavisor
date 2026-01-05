@@ -6,11 +6,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # Configure logging for Docker (outputs to stdout/stderr)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ],
-    force=True
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +41,16 @@ testCases = [
         "expected_role": "supabase_admin",
         "response": {"code": 403, "data": ""},
     },
+    {
+        "auth": "sbp_4444e3d26b63d9a3557c72a1b9902cbb84121111",
+        "expected_role": "postgres",
+        "response": {
+            "code": 503,
+            "data": {
+                "message": "error_occurred",
+            },
+        },
+    },
 ]
 
 
@@ -66,7 +74,9 @@ class SimpleHandler(BaseHTTPRequestHandler):
         resp_code = 401  # default
         response_bytes = json.dumps({"message": "failed authorization"}).encode()
 
-        logger.info(f"POST request from {self.client_address[0]} - Auth token: {auth[:10]}, Data: {json.dumps(data)}")
+        logger.info(
+            f"POST request from {self.client_address[0]} - Auth token: {auth[:10]}, Data: {json.dumps(data)}"
+        )
         # Build response
         for case in testCases:
             if auth == case.get("auth"):
@@ -74,7 +84,9 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 response_bytes = json.dumps(case.get("response").get("data")).encode(
                     "utf-8"
                 )
-                logger.info(f"Auth test case {auth} - ResponseCode: {resp_code}, ResponseData: {response_bytes}")
+                logger.info(
+                    f"Auth test case {auth} - ResponseCode: {resp_code}, ResponseData: {response_bytes}"
+                )
                 break
 
         # Send response

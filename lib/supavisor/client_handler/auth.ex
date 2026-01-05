@@ -108,14 +108,7 @@ defmodule Supavisor.ClientHandler.Auth do
     else
       # match against the scram-sha-256 / md5 we have from auth_query
       case secret.digest do
-        :md5 ->
-          if Helpers.md5([password, secret.user]) == secret.secret do
-            {:ok, nil, :auth_query_md5}
-          else
-            {:error, :wrong_password, :auth_query_md5}
-          end
-
-        _ ->
+        "SCRAM-SHA-256" ->
           salt = Base.decode64!(secret.salt)
 
           salted_password =
@@ -127,6 +120,11 @@ defmodule Supavisor.ClientHandler.Auth do
           if :crypto.hash_equals(stored_key, secret.stored_key),
             do: {:ok, client_key, :auth_query},
             else: {:error, :wrong_password, :auth_query}
+
+        _ ->
+          # reject md5 auth as it isn't supported and doesn't work in
+          # non-jit access mode either
+          {:error, :wrong_password, :auth_query_md5}
       end
     end
   end
