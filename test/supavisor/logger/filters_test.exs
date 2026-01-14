@@ -6,41 +6,27 @@ defmodule Supavisor.Logger.FiltersTest do
 
   doctest @subject
 
-  describe "filter_client_handler" do
-    test "regular log events are ignored" do
+  describe "filter_auth_error" do
+    test "log events without auth_error metadata are ignored" do
       log_event = %{
         msg: {:string, "foo bar"},
         level: :info,
         meta: %{}
       }
 
-      assert :ignore == @subject.filter_client_handler(log_event, :any)
+      assert :ignore == @subject.filter_auth_error(log_event, nil)
     end
 
-    test "log events with incorrect state are ignored" do
+    test "log events with auth_error: true are accepted" do
       log_event = %{
         msg: {:string, "foo bar"},
         level: :info,
         meta: %{
-          mfa: {Supavisor.ClientHandler, :foo, 1},
-          state: :another
+          auth_error: true
         }
       }
 
-      assert :ignore == @subject.filter_client_handler(log_event, :other)
-    end
-
-    test "log events with correct state are accepted" do
-      log_event = %{
-        msg: {:string, "foo bar"},
-        level: :info,
-        meta: %{
-          mfa: {Supavisor.ClientHandler, :foo, 1},
-          state: :some
-        }
-      }
-
-      assert log_event == @subject.filter_client_handler(log_event, :some)
+      assert log_event == @subject.filter_auth_error(log_event, nil)
     end
   end
 end

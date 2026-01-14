@@ -54,29 +54,34 @@ end
             "mode_type" => "transaction"
           },
           %{
-            "db_user_alias" => "transaction",
-            "db_user" => db_conf[:username],
-            "db_password" => db_conf[:password],
+            "db_user" => "transaction",
+            "db_password" => "postgres",
             "pool_size" => 3,
             "max_clients" => 100,
             "mode_type" => "transaction"
           },
           %{
-            "db_user_alias" => "session",
-            "db_user" => db_conf[:username],
-            "db_password" => db_conf[:password],
+            "db_user" => "session",
+            "db_password" => "postgres",
             "pool_size" => 1,
             "mode_type" => "session",
             "max_clients" => 100,
             "pool_checkout_timeout" => 500
           },
           %{
-            "db_user_alias" => "max_clients",
-            "db_user" => db_conf[:username],
-            "db_password" => db_conf[:password],
-            "pool_size" => 1,
-            "max_clients" => -1,
+            "db_user" => "max_clients",
+            "db_password" => "postgres",
+            "pool_size" => 2,
+            "max_clients" => 0,
             "mode_type" => "transaction",
+            "pool_checkout_timeout" => 500
+          },
+          %{
+            "db_user" => "no_warm_pool_user",
+            "db_password" => "postgres",
+            "pool_size" => 5,
+            "mode_type" => "session",
+            "max_clients" => 100,
             "pool_checkout_timeout" => 500
           }
         ]
@@ -114,6 +119,31 @@ end)
       |> Tenants.create_tenant()
   end
 end)
+
+# Create tenants for circuit breaker tests
+["circuit_breaker_secrets", "circuit_breaker_db_conn", "circuit_breaker_auth"]
+|> Enum.each(fn tenant ->
+  if !Tenants.get_tenant_by_external_id(tenant) do
+    {:ok, _} =
+      %{
+        db_host: db_conf[:hostname],
+        db_port: db_conf[:port],
+        db_database: db_conf[:database],
+        default_parameter_status: %{},
+        external_id: tenant,
+        require_user: true,
+        users: [
+          %{
+            "db_user" => db_conf[:username],
+            "db_password" => db_conf[:password],
+            "pool_size" => 1,
+            "mode_type" => "transaction"
+          }
+        ]
+      }
+      |> Tenants.create_tenant()
+  end
+end)
 # Create cluster test tenants for integration tests
 for i <- 1..10 do
   tenant_id = "cluster_pool_tenant_#{i}"
@@ -144,6 +174,18 @@ end
     [
       "drop user if exists dev_postgres;",
       "create user dev_postgres with password 'postgres';",
+      "drop user if exists dev_postgres_password_test;",
+      "create user dev_postgres_password_test with password 'postgres';",
+      "drop user if exists bypass_user;",
+      "create user bypass_user with password 'postgres';",
+      "drop user if exists transaction;",
+      "create user transaction with password 'postgres';",
+      "drop user if exists session;",
+      "create user session with password 'postgres';",
+      "drop user if exists max_clients;",
+      "create user max_clients with password 'postgres';",
+      "drop user if exists no_warm_pool_user;",
+      "create user no_warm_pool_user with password 'postgres';",
       "drop table if exists \"public\".\"test\";",
       "create sequence if not exists test_id_seq;",
       "create table \"public\".\"test\" (

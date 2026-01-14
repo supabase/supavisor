@@ -6,6 +6,7 @@ defmodule Supavisor.MetricsCleaner do
 
   @interval :timer.minutes(30)
   @name __MODULE__
+  @tenant_registry_table :syn_registry_by_name_tenants
 
   def start_link(args),
     do: GenServer.start_link(__MODULE__, args, name: @name)
@@ -40,6 +41,7 @@ defmodule Supavisor.MetricsCleaner do
 
     :telemetry.span([:supavisor, :metrics_cleaner], %{}, fn ->
       count = loop_and_cleanup_metrics_table()
+      Logger.info("Cleaned #{count} orphaned metrics")
       {[], %{orphaned_metrics: count}, %{}}
     end)
 
@@ -69,31 +71,38 @@ defmodule Supavisor.MetricsCleaner do
     |> Enum.sum_by(&clean_table/1)
   end
 
-  @tenant_registry_table :syn_registry_by_name_tenants
-
   defp clean_table(tid) do
-    func =
+    :ets.foldl(
       fn {key, _val}, acc ->
         # We use elem/2 instead of pattern matching because the key may be a tuple with size 2 or 3
-        with %{
-               type: type,
-               mode: mode,
-               user: user,
-               tenant: tenant,
-               db_name: db,
-               search_path: search_path
-             } <- elem(key, 1),
-             [] <-
-               :ets.lookup(@tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) do
-          Logger.warning("Found orphaned metric: #{inspect(key)}")
-          :ets.delete(tid, key)
+        tags = elem(key, 1)
 
+        if tags[:tenant] && tenant_down?(tags) do
+          :ets.delete(tid, key)
           acc + 1
         else
-          _ -> acc
+          acc
         end
-      end
-
-    :ets.foldl(func, 0, tid)
+      end,
+      0,
+      tid
+    )
   end
+
+  defp tenant_down?(%{
+         type: type,
+         mode: mode,
+         user: user,
+         tenant: tenant,
+         db_name: db,
+         search_path: search_path
+       }) do
+    :ets.lookup(@tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) == []
+  end
+
+  defp tenant_down?(%{tenant: tenant}) do
+    Registry.lookup(Supavisor.Registry.TenantSups, tenant) == []
+  end
+
+  defp tenant_down?(_), do: false
 end

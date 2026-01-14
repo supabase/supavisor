@@ -2,9 +2,76 @@ defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
   alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Protocol.Server
 
   # import Mock
   @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
+
+  defmodule MockDbHandler do
+    use GenServer
+
+    def start_link(behavior) do
+      GenServer.start_link(__MODULE__, behavior)
+    end
+
+    def init(behavior) do
+      {:ok, %{behavior: behavior, sock: {:fake_db_sock, self()}}}
+    end
+
+    def handle_call({:checkout, _sock, _caller}, _from, %{behavior: behavior} = state) do
+      case behavior do
+        :normal ->
+          {:reply, {:ok, state.sock}, state}
+
+        :crash ->
+          raise "simulated crash"
+
+        :normal_exit ->
+          exit(:normal)
+
+        :timeout ->
+          # Don't reply to simulate timeout
+          {:noreply, state}
+      end
+    end
+  end
+
+  defmodule FakeManager do
+    use GenServer
+
+    def start_link(config) do
+      GenServer.start_link(__MODULE__, config)
+    end
+
+    def init(config) do
+      # Register with the expected name
+      Registry.register(Supavisor.Registry.Tenants, {:manager, config.id}, nil)
+      {:ok, config}
+    end
+
+    def handle_call(:get_config, _from, state) do
+      config = %{
+        id: state.id,
+        auth: state.auth,
+        user: state.user,
+        tenant: state.tenant,
+        mode: state.mode,
+        replica_type: state.replica_type,
+        log_level: state.log_level,
+        tenant_feature_flags: state.tenant_feature_flags
+      }
+
+      {:reply, config, state}
+    end
+
+    def handle_call(:get_auth, _from, state) do
+      {:reply, state.auth, state}
+    end
+
+    def handle_cast({:shutdown_with_error, _error}, state) do
+      {:noreply, state}
+    end
+  end
 
   defp sockpair do
     {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
@@ -28,26 +95,39 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "init/1" do
     test "starts with correct state" do
-      args = %{
+      method = :password
+      secrets = fn -> %{user: "user", db_user: "user"} end
+      auth = %{secrets: {method, secrets}}
+      tenant = "test_tenant"
+      user = "user"
+
+      # Set up tenant cache for the @id
+      table = :ets.new(:tenant_cache, [:set, :public])
+      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+
+      Supavisor.SecretCache.put_upstream_auth_secrets(@id, method, secrets)
+
+      manager_config = %{
         id: @id,
-        auth: %{},
-        tenant: {:single, "test_tenant"},
-        user_alias: "test_user_alias",
-        user: "user",
+        auth: auth,
+        tenant: {:single, tenant},
+        user: user,
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        reconnect_retries: 5,
         tenant_feature_flags: %{}
       }
+
+      {:ok, _manager} = start_supervised({FakeManager, manager_config})
+
+      args = %{id: @id}
 
       {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
       assert next_event == :internal
       assert data.sock == nil
       assert data.caller == nil
-      assert data.sent == false
-      assert data.auth == args.auth
-      assert data.tenant == args.tenant
+      assert data.auth == auth
+      assert data.tenant == manager_config.tenant
       assert data.db_state == nil
       assert data.parameter_status == %{}
       assert data.nonce == nil
@@ -60,7 +140,7 @@ defmodule Supavisor.DbHandlerTest do
       {:ok, sock} = :gen_tcp.listen(0, mode: :binary, active: false)
       {:ok, {host, port}} = :inet.sockname(sock)
 
-      secrets = fn -> %{user: "some user", db_user: "some user"} end
+      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
 
       auth = %{
         host: host,
@@ -74,11 +154,11 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       state =
-        Db.handle_event(:internal, nil, :connect, %{
+        Db.handle_event(:internal, :connect, :connect, %{
           auth: auth,
           sock: {:gen_tcp, nil},
           id: @id,
-          proxy: false
+          mode: :session
         })
 
       assert {:next_state, :authentication,
@@ -95,7 +175,7 @@ defmodule Supavisor.DbHandlerTest do
                 },
                 sock: {:gen_tcp, _},
                 id: @id,
-                proxy: false
+                mode: :session
               }} = state
     end
 
@@ -104,7 +184,7 @@ defmodule Supavisor.DbHandlerTest do
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
       {host, port} = {{127, 0, 0, 1}, 12345}
 
-      secrets = fn -> %{user: "some user", db_user: "some user"} end
+      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
 
       auth = %{
         id: @id,
@@ -118,16 +198,25 @@ defmodule Supavisor.DbHandlerTest do
         secrets: secrets
       }
 
-      state =
-        Db.handle_event(:internal, nil, :connect, %{
-          auth: auth,
-          sock: nil,
-          id: @id,
-          proxy: false,
-          reconnect_retries: 5
-        })
+      assert {:keep_state, _data, {:state_timeout, 2_500, :connect}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 auth: auth,
+                 sock: nil,
+                 id: @id,
+                 proxy: false,
+                 tenant: {:single, "some tenant"},
+                 reconnect_retries: 0
+               })
 
-      assert state == {:keep_state_and_data, {:state_timeout, 2_500, :connect}}
+      assert {:stop, {:failed_to_connect, _}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 auth: auth,
+                 sock: nil,
+                 id: @id,
+                 proxy: false,
+                 tenant: {:single, "some tenant"},
+                 reconnect_retries: 5
+               })
     end
 
     test "rejects connection when DB responds with SSL negotiation 'N'" do
@@ -146,7 +235,7 @@ defmodule Supavisor.DbHandlerTest do
         :gen_tcp.send(recv, <<?N>>)
       end)
 
-      secrets = fn -> %{user: "some user", db_user: "some user"} end
+      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
 
       auth = %{
         host: host,
@@ -169,8 +258,8 @@ defmodule Supavisor.DbHandlerTest do
         client_sock: nil
       }
 
-      assert {:keep_state_and_data, {:state_timeout, 2500, :connect}} ==
-               Db.handle_event(:internal, nil, :connect, data)
+      assert {:stop, {:failed_to_connect, :ssl_not_available}} ==
+               Db.handle_event(:internal, :connect, :connect, data)
     end
   end
 
@@ -189,7 +278,15 @@ defmodule Supavisor.DbHandlerTest do
         auth: %{
           password: fn -> "some_password" end,
           user: "some_user",
-          method: :password
+          method: :password,
+          secrets:
+            {:password,
+             fn ->
+               %Supavisor.ClientHandler.Auth.PasswordSecrets{
+                 user: "some_user",
+                 password: "some_password"
+               }
+             end}
         },
         sock: {:gen_tcp, a}
       }
@@ -217,7 +314,7 @@ defmodule Supavisor.DbHandlerTest do
         auth: %{
           user: "user",
           require_user: false,
-          secrets: fn -> %{user: "user", password: "pass"} end
+          secrets: {:auth_query, fn -> %{user: "user", password: "pass"} end}
         },
         sock: {:gen_tcp, send},
         nonce: "some nonce"
@@ -259,9 +356,11 @@ defmodule Supavisor.DbHandlerTest do
       {a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      secrets = %{
+      secrets = %Supavisor.ClientHandler.Auth.SASLSecrets{
         user: "user",
-        password: "password",
+        digest: "SCRAM-SHA-256",
+        iterations: 4096,
+        salt: "salt",
         client_key: :binary.copy(<<1>>, 32),
         stored_key: :binary.copy(<<2>>, 32),
         server_key: :binary.copy(<<3>>, 32)
@@ -270,8 +369,9 @@ defmodule Supavisor.DbHandlerTest do
       data = %{
         auth: %{
           user: "user",
-          secrets: fn -> secrets end,
+          secrets: {:auth_query, fn -> secrets end},
           require_user: false,
+          method: :auth_query,
           nonce: "nonce12345"
         },
         sock: {:gen_tcp, a},
@@ -289,35 +389,96 @@ defmodule Supavisor.DbHandlerTest do
   describe "handle_event/4 info tcp error_response" do
     test "handles server invalid password" do
       bin =
-        <<?E, 51::32, "SFATAL", 0, "VFATAL", 0, "C28P01", 0, "wrong", 0, "something", 0, "auth",
-          0, "error", 0>>
+        Server.error_message("28P01", "password authentication failed") |> IO.iodata_to_binary()
 
       {_a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      data = %{id: @id, proxy: false, user: "some user"}
+      data = %{
+        id: @id,
+        mode: :session,
+        user: "some user",
+        client_sock: nil,
+        terminating_error: nil
+      }
 
-      assert {:stop, :invalid_password, ^data} =
+      # Step 1: Receive error from DB, should prepare to terminate
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
                Db.handle_event(:info, content, :authentication, data)
+
+      assert error == %{
+               "C" => "28P01",
+               "M" => "password authentication failed",
+               "S" => "FATAL",
+               "V" => "FATAL"
+             }
+
+      # Step 2: Process internal event, should transition to terminating_with_error
+      assert {:next_state, :terminating_with_error, new_data} =
+               Db.handle_event(
+                 :internal,
+                 {:terminate_with_error, error, :keep_pool},
+                 :authentication,
+                 data
+               )
+
+      assert new_data.terminating_error == error
+
+      # Verify the cast was sent to self
+      assert_received {:"$gen_cast", :finalize_termination}
+
+      # Step 3: Process finalize_termination cast, should stop
+      assert {:stop, :normal} =
+               Db.handle_event(:cast, :finalize_termination, :terminating_with_error, new_data)
     end
 
-    test "handles server encode and forward error" do
-      bin = <<?E, 4::32>>
+    test "encodes and forwards server error to client socket" do
+      bin = Server.error_message("XX000", "generic error") |> IO.iodata_to_binary()
+      {send, recv} = sockpair()
+      content = {:tcp, recv, bin}
 
-      {_a, b} = sockpair()
-      content = {:tcp, b, bin}
+      data = %{
+        id: @id,
+        mode: :session,
+        user: "some user",
+        client_sock: {:gen_tcp, send},
+        terminating_error: nil
+      }
 
-      assert {:stop, {:encode_and_forward, []}} =
-               Db.handle_event(:info, content, :authentication, %{})
+      # Step 1: Receive error from DB, should prepare to terminate
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
+               Db.handle_event(:info, content, :authentication, data)
+
+      assert error == %{"C" => "XX000", "M" => "generic error", "S" => "FATAL", "V" => "FATAL"}
+
+      # Step 2: Process internal event, should forward error to client and transition to terminating_with_error
+      assert {:next_state, :terminating_with_error, new_data} =
+               Db.handle_event(
+                 :internal,
+                 {:terminate_with_error, error, :keep_pool},
+                 :authentication,
+                 data
+               )
+
+      assert new_data.terminating_error == error
+
+      # Verify error was sent to client socket
+      expected_error_bin = Server.encode_error_message(error) |> IO.iodata_to_binary()
+      assert {:ok, ^expected_error_bin} = :gen_tcp.recv(recv, 0, 1000)
+
+      # Verify the cast was sent to self
+      assert_received {:"$gen_cast", :finalize_termination}
+
+      # Step 3: Process finalize_termination cast, should stop
+      assert {:stop, :normal} =
+               Db.handle_event(:cast, :finalize_termination, :terminating_with_error, new_data)
     end
   end
 
   describe "handle_event/4 info tcp authentication authentication_md5_password payload events" do
     setup do
-      # `82` is `?R`, which identifies the payload tag as `:authentication`
-      # `0, 0, 0, 12` is the packet length
-      # `0, 0, 0, 5` is the authentication type, identified as `:authentication_md5_password`
-      # `100, 100, 100, 100` is the md5 salt from db, a random 4 bytes value
       bin = <<82, 0, 0, 0, 12, 0, 0, 0, 5, 100, 100, 100, 100>>
 
       {send, recv} = sockpair()
@@ -337,7 +498,15 @@ defmodule Supavisor.DbHandlerTest do
       auth = %{
         password: fn -> "some_password" end,
         user: "some_user",
-        method: :password
+        method: :password,
+        secrets:
+          {:password,
+           fn ->
+             %Supavisor.ClientHandler.Auth.PasswordSecrets{
+               user: "some_user",
+               password: "some_password"
+             }
+           end}
       }
 
       data = Map.put(data, :auth, auth)
@@ -355,8 +524,15 @@ defmodule Supavisor.DbHandlerTest do
       content: content
     } do
       auth = %{
-        secrets: fn -> %{secret: "9e2e8a8fce0afe2d60bd8207455192cd"} end,
-        method: :other
+        secrets:
+          {:auth_query_md5,
+           fn ->
+             %Supavisor.ClientHandler.Auth.MD5Secrets{
+               user: "some_user",
+               password: "9e2e8a8fce0afe2d60bd8207455192cd"
+             }
+           end},
+        method: :auth_query_md5
       }
 
       data = Map.put(data, :auth, auth)
@@ -380,29 +556,38 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
-  describe "check_ready/1" do
-    test "ready_for_query valid" do
-      assert {:ready_for_query, :transaction_block} == Db.check_ready(<<90, 0, 0, 0, 5, ?T>>)
+  describe "checkout/4 error handling" do
+    test "successful checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :normal})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
 
-      assert {:ready_for_query, :transaction_block} ==
-               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?T>>)
-
-      assert {:ready_for_query, :failed_transaction_block} ==
-               Db.check_ready(<<90, 0, 0, 0, 5, ?E>>)
-
-      assert {:ready_for_query, :failed_transaction_block} ==
-               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?E>>)
-
-      assert {:ready_for_query, :idle} == Db.check_ready(<<90, 0, 0, 0, 5, ?I>>)
-
-      assert {:ready_for_query, :idle} ==
-               Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?I>>)
+      assert {:ok, {:fake_db_sock, ^mock_pid}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
     end
 
-    test "ready_for_query not valid" do
-      assert :continue == Db.check_ready(<<>>)
-      assert :continue == Db.check_ready(<<90, 0, 0, 0, 5, ?I, 1, 1, 1>>)
-      assert :continue == Db.check_ready(<<1, 1, 1, 90, 0, 0, 0, 5, ?I, 1, 1, 1>>)
+    test "handles process crash during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :crash})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {{%RuntimeError{}, _}, _}}} =
+               Db.checkout(mock_pid, dummy_sock, caller, 1000)
+    end
+
+    test "handles process normal exit during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :normal_exit})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {:normal, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+    end
+
+    test "handles checkout timeout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :timeout})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, {:exit, {:timeout, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 100)
     end
   end
 end

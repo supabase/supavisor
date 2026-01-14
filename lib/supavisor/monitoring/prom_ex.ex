@@ -38,17 +38,12 @@ defmodule Supavisor.Monitoring.PromEx do
     @impl true
     def child_spec(name, metrics) do
       global_tags = :logger.get_primary_config().metadata
-      global_tags_keys = Map.keys(global_tags)
 
       Peep.child_spec(
         name: name,
-        metrics: Enum.map(metrics, &extent_tags(&1, global_tags_keys)),
+        metrics: metrics,
         global_tags: global_tags
       )
-    end
-
-    defp extent_tags(%{tags: tags} = metric, global_tags) do
-      %{metric | tags: tags ++ global_tags}
     end
   end
 
@@ -118,11 +113,21 @@ defmodule Supavisor.Monitoring.PromEx do
     Peep.get_all_metrics(__metrics_collector_name__())
   end
 
+  def fetch_metrics_compressed do
+    fetch_metrics()
+    |> :erlang.term_to_binary(compressed: 6)
+  end
+
   def fetch_tenant_metrics(tenant) do
     case Cachex.get(Supavisor.Cache, {:metrics, tenant}) do
       {_, metrics} when is_map(metrics) -> metrics
       _ -> %{}
     end
+  end
+
+  def fetch_tenant_metrics_compressed(tenant) do
+    fetch_tenant_metrics(tenant)
+    |> :erlang.term_to_binary(compressed: 6)
   end
 
   def fetch_cluster_metrics do
@@ -140,17 +145,17 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec fetch_node_metrics(atom()) :: map()
-  defp fetch_node_metrics(node), do: do_fetch(node, :fetch_metrics, [])
+  defp fetch_node_metrics(node), do: do_fetch(node, :fetch_metrics_compressed, [])
 
   @spec fetch_node_tenant_metrics(atom(), String.t()) :: map()
   defp fetch_node_tenant_metrics(node, tenant),
-    do: do_fetch(node, :fetch_tenant_metrics, [tenant])
+    do: do_fetch(node, :fetch_tenant_metrics_compressed, [tenant])
 
   @spec do_fetch(node(), atom(), list()) :: map()
   defp do_fetch(node, f, a) do
     case :rpc.call(node, __MODULE__, f, a, 25_000) do
-      map when is_map(map) ->
-        map
+      binary when is_binary(binary) ->
+        :erlang.binary_to_term(binary)
 
       {:badrpc, reason} ->
         Logger.error(
@@ -179,42 +184,47 @@ defmodule Supavisor.Monitoring.PromEx do
         {:"=:=", {:map_get, {:const, name}, :"$1"}, {:const, value}}
       end
 
-    {_, store} = Peep.Persistent.storage(__metrics_collector_name__())
+    %Peep.Persistent{storage: {_, store}, ids_to_metrics: itm} =
+      Peep.Persistent.fetch(__metrics_collector_name__())
 
     store
     |> List.wrap()
     |> Enum.flat_map(fn tid ->
-      :ets.select(tid, [{{{:_, :"$1", :_}, :_}, match, [:"$_"]}])
+      :ets.select(tid, [
+        # Counter/Sum (3-tuple keys)
+        {{{:_, :"$1", :_}, :_}, match, [:"$_"]},
+        # LastValue/Distribution (2-tuple keys)
+        {{{:_, :"$1"}, :_}, match, [:"$_"]}
+      ])
     end)
-    |> group_metrics(%{})
+    |> group_metrics(itm, %{})
   end
 
   # Copied from Peep. Probably will work only with ETS storage (that we
   # currently use).
   # To be removed if Peep will accept feature request for similar functionality,
   # see: https://github.com/rkallos/peep/issues/35
-  defp group_metrics([], acc) do
+  defp group_metrics([], _itm, acc) do
     acc
   end
 
-  defp group_metrics([metric | rest], acc) do
-    acc2 = group_metric(metric, acc)
-    group_metrics(rest, acc2)
+  defp group_metrics([metric | rest], itm, acc) do
+    acc2 = group_metric(metric, itm, acc)
+    group_metrics(rest, itm, acc2)
   end
 
-  defp group_metric({{%Metrics.Counter{} = metric, tags, _}, value}, acc) do
+  defp group_metric({{id, tags, _}, value}, itm, acc) do
+    %{^id => metric} = itm
     update_in(acc, [Access.key(metric, %{}), Access.key(tags, 0)], &(&1 + value))
   end
 
-  defp group_metric({{%Metrics.Sum{} = metric, tags, _}, value}, acc) do
-    update_in(acc, [Access.key(metric, %{}), Access.key(tags, 0)], &(&1 + value))
-  end
-
-  defp group_metric({{%Metrics.LastValue{} = metric, tags}, value}, acc) do
-    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
-  end
-
-  defp group_metric({{%Metrics.Distribution{} = metric, tags}, atomics}, acc) do
+  defp group_metric({{id, tags}, %Storage.Atomics{} = atomics}, itm, acc) do
+    %{^id => metric} = itm
     put_in(acc, [Access.key(metric, %{}), Access.key(tags)], Storage.Atomics.values(atomics))
+  end
+
+  defp group_metric({{id, tags}, value}, itm, acc) do
+    %{^id => metric} = itm
+    put_in(acc, [Access.key(metric, %{}), Access.key(tags)], value)
   end
 end

@@ -28,7 +28,8 @@ defmodule Supavisor.Logger.LogflareFormatter do
     ]a
 
   @default_context_transformations [
-    mfa: &__MODULE__.transform_mfa/1
+    mfa: &__MODULE__.transform_mfa/1,
+    crash_reason: &__MODULE__.transform_crash_reason/1
   ]
 
   @impl true
@@ -67,6 +68,7 @@ defmodule Supavisor.Logger.LogflareFormatter do
 
     metadata =
       meta
+      |> Map.delete(:auth_error)
       |> Map.merge(%{
         context: context,
         level: level
@@ -97,6 +99,21 @@ defmodule Supavisor.Logger.LogflareFormatter do
   def transform_mfa({module, function, arity}) do
     [to_string(module), to_string(function), to_string(arity)]
   end
+
+  # Logflare expects all members of an array to have the same type.
+  # crash_reason is a tuple with mixed types: {exception_struct, stacktrace_list}
+  # We transform it to a map with the exception info and formatted stacktrace strings
+  def transform_crash_reason({exception, stacktrace})
+      when is_exception(exception) and is_list(stacktrace) do
+    struct_name = exception.__struct__
+
+    exception
+    |> Map.from_struct()
+    |> Map.put(:exception, inspect(struct_name))
+    |> Map.put(:stacktrace, Enum.map(stacktrace, &Exception.format_stacktrace_entry/1))
+  end
+
+  def transform_crash_reason(_other), do: %{dropped: true}
 
   @spec format_message(
           message,

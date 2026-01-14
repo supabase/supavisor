@@ -4,7 +4,8 @@ defmodule Supavisor.SecretChecker do
   use GenServer
   require Logger
 
-  alias Supavisor.{Helpers, Tenants}
+  alias Supavisor.ClientHandler.Auth
+  alias Supavisor.Helpers
 
   @interval :timer.seconds(15)
 
@@ -43,50 +44,58 @@ defmodule Supavisor.SecretChecker do
 
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
-    {{_type, tenant}, user, _mode, db_name, _search_path} = args.id
+    {{_type, tenant_external_id}, pool_user, _mode, db_name, _search_path} = args.id
+
+    # Get tenant and manager user to build auth config
+    tenant = Supavisor.Tenants.get_tenant_cache(tenant_external_id, nil)
+    manager_secrets = Supavisor.Tenants.get_manager_user_cache(tenant_external_id)
+
+    auth =
+      if manager_secrets do
+        %{
+          host: String.to_charlist(tenant.db_host),
+          sni_hostname: if(tenant.sni_hostname != nil, do: to_charlist(tenant.sni_hostname)),
+          port: tenant.db_port,
+          user: manager_secrets.db_user,
+          manager_secrets: manager_secrets,
+          auth_query: tenant.auth_query,
+          database: if(db_name != nil, do: db_name, else: tenant.db_database),
+          password: fn -> manager_secrets.db_password end,
+          application_name: "Supavisor",
+          ip_version: Supavisor.Helpers.ip_version(tenant.ip_version, tenant.db_host),
+          upstream_ssl: tenant.upstream_ssl,
+          upstream_verify: tenant.upstream_verify,
+          upstream_tls_ca: Supavisor.Helpers.upstream_cert(tenant.upstream_tls_ca)
+        }
+      else
+        nil
+      end
 
     state = %{
-      id: args.id,
-      tenant_external_id: tenant,
-      user: user,
-      db_name: db_name,
-      key: {:secrets, tenant, user},
-      ttl: args[:ttl] || :timer.hours(24),
+      tenant: tenant_external_id,
+      auth: auth,
+      user: pool_user,
+      ttl: :timer.hours(24),
       conn: nil,
-      check_ref: nil,
-      auth: nil
+      check_ref: check()
     }
 
-    Logger.metadata(project: tenant, user: user)
+    Logger.metadata(project: tenant, user: pool_user)
     {:ok, state, {:continue, :init_conn}}
   end
 
-  def handle_continue(:init_conn, state) do
-    tenant = Tenants.get_tenant_by_external_id(state.tenant_external_id)
+  def handle_continue(:init_conn, %{auth: nil} = state) do
+    # No auth config (require_user: true tenant), skip connection setup
+    {:noreply, state}
+  end
 
-    auth_query_user =
-      case tenant.users do
-        [u] -> u
-        users -> Enum.find(users, & &1.is_manager)
-      end
+  def handle_continue(:init_conn, %{auth: auth} = state) do
+    {:ok, conn} = start_postgrex_connection(auth)
+    {:noreply, %{state | conn: conn}}
+  end
 
-    if auth_query_user do
-      auth =
-        tenant
-        |> Map.put(:users, [auth_query_user])
-        |> Supavisor.build_auth(
-          state.db_name,
-          :auth_query,
-          {:auth_query, fn -> %{} end},
-          "Supavisor (auth_query)"
-        )
-
-      {:ok, conn} = start_postgrex_connection(auth)
-      {:noreply, %{state | conn: conn, auth: auth, check_ref: check()}}
-    else
-      Logger.info("SecretsChecker terminating: no adequate user found")
-      {:noreply, {:stop, :normal}}
-    end
+  def handle_info(:check, %{auth: nil} = state) do
+    {:noreply, %{state | check_ref: check()}}
   end
 
   def handle_info(:check, state) do
@@ -99,36 +108,51 @@ defmodule Supavisor.SecretChecker do
     {:noreply, state}
   end
 
+  def terminate(_, state) do
+    :gen_statem.stop(state.conn)
+    :ok
+  end
+
   def check(interval \\ @interval),
     do: Process.send_after(self(), :check, interval + jitter())
 
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
-        method = if secret.digest == :md5, do: :auth_query_md5, else: :auth_query
-        secrets = Map.put(secret, :alias, auth.alias)
+        method =
+          case secret do
+            %Auth.MD5Secrets{} -> :auth_query_md5
+            %Auth.SASLSecrets{} -> :auth_query
+          end
 
         update_cache =
-          case Cachex.get(Supavisor.Cache, state.key) do
-            {:ok, {:cached, {_, {old_method, old_secrets}}}} ->
-              method != old_method or secrets != old_secrets.()
+          case Supavisor.SecretCache.get_validation_secrets(state.tenant, state.user) do
+            {:ok, {old_method, old_secrets_fn}} ->
+              method != old_method or
+                Map.delete(secret, :client_key) != Map.delete(old_secrets_fn.(), :client_key)
 
-            other ->
-              Logger.error("Failed to get cache: #{inspect(other)}")
+            _other ->
               true
           end
 
         if update_cache do
           Logger.info("Secrets changed or not present, updating cache")
-          value = {:ok, {method, fn -> secrets end}}
-          Cachex.put(Supavisor.Cache, state.key, {:cached, value}, expire: :timer.hours(24))
+
+          Supavisor.SecretCache.put_validation_secrets(state.tenant, state.user, method, fn ->
+            secret
+          end)
         end
 
         {:ok, {method, fn -> secret end}}
 
       other ->
         Logger.error("Failed to get secret: #{inspect(other)}")
+        other
     end
+  end
+
+  def handle_call(:get_secrets, _from, %{auth: nil} = state) do
+    {:reply, {:error, :no_auth_config}, state}
   end
 
   def handle_call(:get_secrets, _from, state) do
@@ -157,7 +181,10 @@ defmodule Supavisor.SecretChecker do
       end
     end)
 
-    Cachex.del(Supavisor.Cache, state.key)
+    # Clear the secrets cache for this tenant/user
+    tenant = state.tenant
+    user = state.user
+    Cachex.del(Supavisor.Cache, {:secrets, tenant, user})
 
     Logger.info("SecretChecker: Successfully changed auth_query user")
     {:reply, :ok, %{state | auth: new_auth, conn: new_conn}}
@@ -184,7 +211,7 @@ defmodule Supavisor.SecretChecker do
       database: auth.database,
       password: auth.password.(),
       username: auth.user,
-      parameters: [application_name: "Supavisor auth_query"],
+      parameters: [application_name: "Supavisor (auth_query)"],
       ssl: auth.upstream_ssl,
       socket_options: [
         auth.ip_version

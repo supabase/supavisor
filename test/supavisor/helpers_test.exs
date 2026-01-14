@@ -15,12 +15,13 @@ defmodule Supavisor.HelpersTest do
 
       expected =
         {:ok,
-         %{
+         %Supavisor.ClientHandler.Auth.SASLSecrets{
            digest: "SCRAM-SHA-256",
            iterations: 4000,
            salt: "salt",
            stored_key: "storedKey",
            server_key: "serverKey",
+           client_key: "storedKey",
            user: user
          }}
 
@@ -30,13 +31,60 @@ defmodule Supavisor.HelpersTest do
     test "parses md5 secrets correctly" do
       secret = "supersecret"
       user = "user@example.com"
-      expected = {:ok, %{digest: :md5, secret: secret, user: user}}
+
+      expected =
+        {:ok, %Supavisor.ClientHandler.Auth.MD5Secrets{password: secret, user: user}}
+
       assert Helpers.parse_secret("md5supersecret", user) == expected
     end
 
     test "returns error for unsupported or invalid secret formats" do
       assert Helpers.parse_secret("unsupported_secret", "user@example.com") ==
                {:error, "Unsupported or invalid secret format"}
+    end
+  end
+
+  describe "get_user_secret/3" do
+    test "handles Postgrex.Error and extracts postgres error message" do
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      {:ok, conn} =
+        Postgrex.start_link(
+          hostname: db_conf[:hostname],
+          port: db_conf[:port],
+          database: db_conf[:database],
+          password: db_conf[:password],
+          username: db_conf[:username]
+        )
+
+      # Query references a non-existent table to trigger Postgrex.Error
+      invalid_query = "SELECT * FROM nonexistent_table_xyz WHERE user=$1"
+
+      result = Helpers.get_user_secret(conn, invalid_query, "testuser")
+
+      assert {:error, message} = result
+
+      assert message ==
+               ~s(Authentication query failed: relation "nonexistent_table_xyz" does not exist)
+
+      GenServer.stop(conn)
+    end
+
+    test "handles DBConnection.ConnectionError unreachable database" do
+      {:ok, conn} =
+        Postgrex.start_link(
+          hostname: "invalid.nonexistent.host",
+          port: 5432,
+          database: "test"
+        )
+
+      auth_query = "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"
+      result = Helpers.get_user_secret(conn, auth_query, "testuser")
+
+      assert {:error, message} = result
+      assert message == "Authentication query failed: Connection to database not available"
+
+      GenServer.stop(conn)
     end
   end
 
