@@ -20,22 +20,25 @@ defmodule Supavisor.Protocol.PreparedStatements.Storage do
 
   @spec put(t(), PreparedStatements.statement_name(), PreparedStatement.t()) ::
           {:ok, t()}
-          | {:error, :max_prepared_statements}
-          | {:error, :max_prepared_statements_memory}
-          | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
+          | {:error, Supavisor.Errors.MaxPreparedStatementsError.t()}
+          | {:error, Supavisor.Errors.MaxPreparedStatementsMemoryError.t()}
+          | {:error, Supavisor.Errors.DuplicatePreparedStatementError.t()}
   def put({size, statements}, statement_name, statement) do
     cond do
       map_size(statements) >= @statement_limit ->
-        {:error, :max_prepared_statements}
+        {:error, %Supavisor.Errors.MaxPreparedStatementsError{limit: @statement_limit}}
 
       Map.has_key?(statements, statement_name) ->
-        {:error, :duplicate_prepared_statement, statement_name}
+        {:error, %Supavisor.Errors.DuplicatePreparedStatementError{name: statement_name}}
 
       true ->
         new_size = size + PreparedStatement.size(statement)
 
         if new_size > @memory_limit_bytes do
-          {:error, :max_prepared_statements_memory}
+          {:error,
+           %Supavisor.Errors.MaxPreparedStatementsMemoryError{
+             limit_mb: @memory_limit_bytes / 1_000_000
+           }}
         else
           {:ok, {new_size, Map.put(statements, statement_name, statement)}}
         end

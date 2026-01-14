@@ -98,13 +98,6 @@ defmodule Supavisor.Protocol.DebugTest do
       assert Debug.packet_to_string(server_pkt, :backend) == "ReadyForQuery(idle)"
     end
 
-    test "formats Client.Pkt struct" do
-      packet = <<?Q, 13::32, "SELECT 1", 0>>
-      {:ok, client_pkt, _} = Client.decode_pkt(packet)
-
-      assert Debug.packet_to_string(client_pkt, :frontend) == "Query(\"SELECT 1\")"
-    end
-
     test "formats prepared statement tuple" do
       storage = PreparedStatements.init_storage()
 

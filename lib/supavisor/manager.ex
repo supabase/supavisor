@@ -9,6 +9,7 @@ defmodule Supavisor.Manager do
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
   alias Supavisor.Helpers
+  alias Supavisor.Errors.PoolTerminatingError
 
   @check_timeout 120_000
 
@@ -29,8 +30,8 @@ defmodule Supavisor.Manager do
   """
   @spec subscribe(pid, pid) ::
           {:ok, iodata() | [], integer}
-          | {:error, :max_clients_reached}
-          | {:error, :terminating, term()}
+          | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
+          | {:error, PoolTerminatingError.t()}
   def subscribe(manager, pid) do
     GenServer.call(manager, {:subscribe, pid})
   end
@@ -199,7 +200,7 @@ defmodule Supavisor.Manager do
   def handle_call({:subscribe, _pid}, _, %{terminating_error: error} = state)
       when not is_nil(error) do
     Logger.warning("Rejecting subscription to terminating pool #{inspect(state.id)}")
-    {:reply, {:error, :terminating, error}, state}
+    {:reply, {:error, %PoolTerminatingError{underlying_error: error}}, state}
   end
 
   def handle_call({:subscribe, pid}, _, state) do
@@ -219,7 +220,7 @@ defmodule Supavisor.Manager do
             {{:ok, ps, state.idle_timeout}, state}
         end
       else
-        {{:error, :max_clients_reached}, state}
+        {{:error, %Supavisor.Errors.MaxClientConnectionsError{limit: limit}}, state}
       end
 
     {:reply, reply, new_state}

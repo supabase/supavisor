@@ -7,6 +7,8 @@ defmodule Supavisor.CircuitBreaker do
 
   require Logger
 
+  alias Supavisor.Errors.CircuitBreakerError
+
   @table __MODULE__
 
   @thresholds %{
@@ -77,9 +79,9 @@ defmodule Supavisor.CircuitBreaker do
 
   @doc """
   Checks if a circuit breaker is open for a given key and operation.
-  Returns :ok if operation is allowed, {:error, :circuit_open, blocked_until} otherwise.
+  Returns :ok if operation is allowed, {:error, CircuitBreakerError.t()} otherwise.
   """
-  @spec check(term(), atom()) :: :ok | {:error, :circuit_open, integer()}
+  @spec check(term(), atom()) :: :ok | {:error, CircuitBreakerError.t()}
   def check(key, operation) when is_atom(operation) do
     now = System.system_time(:second)
     ets_key = {key, operation}
@@ -92,7 +94,7 @@ defmodule Supavisor.CircuitBreaker do
         :ok
 
       [{^ets_key, %{blocked_until: blocked_until}}] when blocked_until > now ->
-        {:error, :circuit_open, blocked_until}
+        {:error, %CircuitBreakerError{operation: operation, blocked_until: blocked_until}}
 
       [{^ets_key, state}] ->
         :ets.insert(@table, {ets_key, %{state | blocked_until: nil}})

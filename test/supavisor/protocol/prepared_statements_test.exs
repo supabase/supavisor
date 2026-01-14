@@ -125,7 +125,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 21
       payload = <<0, "test_stmt", 0, 0, 0, 0, 0, 0, 0, 0>>
 
-      assert {:error, :prepared_statement_not_found, "test_stmt"} =
+      assert {:error, %Supavisor.Errors.PreparedStatementNotFoundError{name: "test_stmt"}} =
                PreparedStatements.handle_bind_message(client_statements, len, payload)
     end
 
@@ -133,7 +133,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 15
       payload = <<?S, "test_stmt", 0>>
 
-      assert {:error, :prepared_statement_not_found, "test_stmt"} =
+      assert {:error, %Supavisor.Errors.PreparedStatementNotFoundError{name: "test_stmt"}} =
                PreparedStatements.handle_describe_message(client_statements, len, payload)
     end
 
@@ -166,7 +166,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 25
       payload = <<"test_stmt", 0, "select 1", 0, 0, 0>>
 
-      assert {:error, :max_prepared_statements} =
+      assert {:error, %Supavisor.Errors.MaxPreparedStatementsError{}} =
                PreparedStatements.handle_parse_message(client_statements, len, payload)
     end
 
@@ -180,7 +180,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 20
       payload = <<"stmt", 0, "select 1", 0, 0, 0>>
 
-      assert {:error, :duplicate_prepared_statement, "stmt"} =
+      assert {:error, %Supavisor.Errors.DuplicatePreparedStatementError{name: "stmt"}} =
                PreparedStatements.handle_parse_message(client_statements, len, payload)
     end
 
@@ -199,7 +199,7 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 25
       payload = <<"test_stmt", 0, "select 1", 0, 0, 0>>
 
-      assert {:error, :max_prepared_statements_memory} =
+      assert {:error, %Supavisor.Errors.MaxPreparedStatementsMemoryError{}} =
                PreparedStatements.handle_parse_message(client_statements, len, payload)
     end
   end

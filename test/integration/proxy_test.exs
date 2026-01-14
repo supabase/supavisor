@@ -54,7 +54,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :invalid_password,
-                  message: "password authentication failed for user \"" <> _,
+                  message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
                   severity: "FATAL",
                   pg_code: "28P01"
                 }
@@ -182,8 +182,7 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size",
-                unknown: "FATAL",
+                  "(EMAXCLIENTSESSION) max clients reached in session mode - max clients are limited to pool_size: 2",
                 severity: "FATAL",
                 pg_code: "XX000"
               }
@@ -237,12 +236,46 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Max client connections reached",
+                message: "(EMAXCLIENTCONN) max client connections reached, limit: 0",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = single_connection(connection_opts)
+  end
+
+  test "checkout timeout in transaction mode" do
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_transaction),
+      username: "checkout_timeout_test.proxy_tenant1",
+      database: "postgres",
+      password: "postgres"
+    ]
+
+    # Start 2 connections and keep them busy with transactions (pool_size is 2)
+    {:ok, conn1} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn1, {:query, "BEGIN;"})
+
+    {:ok, conn2} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn2, {:query, "BEGIN;"})
+
+    {:ok, conn3} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn3, {:query, "BEGIN;"})
+
+    {:ok, conn4} = single_connection(connection_opts)
+
+    # Try to execute query on 4th connection - should timeout after 500ms
+    assert %Postgrex.Error{
+             postgres: %{
+               code: :internal_error,
+               message:
+                 "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 500ms in Transaction mode",
+               pg_code: "XX000",
+               severity: "FATAL"
+             }
+           } = P.SimpleConnection.call(conn4, {:query, "BEGIN;"})
   end
 
   test "change role password" do
@@ -267,7 +300,7 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :invalid_password,
-                message: "password authentication failed for user \"" <> _,
+                message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
                 severity: "FATAL",
                 pg_code: "28P01"
               }
@@ -329,10 +362,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Authentication error, reason: \"Invalid format for user or db_name\"",
+                message:
+                  "(EINVALIDUSERINFO) Authentication error, reason: \"Invalid format for user or db_name\"",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
   end
@@ -422,10 +455,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Circuit breaker open: Failed to retrieve database credentials",
+                message:
+                  "(ECIRCUITBREAKER) circuit breaker open: Failed to retrieve database credentials",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -448,10 +481,9 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "Circuit breaker open: Unable to establish connection to upstream database",
+                  "(ECIRCUITBREAKER) circuit breaker open: Unable to establish connection to upstream database",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -471,7 +503,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :invalid_password,
-                  message: "password authentication failed for user \"" <> _,
+                  message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
                   severity: "FATAL",
                   pg_code: "28P01"
                 }
@@ -483,10 +515,9 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Circuit breaker open: Too many authentication errors",
+                message: "(ECIRCUITBREAKER) circuit breaker open: Too many authentication errors",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 

@@ -49,17 +49,17 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
 
       prepare_bin = <<?Q, 27::32, "PREPARE stmt AS SELECT 1">>
 
-      assert {:error, :prepared_statement_on_simple_query} =
+      assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
                MessageStreamer.handle_packets(stream_state, prepare_bin)
 
       execute_bin = <<?Q, 19::32, "EXECUTE stmt(1)">>
 
-      assert {:error, :prepared_statement_on_simple_query} =
+      assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
                MessageStreamer.handle_packets(stream_state, execute_bin)
 
       deallocate_bin = <<?Q, 19::32, "DEALLOCATE stmt">>
 
-      assert {:error, :prepared_statement_on_simple_query} =
+      assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
                MessageStreamer.handle_packets(stream_state, deallocate_bin)
     end
 
@@ -80,7 +80,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
 
       multi_query_bin = <<?Q, 36::32, "SELECT 1; PREPARE stmt AS SELECT 2">>
 
-      assert {:error, :prepared_statement_on_simple_query} =
+      assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
                MessageStreamer.handle_packets(stream_state, multi_query_bin)
     end
 
