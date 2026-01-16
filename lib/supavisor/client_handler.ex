@@ -199,7 +199,7 @@ defmodule Supavisor.ClientHandler do
       ) do
     sni_hostname = HandlerHelpers.try_get_sni(sock)
 
-    case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
+    case Tenants.fetch_user_cache(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
         db_name = db_name || info.tenant.db_database
 
