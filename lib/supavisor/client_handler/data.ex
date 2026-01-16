@@ -8,6 +8,7 @@ defmodule Supavisor.ClientHandler.Data do
   defstruct [
     :id,
     :sock,
+    :sock_ref,
     :trans,
     :peer_ip,
     :local,
