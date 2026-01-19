@@ -127,4 +127,37 @@ defmodule Supavisor.SecretCacheTest do
     # No tenant cache registered
     assert {:error, :not_found} = SecretCache.get_upstream_auth_secrets(id)
   end
+
+  test "delete_upstream_auth_secrets removes secrets from tenant cache" do
+    tenant = "test_tenant"
+    user = "normal_user"
+    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+    method = :password
+    secrets_fn = fn -> %{password: "secret123", client_key: "key123"} end
+
+    setup_tenant_cache(id)
+
+    # Store secrets
+    SecretCache.put_upstream_auth_secrets(id, method, secrets_fn)
+    assert {:ok, {^method, ^secrets_fn}} = SecretCache.get_upstream_auth_secrets(id)
+
+    # Delete secrets via SecretCache
+    SecretCache.delete_upstream_auth_secrets(id)
+
+    # Verify secrets are gone
+    assert {:error, :not_found} = SecretCache.get_upstream_auth_secrets(id)
+    assert {:error, :not_found} = TenantCache.get_upstream_auth_secrets(id)
+  end
+
+  test "delete_upstream_auth_secrets is idempotent" do
+    tenant = "test_tenant"
+    user = "normal_user"
+    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+
+    setup_tenant_cache(id)
+
+    # Delete when nothing exists should not crash
+    assert true = SecretCache.delete_upstream_auth_secrets(id)
+    assert true = SecretCache.delete_upstream_auth_secrets(id)
+  end
 end
