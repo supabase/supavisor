@@ -34,6 +34,7 @@ defmodule Supavisor.DbHandler do
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
+  @cleanup_buffer_limit 65_536
 
   @doc """
   Starts a DbHandler state machine
@@ -65,10 +66,17 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
-  Checks in a DbHandler process
+  Attempts to clean up session state by sending DISCARD ALL to the database.
+
+  The caller is responsible for ensuring that:
+  - The DbHandler is NOT actively processing a query
+  - The DbHandler is NOT in a transaction (no uncommitted changes)
+  - The DbHandler is in session mode (not transaction mode)
   """
-  @spec checkin(pid()) :: :ok
-  def checkin(pid), do: :gen_statem.cast(pid, :checkin)
+  @spec attempt_cleanup(pid()) :: :ok | {:error, term()}
+  def attempt_cleanup(db_handler_pid) do
+    :gen_statem.call(db_handler_pid, :cleanup)
+  end
 
   @doc """
   Sends prepared statement packets to a DbHandler
@@ -244,6 +252,11 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | reconnect_retries: retry + 1}, {:next_event, :internal, :connect}}
   end
 
+  def handle_event(:timeout, :cleanup_timeout, :waiting_cleanup, _data) do
+    Logger.error("DbHandler: Cleanup timeout, shutting down")
+    {:stop, :normal}
+  end
+
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
     {:ok, dec_pkt, _} = Server.decode(bin)
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
@@ -347,6 +360,24 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  def handle_event(:info, {proto, _, bin}, :waiting_cleanup, %{caller: caller} = data)
+      when is_pid(caller) and proto in @proto do
+    buffered_bin = data.pending_bin <> bin
+
+    cond do
+      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
+        new_data = %{data | caller: nil, waiting_cleanup: nil, pending_bin: nil}
+        {:next_state, :idle, new_data, {:reply, data.waiting_cleanup, :ok}}
+
+      byte_size(buffered_bin) > @cleanup_buffer_limit ->
+        Logger.error("DbHandler: Cleanup buffer limit exceeded, shutting down")
+        {:stop, :normal}
+
+      true ->
+        {:keep_state, %{data | pending_bin: buffered_bin}}
+    end
+  end
+
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
     {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
@@ -392,6 +423,33 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, :ps, :busy, data) do
     Logger.debug("DbHandler: get parameter status")
     {:keep_state_and_data, {:reply, from, data.parameter_status}}
+  end
+
+  def handle_event({:call, from}, :cleanup, state, data) do
+    Logger.debug("DbHandler: Cleanup requested, current state: #{inspect(state)}")
+
+    cond do
+      data.mode == :transaction ->
+        Logger.error(
+          "DbHandler: Cleanup called on transaction mode - only supported in session mode"
+        )
+
+        {:keep_state_and_data,
+         {:reply, from, {:error, :cleanup_not_supported_in_transaction_mode}}}
+
+      state in [:idle, :busy] ->
+        Logger.debug("DbHandler: Starting cleanup, sending DISCARD ALL")
+        msg = :pgo_protocol.encode_query_message("DISCARD ALL")
+        :ok = HandlerHelpers.sock_send(data.sock, msg)
+
+        {:next_state, :waiting_cleanup,
+         Map.merge(data, %{waiting_cleanup: from, pending_bin: <<>>}),
+         {:timeout, 5_000, :cleanup_timeout}}
+
+      true ->
+        Logger.warning("DbHandler: Cannot cleanup in state #{inspect(state)}")
+        {:keep_state_and_data, {:reply, from, {:error, :cant_cleanup_now}}}
+    end
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do

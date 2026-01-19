@@ -435,4 +435,9 @@ defmodule Supavisor.Helpers do
         raise "Invalid boolean value for #{env_var}: #{inspect(value)}. Expected: true, false, 1, or 0"
     end
   end
+
+  def no_warm_pool_user?(user) do
+    no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
+    user in no_warm_pool_users
+  end
 end
