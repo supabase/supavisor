@@ -634,10 +634,12 @@ defmodule Supavisor.DbHandlerTest do
         caller: self()
       }
 
-      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
-               Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :idle, data)
+      from = {self(), make_ref()}
 
-      assert new_data.waiting_cleanup != nil
+      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
+               Db.handle_event({:call, from}, :cleanup, :idle, data)
+
+      assert new_data.waiting_cleanup == from
       assert new_data.pending_bin == <<>>
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
@@ -656,10 +658,12 @@ defmodule Supavisor.DbHandlerTest do
         caller: self()
       }
 
-      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
-               Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :busy, data)
+      from = {self(), make_ref()}
 
-      assert new_data.waiting_cleanup != nil
+      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
+               Db.handle_event({:call, from}, :cleanup, :busy, data)
+
+      assert new_data.waiting_cleanup == from
       assert new_data.pending_bin == <<>>
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
