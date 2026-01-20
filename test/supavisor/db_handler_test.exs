@@ -634,7 +634,7 @@ defmodule Supavisor.DbHandlerTest do
         caller: self()
       }
 
-      assert {:next_state, :waiting_cleanup, new_data, {:timeout, 5_000, :cleanup_timeout}} =
+      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
                Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :idle, data)
 
       assert new_data.waiting_cleanup != nil
@@ -656,7 +656,7 @@ defmodule Supavisor.DbHandlerTest do
         caller: self()
       }
 
-      assert {:next_state, :waiting_cleanup, new_data, {:timeout, 5_000, :cleanup_timeout}} =
+      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
                Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :busy, data)
 
       assert new_data.waiting_cleanup != nil
@@ -748,7 +748,7 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       assert {:stop, :normal} =
-               Db.handle_event(:timeout, :cleanup_timeout, :waiting_cleanup, data)
+               Db.handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, data)
     end
   end
 end

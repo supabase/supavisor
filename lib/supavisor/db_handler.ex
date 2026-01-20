@@ -252,7 +252,7 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | reconnect_retries: retry + 1}, {:next_event, :internal, :connect}}
   end
 
-  def handle_event(:timeout, :cleanup_timeout, :waiting_cleanup, _data) do
+  def handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, _data) do
     Logger.error("DbHandler: Cleanup timeout, shutting down")
     {:stop, :normal}
   end
@@ -444,7 +444,7 @@ defmodule Supavisor.DbHandler do
 
         {:next_state, :waiting_cleanup,
          Map.merge(data, %{waiting_cleanup: from, pending_bin: <<>>}),
-         {:timeout, 5_000, :cleanup_timeout}}
+         {:state_timeout, 5_000, :cleanup_timeout}}
 
       true ->
         Logger.warning("DbHandler: Cannot cleanup in state #{inspect(state)}")
