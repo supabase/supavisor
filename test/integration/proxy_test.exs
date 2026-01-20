@@ -629,6 +629,49 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  test "cleanup resets session state in session mode" do
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_session),
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> List.first(@tenants)
+    ]
+
+    test_timeout = "12345ms"
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+
+    assert [%P.Result{rows: [[backend_pid_1]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    assert [%P.Result{}] =
+             P.SimpleConnection.call(
+               conn1,
+               {:query, "SET statement_timeout = '#{test_timeout}';"}
+             )
+
+    assert [%P.Result{rows: [[^test_timeout]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SHOW statement_timeout;"})
+
+    stop_supervised(:conn1)
+    Process.sleep(100)
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+
+    assert [%P.Result{rows: [[backend_pid_2]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
+
+    assert backend_pid_1 == backend_pid_2
+
+    assert [%P.Result{rows: [[timeout]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})
+
+    assert timeout != test_timeout
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,

@@ -533,6 +533,7 @@ defmodule Supavisor.ClientHandler do
       "ClientHandler: socket closed while state was #{state} (#{data.mode})"
     )
 
+    maybe_cleanup_db_handler(state, data)
     {:stop, :normal}
   end
 
@@ -715,8 +716,9 @@ defmodule Supavisor.ClientHandler do
   end
 
   # Terminate request
-  def handle_event(_kind, {proto, _, <<?X, 4::32>>}, :idle, _data) when proto in @proto do
+  def handle_event(_kind, {proto, _, <<?X, 4::32>>}, state, data) when proto in @proto do
     Logger.info("ClientHandler: Terminate received from client")
+    maybe_cleanup_db_handler(state, data)
     {:stop, :normal}
   end
 
@@ -793,6 +795,23 @@ defmodule Supavisor.ClientHandler do
       end
 
     Logger.log(level, "ClientHandler: terminating with reason #{inspect(reason)}")
+  end
+
+  defp maybe_cleanup_db_handler(state, data) do
+    if state == :idle and data.mode == :session and data.db_connection != nil and
+         !Supavisor.Helpers.no_warm_pool_user?(data.user) do
+      Logger.debug("ClientHandler: Performing session cleanup before termination")
+      {pool, db_pid, _} = data.db_connection
+
+      case DbHandler.attempt_cleanup(db_pid) do
+        :ok ->
+          Process.unlink(db_pid)
+          :poolboy.checkin(pool, db_pid)
+
+        _error ->
+          :ok
+      end
+    end
   end
 
   @impl true
