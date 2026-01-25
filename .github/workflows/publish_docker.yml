@@ -15,7 +15,7 @@ jobs:
       docker_version: ${{ steps.settings.outputs.result }}
       image_tag: supabase/supavisor:${{ steps.settings.outputs.result }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - id: settings
         # Remove spaces to get the raw version string
         run: echo "result=$(sed -r 's/\s+//g' VERSION)" >> $GITHUB_OUTPUT
