@@ -122,4 +122,31 @@ defmodule Supavisor.ClientHandlerTest do
                @subject.code_change("1.0", :busy, old_data, :monitor_socket)
     end
   end
+
+  describe "socket DOWN handler" do
+    test "handles DOWN message for port monitor" do
+      ref = make_ref()
+      data = %{sock_ref: {:port, ref}}
+
+      assert {:stop, :normal} =
+               @subject.handle_event(:info, {:DOWN, ref, :port, self(), :normal}, :idle, data)
+    end
+
+    test "handles DOWN message for process monitor" do
+      ref = make_ref()
+      data = %{sock_ref: {:process, ref}}
+
+      assert {:stop, :normal} =
+               @subject.handle_event(:info, {:DOWN, ref, :process, self(), :normal}, :idle, data)
+    end
+
+    test "ignores DOWN message with non-matching ref" do
+      ref = make_ref()
+      other_ref = make_ref()
+      data = %{sock_ref: {:port, ref}}
+
+      assert :keep_state_and_data =
+               @subject.handle_event(:info, {:DOWN, other_ref, :port, self(), :normal}, :idle, data)
+    end
+  end
 end
