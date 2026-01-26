@@ -136,9 +136,6 @@ defmodule SupavisorWeb.TenantController do
   end
 
   def update(conn, %{"external_id" => id, "tenant" => params}) do
-    cleanup_result = Supavisor.del_all_cache_dist(id)
-    Logger.info("Delete cache dist #{id}: #{inspect(cleanup_result)}")
-
     cert = Helpers.upstream_cert(params["upstream_tls_ca"])
 
     if params["upstream_ssl"] && params["upstream_verify"] == "peer" && !cert do
@@ -174,6 +171,9 @@ defmodule SupavisorWeb.TenantController do
 
           with {:ok, %TenantModel{} = tenant} <-
                  Tenants.update_tenant(tenant, params) do
+            cleanup_result = Supavisor.del_all_cache_dist(id)
+            Logger.info("Delete cache dist #{id}: #{inspect(cleanup_result)}")
+
             result = Supavisor.terminate_global(tenant.external_id)
             Logger.warning("Stop #{tenant.external_id}: #{inspect(result)}")
             render(conn, "show.json", tenant: tenant)

@@ -44,9 +44,8 @@ defmodule Supavisor.SecretChecker do
 
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
-    {{_type, tenant_external_id}, pool_user, _mode, db_name, _search_path} = args.id
+    {{_type, tenant_external_id}, pool_user, _mode, _db_name, _search_path} = args.id
 
-    # Get tenant and manager user to build auth config
     tenant = Supavisor.Tenants.get_tenant_cache(tenant_external_id, nil)
     manager_secrets = Supavisor.Tenants.get_manager_user_cache(tenant_external_id)
 
@@ -59,7 +58,7 @@ defmodule Supavisor.SecretChecker do
           user: manager_secrets.db_user,
           manager_secrets: manager_secrets,
           auth_query: tenant.auth_query,
-          database: if(db_name != nil, do: db_name, else: tenant.db_database),
+          database: tenant.db_database,
           password: fn -> manager_secrets.db_password end,
           application_name: "Supavisor",
           ip_version: Supavisor.Helpers.ip_version(tenant.ip_version, tenant.db_host),

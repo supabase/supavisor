@@ -34,6 +34,7 @@ defmodule Cluster.Strategy.Postgres do
       |> Keyword.put_new(:parameters, application_name: "cluster_node_#{node()}")
       |> Keyword.put_new(:auto_reconnect, true)
       |> Keyword.put_new(:ssl_opts, verify: :verify_none)
+      |> Keyword.put_new(:socket_options, state.config[:socket_options] || [])
 
     new_config =
       state.config
