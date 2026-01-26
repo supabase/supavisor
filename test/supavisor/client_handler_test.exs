@@ -110,18 +110,16 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "monitor leaves data unchanged when sock field is missing" do
       old_data = %{other_field: :value}
-      state = :idle
 
-      assert {:ok, ^state, ^old_data} =
-               @subject.code_change("1.0", state, old_data, :monitor_socket)
+      assert {:ok, :busy, ^old_data} =
+               @subject.code_change("1.0", :busy, old_data, :monitor_socket)
     end
 
     test "monitor leaves data unchanged when sock format is unrecognized" do
       old_data = %{sock: :unexpected_format}
-      state = :busy
 
-      assert {:ok, ^state, ^old_data} =
-               @subject.code_change("1.0", state, old_data, :monitor_socket)
+      assert {:ok, :busy, ^old_data} =
+               @subject.code_change("1.0", :busy, old_data, :monitor_socket)
     end
 
     test "demonitors port for plain TCP connections" do
@@ -180,10 +178,9 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "demonitor leaves data unchanged when sock_ref is missing" do
       old_data = %{other_field: :value}
-      state = :idle
 
-      assert {:ok, ^state, ^old_data} =
-               @subject.code_change("1.0", state, old_data, :demonitor_socket)
+      assert {:ok, :idle, ^old_data} =
+               @subject.code_change("1.0", :idle, old_data, :demonitor_socket)
     end
   end
 end
