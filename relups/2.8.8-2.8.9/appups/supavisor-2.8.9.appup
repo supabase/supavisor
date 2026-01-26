@@ -12,6 +12,6 @@
     {apply,{'Elixir.Supavisor.HotUpgrade',reint_funs,[]}},
     {update,'Elixir.Cluster.Strategy.Postgres',{advanced,[]},[]},
     {load_module,'Elixir.Supavisor.ClientHandler.Data',[]},
-    {update,'Elixir.Supavisor.ClientHandler',{advanced,demonitor_socket},[]},
+    {load_module,'Elixir.Supavisor.ClientHandler',[]},
     {update,'Elixir.Supavisor.SecretChecker',{advanced,[]},[]},
     {load_module,'Elixir.SupavisorWeb.TenantController',[]}]}]}.

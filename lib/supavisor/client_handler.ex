@@ -825,24 +825,6 @@ defmodule Supavisor.ClientHandler do
     {:ok, state, new_data}
   end
 
-  def code_change(_version, state, data, :demonitor_socket) do
-    new_data =
-      case data do
-        %{sock_ref: {:port, ref}} when is_reference(ref) ->
-          Port.demonitor(ref, [:flush])
-          Map.delete(data, :sock_ref)
-
-        %{sock_ref: {:process, ref}} when is_reference(ref) ->
-          Process.demonitor(ref, [:flush])
-          Map.delete(data, :sock_ref)
-
-        _ ->
-          data
-      end
-
-    {:ok, state, new_data}
-  end
-
   ## Internal functions
 
   defp handle_auth_success(sock, {method, secrets}, client_key, data) do
