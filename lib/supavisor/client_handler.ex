@@ -9,6 +9,14 @@ defmodule Supavisor.ClientHandler do
 
   require Logger
 
+  require Record
+
+  # Import the sslsocket record definition
+  Record.defrecord(
+    :sslsocket,
+    Record.extract(:sslsocket, from_lib: "ssl/src/ssl_api.hrl")
+  )
+
   @behaviour :ranch_protocol
   @behaviour :gen_statem
   @proto [:tcp, :ssl]
@@ -68,7 +76,7 @@ defmodule Supavisor.ClientHandler do
     Helpers.set_max_heap_size(90)
 
     {:ok, sock} = :ranch.handshake(ref)
-    sock_ref = Port.monitor(sock)
+    sock_ref = {:port, Port.monitor(sock)}
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
 
@@ -544,9 +552,9 @@ defmodule Supavisor.ClientHandler do
   # socket went down
   def handle_event(
         :info,
-        {:DOWN, sock_ref, :port, _port, _reason},
+        {:DOWN, ref, _, _, _reason},
         state,
-        %{sock_ref: sock_ref} = data
+        %{sock_ref: {_, ref}} = data
       ) do
     handle_socket_close(state, data)
   end
@@ -799,19 +807,37 @@ defmodule Supavisor.ClientHandler do
   def code_change(_version, state, old_data, :monitor_socket) do
     new_data =
       case old_data do
-        %{socket: {:gen_tcp, port}} ->
+        %{sock: {:gen_tcp, port}} ->
           ref = Port.monitor(port)
-          Map.put(old_data, :socket_ref, ref)
+          Map.put(old_data, :sock_ref, {:port, ref})
 
         # This is reliant on the internal implementation of SSL, but
         # a necessary evil since there's no API in Erlang to read the
-        # socket port, or to monitor the SSL socket
-        %{socket: {:ssl, {:sslsocket, port, _, _, _, _, _, _}}} ->
-          ref = Port.monitor(port)
-          Map.put(old_data, :socket_ref, ref)
+        # port, or to monitor the SSL connection
+        %{sock: {:ssl, sslsocket(pid: [connection_handler | _])}} ->
+          ref = Process.monitor(connection_handler)
+          Map.put(old_data, :sock_ref, {:process, ref})
 
         _ ->
           old_data
+      end
+
+    {:ok, state, new_data}
+  end
+
+  def code_change(_version, state, data, :demonitor_socket) do
+    new_data =
+      case data do
+        %{sock_ref: {:port, ref}} when is_reference(ref) ->
+          Port.demonitor(ref, [:flush])
+          Map.delete(data, :sock_ref)
+
+        %{sock_ref: {:process, ref}} when is_reference(ref) ->
+          Process.demonitor(ref, [:flush])
+          Map.delete(data, :sock_ref)
+
+        _ ->
+          data
       end
 
     {:ok, state, new_data}
