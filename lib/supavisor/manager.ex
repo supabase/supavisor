@@ -457,7 +457,7 @@ defmodule Supavisor.Manager do
     {:error, %SessionMaxClientsError{pool_size: pool_size}}
   end
 
-  defp check_limit(_mode, _pool_size, max_clients, current_count)
+  defp check_limit(:transaction, _pool_size, max_clients, current_count)
        when current_count >= max_clients do
     {:error, %MaxClientConnectionsError{limit: max_clients}}
   end
