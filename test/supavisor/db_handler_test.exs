@@ -1,6 +1,10 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.Errors.CheckoutError
+  alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.DbHandlerExitedError
+
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.Server
 
@@ -562,7 +566,8 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:ok, {:fake_db_sock, ^mock_pid}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:ok, {:fake_db_sock, ^mock_pid}} =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
     end
 
     test "handles process crash during checkout" do
@@ -570,8 +575,8 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {{%RuntimeError{}, _}, _}}} =
-               Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid}} =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
     end
 
     test "handles process normal exit during checkout" do
@@ -579,7 +584,8 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {:normal, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: {:normal, _}}} =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
     end
 
     test "handles checkout timeout" do
@@ -587,7 +593,8 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {:timeout, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 100)
+      assert {:error, %CheckoutTimeoutError{timeout_ms: 100, mode: :transaction}} =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 100)
     end
   end
 end

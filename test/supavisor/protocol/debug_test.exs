@@ -1,7 +1,7 @@
 defmodule Supavisor.Protocol.DebugTest do
   use ExUnit.Case
 
-  alias Supavisor.Protocol.{Client, Debug, PreparedStatements, Server}
+  alias Supavisor.Protocol.{Debug, PreparedStatements, Server}
 
   describe "packet_to_string/2" do
     test "formats frontend Query message" do

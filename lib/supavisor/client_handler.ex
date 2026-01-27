@@ -45,7 +45,6 @@ defmodule Supavisor.ClientHandler do
     DbHandlerExitedError,
     SslHandshakeError,
     SslRequiredError,
-    StartupMessageError,
     StartupPacketTooLargeError,
     SubscribeRetriesExhaustedError
   }
@@ -331,31 +330,12 @@ defmodule Supavisor.ClientHandler do
 
     {:ok, db_pid} = DbHandler.start_link(args)
 
-    case DbHandler.checkout(db_pid, data.sock, self()) do
+    case DbHandler.checkout(db_pid, data.sock, data.mode, self()) do
       {:ok, db_sock} ->
         {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
 
-      {:error, {:exit, {:timeout, _}}} ->
-        Error.terminate_with_error(data, checkout_timeout_error(data), :handshake)
-
-      # TODO: DbHandler.checkout should also return a proper {:error, exception.t()} tuple so that we don't need this code
-      {:error, %{"S" => "FATAL"} = error_map} ->
-        Logger.debug(
-          "ClientHandler: Received error from DbHandler checkout (proxy): #{inspect(error_map)}"
-        )
-
-        error_message = Server.encode_error_message(error_map)
-        HandlerHelpers.sock_send(data.sock, error_message)
-        {:stop, :normal}
-
-      # Errors are already forwarded to the client socket, so we can safely ignore them
-      # here.
-      {:error, {:exit, {reason, _}}} ->
-        Logger.warning(
-          "ClientHandler: error checking out DbHandler (proxy), exit with reason: #{inspect(reason)}"
-        )
-
-        {:stop, :normal}
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :authenticated)
     end
   end
 
@@ -768,13 +748,10 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout),
          true <- Process.link(db_pid),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self()) do
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, data.mode, self()) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
       {:ok, {data.pool, db_pid, db_sock}}
-    else
-      {:error, {:exit, {:timeout, _}}} ->
-        {:error, checkout_timeout_error(data)}
     end
   end
 
@@ -964,9 +941,5 @@ defmodule Supavisor.ClientHandler do
         Supavisor.CircuitBreaker.record_failure(tenant_or_alias, :get_secrets)
         {:error, :auth_error, reason}
     end
-  end
-
-  defp checkout_timeout_error(data) do
-    %Supavisor.Errors.CheckoutTimeoutError{mode: data.mode, timeout_ms: data.timeout}
   end
 end

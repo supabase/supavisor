@@ -13,6 +13,10 @@ defmodule Supavisor.DbHandler do
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
+  alias Supavisor.Errors.CheckoutError
+  alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.DbHandlerExitedError
+
   alias Supavisor.Protocol.PreparedStatements
 
   alias Supavisor.{
@@ -55,13 +59,19 @@ defmodule Supavisor.DbHandler do
 
   Returns the server socket, which the client may write messages directly to.
   """
-  @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
-          {:ok, Supavisor.sock()} | {:error, {:exit, term()}} | {:error, map()}
-  def checkout(pid, sock, caller, timeout \\ 15_000) do
+  @spec checkout(pid(), Supavisor.sock(), pid(), Supavisor.mode(), timeout()) ::
+          {:ok, Supavisor.sock()}
+          | {:error, DbHandlerExitedError.t()}
+          | {:error, CheckoutError.t()}
+          | {:error, CheckoutTimeoutError.t()}
+  def checkout(pid, sock, caller, mode, timeout \\ 15_000) do
     :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
   catch
+    :exit, {:timeout, _} ->
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+
     :exit, reason ->
-      {:error, {:exit, reason}}
+      {:error, %DbHandlerExitedError{pid: pid, reason: reason}}
   end
 
   @doc """
@@ -370,7 +380,8 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
-    {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
+    error = %Supavisor.Errors.CheckoutError{pid: self(), postgres_error: data.terminating_error}
+    {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
