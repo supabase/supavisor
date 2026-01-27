@@ -58,18 +58,19 @@ defmodule Supavisor do
     end
   end
 
-  @spec stop(id) :: :ok | {:error, :tenant_not_found}
+  @spec stop(id) :: :ok | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def stop(id) do
     case get_global_sup(id) do
       nil ->
-        {:error, :tenant_not_running}
+        {:error, %Supavisor.Errors.WorkerNotFoundError{id: id}}
 
       pid ->
         Supervisor.stop(pid)
     end
   end
 
-  @spec get_local_workers(id) :: {:ok, workers} | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
+  @spec get_local_workers(id) ::
+          {:ok, workers} | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def get_local_workers(id) do
     workers = %{
       manager: get_local_manager(id),
