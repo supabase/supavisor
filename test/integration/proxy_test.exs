@@ -62,6 +62,23 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  test "tenant or user not found" do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url =
+      "postgresql://postgres.nonexistent_tenant:any_password@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "(ENOTFOUND) tenant/user postgres.nonexistent_tenant not found",
+                severity: "FATAL",
+                pg_code: "XX000"
+              }
+            }} = parse_uri(url) |> single_connection()
+  end
+
   for tenant <- @tenants do
     @tag cluster: true
     test "query via another node with #{tenant}" do

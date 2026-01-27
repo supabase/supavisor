@@ -1,7 +1,6 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
-  alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
   alias Supavisor.Errors.DbHandlerExitedError
 

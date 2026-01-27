@@ -22,6 +22,7 @@ defmodule Supavisor.ClientHandler do
     DbHandler,
     HandlerHelpers,
     Helpers,
+    Manager,
     Monitoring.Telem,
     Protocol.Debug,
     Tenants
@@ -40,9 +41,11 @@ defmodule Supavisor.ClientHandler do
 
   alias Supavisor.Errors.{
     AddressNotAllowedError,
+    CheckoutTimeoutError,
     CircuitBreakerError,
     ClientSocketClosedError,
     DbHandlerExitedError,
+    PoolCheckoutError,
     SslHandshakeError,
     SslRequiredError,
     StartupPacketTooLargeError,
@@ -224,7 +227,7 @@ defmodule Supavisor.ClientHandler do
          _ = Logger.metadata(db_name: db_name),
          :ok <- check_ssl_enforcement(data, info, user),
          :ok <- check_address_allowed(sock, info),
-         :ok <- check_max_clients(id, info, data.mode),
+         :ok <- Manager.check_client_limit(id, info, data.mode),
          {:ok, auth_secrets} <- get_secrets(data.id, info, user, tenant_or_alias) do
       Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
       new_data = set_tenant_info(data, info, user, id, db_name)
@@ -330,7 +333,7 @@ defmodule Supavisor.ClientHandler do
 
     {:ok, db_pid} = DbHandler.start_link(args)
 
-    case DbHandler.checkout(db_pid, data.sock, data.mode, self()) do
+    case DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       {:ok, db_sock} ->
         {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
 
@@ -735,7 +738,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   @spec maybe_checkout(:on_connect | :on_query, map) ::
-          {:ok, Data.db_connection()} | {:ok, nil} | {:error, term()}
+          {:ok, Data.db_connection()} | {:ok, nil} | {:error, Exception.t()}
   defp maybe_checkout(_, %{mode: mode, db_connection: {pool, db_pid, db_sock}})
        when is_pid(db_pid) and mode in [:session, :proxy] do
     {:ok, {pool, db_pid, db_sock}}
@@ -746,9 +749,9 @@ defmodule Supavisor.ClientHandler do
   defp maybe_checkout(_, data) do
     start = System.monotonic_time(:microsecond)
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout),
+    with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout, data.mode),
          true <- Process.link(db_pid),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, data.mode, self()) do
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
       {:ok, {data.pool, db_pid, db_sock}}
@@ -835,10 +838,14 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  defp pool_checkout(pool, timeout) do
+  defp pool_checkout(pool, timeout, mode) do
     {:ok, :poolboy.checkout(pool, true, timeout)}
   catch
-    :exit, reason -> {:error, {:exit, reason}}
+    :exit, {:timeout, _} ->
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+
+    :exit, reason ->
+      {:error, %PoolCheckoutError{reason: reason}}
   end
 
   defp set_tenant_info(data, info, user, id, db_name) do
@@ -892,38 +899,6 @@ defmodule Supavisor.ClientHandler do
 
     if HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] do
       {:error, %AddressNotAllowedError{address: addr}}
-    else
-      :ok
-    end
-  end
-
-  defp check_max_clients(id, info, mode) do
-    limit =
-      if mode == :session do
-        info.user.pool_size || info.tenant.default_pool_size
-      else
-        info.user.max_clients || info.tenant.default_max_clients
-      end
-
-    clients_reached? =
-      case Registry.lookup(Supavisor.Registry.ManagerTables, id) do
-        [{_pid, tid}] ->
-          current_clients = :ets.info(tid, :size)
-          current_clients >= limit
-
-        _ ->
-          false
-      end
-
-    if clients_reached? do
-      error =
-        if mode == :session do
-          %Supavisor.Errors.SessionMaxClientsError{pool_size: limit}
-        else
-          %Supavisor.Errors.MaxClientConnectionsError{limit: limit}
-        end
-
-      {:error, error}
     else
       :ok
     end

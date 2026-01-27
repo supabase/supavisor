@@ -93,16 +93,6 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
-  Returns the state and the mode of the DbHandler
-  """
-  @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
-  def get_state_and_mode(pid) do
-    {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
-  catch
-    error, reason -> {:error, {error, reason}}
-  end
-
-  @doc """
   Stops a DbHandler
   """
   @spec stop(pid()) :: :ok
@@ -430,10 +420,6 @@ defmodule Supavisor.DbHandler do
     HandlerHelpers.sock_send(data.sock, Server.terminate_message())
     HandlerHelpers.sock_close(data.sock)
     {:stop, :normal}
-  end
-
-  def handle_event({:call, from}, :get_state_and_mode, state, data) do
-    {:keep_state_and_data, {:reply, from, {state, data.mode}}}
   end
 
   def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
