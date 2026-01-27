@@ -46,10 +46,13 @@ defmodule Supavisor.ClientHandler do
     ClientSocketClosedError,
     DbHandlerExitedError,
     PoolCheckoutError,
+    PoolConfigNotFoundError,
+    PoolRanchNotFoundError,
     SslHandshakeError,
     SslRequiredError,
     StartupPacketTooLargeError,
-    SubscribeRetriesExhaustedError
+    SubscribeRetriesExhaustedError,
+    WorkerNotFoundError
   }
 
   require Supavisor.Protocol.Server, as: Server
@@ -304,6 +307,12 @@ defmodule Supavisor.ClientHandler do
           {:keep_state, data, {:next_event, :internal, {:greetings, opts.ps}}}
       end
     else
+      {:error, %WorkerNotFoundError{}} ->
+        timeout_subscribe_or_terminate(data)
+
+      {:error, %PoolConfigNotFoundError{}} ->
+        timeout_subscribe_or_terminate(data)
+
       {:error, exception} when is_exception(exception) ->
         Error.terminate_with_error(data, exception, :handshake)
 
@@ -315,14 +324,9 @@ defmodule Supavisor.ClientHandler do
 
             {:keep_state, updated_data, {:next_event, :internal, :connect_db}}
 
-          {:error, other} ->
-            Logger.error("ClientHandler: Subscribe proxy error: #{inspect(other)}")
+          {:error, %PoolRanchNotFoundError{}} ->
             timeout_subscribe_or_terminate(data)
         end
-
-      error ->
-        Logger.error("ClientHandler: Subscribe error: #{inspect(error)}")
-        timeout_subscribe_or_terminate(data)
     end
   end
 
@@ -914,7 +918,7 @@ defmodule Supavisor.ClientHandler do
 
       {:error, reason} ->
         Supavisor.CircuitBreaker.record_failure(tenant_or_alias, :get_secrets)
-        {:error, :auth_error, reason}
+        {:error, %Supavisor.Errors.AuthSecretsError{reason: reason}}
     end
   end
 end
