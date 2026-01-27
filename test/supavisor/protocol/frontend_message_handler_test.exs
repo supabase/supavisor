@@ -1,6 +1,8 @@
 defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
   use ExUnit.Case, async: true
 
+  import Supavisor.Asserts
+
   alias Supavisor.Protocol.FrontendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
 
@@ -50,17 +52,23 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       prepare_bin = <<?Q, 27::32, "PREPARE stmt AS SELECT 1">>
 
       assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
-               MessageStreamer.handle_packets(stream_state, prepare_bin)
+               error = MessageStreamer.handle_packets(stream_state, prepare_bin)
+
+      assert_valid_error(error)
 
       execute_bin = <<?Q, 19::32, "EXECUTE stmt(1)">>
 
       assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
-               MessageStreamer.handle_packets(stream_state, execute_bin)
+               error = MessageStreamer.handle_packets(stream_state, execute_bin)
+
+      assert_valid_error(error)
 
       deallocate_bin = <<?Q, 19::32, "DEALLOCATE stmt">>
 
       assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
-               MessageStreamer.handle_packets(stream_state, deallocate_bin)
+               error = MessageStreamer.handle_packets(stream_state, deallocate_bin)
+
+      assert_valid_error(error)
     end
 
     test "regular simple query passes through unchanged", %{stream_state: stream_state} do
@@ -81,7 +89,9 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       multi_query_bin = <<?Q, 36::32, "SELECT 1; PREPARE stmt AS SELECT 2">>
 
       assert {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}} =
-               MessageStreamer.handle_packets(stream_state, multi_query_bin)
+               error = MessageStreamer.handle_packets(stream_state, multi_query_bin)
+
+      assert_valid_error(error)
     end
 
     test "multiple allowed statements pass through unchanged", %{stream_state: stream_state} do
