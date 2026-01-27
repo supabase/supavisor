@@ -16,19 +16,21 @@ defmodule Supavisor.CircuitBreaker do
       max_failures: 5,
       window_seconds: 600,
       block_seconds: 600,
-      explanation: "Failed to retrieve database credentials"
+      explanation:
+        "failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked"
     },
     db_connection: %{
       max_failures: 100,
       window_seconds: 300,
       block_seconds: 600,
-      explanation: "Unable to establish connection to upstream database"
+      explanation:
+        "too many failed attempts to connect to the database, new connections are temporarily blocked"
     },
     auth_error: %{
       max_failures: 10,
       window_seconds: 300,
       block_seconds: 600,
-      explanation: "Too many authentication errors"
+      explanation: "too many authentication failures, new connections are temporarily blocked"
     }
   }
 

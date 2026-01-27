@@ -473,7 +473,7 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "(ECIRCUITBREAKER) circuit breaker open: Failed to retrieve database credentials",
+                  "(ECIRCUITBREAKER) failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked",
                 pg_code: "XX000",
                 severity: "FATAL"
               }
@@ -498,7 +498,7 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "(ECIRCUITBREAKER) circuit breaker open: Unable to establish connection to upstream database",
+                  "(ECIRCUITBREAKER) too many failed attempts to connect to the database, new connections are temporarily blocked",
                 pg_code: "XX000",
                 severity: "FATAL"
               }
@@ -532,7 +532,8 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "(ECIRCUITBREAKER) circuit breaker open: Too many authentication errors",
+                message:
+                  "(ECIRCUITBREAKER) too many authentication failures, new connections are temporarily blocked",
                 pg_code: "XX000",
                 severity: "FATAL"
               }

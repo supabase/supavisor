@@ -13,12 +13,13 @@ defmodule Supavisor.Errors.CircuitBreakerError do
 
   @impl Supavisor.Error
   def error_message(%{operation: operation}) do
-    explanation = Supavisor.CircuitBreaker.explanation(operation)
-    "circuit breaker open: #{explanation}"
+    Supavisor.CircuitBreaker.explanation(operation)
   end
 
   @impl Supavisor.Error
   def log_message(%{operation: operation, blocked_until: blocked_until}) do
-    "Circuit breaker open for operation: #{operation}, blocked until: #{blocked_until}"
+    explanation = Supavisor.CircuitBreaker.explanation(operation)
+
+    "circuit breaker open for operation: #{operation}, blocked until: #{blocked_until}, #{explanation}"
   end
 end
