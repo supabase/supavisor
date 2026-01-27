@@ -62,7 +62,7 @@ defmodule Supavisor do
   def stop(id) do
     case get_global_sup(id) do
       nil ->
-        {:error, :tenant_not_found}
+        {:error, :tenant_not_running}
 
       pid ->
         Supervisor.stop(pid)
@@ -86,7 +86,8 @@ defmodule Supavisor do
 
   @spec subscribe_local(pid, id) ::
           {:ok, subscribe_opts}
-          | {:error, :max_clients_reached}
+          | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
+          | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
           | {:error, Supavisor.Errors.PoolTerminatingError.t()}
   def subscribe_local(pid, id) do
     with {:ok, workers} <- get_local_workers(id),
@@ -97,7 +98,8 @@ defmodule Supavisor do
 
   @spec subscribe(pid, id, pid) ::
           {:ok, subscribe_opts}
-          | {:error, :max_clients_reached}
+          | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
+          | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
           | {:error, Supavisor.Errors.PoolTerminatingError.t()}
   def subscribe(sup, id, pid \\ self()) do
     dest_node = node(sup)
