@@ -20,8 +20,9 @@ defmodule Supavisor.ClientHandler.Error do
   """
   @spec terminate_with_error(map(), Exception.t(), context()) ::
           :gen_statem.handle_event_result()
-  def terminate_with_error(data, exception, context) do
-    error_actions = process({:error, exception}, context)
+  def terminate_with_error(data, exception, context)
+      when context in [:handshake, :authenticated] do
+    error_actions = process(exception, context)
     message = Map.get(error_actions, :error)
     log_message = Map.get(error_actions, :log_message)
     log_level = Map.get(error_actions, :log_level, :error)
@@ -50,7 +51,7 @@ defmodule Supavisor.ClientHandler.Error do
   end
 
   @spec process(term(), term()) :: map()
-  defp process({:error, e}, stage) when is_exception(e) do
+  defp process(e, stage) when is_exception(e) do
     error =
       case e.__struct__.postgres_error(e) do
         nil -> nil
@@ -70,11 +71,7 @@ defmodule Supavisor.ClientHandler.Error do
   end
 
   defp process(error, context) do
-    message =
-      case context do
-        nil -> "Internal error: #{inspect(error)}"
-        context -> "Internal error (#{context}): #{inspect(error)}"
-      end
+    message = "Internal error (#{context}): #{inspect(error)}"
 
     %{
       error: Server.error_message("XX000", message),
