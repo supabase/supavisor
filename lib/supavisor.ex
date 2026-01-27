@@ -89,6 +89,7 @@ defmodule Supavisor do
           | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
           | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
           | {:error, Supavisor.Errors.PoolTerminatingError.t()}
+          | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def subscribe_local(pid, id) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
@@ -101,6 +102,7 @@ defmodule Supavisor do
           | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
           | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
           | {:error, Supavisor.Errors.PoolTerminatingError.t()}
+          | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def subscribe(sup, id, pid \\ self()) do
     dest_node = node(sup)
 
