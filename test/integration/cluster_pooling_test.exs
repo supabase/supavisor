@@ -30,8 +30,8 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
           proxy_port_transaction: 7661,
           proxy_port_session: 7662,
           proxy_port: 7663,
-          session_proxy_ports: [14100, 14101, 14102, 14103],
-          transaction_proxy_ports: [14104, 14105, 14106, 14107]
+          session_proxy_ports: [14_100, 14_101, 14_102, 14_103],
+          transaction_proxy_ports: [14_104, 14_105, 14_106, 14_107]
         }
       )
 
