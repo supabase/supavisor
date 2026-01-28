@@ -1,5 +1,5 @@
 defmodule SupavisorWeb.MetricsControllerTest do
-  use SupavisorWeb.ConnCase
+  use SupavisorWeb.ConnCase, async: false
   alias Supavisor.Support.Cluster
   alias Postgrex, as: P
 
