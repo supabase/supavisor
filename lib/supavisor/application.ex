@@ -102,6 +102,7 @@ defmodule Supavisor.Application do
     topologies = Application.get_env(:libcluster, :topologies) || []
 
     children = [
+      {Cachex, name: Supavisor.Cache},
       Supavisor.ErlSysMon,
       Supavisor.Health,
       Supavisor.CacheRefreshLimiter,
@@ -142,14 +143,6 @@ defmodule Supavisor.Application do
         children
       else
         children ++ [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner]
-      end
-
-    # start Cachex only if the node uses names, this is necessary for test setup
-    children =
-      if node() != :nonode@nohost do
-        [{Cachex, name: Supavisor.Cache} | children]
-      else
-        children
       end
 
     # See https://hexdocs.pm/elixir/Supervisor.html
