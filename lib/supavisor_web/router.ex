@@ -52,6 +52,8 @@ defmodule SupavisorWeb.Router do
       :update_auth_credentials
     )
 
+    get("/tenants/:external_id/bans", TenantController, :list_bans)
+
     get("/health", TenantController, :health)
 
     get("/clusters/:alias", ClusterController, :show)

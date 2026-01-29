@@ -396,6 +396,37 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "list bans" do
+    test "renders a list of bans applied to the tenant", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      Supavisor.CircuitBreaker.record_failure(external_id, :get_secrets)
+      Supavisor.CircuitBreaker.record_failure(external_id, :db_connection)
+
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
+      end
+
+      assert %{
+               "data" => [
+                 %{"operation" => "get_secrets", "failures" => [_], "blocked_until" => nil},
+                 %{"operation" => "db_connection", "failures" => [_], "blocked_until" => nil},
+                 %{
+                   "operation" => "auth_error",
+                   "failures" => [_ | _],
+                   "blocked_until" => blocked_until
+                 }
+               ]
+             } =
+               conn
+               |> get(~p"/api/tenants/#{external_id}/bans")
+               |> json_response(200)
+
+      assert is_integer(blocked_until)
+    end
+  end
+
   describe "health endpoint" do
     test "returns 204 when all health checks pass", %{conn: conn} do
       assert "" ==
