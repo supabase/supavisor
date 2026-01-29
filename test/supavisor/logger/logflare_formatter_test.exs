@@ -11,20 +11,20 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   defmodule FakeLogger do
     @behaviour :logger_handler
 
-    def install(id, opts) do
-      pid = start_supervised!({Agent, fn -> [] end})
+    def install(id, opts, filter_pid) do
+      agent_pid = start_supervised!({Agent, fn -> [] end})
 
       :logger.add_handler(
         id,
         __MODULE__,
         Map.merge(opts, %{
-          config: %{pid: pid}
+          config: %{agent_pid: agent_pid, filter_pid: filter_pid}
         })
       )
 
       on_exit(fn -> :logger.remove_handler(id) end)
 
-      pid
+      agent_pid
     end
 
     def get(pid) do
@@ -34,17 +34,18 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
     def log(le, config) do
       %{
         formatter: {fmod, fopts},
-        config: %{pid: pid}
+        config: %{agent_pid: agent_pid, filter_pid: filter_pid}
       } = config
 
-      entry = fmod.format(le, fopts)
-
-      Agent.update(pid, fn state -> [IO.iodata_to_binary(entry) | state] end)
+      if le.meta[:pid] == filter_pid do
+        entry = fmod.format(le, fopts)
+        Agent.update(agent_pid, fn state -> [IO.iodata_to_binary(entry) | state] end)
+      end
     end
   end
 
   test "simple" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, self())
 
     Logger.info("foo")
 
@@ -54,7 +55,7 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   end
 
   test "regression: mfa in context is a string array" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, self())
 
     Logger.info("foo")
 
@@ -70,7 +71,7 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   end
 
   test "regression: level is inside metadata" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, self())
 
     Logger.info("foo")
 
@@ -82,7 +83,7 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   end
 
   test "regression: nodehost, instance_id, location and region should be top-level fields" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, self())
 
     Logger.info("test message", instance_id: "123", location: "us-east-1", region: "us-east")
 
@@ -100,7 +101,7 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   end
 
   test "pids are formatted with :erlang.pid_to_list" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, self())
 
     Logger.info("test message", some_pid: self())
 
@@ -115,7 +116,7 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   end
 
   test "module and function are included in context" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, self())
 
     Logger.info("test message")
 
@@ -130,17 +131,21 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   end
 
   test "crash_reason with mixed types is normalized" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    line = __ENV__.line + 5
 
-    line = __ENV__.line + 3
+    child_pid =
+      spawn(fn ->
+        receive do
+          :start -> :error = Enum.random([:ok])
+        end
+      end)
 
-    spawn(fn ->
-      :error = Enum.random([:ok])
-    end)
+    agent_pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, child_pid)
 
+    send(child_pid, :start)
     Process.sleep(100)
 
-    events = FakeLogger.get(pid)
+    events = FakeLogger.get(agent_pid)
     assert length(events) > 0
 
     [event] = events
@@ -161,17 +166,21 @@ defmodule Supavisor.Logger.LogflareFormatterTest do
   end
 
   test "erlang error crash_reason is normalized" do
-    pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}})
+    line = __ENV__.line + 5
 
-    line = __ENV__.line + 3
+    child_pid =
+      spawn(fn ->
+        receive do
+          :start -> :erlang.error(:some_erlang_error)
+        end
+      end)
 
-    spawn(fn ->
-      :erlang.error(:some_erlang_error)
-    end)
+    agent_pid = FakeLogger.install(:fake_logger, %{formatter: {@subject, %{}}}, child_pid)
 
+    send(child_pid, :start)
     Process.sleep(100)
 
-    events = FakeLogger.get(pid)
+    events = FakeLogger.get(agent_pid)
     assert length(events) > 0
 
     [event] = events
