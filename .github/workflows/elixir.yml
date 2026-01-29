@@ -23,7 +23,7 @@ jobs:
     runs-on: u22-arm-runner
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Elixir
         id: beam
         uses: erlef/setup-beam@v1
@@ -31,7 +31,7 @@ jobs:
           otp-version: '27.2.1'
           elixir-version: '1.18.2'
       - name: Cache Mix
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
@@ -46,7 +46,7 @@ jobs:
     needs: [deps]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Elixir
         id: beam
         uses: erlef/setup-beam@v1
@@ -54,7 +54,7 @@ jobs:
           otp-version: '27.2.1'
           elixir-version: '1.18.2'
       - name: Cache Mix
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
@@ -67,7 +67,7 @@ jobs:
     needs: [deps]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Elixir
         id: beam
         uses: erlef/setup-beam@v1
@@ -75,7 +75,7 @@ jobs:
           otp-version: '27.2.1'
           elixir-version: '1.18.2'
       - name: Cache Mix
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
@@ -96,7 +96,7 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Postgres
         run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Setup Elixir
@@ -110,12 +110,12 @@ jobs:
         with:
           toolchain: stable
       - name: Cache Mix
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
       - name: Cache native
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             _build/${{ env.MIX_ENV }}/lib/supavisor/native
@@ -147,7 +147,7 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Postgres
         run: docker-compose -f ./docker-compose.db.yml up -d
       - name: Setup Elixir
@@ -156,7 +156,7 @@ jobs:
         with:
           otp-version: '27.2.1'
           elixir-version: '1.18.2'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 'lts/*'
           cache-dependency-path: 'test/integration/js/'
@@ -165,18 +165,18 @@ jobs:
           deno-version: 'v2.x'
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: '1.3.6'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
       - name: Cache Mix
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
       - name: Cache native
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             _build/${{ env.MIX_ENV }}/lib/supavisor/native
@@ -220,7 +220,7 @@ jobs:
     needs: [deps]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Elixir
         id: beam
         uses: erlef/setup-beam@v1
@@ -232,12 +232,12 @@ jobs:
         with:
           toolchain: stable
       - name: Cache Mix
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
       - name: Cache native
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             _build/${{ env.MIX_ENV }}/lib/supavisor/native
@@ -253,7 +253,7 @@ jobs:
       - name: Compile
         run: mix compile
       - name: Retrieve PLT Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: plt-cache
         with:
           path: _build/${{ env.MIX_ENV }}/*.plt
