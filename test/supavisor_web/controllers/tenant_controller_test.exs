@@ -410,13 +410,13 @@ defmodule SupavisorWeb.TenantControllerTest do
 
       assert %{
                "data" => [
-                 %{"operation" => "get_secrets", "failures" => [_], "blocked_until" => nil},
-                 %{"operation" => "db_connection", "failures" => [_], "blocked_until" => nil},
                  %{
                    "operation" => "auth_error",
                    "failures" => [_ | _],
                    "blocked_until" => blocked_until
-                 }
+                 },
+                 %{"operation" => "db_connection", "failures" => [_], "blocked_until" => nil},
+                 %{"operation" => "get_secrets", "failures" => [_], "blocked_until" => nil}
                ]
              } =
                conn

@@ -685,4 +685,18 @@ defmodule Supavisor.Tenants do
   def change_cluster_tenants(%ClusterTenants{} = cluster_tenants, attrs \\ %{}) do
     ClusterTenants.changeset(cluster_tenants, attrs)
   end
+
+  def list_tenant_bans(external_id) do
+    :ets.select(Supavisor.CircuitBreaker, [
+      {{{external_id, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}
+    ])
+    |> Enum.map(fn {operation, state} ->
+      %{
+        "operation" => Atom.to_string(operation),
+        "failures" => state.failures,
+        "blocked_until" => state.blocked_until
+      }
+    end)
+    |> Enum.sort_by(& &1["operation"])
+  end
 end
