@@ -1,6 +1,11 @@
 {:ok, _} = Node.start(:"primary@127.0.0.1", :longnames)
 
-Cachex.start_link(name: Supavisor.Cache)
+# Cachex records the node name at startup for its internal routing. The
+# application started Cachex on nonode@nohost, so after Node.start changes
+# the identity, Cachex routes all operations to the stale node name via RPC,
+# which fails with {:error, :nodedown}. Restart it to pick up the new name.
+Supervisor.terminate_child(Supavisor.Supervisor, Cachex)
+Supervisor.restart_child(Supavisor.Supervisor, Cachex)
 
 logs =
   case System.get_env("TEST_LOGS", "all") do
