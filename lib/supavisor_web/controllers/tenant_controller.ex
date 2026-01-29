@@ -302,26 +302,7 @@ defmodule SupavisorWeb.TenantController do
   end
 
   def list_bans(conn, %{"external_id" => external_id}) do
-    bans = [
-      %{
-        "operation" => "get_secrets",
-        "failures" => [System.system_time()],
-        "blocked_until" => nil
-      },
-      %{
-        "operation" => "db_connection",
-        "failures" => [System.system_time()],
-        "blocked_until" => nil
-      },
-      %{
-        "operation" => "auth_error",
-        "failures" => [System.system_time() - 100, System.system_time()],
-        "blocked_until" => System.system_time() + 500
-      }
-    ]
-
     bans = Tenants.list_tenant_bans(external_id)
-
     render(conn, "list_bans.json", bans: bans)
   end
 end

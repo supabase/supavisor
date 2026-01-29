@@ -687,9 +687,8 @@ defmodule Supavisor.Tenants do
   end
 
   def list_tenant_bans(external_id) do
-    :ets.select(Supavisor.CircuitBreaker, [
-      {{{external_id, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}
-    ])
+    external_id
+    |> Supavisor.CircuitBreaker.list_all_failures()
     |> Enum.map(fn {operation, state} ->
       %{
         "operation" => Atom.to_string(operation),
