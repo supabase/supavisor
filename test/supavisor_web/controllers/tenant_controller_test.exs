@@ -414,21 +414,24 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert {:error, :circuit_open, get_secrets_blocked_until} =
                Supavisor.CircuitBreaker.check(external_id, :get_secrets)
 
-      assert %{
-               "data" => [
-                 %{
-                   "operation" => "auth_error",
-                   "blocked_until" => ^auth_blocked_until
-                 },
-                 %{
-                   "operation" => "get_secrets",
-                   "blocked_until" => ^get_secrets_blocked_until
-                 }
-               ]
-             } =
+      assert result =
+               %{
+                 "data" => [
+                   %{
+                     "operation" => "auth_error",
+                     "blocked_until" => ^auth_blocked_until
+                   },
+                   %{
+                     "operation" => "get_secrets",
+                     "blocked_until" => ^get_secrets_blocked_until
+                   }
+                 ]
+               } =
                conn
                |> get(~p"/api/tenants/#{external_id}/bans")
                |> json_response(200)
+
+      assert_schema(result, "BanList")
     end
   end
 

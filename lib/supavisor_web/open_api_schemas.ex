@@ -288,4 +288,76 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     def params, do: {"User Credentials Update Params", "application/json", __MODULE__}
   end
+
+  defmodule CircuitBreakerOperation do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :string,
+      description: """
+      Circuit breaker operation type. Each operation has specific thresholds:
+
+      - `auth_error`: Too many authentication errors (10 failures in 5 minutes → 10 minute block)
+      - `db_connection`: Unable to establish connection to upstream database (100 failures in 5 minutes → 10 minute block)
+      - `get_secrets`: Failed to retrieve database credentials (5 failures in 10 minutes → 10 minute block)
+      """,
+      enum: ["auth_error", "db_connection", "get_secrets"]
+    })
+  end
+
+  defmodule Ban do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        operation: CircuitBreakerOperation,
+        blocked_until: %Schema{
+          type: :integer,
+          minimum: 0,
+          description: "Unix timestamp (seconds) until which operations are blocked"
+        }
+      },
+      required: [:operation, :blocked_until],
+      example: %{
+        operation: "auth_error",
+        blocked_until: 1706549400
+      }
+    })
+
+    def response, do: {"Ban Response", "application/json", __MODULE__}
+  end
+
+  defmodule BanList do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        data: %Schema{
+          type: :array,
+          items: Ban,
+          description: "List of circuit breaker bans for tenant operations"
+        }
+      },
+      required: [:data],
+      example: %{
+        data: [
+          %{
+            operation: "auth_error",
+            blocked_until: 1706549400
+          },
+          %{
+            operation: "db_connection",
+            blocked_until: 1706549400
+          }
+        ]
+      }
+    })
+
+    def response, do: {"Ban List Response", "application/json", __MODULE__}
+  end
 end
