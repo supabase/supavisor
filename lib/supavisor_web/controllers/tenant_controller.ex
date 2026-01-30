@@ -364,10 +364,7 @@ defmodule SupavisorWeb.TenantController do
   )
 
   def clear_ban(conn, %{"external_id" => external_id, "operation" => operation}) do
-    # Convert string operation to atom
-    operation_atom = String.to_existing_atom(operation)
-
-    case Tenants.clear_ban(external_id, operation_atom) do
+    case Tenants.clear_ban(external_id, operation) do
       {:ok, remaining_bans} ->
         render(conn, "list_bans.json", bans: remaining_bans)
 
@@ -383,13 +380,5 @@ defmodule SupavisorWeb.TenantController do
           error: "Invalid operation. Must be one of: auth_error, db_connection, get_secrets"
         )
     end
-  rescue
-    ArgumentError ->
-      # String.to_existing_atom raised - operation string is not a valid atom
-      conn
-      |> put_status(400)
-      |> render("error.json",
-        error: "Invalid operation. Must be one of: auth_error, db_connection, get_secrets"
-      )
   end
 end
