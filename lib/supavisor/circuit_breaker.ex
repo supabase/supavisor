@@ -100,6 +100,15 @@ defmodule Supavisor.CircuitBreaker do
     end
   end
 
+  def blocked(key) do
+    now = System.system_time(:second)
+
+    :ets.select(@table, [
+      {{{key, :"$1"}, %{blocked_until: :"$2"}},
+       [{:andalso, {:is_integer, :"$2"}, {:>, :"$2", now}}], [{{:"$1", %{blocked_until: :"$2"}}}]}
+    ])
+  end
+
   @doc """
   Clears circuit breaker state for a key and operation.
   """
