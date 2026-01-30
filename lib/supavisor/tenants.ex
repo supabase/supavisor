@@ -6,6 +6,7 @@ defmodule Supavisor.Tenants do
   import Ecto.Query, warn: false
   alias Supavisor.Repo
 
+  alias Supavisor.CircuitBreaker
   alias Supavisor.ClientHandler.Auth.ManagerSecrets
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
@@ -686,15 +687,24 @@ defmodule Supavisor.Tenants do
     ClusterTenants.changeset(cluster_tenants, attrs)
   end
 
-  def list_tenant_bans(external_id) do
+  @doc """
+  Returns a list of currently blocked operations for a given tenant external_id.
+
+  Each entry is a map with :operation and :blocked_until keys. If there are
+  no blocked operations for a tenant, an empty list is returned.
+
+  ## Examples
+
+      iex> list_tenant_bans("tenant_external_id")
+      [%{operation: :some_operation, blocked_until: 1620000000}, ...]
+  """
+  @spec list_tenant_bans(String.t()) :: [
+          %{required(:operation) => atom(), required(:blocked_until) => integer()}
+        ]
+  def list_tenant_bans(external_id) when is_binary(external_id) do
     external_id
-    |> Supavisor.CircuitBreaker.blocked()
-    |> Enum.map(fn {operation, blocked_until} ->
-      %{
-        "operation" => operation,
-        "blocked_until" => blocked_until
-      }
-    end)
-    |> Enum.sort_by(& &1["operation"])
+    |> CircuitBreaker.blocked()
+    |> Enum.map(&%{operation: elem(&1, 0), blocked_until: elem(&1, 1)})
+    |> Enum.sort_by(& &1.operation)
   end
 end
