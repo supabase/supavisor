@@ -397,6 +397,11 @@ defmodule SupavisorWeb.TenantControllerTest do
   end
 
   describe "list bans" do
+    setup do
+      :ets.delete_all_objects(Supavisor.CircuitBreaker)
+      :ok
+    end
+
     test "renders a list of bans applied to the tenant", %{conn: conn} do
       {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
       external_id = tenant.external_id
@@ -414,24 +419,43 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert {:error, :circuit_open, get_secrets_blocked_until} =
                Supavisor.CircuitBreaker.check(external_id, :get_secrets)
 
-      assert result =
-               %{
-                 "data" => [
-                   %{
-                     "operation" => "auth_error",
-                     "blocked_until" => ^auth_blocked_until
-                   },
-                   %{
-                     "operation" => "get_secrets",
-                     "blocked_until" => ^get_secrets_blocked_until
-                   }
-                 ]
-               } =
+      assert %_{
+               data: [
+                 %_{
+                   operation: "auth_error",
+                   blocked_until: ^auth_blocked_until
+                 },
+                 %_{
+                   operation: "get_secrets",
+                   blocked_until: ^get_secrets_blocked_until
+                 }
+               ]
+             } =
                conn
                |> get(~p"/api/tenants/#{external_id}/bans")
                |> json_response(200)
+               |> assert_schema("BanList")
+    end
 
-      assert_schema(result, "BanList")
+    test "returns an empty list when there are no bans applied to the tenant", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      assert %_{data: []} =
+               conn
+               |> get(~p"/api/tenants/#{external_id}/bans")
+               |> json_response(200)
+               |> assert_schema("BanList")
+    end
+
+    test "returns 404 for non-existent tenant", %{conn: conn} do
+      tenant_id = "non_existent_tenant"
+
+      assert %{"error" => "not found"} ==
+               conn
+               |> get(~p"/api/tenants/#{tenant_id}/bans")
+               |> json_response(404)
+               |> assert_schema("NotFound")
     end
   end
 

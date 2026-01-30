@@ -317,12 +317,21 @@ defmodule SupavisorWeb.TenantController do
       authorization: @authorization
     ],
     responses: %{
-      200 => BanList.response()
+      200 => BanList.response(),
+      404 => NotFound.response()
     }
   )
 
   def list_bans(conn, %{"external_id" => external_id}) do
-    bans = Tenants.list_tenant_bans(external_id)
-    render(conn, "list_bans.json", bans: bans)
+    case Tenants.get_tenant_by_external_id(external_id) do
+      %TenantModel{} = _tenant ->
+        bans = Tenants.list_tenant_bans(external_id)
+        render(conn, "list_bans.json", bans: bans)
+
+      nil ->
+        conn
+        |> put_status(404)
+        |> render("not_found.json", tenant: nil)
+    end
   end
 end
