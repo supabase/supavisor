@@ -164,10 +164,4 @@ defmodule Supavisor.CircuitBreaker do
 
     deleted
   end
-
-  def list_all_failures(key) do
-    :ets.select(@table, [
-      {{{key, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}
-    ])
-  end
 end

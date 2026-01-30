@@ -173,28 +173,8 @@ defmodule Supavisor.CircuitBreakerTest do
     end
   end
 
-  describe "list_all_failures/1" do
-    test "returns all failures for a given key" do
-      CircuitBreaker.record_failure("tenant1", :get_secrets)
-      CircuitBreaker.record_failure("tenant1", :db_connection)
-      CircuitBreaker.record_failure("tenant2", :get_secrets)
-
-      results = CircuitBreaker.list_all_failures("tenant1")
-
-      assert length(results) == 2
-
-      assert Enum.any?(results, fn
-               {:get_secrets, %{failures: [_], blocked_until: nil}} -> true
-               _ -> false
-             end)
-
-      assert Enum.any?(results, fn
-               {:db_connection, %{failures: [_], blocked_until: nil}} -> true
-               _ -> false
-             end)
-    end
-
-    test "returns all blocked operations along with the timestamp" do
+  describe "blocked/1" do
+    test "returns all blocked operations with the blocked_until timestamp" do
       CircuitBreaker.record_failure("tenant1", :get_secrets)
       CircuitBreaker.record_failure("tenant1", :db_connection)
 
@@ -209,6 +189,15 @@ defmodule Supavisor.CircuitBreakerTest do
       assert [auth_error: blocked_until] = CircuitBreaker.blocked("tenant1")
       assert is_integer(blocked_until)
       assert blocked_until > System.system_time(:second)
+    end
+
+    test "returns empty list when no operations are blocked" do
+      CircuitBreaker.record_failure("tenant1", :get_secrets)
+      assert [] = CircuitBreaker.blocked("tenant1")
+    end
+
+    test "returns empty list for an unknown tenant" do
+      assert [] = CircuitBreaker.blocked("tenant3")
     end
   end
 end
