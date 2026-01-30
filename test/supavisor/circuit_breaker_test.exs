@@ -206,7 +206,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
       assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :auth_error)
 
-      assert [{:auth_error, %{blocked_until: blocked_until}}] = CircuitBreaker.blocked("tenant1")
+      assert [auth_error: blocked_until] = CircuitBreaker.blocked("tenant1")
       assert is_integer(blocked_until)
       assert blocked_until > System.system_time(:second)
     end

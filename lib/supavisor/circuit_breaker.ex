@@ -105,7 +105,7 @@ defmodule Supavisor.CircuitBreaker do
 
     :ets.select(@table, [
       {{{key, :"$1"}, %{blocked_until: :"$2"}},
-       [{:andalso, {:is_integer, :"$2"}, {:>, :"$2", now}}], [{{:"$1", %{blocked_until: :"$2"}}}]}
+       [{:andalso, {:is_integer, :"$2"}, {:>, :"$2", now}}], [{{:"$1", :"$2"}}]}
     ])
   end
 

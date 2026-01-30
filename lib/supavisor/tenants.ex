@@ -688,12 +688,11 @@ defmodule Supavisor.Tenants do
 
   def list_tenant_bans(external_id) do
     external_id
-    |> Supavisor.CircuitBreaker.list_all_failures()
-    |> Enum.map(fn {operation, state} ->
+    |> Supavisor.CircuitBreaker.blocked()
+    |> Enum.map(fn {operation, blocked_until} ->
       %{
-        "operation" => Atom.to_string(operation),
-        "failures" => state.failures,
-        "blocked_until" => state.blocked_until
+        "operation" => operation,
+        "blocked_until" => blocked_until
       }
     end)
     |> Enum.sort_by(& &1["operation"])

@@ -401,29 +401,34 @@ defmodule SupavisorWeb.TenantControllerTest do
       {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
       external_id = tenant.external_id
 
-      Supavisor.CircuitBreaker.record_failure(external_id, :get_secrets)
       Supavisor.CircuitBreaker.record_failure(external_id, :db_connection)
 
       for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure(external_id, :get_secrets)
         Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
       end
+
+      assert {:error, :circuit_open, auth_blocked_until} =
+               Supavisor.CircuitBreaker.check(external_id, :auth_error)
+
+      assert {:error, :circuit_open, get_secrets_blocked_until} =
+               Supavisor.CircuitBreaker.check(external_id, :get_secrets)
 
       assert %{
                "data" => [
                  %{
                    "operation" => "auth_error",
-                   "failures" => [_ | _],
-                   "blocked_until" => blocked_until
+                   "blocked_until" => ^auth_blocked_until
                  },
-                 %{"operation" => "db_connection", "failures" => [_], "blocked_until" => nil},
-                 %{"operation" => "get_secrets", "failures" => [_], "blocked_until" => nil}
+                 %{
+                   "operation" => "get_secrets",
+                   "blocked_until" => ^get_secrets_blocked_until
+                 }
                ]
              } =
                conn
                |> get(~p"/api/tenants/#{external_id}/bans")
                |> json_response(200)
-
-      assert is_integer(blocked_until)
     end
   end
 
