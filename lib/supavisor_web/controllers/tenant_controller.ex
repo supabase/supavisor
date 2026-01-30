@@ -303,7 +303,7 @@ defmodule SupavisorWeb.TenantController do
   end
 
   operation(:list_bans,
-    summary: "List bans for tenant",
+    summary: "List circuit breaker bans for tenant",
     description: """
     Returns circuit breaker operations banned on a tenant.
 
@@ -313,7 +313,7 @@ defmodule SupavisorWeb.TenantController do
     details.
     """,
     parameters: [
-      external_id: [in: :path, description: "External id", type: :string],
+      external_id: [in: :path, description: "External ID", type: :string],
       authorization: @authorization
     ],
     responses: %{
