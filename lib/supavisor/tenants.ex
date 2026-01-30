@@ -707,4 +707,41 @@ defmodule Supavisor.Tenants do
     |> Enum.map(&%{operation: elem(&1, 0), blocked_until: elem(&1, 1)})
     |> Enum.sort_by(& &1.operation)
   end
+
+  @doc """
+  Clears a circuit breaker ban for a specific operation on a tenant.
+
+  This completely erases the circuit breaker state for the operation, allowing
+  new operations to proceed immediately. The failure history is removed.
+
+  Returns the remaining active bans after clearing.
+  """
+  @spec clear_ban(String.t(), atom()) ::
+          {:ok, [%{required(:operation) => atom(), required(:blocked_until) => integer()}]}
+          | {:error, :tenant_not_found}
+          | {:error, :invalid_operation}
+  def clear_ban(external_id, operation)
+      when is_binary(external_id) and is_atom(operation) do
+    # Validate operation is supported
+    unless operation in [:auth_error, :db_connection, :get_secrets] do
+      {:error, :invalid_operation}
+    else
+      # Verify tenant exists
+      case get_tenant_by_external_id(external_id) do
+        nil ->
+          {:error, :tenant_not_found}
+
+        _tenant ->
+          # Log the administrative action
+          Logger.info("Clearing circuit breaker ban: tenant=#{external_id} operation=#{operation}")
+
+          # Clear the circuit breaker state
+          CircuitBreaker.clear(external_id, operation)
+
+          # Return remaining bans
+          remaining_bans = list_tenant_bans(external_id)
+          {:ok, remaining_bans}
+      end
+    end
+  end
 end

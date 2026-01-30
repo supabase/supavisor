@@ -459,6 +459,80 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "clear ban" do
+    setup do
+      :ets.delete_all_objects(Supavisor.CircuitBreaker)
+      :ok
+    end
+
+    test "clears a specific ban and returns remaining bans", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      # Create bans for two operations
+      Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
+
+      # Record enough failures to trigger ban
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
+      end
+
+      Supavisor.CircuitBreaker.record_failure(external_id, :get_secrets)
+
+      for _ <- 1..5 do
+        Supavisor.CircuitBreaker.record_failure(external_id, :get_secrets)
+      end
+
+      # Verify both bans exist
+      bans_before = Supavisor.Tenants.list_tenant_bans(external_id)
+      assert length(bans_before) == 2
+
+      # Clear auth_error ban
+      conn =
+        post(
+          conn,
+          ~p"/api/tenants/#{external_id}/bans/auth_error/clear"
+        )
+
+      assert %{"data" => remaining_bans} = json_response(conn, 200)
+      assert length(remaining_bans) == 1
+      assert hd(remaining_bans)["operation"] == "get_secrets"
+
+      # Verify ban is actually cleared in circuit breaker
+      assert :ok == Supavisor.CircuitBreaker.check(external_id, :auth_error)
+    end
+
+    test "returns 404 when tenant does not exist", %{conn: conn} do
+      conn = post(conn, ~p"/api/tenants/nonexistent/bans/auth_error/clear")
+
+      assert json_response(conn, 404)
+    end
+
+    test "returns 400 for invalid operation", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+
+      conn = post(conn, ~p"/api/tenants/#{tenant.external_id}/bans/invalid_op/clear")
+
+      assert %{"error" => error_msg} = json_response(conn, 400)
+      assert error_msg =~ "Invalid operation"
+    end
+
+    test "returns empty list when clearing the last ban", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      # Create single ban
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
+      end
+
+      # Clear the only ban
+      conn = post(conn, ~p"/api/tenants/#{external_id}/bans/auth_error/clear")
+
+      assert %{"data" => []} = json_response(conn, 200)
+    end
+  end
+
   describe "health endpoint" do
     test "returns 204 when all health checks pass", %{conn: conn} do
       assert "" ==

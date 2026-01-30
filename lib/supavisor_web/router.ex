@@ -53,6 +53,7 @@ defmodule SupavisorWeb.Router do
     )
 
     get("/tenants/:external_id/bans", TenantController, :list_bans)
+    post("/tenants/:external_id/bans/:operation/clear", TenantController, :clear_ban)
 
     get("/health", TenantController, :health)
 
