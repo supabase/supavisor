@@ -303,7 +303,7 @@ defmodule SupavisorWeb.TenantController do
   end
 
   operation(:list_bans,
-    summary: "List bans for tenant",
+    summary: "List circuit breaker bans for tenant",
     description: """
     Returns circuit breaker operations banned on a tenant.
 
@@ -313,7 +313,7 @@ defmodule SupavisorWeb.TenantController do
     details.
     """,
     parameters: [
-      external_id: [in: :path, description: "External id", type: :string],
+      external_id: [in: :path, description: "External ID", type: :string],
       authorization: @authorization
     ],
     responses: %{
@@ -323,15 +323,61 @@ defmodule SupavisorWeb.TenantController do
   )
 
   def list_bans(conn, %{"external_id" => external_id}) do
-    case Tenants.get_tenant_by_external_id(external_id) do
-      %TenantModel{} = _tenant ->
-        bans = Tenants.list_tenant_bans(external_id)
+    case Tenants.list_bans(external_id) do
+      {:ok, bans} ->
         render(conn, "list_bans.json", bans: bans)
 
-      nil ->
+      {:error, :tenant_not_found} ->
         conn
         |> put_status(404)
         |> render("not_found.json", tenant: nil)
+    end
+  end
+
+  operation(:clear_ban,
+    summary: "Clear a circuit breaker ban for tenant",
+    description: """
+    Manually clears a circuit breaker ban for a specific operation on a tenant.
+
+    This administrative operation completely erases the circuit breaker state,
+    removing the block and clearing the failure history. The operation will be
+    allowed to proceed immediately.
+
+    Returns the list of remaining active bans after clearing.
+    """,
+    parameters: [
+      external_id: [in: :path, description: "External tenant ID", type: :string],
+      operation: [
+        in: :path,
+        description: "Circuit breaker operation to clear",
+        type: :string,
+        example: "auth_error"
+      ],
+      authorization: @authorization
+    ],
+    responses: %{
+      200 => BanList.response(),
+      404 => NotFound.response(),
+      400 => BadRequest.response()
+    }
+  )
+
+  def clear_ban(conn, %{"external_id" => external_id, "operation" => operation}) do
+    case Tenants.clear_ban(external_id, operation) do
+      {:ok, remaining_bans} ->
+        render(conn, "list_bans.json", bans: remaining_bans)
+
+      {:error, :tenant_not_found} ->
+        conn
+        |> put_status(404)
+        |> render("error.json", error: "Tenant not found")
+
+      {:error, :invalid_operation} ->
+        conn
+        |> put_status(400)
+        |> render("error.json",
+          error: "Invalid operation. Must be one of: auth_error, db_connection, get_secrets"
+        )
     end
   end
 end

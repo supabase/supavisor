@@ -459,6 +459,66 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "clear ban" do
+    setup do
+      :ets.delete_all_objects(Supavisor.CircuitBreaker)
+      :ok
+    end
+
+    test "clears a specific ban and returns remaining bans", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
+        Supavisor.CircuitBreaker.record_failure(external_id, :get_secrets)
+      end
+
+      assert {:ok, _bans = [_, _]} = Supavisor.Tenants.list_bans(external_id)
+
+      assert %_{data: _remaining_bans = [%_{operation: "get_secrets"}]} =
+               post(
+                 conn,
+                 ~p"/api/tenants/#{external_id}/bans/auth_error/clear"
+               )
+               |> json_response(200)
+               |> assert_schema("BanList")
+
+      assert :ok == Supavisor.CircuitBreaker.check(external_id, :auth_error)
+    end
+
+    test "returns 404 when tenant does not exist", %{conn: conn} do
+      assert conn
+             |> post(~p"/api/tenants/nonexistent/bans/auth_error/clear")
+             |> json_response(404)
+             |> assert_schema("NotFound")
+    end
+
+    test "returns 400 for invalid operation", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+
+      assert conn
+             |> post(~p"/api/tenants/#{tenant.external_id}/bans/invalid_op/clear")
+             |> json_response(400)
+             |> assert_schema("BadRequest")
+    end
+
+    test "returns empty list when clearing the last ban", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
+      end
+
+      assert %_{data: []} =
+               conn
+               |> post(~p"/api/tenants/#{external_id}/bans/auth_error/clear")
+               |> json_response(200)
+               |> assert_schema("BanList")
+    end
+  end
+
   describe "health endpoint" do
     test "returns 204 when all health checks pass", %{conn: conn} do
       assert "" ==
