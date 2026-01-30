@@ -323,7 +323,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       required: [:operation, :blocked_until],
       example: %{
         operation: "auth_error",
-        blocked_until: 1706549400
+        blocked_until: 1_706_549_400
       }
     })
 
@@ -348,11 +348,11 @@ defmodule SupavisorWeb.OpenApiSchemas do
         data: [
           %{
             operation: "auth_error",
-            blocked_until: 1706549400
+            blocked_until: 1_706_549_400
           },
           %{
             operation: "db_connection",
-            blocked_until: 1706549400
+            blocked_until: 1_706_549_400
           }
         ]
       }
