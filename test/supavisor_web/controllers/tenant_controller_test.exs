@@ -474,7 +474,7 @@ defmodule SupavisorWeb.TenantControllerTest do
         Supavisor.CircuitBreaker.record_failure(external_id, :get_secrets)
       end
 
-      assert Supavisor.Tenants.list_tenant_bans(external_id) |> length() == 2
+      assert {:ok, _bans = [_, _]} = Supavisor.Tenants.list_bans(external_id)
 
       assert %_{data: _remaining_bans = [%_{operation: "get_secrets"}]} =
                post(
@@ -507,15 +507,15 @@ defmodule SupavisorWeb.TenantControllerTest do
       {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
       external_id = tenant.external_id
 
-      # Create single ban
       for _ <- 1..10 do
         Supavisor.CircuitBreaker.record_failure(external_id, :auth_error)
       end
 
-      # Clear the only ban
-      conn = post(conn, ~p"/api/tenants/#{external_id}/bans/auth_error/clear")
-
-      assert %{"data" => []} = json_response(conn, 200)
+      assert %_{data: []} =
+               conn
+               |> post(~p"/api/tenants/#{external_id}/bans/auth_error/clear")
+               |> json_response(200)
+               |> assert_schema("BanList")
     end
   end
 

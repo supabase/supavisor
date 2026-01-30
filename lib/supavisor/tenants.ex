@@ -695,17 +695,25 @@ defmodule Supavisor.Tenants do
 
   ## Examples
 
-      iex> list_tenant_bans("tenant_external_id")
+      iex> list_bans("tenant_external_id")
       [%{operation: :some_operation, blocked_until: 1620000000}, ...]
   """
-  @spec list_tenant_bans(String.t()) :: [
-          %{required(:operation) => atom(), required(:blocked_until) => integer()}
-        ]
-  def list_tenant_bans(external_id) when is_binary(external_id) do
-    external_id
-    |> CircuitBreaker.blocked()
-    |> Enum.map(&%{operation: elem(&1, 0), blocked_until: elem(&1, 1)})
-    |> Enum.sort_by(& &1.operation)
+  @spec list_bans(String.t()) ::
+          {:ok,
+           [
+             %{required(:operation) => atom(), required(:blocked_until) => integer()}
+           ]}
+          | {:error, :tenant_not_found}
+  def list_bans(external_id) when is_binary(external_id) do
+    if get_tenant_by_external_id(external_id) do
+      external_id
+      |> CircuitBreaker.blocked()
+      |> Enum.map(&%{operation: elem(&1, 0), blocked_until: elem(&1, 1)})
+      |> Enum.sort_by(& &1.operation)
+      |> then(&{:ok, &1})
+    else
+      {:error, :tenant_not_found}
+    end
   end
 
   @doc """
@@ -725,7 +733,7 @@ defmodule Supavisor.Tenants do
     if get_tenant_by_external_id(external_id) do
       Logger.info("Clearing circuit breaker ban: tenant=#{external_id} operation=#{operation}")
       CircuitBreaker.clear(external_id, String.to_existing_atom(operation))
-      {:ok, list_tenant_bans(external_id)}
+      list_bans(external_id)
     else
       {:error, :tenant_not_found}
     end

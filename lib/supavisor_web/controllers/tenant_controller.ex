@@ -323,12 +323,11 @@ defmodule SupavisorWeb.TenantController do
   )
 
   def list_bans(conn, %{"external_id" => external_id}) do
-    case Tenants.get_tenant_by_external_id(external_id) do
-      %TenantModel{} = _tenant ->
-        bans = Tenants.list_tenant_bans(external_id)
+    case Tenants.list_bans(external_id) do
+      {:ok, bans} ->
         render(conn, "list_bans.json", bans: bans)
 
-      nil ->
+      {:error, :tenant_not_found} ->
         conn
         |> put_status(404)
         |> render("not_found.json", tenant: nil)
