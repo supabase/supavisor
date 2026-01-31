@@ -172,4 +172,32 @@ defmodule Supavisor.CircuitBreakerTest do
       assert deleted == 0
     end
   end
+
+  describe "blocked/1" do
+    test "returns all blocked operations with the blocked_until timestamp" do
+      CircuitBreaker.record_failure("tenant1", :get_secrets)
+      CircuitBreaker.record_failure("tenant1", :db_connection)
+
+      for _ <- 1..10 do
+        CircuitBreaker.record_failure("tenant1", :auth_error)
+      end
+
+      CircuitBreaker.record_failure("tenant2", :get_secrets)
+
+      assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :auth_error)
+
+      assert [auth_error: blocked_until] = CircuitBreaker.blocked("tenant1")
+      assert is_integer(blocked_until)
+      assert blocked_until > System.system_time(:second)
+    end
+
+    test "returns empty list when no operations are blocked" do
+      CircuitBreaker.record_failure("tenant1", :get_secrets)
+      assert [] = CircuitBreaker.blocked("tenant1")
+    end
+
+    test "returns empty list for an unknown tenant" do
+      assert [] = CircuitBreaker.blocked("tenant3")
+    end
+  end
 end

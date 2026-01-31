@@ -101,6 +101,22 @@ defmodule Supavisor.CircuitBreaker do
   end
 
   @doc """
+  Returns a list of currently blocked operations for a given key.
+  Each entry is a tuple of {operation, blocked_until}.
+
+  Returns an empty list if no operations are blocked for the key or the key does not exist.
+  """
+  @spec blocked(term()) :: [{atom(), integer()}]
+  def blocked(key) do
+    now = System.system_time(:second)
+
+    :ets.select(@table, [
+      {{{key, :"$1"}, %{blocked_until: :"$2"}},
+       [{:andalso, {:is_integer, :"$2"}, {:>, :"$2", now}}], [{{:"$1", :"$2"}}]}
+    ])
+  end
+
+  @doc """
   Clears circuit breaker state for a key and operation.
   """
   @spec clear(term(), atom()) :: :ok

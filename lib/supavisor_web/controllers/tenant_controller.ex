@@ -14,6 +14,7 @@ defmodule SupavisorWeb.TenantController do
 
   alias SupavisorWeb.OpenApiSchemas.{
     BadRequest,
+    BanList,
     Created,
     Empty,
     NotFound,
@@ -298,6 +299,39 @@ defmodule SupavisorWeb.TenantController do
             |> put_view(SupavisorWeb.ChangesetView)
             |> render("error.json", changeset: changeset)
         end
+    end
+  end
+
+  operation(:list_bans,
+    summary: "List bans for tenant",
+    description: """
+    Returns circuit breaker operations banned on a tenant.
+
+    Each operation has specific failure thresholds that trigger the circuit breaker.
+    The `blocked_until` is a unix timestamp indicating for how long new operations
+    of that type are blocked. See the operation type descriptions for specific threshold
+    details.
+    """,
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    responses: %{
+      200 => BanList.response(),
+      404 => NotFound.response()
+    }
+  )
+
+  def list_bans(conn, %{"external_id" => external_id}) do
+    case Tenants.get_tenant_by_external_id(external_id) do
+      %TenantModel{} = _tenant ->
+        bans = Tenants.list_tenant_bans(external_id)
+        render(conn, "list_bans.json", bans: bans)
+
+      nil ->
+        conn
+        |> put_status(404)
+        |> render("not_found.json", tenant: nil)
     end
   end
 end
