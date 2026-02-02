@@ -87,6 +87,17 @@ defmodule Supavisor.Manager do
     GenServer.call(manager, {:graceful_shutdown, timeout}, :infinity)
   end
 
+  @doc """
+  Unsubscribes a client from the pool.
+
+  Can be used on termination to free the client slot while cleanup is performed.
+  """
+  @spec unsubscribe(pid | Supavisor.id()) :: :ok
+  def unsubscribe(manager_or_id) do
+    manager = resolve_manager(manager_or_id)
+    GenServer.call(manager, {:unsubscribe, self()}, 5000)
+  end
+
   ## Callbacks
 
   @impl true
@@ -223,6 +234,13 @@ defmodule Supavisor.Manager do
       end
 
     {:reply, reply, new_state}
+  end
+
+  def handle_call({:unsubscribe, pid}, _from, state) do
+    Process.demonitor(pid, [:flush])
+    :ets.delete(state.tid, pid)
+    new_state = %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
+    {:reply, :ok, new_state}
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do

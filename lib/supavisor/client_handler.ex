@@ -803,6 +803,8 @@ defmodule Supavisor.ClientHandler do
       Logger.debug("ClientHandler: Performing session cleanup before termination")
       {pool, db_pid, _} = data.db_connection
 
+      Manager.unsubscribe(data.manager)
+
       case DbHandler.attempt_cleanup(db_pid) do
         :ok ->
           Process.unlink(db_pid)
