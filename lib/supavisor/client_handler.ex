@@ -1102,9 +1102,9 @@ defmodule Supavisor.ClientHandler do
       level,
       "ClientHandler: socket closed while state was #{state} (#{data.mode})"
     )
-    
+
     maybe_cleanup_db_handler(state, data)
-    
+
     {:stop, :normal}
   end
 end
