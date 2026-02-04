@@ -104,6 +104,7 @@ defmodule Supavisor.Manager do
   def init(args) do
     Helpers.set_log_level(args.log_level)
     tid = :ets.new(__MODULE__, [:protected])
+    pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
 
     {{type, tenant}, user, mode, db_name, _search_path} = args.id
     {method, secrets} = args.secrets
@@ -183,6 +184,7 @@ defmodule Supavisor.Manager do
       id: args.id,
       check_ref: check_subscribers(),
       tid: tid,
+      pid_to_ref: pid_to_ref,
       tenant: tenant,
       parameter_status: persisted_ps,
       wait_ps: [],
@@ -220,7 +222,9 @@ defmodule Supavisor.Manager do
 
     {reply, new_state} =
       if :ets.info(state.tid, :size) < limit do
-        :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
+        ref = Process.monitor(pid)
+        :ets.insert(state.tid, {ref, pid, now()})
+        :ets.insert(state.pid_to_ref, {pid, ref})
 
         case state.parameter_status do
           [] ->
@@ -237,8 +241,15 @@ defmodule Supavisor.Manager do
   end
 
   def handle_call({:unsubscribe, pid}, _from, state) do
-    Process.demonitor(pid, [:flush])
-    :ets.delete(state.tid, pid)
+    case :ets.take(state.pid_to_ref, pid) do
+      [{^pid, ref}] ->
+        :ets.delete(state.tid, ref)
+        Process.demonitor(ref, [:flush])
+
+      [] ->
+        Logger.warning("Unsubscribe: no entry found for #{inspect(pid)}")
+    end
+
     new_state = %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
     {:reply, :ok, new_state}
   end
@@ -321,9 +332,10 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, _, _, _}, state) do
+  def handle_info({:DOWN, ref, _, pid, _}, state) do
     Process.cancel_timer(state.check_ref)
-    :ets.take(state.tid, ref)
+    :ets.delete(state.tid, ref)
+    :ets.delete(state.pid_to_ref, pid)
 
     state =
       if state.drain_caller && :ets.info(state.tid, :size) == 0 do
@@ -373,6 +385,23 @@ defmodule Supavisor.Manager do
   @impl true
   def terminate(_reason, _state) do
     :ok
+  end
+
+  @impl true
+  def code_change(_old_vsn, state, :create_pid_to_ref_table) do
+    pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
+
+    :ets.foldl(
+      fn {ref, pid, _}, _ -> :ets.insert(pid_to_ref, {pid, ref}) end,
+      nil,
+      state.tid
+    )
+
+    {:ok, Map.put(state, :pid_to_ref, pid_to_ref)}
+  end
+
+  def code_change(_old_vsn, state, _extra) do
+    {:ok, state}
   end
 
   ## Internal functions

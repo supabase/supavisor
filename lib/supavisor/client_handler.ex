@@ -806,7 +806,7 @@ defmodule Supavisor.ClientHandler do
       {pool, db_pid, _} = data.db_connection
 
       # We unsubscribe to free up space for new clients during the cleanup time.
-      Supavisor.Manager.unsubscribe(data.manager)
+      Supavisor.Manager.unsubscribe(data.id)
 
       case DbHandler.attempt_cleanup(db_pid) do
         :ok ->
