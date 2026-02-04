@@ -5,6 +5,7 @@
     {update,'Elixir.Cluster.Strategy.Postgres',{advanced,[]},[]},
     {load_module,'Elixir.Supavisor.ClientHandler.Data',[]},
     {update,'Elixir.Supavisor.ClientHandler',{advanced,monitor_socket},[]},
+    {update,'Elixir.Supavisor.Manager',{advanced,create_pid_to_ref_table},[]},
     {update,'Elixir.Supavisor.SecretChecker',{advanced,[]},[]},
     {load_module,'Elixir.SupavisorWeb.TenantController',[]}]}],
  [{"2.8.8",
@@ -13,5 +14,6 @@
     {update,'Elixir.Cluster.Strategy.Postgres',{advanced,[]},[]},
     {load_module,'Elixir.Supavisor.ClientHandler.Data',[]},
     {load_module,'Elixir.Supavisor.ClientHandler',[]},
+    {load_module,'Elixir.Supavisor.Manager',[]},
     {update,'Elixir.Supavisor.SecretChecker',{advanced,[]},[]},
     {load_module,'Elixir.SupavisorWeb.TenantController',[]}]}]}.
