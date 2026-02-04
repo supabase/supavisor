@@ -8,6 +8,11 @@ parse_integer_list = fn numbers when is_binary(numbers) ->
   |> Enum.map(&String.to_integer/1)
 end
 
+db_socket_options =
+  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
+    do: [:inet6],
+    else: [:inet]
+
 secret_key_base =
   if config_env() in [:dev, :test] do
     "3S1V5RyqQcuPrMVuR4BjH9XBayridj56JA0EE6wYidTEc6H84KSFY6urVX7GfOhK"
@@ -93,7 +98,8 @@ topologies =
       config: [
         url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
         heartbeat_interval: 5_000,
-        channel_name: "supavisor_#{region}_#{maj}_#{min}"
+        channel_name: "supavisor_#{region}_#{maj}_#{min}",
+        socket_options: db_socket_options
       ]
     ]
 
@@ -148,11 +154,6 @@ downstream_key =
       raise "There is no such file in $GLOBAL_DOWNSTREAM_KEY_PATH"
     end
   end
-
-db_socket_options =
-  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
-    do: [:inet6],
-    else: [:inet]
 
 reconnect_retries =
   System.get_env("RECONNECT_RETRIES", "5")

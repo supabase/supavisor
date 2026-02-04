@@ -358,7 +358,6 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
     if String.ends_with?(bin, Server.ready_for_query()) do
-      HandlerHelpers.activate(data.sock)
       ClientHandler.db_status(data.caller, :ready_for_query)
       data = handle_server_messages(bin, data)
 

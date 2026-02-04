@@ -9,6 +9,14 @@ defmodule Supavisor.ClientHandler do
 
   require Logger
 
+  require Record
+
+  # Import the sslsocket record definition
+  Record.defrecord(
+    :sslsocket,
+    Record.extract(:sslsocket, from_lib: "ssl/src/ssl_api.hrl")
+  )
+
   @behaviour :ranch_protocol
   @behaviour :gen_statem
   @proto [:tcp, :ssl]
@@ -68,6 +76,7 @@ defmodule Supavisor.ClientHandler do
     Helpers.set_max_heap_size(90)
 
     {:ok, sock} = :ranch.handshake(ref)
+    sock_ref = {:port, Port.monitor(sock)}
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
 
@@ -80,6 +89,7 @@ defmodule Supavisor.ClientHandler do
     data = %Data{
       sock: {:gen_tcp, sock},
       trans: trans,
+      sock_ref: sock_ref,
       peer_ip: peer_ip,
       local: local,
       ssl: false,
@@ -516,24 +526,7 @@ defmodule Supavisor.ClientHandler do
   # client closed connection
   def handle_event(_, {closed, _}, state, data)
       when closed in [:tcp_closed, :ssl_closed] do
-    level =
-      cond do
-        state == :idle or data.mode == :proxy ->
-          :info
-
-        state == :handshake ->
-          :warning
-
-        true ->
-          :error
-      end
-
-    Logger.log(
-      level,
-      "ClientHandler: socket closed while state was #{state} (#{data.mode})"
-    )
-
-    {:stop, :normal}
+    handle_socket_close(state, data)
   end
 
   # linked DbHandler went down
@@ -554,6 +547,16 @@ defmodule Supavisor.ClientHandler do
       {:connecting, _} -> {:keep_state_and_data, {:next_event, :internal, :subscribe}}
       {:busy, _} -> {:keep_state_and_data, :postpone}
     end
+  end
+
+  # socket went down
+  def handle_event(
+        :info,
+        {:DOWN, ref, _, _, _reason},
+        state,
+        %{sock_ref: {_, ref}} = data
+      ) do
+    handle_socket_close(state, data)
   end
 
   # emulate handle_cast
@@ -800,6 +803,28 @@ defmodule Supavisor.ClientHandler do
     Map.put(status, :queue, [])
   end
 
+  @impl true
+  def code_change(_version, state, old_data, :monitor_socket) do
+    new_data =
+      case old_data do
+        %{sock: {:gen_tcp, port}} ->
+          ref = Port.monitor(port)
+          Map.put(old_data, :sock_ref, {:port, ref})
+
+        # This is reliant on the internal implementation of SSL, but
+        # a necessary evil since there's no API in Erlang to read the
+        # port, or to monitor the SSL connection
+        %{sock: {:ssl, sslsocket(pid: [connection_handler | _])}} ->
+          ref = Process.monitor(connection_handler)
+          Map.put(old_data, :sock_ref, {:process, ref})
+
+        _ ->
+          old_data
+      end
+
+    {:ok, state, new_data}
+  end
+
   ## Internal functions
 
   defp handle_auth_success(sock, {method, secrets}, client_key, data) do
@@ -1039,5 +1064,26 @@ defmodule Supavisor.ClientHandler do
       _ ->
         false
     end
+  end
+
+  defp handle_socket_close(state, data) do
+    level =
+      cond do
+        state == :idle or data.mode == :proxy ->
+          :info
+
+        state == :handshake ->
+          :warning
+
+        true ->
+          :error
+      end
+
+    Logger.log(
+      level,
+      "ClientHandler: socket closed while state was #{state} (#{data.mode})"
+    )
+
+    {:stop, :normal}
   end
 end
