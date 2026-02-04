@@ -139,6 +139,13 @@ defmodule Supavisor.SecretCache do
     end)
   end
 
+  @doc """
+  Deletes upstream auth secrets from the tenant cache.
+  """
+  def delete_upstream_auth_secrets(id) do
+    Supavisor.TenantCache.delete_upstream_auth_secrets(id)
+  end
+
   @doc false
   defp should_bypass_cache?(user) do
     bypass_users = Application.get_env(:supavisor, :cache_bypass_users, [])

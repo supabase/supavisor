@@ -855,6 +855,9 @@ defmodule Supavisor.ClientHandler do
     # For proxy mode, secrets are passed directly to DbHandler via data.auth
     if data.mode != :proxy do
       Supavisor.SecretCache.put_upstream_auth_secrets(data.id, method, final_secrets)
+
+      # Notify any waiting db handlers that secrets are now available
+      Supavisor.Manager.notify_secrets_available(data.id)
     end
 
     Logger.info("ClientHandler: Connection authenticated")
@@ -906,14 +909,14 @@ defmodule Supavisor.ClientHandler do
     start = System.monotonic_time(:microsecond)
 
     with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout),
-         true <- Process.link(db_pid),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self()) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
       {data.pool, db_pid, db_sock}
     else
       {:error, {:exit, {:timeout, _}}} ->
-        timeout_error(data)
+        {:stop, reason} = timeout_error(data)
+        exit(reason)
 
       {:error, %{"S" => "FATAL"} = error_map} ->
         Logger.debug(
@@ -922,7 +925,7 @@ defmodule Supavisor.ClientHandler do
 
         error_message = Server.encode_error_message(error_map)
         HandlerHelpers.sock_send(data.sock, error_message)
-        {:stop, :normal}
+        exit(:normal)
 
       {:error, {:exit, e}} ->
         exit(e)
