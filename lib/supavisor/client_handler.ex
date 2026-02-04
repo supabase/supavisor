@@ -834,6 +834,7 @@ defmodule Supavisor.ClientHandler do
     # For proxy mode, secrets are passed directly to DbHandler via data.auth
     if data.mode != :proxy do
       Supavisor.SecretCache.put_upstream_auth_secrets(data.id, method, final_secrets)
+
       # Notify any waiting db handlers that secrets are now available
       Supavisor.Manager.notify_secrets_available(data.id)
     end

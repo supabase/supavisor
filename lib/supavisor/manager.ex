@@ -331,17 +331,11 @@ defmodule Supavisor.Manager do
     # Check if secrets are already available to avoid race condition
     case Supavisor.SecretCache.get_upstream_auth_secrets(state.id) do
       {:ok, _secrets} ->
-        # Secrets already available, notify immediately
-        Logger.debug(
-          "Manager: Secrets already available, notifying #{inspect(db_handler_pid)} immediately"
-        )
-
         Supavisor.DbHandler.notify_secrets_available(db_handler_pid)
         {:noreply, state}
 
       {:error, :not_found} ->
-        # Secrets not available yet, add to waiting list
-        ref = Process.monitor(db_handler_pid)
+        ref = Process.monitor(db_handler_pid, tag: :DB_HANDLER_DOWN)
 
         {:noreply,
          %{state | waiting_for_secrets: [{ref, db_handler_pid} | state.waiting_for_secrets]}}
@@ -366,11 +360,6 @@ defmodule Supavisor.Manager do
     Process.cancel_timer(state.check_ref)
     :ets.take(state.tid, ref)
 
-    # Also remove from waiting_for_secrets if present
-    waiting_for_secrets = Enum.reject(state.waiting_for_secrets, fn {r, _} -> r == ref end)
-
-    state = %{state | waiting_for_secrets: waiting_for_secrets}
-
     state =
       if state.drain_caller && :ets.info(state.tid, :size) == 0 do
         if state.drain_timer, do: Process.cancel_timer(state.drain_timer)
@@ -381,6 +370,12 @@ defmodule Supavisor.Manager do
       end
 
     {:noreply, %{state | check_ref: check_subscribers()}}
+  end
+
+  def handle_info({:DB_HANDLER_DOWN, ref, _, _, _}, state) do
+    waiting_for_secrets = Enum.reject(state.waiting_for_secrets, fn {r, _} -> r == ref end)
+
+    {:noreply, %{state | waiting_for_secrets: waiting_for_secrets}}
   end
 
   def handle_info(:drain_timeout, state) do
