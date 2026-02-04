@@ -97,7 +97,7 @@ defmodule Supavisor.Manager do
     manager = resolve_manager(manager_or_id)
     GenServer.call(manager, {:unsubscribe, self()}, 5000)
   end
-  
+
   @doc """
   Registers a DbHandler as waiting for secrets to become available.
   """
@@ -456,7 +456,12 @@ defmodule Supavisor.Manager do
       state.tid
     )
 
-    {:ok, Map.put(state, :pid_to_ref, pid_to_ref)}
+    new_state =
+      state
+      |> Map.put(:pid_to_ref, pid_to_ref)
+      |> Map.put_new(:waiting_for_secrets, [])
+
+    {:ok, new_state}
   end
 
   def code_change(_old_vsn, state, _extra) do

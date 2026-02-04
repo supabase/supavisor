@@ -21,6 +21,7 @@ defmodule Supavisor.ManagerTest do
 
       assert [{^pid1, ^ref1}] = :ets.lookup(new_state.pid_to_ref, pid1)
       assert [{^pid2, ^ref2}] = :ets.lookup(new_state.pid_to_ref, pid2)
+      assert new_state.waiting_for_secrets == []
     end
 
     test "catch-all clause returns state unchanged" do

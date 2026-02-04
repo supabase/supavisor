@@ -6,6 +6,7 @@
     {load_module,'Elixir.Supavisor.ClientHandler.Data',[]},
     {update,'Elixir.Supavisor.ClientHandler',{advanced,monitor_socket},[]},
     {update,'Elixir.Supavisor.Manager',{advanced,create_pid_to_ref_table},[]},
+    {update,'Elixir.Supavisor.DbHandler',{advanced,[]},[]},
     {update,'Elixir.Supavisor.SecretChecker',{advanced,[]},[]},
     {load_module,'Elixir.SupavisorWeb.TenantController',[]}]}],
  [{"2.8.8",
@@ -15,5 +16,6 @@
     {load_module,'Elixir.Supavisor.ClientHandler.Data',[]},
     {load_module,'Elixir.Supavisor.ClientHandler',[]},
     {load_module,'Elixir.Supavisor.Manager',[]},
+    {load_module,'Elixir.Supavisor.DbHandler',[]},
     {update,'Elixir.Supavisor.SecretChecker',{advanced,[]},[]},
     {load_module,'Elixir.SupavisorWeb.TenantController',[]}]}]}.
