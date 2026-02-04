@@ -27,7 +27,13 @@ defmodule Supavisor.DbHandler do
     Protocol.Server
   }
 
-  @type state :: :connect | :authentication | :idle | :busy | :terminating_with_error
+  @type state ::
+          :connect
+          | :authentication
+          | :idle
+          | :busy
+          | :terminating_with_error
+          | :waiting_for_secrets
 
   @reconnect_timeout 2_500
   @reconnect_timeout_proxy 500
@@ -101,6 +107,14 @@ defmodule Supavisor.DbHandler do
     :gen_statem.stop(pid, {:shutdown, :client_termination}, 5_000)
   end
 
+  @doc """
+  Notifies a DbHandler that secrets are now available
+  """
+  @spec notify_secrets_available(pid()) :: :ok
+  def notify_secrets_available(pid) do
+    :gen_statem.cast(pid, :secrets_available)
+  end
+
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
@@ -124,38 +138,56 @@ defmodule Supavisor.DbHandler do
     auth =
       if config[:proxy] do
         # Proxy mode: secrets already in config.auth from ClientHandler
-        config.auth
+        {:ok, config.auth}
       else
         # Pool mode: fetch secrets from TenantCache
         get_auth_with_secrets(config.auth, id)
       end
 
-    data =
-      %{
-        id: id,
-        sock: nil,
-        auth: auth,
-        user: config.user,
-        tenant: config.tenant,
-        tenant_feature_flags: config.tenant_feature_flags,
-        db_state: nil,
-        parameter_status: %{},
-        nonce: nil,
-        server_proof: nil,
-        stats: %{},
-        prepared_statements: MapSet.new(),
-        proxy: Map.get(config, :proxy, false),
-        stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
-        mode: config.mode,
-        replica_type: config.replica_type,
-        caller: Map.get(config, :caller) || nil,
-        client_sock: Map.get(config, :client_sock) || nil,
-        reconnect_retries: 0,
-        terminating_error: nil
-      }
+    {auth_value, manager_ref} =
+      case auth do
+        {:ok, auth_with_secrets} ->
+          {auth_with_secrets, nil}
+
+        {:error, :no_secrets} ->
+          Logger.warning("DbHandler: Secrets not available, entering waiting state")
+          manager_pid = Supavisor.get_local_manager(id)
+          ref = Process.monitor(manager_pid)
+          Supavisor.Manager.register_waiting_for_secrets(id, self())
+          {config.auth, ref}
+      end
+
+    data = %{
+      id: id,
+      sock: nil,
+      auth: auth_value,
+      user: config.user,
+      tenant: config.tenant,
+      tenant_feature_flags: config.tenant_feature_flags,
+      db_state: nil,
+      parameter_status: %{},
+      nonce: nil,
+      server_proof: nil,
+      stats: %{},
+      prepared_statements: MapSet.new(),
+      proxy: Map.get(config, :proxy, false),
+      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
+      mode: config.mode,
+      replica_type: config.replica_type,
+      caller: Map.get(config, :caller) || nil,
+      client_sock: Map.get(config, :client_sock) || nil,
+      reconnect_retries: 0,
+      terminating_error: nil,
+      manager_ref: manager_ref
+    }
 
     Telem.handler_action(:db_handler, :started, id)
-    {:ok, :connect, data, {:next_event, :internal, :connect}}
+
+    if manager_ref do
+      {:ok, :waiting_for_secrets, data}
+    else
+      {:ok, :connect, data, {:next_event, :internal, :connect}}
+    end
   end
 
   @impl true
@@ -373,10 +405,25 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
   end
 
+  def handle_event({:call, from}, {:checkout, _sock, _caller}, :waiting_for_secrets, _data) do
+    Logger.debug("DbHandler: checkout call during waiting_for_secrets, replying with error")
+
+    error = %{
+      "S" => "FATAL",
+      "C" => "28P01",
+      "M" =>
+        "Authentication credentials are invalid. Please reconnect with fresh credentials to restore pool functionality."
+    }
+
+    {:keep_state_and_data, {:reply, from, {:error, error}}}
+  end
+
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
+      Process.link(caller)
+
       if data.mode == :proxy do
         bin_ps = Server.encode_parameter_status(data.parameter_status)
         send(caller, {:parameter_status, bin_ps})
@@ -425,6 +472,28 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:reply, from, {state, data.mode}}}
   end
 
+  def handle_event(:cast, :secrets_available, :waiting_for_secrets, data) do
+    Logger.info("DbHandler: Secrets are now available, transitioning to connect state")
+
+    Process.demonitor(data.manager_ref, [:flush])
+
+    case get_auth_with_secrets(data.auth, data.id) do
+      {:ok, auth_with_secrets} ->
+        {:next_state, :connect, %{data | auth: auth_with_secrets, manager_ref: nil},
+         {:next_event, :internal, :connect}}
+
+      {:error, :no_secrets} ->
+        Logger.error("DbHandler: Still no secrets available after notification")
+        :keep_state_and_data
+    end
+  end
+
+  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, :waiting_for_secrets, data)
+      when ref == data.manager_ref do
+    Logger.error("DbHandler: Manager died while waiting for secrets: #{inspect(reason)}")
+    {:stop, :normal, data}
+  end
+
   def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
     HandlerHelpers.setopts(data.sock, active: @switch_active_count)
     :keep_state_and_data
@@ -463,6 +532,12 @@ defmodule Supavisor.DbHandler do
           "DbHandler: Terminating with reason #{inspect(reason)} when state was #{inspect(state)}"
         )
     end
+  end
+
+  @impl true
+  def code_change(_version, state, old_data, _extra) do
+    new_data = Map.put_new(old_data, :manager_ref, nil)
+    {:ok, state, new_data}
   end
 
   @impl true
@@ -694,6 +769,7 @@ defmodule Supavisor.DbHandler do
   defp handle_authentication_error(%{mode: _other} = data, _reason) do
     tenant = Supavisor.tenant(data.id)
     Supavisor.SecretCache.invalidate(tenant, data.user)
+    Supavisor.SecretCache.delete_upstream_auth_secrets(data.id)
   end
 
   @spec reconnect_timeout(map()) :: pos_integer()
@@ -826,10 +902,10 @@ defmodule Supavisor.DbHandler do
   defp get_auth_with_secrets(auth, id) do
     case Supavisor.SecretCache.get_upstream_auth_secrets(id) do
       {:ok, upstream_auth_secrets} ->
-        Map.put(auth, :secrets, upstream_auth_secrets)
+        {:ok, Map.put(auth, :secrets, upstream_auth_secrets)}
 
       _other ->
-        raise "Upstream connection secrets not found"
+        {:error, :no_secrets}
     end
   end
 

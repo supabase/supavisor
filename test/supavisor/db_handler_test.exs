@@ -133,6 +133,74 @@ defmodule Supavisor.DbHandlerTest do
       assert data.nonce == nil
       assert data.server_proof == nil
     end
+
+    test "enters waiting_for_secrets state when upstream secrets are missing" do
+      auth = %{host: ~c"localhost", port: 5432}
+      tenant = "test_tenant"
+      user = "user"
+
+      # Set up tenant cache but don't put any secrets in it
+      table = :ets.new(:tenant_cache, [:set, :public])
+      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+
+      manager_config = %{
+        id: @id,
+        auth: auth,
+        tenant: {:single, tenant},
+        user: user,
+        mode: :transaction,
+        replica_type: :single,
+        log_level: nil,
+        tenant_feature_flags: %{}
+      }
+
+      {:ok, _manager} = start_supervised({FakeManager, manager_config})
+
+      args = %{id: @id}
+
+      assert {:ok, :waiting_for_secrets, data} = Db.init(args)
+      assert data.id == @id
+      assert data.manager_ref != nil
+    end
+
+    test "transitions from waiting_for_secrets to connect when secrets become available" do
+      auth = %{host: ~c"localhost", port: 5432}
+      tenant = "test_tenant"
+      user = "user"
+      method = :password
+      secrets_fn = fn -> %{user: "some user", password: "secret", client_key: "key"} end
+
+      # Set up tenant cache
+      table = :ets.new(:tenant_cache, [:set, :public])
+      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+
+      manager_config = %{
+        id: @id,
+        auth: auth,
+        tenant: {:single, tenant},
+        user: user,
+        mode: :transaction,
+        replica_type: :single,
+        log_level: nil,
+        tenant_feature_flags: %{}
+      }
+
+      {:ok, _manager} = start_supervised({FakeManager, manager_config})
+
+      # Initialize in waiting_for_secrets state
+      args = %{id: @id}
+      assert {:ok, :waiting_for_secrets, data} = Db.init(args)
+
+      # Now put secrets in cache
+      Supavisor.SecretCache.put_upstream_auth_secrets(@id, method, secrets_fn)
+
+      # Notify that secrets are available
+      assert {:next_state, :connect, updated_data, {:next_event, :internal, :connect}} =
+               Db.handle_event(:cast, :secrets_available, :waiting_for_secrets, data)
+
+      assert updated_data.auth.secrets == {method, secrets_fn}
+      assert updated_data.manager_ref == nil
+    end
   end
 
   describe "handle_event/4" do
@@ -217,6 +285,26 @@ defmodule Supavisor.DbHandlerTest do
                  tenant: {:single, "some tenant"},
                  reconnect_retries: 5
                })
+    end
+
+    test "checkout returns error when in waiting_for_secrets state" do
+      data = %{id: @id}
+      from = {self(), make_ref()}
+
+      expected_error = %{
+        "S" => "FATAL",
+        "C" => "28P01",
+        "M" =>
+          "Authentication credentials are invalid. Please reconnect with fresh credentials to restore pool functionality."
+      }
+
+      assert {:keep_state_and_data, {:reply, ^from, {:error, ^expected_error}}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:checkout, nil, self()},
+                 :waiting_for_secrets,
+                 data
+               )
     end
 
     test "rejects connection when DB responds with SSL negotiation 'N'" do
