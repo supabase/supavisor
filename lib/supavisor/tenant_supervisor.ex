@@ -60,7 +60,8 @@ defmodule Supavisor.TenantSupervisor do
     %{
       id: args.id,
       start: {__MODULE__, :start_link, [args]},
-      restart: :transient
+      restart: :transient,
+      type: :supervisor
     }
   end
 
