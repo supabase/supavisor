@@ -52,8 +52,8 @@ defmodule SupavisorWeb.Router do
       :update_auth_credentials
     )
 
-    get("/tenants/:external_id/bans", TenantController, :list_bans)
-    post("/tenants/:external_id/bans/:operation/clear", TenantController, :clear_ban)
+    get("/tenants/:external_id/network_bans", TenantController, :list_network_bans)
+    delete("/tenants/:external_id/network_bans", TenantController, :clear_network_bans)
 
     get("/health", TenantController, :health)
 

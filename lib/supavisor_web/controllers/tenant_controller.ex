@@ -302,15 +302,14 @@ defmodule SupavisorWeb.TenantController do
     end
   end
 
-  operation(:list_bans,
-    summary: "List circuit breaker bans for tenant",
+  operation(:list_network_bans,
+    summary: "List network bans for tenant",
     description: """
-    Returns circuit breaker operations banned on a tenant.
+    Returns IP addresses banned due to authentication errors.
 
-    Each operation has specific failure thresholds that trigger the circuit breaker.
-    The `blocked_until` is a unix timestamp indicating for how long new operations
-    of that type are blocked. See the operation type descriptions for specific threshold
-    details.
+    When too many authentication failures occur from an IP, the circuit breaker
+    blocks that IP for a configured period. This endpoint returns all currently
+    banned IPs with their unblock unix timestamps.
     """,
     parameters: [
       external_id: [in: :path, description: "External ID", type: :string],
@@ -322,10 +321,10 @@ defmodule SupavisorWeb.TenantController do
     }
   )
 
-  def list_bans(conn, %{"external_id" => external_id}) do
-    case Tenants.list_bans(external_id) do
+  def list_network_bans(conn, %{"external_id" => external_id}) do
+    case Tenants.list_network_bans(external_id) do
       {:ok, bans} ->
-        render(conn, "list_bans.json", bans: bans)
+        render(conn, "list_network_bans.json", bans: bans)
 
       {:error, :tenant_not_found} ->
         conn
@@ -334,27 +333,22 @@ defmodule SupavisorWeb.TenantController do
     end
   end
 
-  operation(:clear_ban,
-    summary: "Clear a circuit breaker ban for tenant",
+  operation(:clear_network_bans,
+    summary: "Clear network bans for specific IPs",
     description: """
-    Manually clears a circuit breaker ban for a specific operation on a tenant.
+    Manually clears authentication error bans for specific IP addresses.
 
-    This administrative operation completely erases the circuit breaker state,
-    removing the block and clearing the failure history. The operation will be
-    allowed to proceed immediately.
-
-    Returns the list of remaining active bans after clearing.
+    This removes the circuit breaker block globally across all cluster nodes
+    for the provided IP addresses. Returns remaining bans after the clear operation
+    in the same format as the list endpoint.
     """,
     parameters: [
       external_id: [in: :path, description: "External tenant ID", type: :string],
-      operation: [
-        in: :path,
-        description: "Circuit breaker operation to clear",
-        type: :string,
-        example: "auth_error"
-      ],
       authorization: @authorization
     ],
+    request_body:
+      {"IP addresses to clear", "application/json", SupavisorWeb.OpenApiSchemas.ClearNetworkBans,
+       required: true},
     responses: %{
       200 => BanList.response(),
       404 => NotFound.response(),
@@ -362,22 +356,15 @@ defmodule SupavisorWeb.TenantController do
     }
   )
 
-  def clear_ban(conn, %{"external_id" => external_id, "operation" => operation}) do
-    case Tenants.clear_ban(external_id, operation) do
+  def clear_network_bans(conn, %{"external_id" => external_id, "ipv4_addresses" => ip_addresses}) do
+    case Tenants.clear_network_bans(external_id, ip_addresses) do
       {:ok, remaining_bans} ->
-        render(conn, "list_bans.json", bans: remaining_bans)
+        render(conn, "list_network_bans.json", bans: remaining_bans)
 
       {:error, :tenant_not_found} ->
         conn
         |> put_status(404)
         |> render("error.json", error: "Tenant not found")
-
-      {:error, :invalid_operation} ->
-        conn
-        |> put_status(400)
-        |> render("error.json",
-          error: "Invalid operation. Must be one of: auth_error, db_connection, get_secrets"
-        )
     end
   end
 end

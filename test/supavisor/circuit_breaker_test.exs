@@ -173,31 +173,96 @@ defmodule Supavisor.CircuitBreakerTest do
     end
   end
 
-  describe "blocked/1" do
-    test "returns all blocked operations with the blocked_until timestamp" do
-      CircuitBreaker.record_failure("tenant1", :get_secrets)
-      CircuitBreaker.record_failure("tenant1", :db_connection)
-
+  describe "opened/2" do
+    test "returns blocked operations with key and blocked_until timestamp" do
       for _ <- 1..10 do
         CircuitBreaker.record_failure("tenant1", :auth_error)
       end
 
-      CircuitBreaker.record_failure("tenant2", :get_secrets)
-
       assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :auth_error)
 
-      assert [auth_error: blocked_until] = CircuitBreaker.blocked("tenant1")
+      assert [{"tenant1", blocked_until}] = CircuitBreaker.opened("tenant1", :auth_error)
       assert is_integer(blocked_until)
       assert blocked_until > System.system_time(:second)
     end
 
-    test "returns empty list when no operations are blocked" do
+    test "returns empty list when operation is not blocked" do
       CircuitBreaker.record_failure("tenant1", :get_secrets)
-      assert [] = CircuitBreaker.blocked("tenant1")
+      assert [] = CircuitBreaker.opened("tenant1", :get_secrets)
     end
 
-    test "returns empty list for an unknown tenant" do
-      assert [] = CircuitBreaker.blocked("tenant3")
+    test "returns empty list for unknown key" do
+      assert [] = CircuitBreaker.opened("unknown_tenant", :auth_error)
+    end
+
+    test "supports pattern matching with {tenant, :_} to find all IPs" do
+      ip1 = "10.0.0.1"
+      ip2 = "10.0.0.2"
+
+      for _ <- 1..10 do
+        CircuitBreaker.record_failure({"tenant1", ip1}, :auth_error)
+        CircuitBreaker.record_failure({"tenant1", ip2}, :auth_error)
+      end
+
+      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip1}, :auth_error)
+      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip2}, :auth_error)
+
+      bans = CircuitBreaker.opened({"tenant1", :_}, :auth_error)
+      assert length(bans) == 2
+
+      assert Enum.all?(bans, fn {{tenant, ip}, blocked_until} ->
+               tenant == "tenant1" and ip in [ip1, ip2] and is_integer(blocked_until) and
+                 blocked_until > System.system_time(:second)
+             end)
+    end
+
+    test "returns empty list when no keys match pattern" do
+      assert [] = CircuitBreaker.opened({"unknown_tenant", :_}, :auth_error)
+    end
+
+    test "only returns keys matching the exact prefix in pattern and the operation" do
+      ip1 = "10.0.0.1"
+      ip2 = "10.0.0.2"
+
+      for _ <- 1..10 do
+        CircuitBreaker.record_failure({"tenant1", ip1}, :auth_error)
+        CircuitBreaker.record_failure({"tenant1", ip1}, :get_secrets)
+        CircuitBreaker.record_failure({"tenant2", ip2}, :auth_error)
+      end
+
+      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip1}, :auth_error)
+      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip1}, :get_secrets)
+
+      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant2", ip2}, :auth_error)
+
+      assert [{{"tenant1", ^ip1}, blocked_until}] =
+               CircuitBreaker.opened({"tenant1", :_}, :auth_error)
+
+      assert is_integer(blocked_until)
+      assert blocked_until > System.system_time(:second)
+    end
+  end
+
+  describe "open/3" do
+    test "sets circuit breaker to open without previous failures" do
+      key = "tenant1"
+      blocked_until = System.system_time(:second) + 300
+
+      CircuitBreaker.open(key, :auth_error, blocked_until)
+
+      assert {:error, :circuit_open, ^blocked_until} =
+               CircuitBreaker.check(key, :auth_error)
+    end
+
+    test "sets circuit breaker to open with previous failures" do
+      key = "tenant1"
+      CircuitBreaker.record_failure(key, :auth_error)
+
+      blocked_until = System.system_time(:second) + 300
+      CircuitBreaker.open(key, :auth_error, blocked_until)
+
+      assert {:error, :circuit_open, ^blocked_until} =
+               CircuitBreaker.check(key, :auth_error)
     end
   end
 end

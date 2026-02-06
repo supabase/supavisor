@@ -40,6 +40,9 @@ defmodule Supavisor.CircuitBreaker do
 
   @doc """
   Records a failure for a given key and operation.
+
+  For the :auth_error, it the circuit is opened, it is opened across all the nodes
+  in the cluster.
   """
   @spec record_failure(term(), atom()) :: :ok
   def record_failure(key, operation) when is_atom(operation) do
@@ -63,6 +66,8 @@ defmodule Supavisor.CircuitBreaker do
             Logger.warning(
               "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{block_until}"
             )
+
+            maybe_open_globally(key, operation, block_until)
 
             block_until
           else
@@ -101,29 +106,117 @@ defmodule Supavisor.CircuitBreaker do
   end
 
   @doc """
-  Returns a list of currently blocked operations for a given key.
-  Each entry is a tuple of {operation, blocked_until}.
+  Given the operation returns a list of {key, blocked_until} for which the circuit is opened.
 
-  Returns an empty list if no operations are blocked for the key or the key does not exist.
+  ## Examples
+
+      iex> opened("tenant1", :auth_error)
+      [{"tenant1", 1234567890}]
+
+      iex> opened({"tenant1", "192.168.1.100"}, :auth_error)
+      [{{"tenant1", "192.168.1.100"}, 1234567890}]
+
+      iex> opened({"tenant1", :_}, :auth_error)
+      [{{"tenant1", "192.168.1.100"}, 1234567890}, {{"tenant1", "10.0.0.1"}, 1234567891}]
   """
-  @spec blocked(term()) :: [{atom(), integer()}]
-  def blocked(key) do
+  @spec opened(term(), atom()) :: [{term(), integer()}]
+  def opened(key, operation) when is_atom(operation) do
     now = System.system_time(:second)
 
     :ets.select(@table, [
-      {{{key, :"$1"}, %{blocked_until: :"$2"}},
-       [{:andalso, {:is_integer, :"$2"}, {:>, :"$2", now}}], [{{:"$1", :"$2"}}]}
+      {{{key, operation}, %{blocked_until: :"$1"}},
+       [{:andalso, {:is_integer, :"$1"}, {:>, :"$1", now}}], [:"$_"]}
     ])
+    |> Enum.map(fn {{key, _operation}, %{blocked_until: blocked_until}} ->
+      {key, blocked_until}
+    end)
   end
 
   @doc """
   Clears circuit breaker state for a key and operation.
+
+  For :auth_error operation clears the state on all the cluster nodes.
   """
   @spec clear(term(), atom()) :: :ok
   def clear(key, operation) when is_atom(operation) do
     :ets.delete(@table, {key, operation})
+    maybe_clear_globally(key, operation)
+    Logger.warning("Circuit breaker cleared for key=#{inspect(key)} operation=#{operation}")
     :ok
   end
+
+  # Clears circuit breaker state globally for :auth_error operation.
+  # Propagates the clear operation to all nodes in the cluster.
+  defp maybe_clear_globally(key, :auth_error = operation) do
+    nodes = Node.list()
+
+    nodes
+    |> :erpc.multicall(__MODULE__, :clear, [key, operation], 10_000)
+    |> then(&Enum.zip(nodes, &1))
+    |> Enum.each(fn
+      {node, {:ok, :ok}} ->
+        Logger.debug(
+          "Circuit breaker cleared for key=#{inspect(key)} operation=#{operation} node=#{node}"
+        )
+
+      {node, error} ->
+        Logger.error(
+          "Circuit breaker failed to clear for key=#{inspect(key)} operation=#{operation} node=#{node} error=#{inspect(error)}"
+        )
+    end)
+  end
+
+  defp maybe_clear_globally(_, _), do: :ok
+
+  @doc """
+  Open the circuit arbitrary for a given key and operation.
+
+  This directly sets blocked_until without counting failures. Used for
+  propagating the opened circuit state across the cluster.
+  """
+  @spec open(term(), atom(), integer()) :: :ok
+  def open(key, operation, blocked_until)
+      when is_atom(operation) and is_integer(blocked_until) do
+    ets_key = {key, operation}
+
+    case :ets.lookup(@table, ets_key) do
+      [] ->
+        :ets.insert(@table, {ets_key, %{failures: [], blocked_until: blocked_until}})
+
+      [{^ets_key, state}] ->
+        :ets.insert(@table, {ets_key, %{state | blocked_until: blocked_until}})
+    end
+
+    Logger.warning(
+      "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{blocked_until}"
+    )
+
+    :ok
+  end
+
+  # Propagates the :auth_error ban to all nodes except for the current node.
+  # Does NOT run on the caller's node.
+  defp maybe_open_globally(key, :auth_error = operation, blocked_until)
+       when is_integer(blocked_until) do
+    nodes = Node.list()
+
+    nodes
+    |> :erpc.multicall(__MODULE__, :open, [key, operation, blocked_until], 10_000)
+    |> then(&Enum.zip(nodes, &1))
+    |> Enum.each(fn
+      {node, {:ok, :ok}} ->
+        Logger.debug(
+          "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} node=#{node}"
+        )
+
+      {node, error} ->
+        Logger.error(
+          "Circuit breaker failed to open for key=#{inspect(key)} operation=#{operation} node=#{node} error=#{inspect(error)}"
+        )
+    end)
+  end
+
+  defp maybe_open_globally(_, _, _), do: :ok
 
   @doc """
   Returns the user-facing explanation for a given operation.
