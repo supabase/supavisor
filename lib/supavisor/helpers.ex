@@ -386,9 +386,12 @@ defmodule Supavisor.Helpers do
 
   @spec peer_ip(:gen_tcp.socket()) :: String.t()
   def peer_ip(socket) do
-    case :inet.peername(socket) do
+    peername_fn =
+      if match?({:sslsocket, _, _}, socket), do: &:ssl.peername/1, else: &:inet.peername/1
+
+    case peername_fn.(socket) do
       {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
-      _error -> "undefined"
+      _ -> "undefined"
     end
   end
 
@@ -433,6 +436,76 @@ defmodule Supavisor.Helpers do
 
       value ->
         raise "Invalid boolean value for #{env_var}: #{inspect(value)}. Expected: true, false, 1, or 0"
+    end
+  end
+
+  @doc """
+  Checks if a token matches either a PAT or JWT.
+
+  ## Parameters
+
+  - `token`: The token string
+  """
+  def token_matches?(<<"sbp_", _rest::binary>>), do: true
+
+  def token_matches?(token) do
+    case String.split(token, ".") do
+      ["eyJ" <> _, "eyJ" <> _, _sig] ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  @doc """
+  Makes an HTTPS GET request to `url` with a Bearer `token`
+  and checks if the given `role` is present in the returned `user_roles` list.
+
+  Returns:
+    - `{:ok, true}` if role is present
+    - `{:ok, false}` if role is absent
+    - `{:error, :unauthorized}` for 401
+    - `{:error, :forbidden}` for 403
+    - `{:error, {:unexpected_status, status}}` for other HTTP codes
+  """
+  def check_user_has_jit_role(url, token, role \\ "postgres", rhost, opts \\ []) do
+    opts =
+      Keyword.merge(opts,
+        headers: [
+          authorization: "Bearer #{token}",
+          "content-type": "application/json"
+        ]
+      )
+
+    body =
+      %{
+        rhost: rhost,
+        role: role
+      }
+      |> Jason.encode!()
+
+    response =
+      Req.post!(
+        url,
+        opts
+        |> Keyword.put(:body, body)
+      )
+
+    case response.status do
+      200 ->
+        %{"user_role" => %{"role" => urole}} = response.body
+
+        # double check server response
+        has_valid_role? = urole == role
+
+        {:ok, has_valid_role?}
+
+      status when status in [401, 403] ->
+        {:error, :unauthorized_or_forbidden}
+
+      status ->
+        {:error, {:unexpected_status, status}}
     end
   end
 end
