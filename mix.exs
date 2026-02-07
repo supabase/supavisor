@@ -69,7 +69,7 @@ defmodule Supavisor.MixProject do
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
-      {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.2"},
+      {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.3"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
       {:rustler, "~> 0.36.1"},
