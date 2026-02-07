@@ -245,6 +245,7 @@ defmodule Supavisor.Tenants do
     %Tenant{}
     |> Tenant.changeset(attrs)
     |> Repo.insert()
+    |> with_cache_invalidation(operation: "create")
   end
 
   @doc """
@@ -263,6 +264,7 @@ defmodule Supavisor.Tenants do
     tenant
     |> Tenant.changeset(attrs)
     |> Repo.update()
+    |> with_cache_invalidation(operation: "update", terminate_pools: true)
   end
 
   def update_tenant_ps(external_id, new_ps) do
@@ -285,7 +287,9 @@ defmodule Supavisor.Tenants do
 
   """
   def delete_tenant(%Tenant{} = tenant) do
-    Repo.delete(tenant)
+    tenant
+    |> Repo.delete()
+    |> with_cache_invalidation(operation: "delete")
   end
 
   @spec delete_tenant_by_external_id(String.t()) :: boolean()
@@ -294,11 +298,39 @@ defmodule Supavisor.Tenants do
     |> Repo.delete_all()
     |> case do
       {num, _} when num > 0 ->
+        cleanup_result = Supavisor.del_all_cache_dist(id)
+        Logger.info("Delete cache dist on delete #{id}: #{inspect(cleanup_result)}")
         true
 
       _ ->
         false
     end
+  end
+
+  defp with_cache_invalidation(result, opts) do
+    case result do
+      {:ok, %Tenant{external_id: external_id}} ->
+        operation = Keyword.get(opts, :operation, "operation")
+
+        cleanup_result = Supavisor.del_all_cache_dist(external_id)
+
+        Logger.info(
+          "Delete cache dist on #{operation} #{external_id}: #{inspect(cleanup_result)}"
+        )
+
+        if opts[:terminate_pools] do
+          terminate_result = Supavisor.terminate_global(external_id)
+
+          Logger.warning(
+            "Terminate pools on #{operation} #{external_id}: #{inspect(terminate_result)}"
+          )
+        end
+
+      _ ->
+        :ok
+    end
+
+    result
   end
 
   @spec delete_cluster_by_alias(String.t()) :: boolean()

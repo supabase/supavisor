@@ -205,11 +205,11 @@ defmodule SupavisorWeb.TenantControllerTest do
                |> assert_schema("UnprocessablyEntity")
     end
 
-    test "triggers Supavisor.stop/2", %{
+    test "triggers Supavisor.terminate_global/1", %{
       conn: conn,
       tenant: %Tenant{external_id: external_id}
     } do
-      msg = "Stop #{@update_attrs.external_id}"
+      msg = "Terminate pools on update #{@update_attrs.external_id}"
 
       assert capture_log(fn ->
                put(conn, ~p"/api/tenants/#{external_id}", tenant: @update_attrs)
