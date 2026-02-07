@@ -6,6 +6,7 @@ defmodule Supavisor.Tenants do
   import Ecto.Query, warn: false
   alias Supavisor.Repo
 
+  alias Supavisor.CircuitBreaker
   alias Supavisor.ClientHandler.Auth.ManagerSecrets
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
@@ -716,5 +717,81 @@ defmodule Supavisor.Tenants do
   """
   def change_cluster_tenants(%ClusterTenants{} = cluster_tenants, attrs \\ %{}) do
     ClusterTenants.changeset(cluster_tenants, attrs)
+  end
+
+  # TODO: remove?
+  @doc """
+  Returns a list of currently blocked operations for a given tenant external_id.
+
+  Each entry is a map with :operation and :blocked_until keys. If there are
+  no blocked operations for a tenant, an empty list is returned.
+
+  ## Examples
+
+      iex> list_bans("tenant_external_id")
+      [%{operation: :some_operation, blocked_until: 1620000000}, ...]
+  """
+  @spec list_bans(String.t()) ::
+          {:ok,
+           [
+             %{required(:operation) => atom(), required(:blocked_until) => integer()}
+           ]}
+          | {:error, :tenant_not_found}
+  def list_bans(external_id) when is_binary(external_id) do
+    if get_tenant_by_external_id(external_id) do
+      list_network_bans(external_id)
+    else
+      {:error, :tenant_not_found}
+    end
+  end
+
+  @doc """
+  Returns a list of network bans (auth_error) for a given tenant.
+
+  This specifically lists IP-based authentication error bans across the cluster
+  along with their unblock unix timestamp.
+
+  ## Examples
+
+      iex> list_network_bans("tenant_external_id")
+      {:ok, [%{banned_address: "192.168.1.100", banned_until: 1620000000}, ...]}
+  """
+  @spec list_network_bans(String.t()) ::
+          {:ok,
+           [%{required(:banned_address) => String.t(), required(:banned_until) => integer()}]}
+          | {:error, :tenant_not_found}
+  def list_network_bans(external_id) when is_binary(external_id) do
+    if get_tenant_by_external_id(external_id) do
+      {external_id, :_}
+      |> CircuitBreaker.opened(:auth_error)
+      |> Enum.map(fn {{_tenant, ip}, blocked_until} ->
+        %{banned_address: ip, banned_until: blocked_until}
+      end)
+      |> then(&{:ok, &1})
+    else
+      {:error, :tenant_not_found}
+    end
+  end
+
+  @doc """
+  Clears network bans (auth_error) for specific IP addresses.
+
+  This completely erases the circuit breaker state globally across all cluster nodes
+  for the specified IP addresses, allowing authentication attempts to proceed immediately.
+
+  Returns the remaining active bans after clearing.
+  """
+  @spec clear_network_bans(String.t(), [String.t()]) ::
+          {:ok,
+           [%{required(:banned_address) => String.t(), required(:banned_until) => integer()}]}
+          | {:error, :tenant_not_found}
+  def clear_network_bans(external_id, ip_addresses)
+      when is_binary(external_id) and is_list(ip_addresses) do
+    if get_tenant_by_external_id(external_id) do
+      Enum.each(ip_addresses, &CircuitBreaker.clear({external_id, &1}, :auth_error))
+      list_network_bans(external_id)
+    else
+      {:error, :tenant_not_found}
+    end
   end
 end

@@ -23,6 +23,14 @@ defmodule SupavisorWeb.TenantView do
     %{result: result}
   end
 
+  def render("list_bans.json", %{bans: bans}) do
+    %{data: bans}
+  end
+
+  def render("list_network_bans.json", %{bans: bans}) do
+    %{banned_ipv4_addresses: bans}
+  end
+
   def render("not_found.json", _) do
     %{error: "not found"}
   end
