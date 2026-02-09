@@ -14,18 +14,21 @@ defmodule Supavisor.CircuitBreaker do
       max_failures: 5,
       window_seconds: 600,
       block_seconds: 600,
+      propagate?: false,
       explanation: "Failed to retrieve database credentials"
     },
     db_connection: %{
       max_failures: 100,
       window_seconds: 300,
       block_seconds: 600,
+      propagate?: false,
       explanation: "Unable to establish connection to upstream database"
     },
     auth_error: %{
       max_failures: 10,
       window_seconds: 300,
       block_seconds: 600,
+      propagate?: true,
       explanation: "Too many authentication errors"
     }
   }
@@ -59,22 +62,13 @@ defmodule Supavisor.CircuitBreaker do
 
         recent_failures = Enum.filter([now | state.failures], &(&1 >= window_start))
 
-        blocked_until =
-          if length(recent_failures) >= threshold.max_failures do
-            block_until = now + threshold.block_seconds
-
-            Logger.warning(
-              "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{block_until}"
-            )
-
-            maybe_open_globally(key, operation, block_until)
-
-            block_until
-          else
-            state.blocked_until
-          end
-
-        :ets.insert(@table, {ets_key, %{failures: recent_failures, blocked_until: blocked_until}})
+        if length(recent_failures) >= threshold.max_failures do
+          block_until = now + threshold.block_seconds
+          open_local(key, operation, block_until, recent_failures)
+          threshold.propagate? && open_global(key, operation, block_until)
+        else
+          :ets.insert(@table, {ets_key, %{state | failures: recent_failures}})
+        end
     end
 
     :ok
@@ -134,31 +128,30 @@ defmodule Supavisor.CircuitBreaker do
 
   @doc """
   Clears circuit breaker state for a key and operation.
-
-  For :auth_error operation clears the state on all the cluster nodes.
   """
   @spec clear(term(), atom()) :: :ok
   def clear(key, operation) when is_atom(operation) do
-    do_clear(key, operation)
-    maybe_clear_globally(key, operation)
+    clear_local(key, operation)
+    Map.fetch!(@thresholds, operation).propagate? && clear_global(key, operation)
+    :ok
+  end
+
+  @doc """
+  Clears circuit breaker for a given key and operation on the current node.
+  """
+  @spec clear_local(term(), atom()) :: :ok
+  def clear_local(key, operation) when is_atom(operation) do
+    :ets.delete(@table, {key, operation})
     Logger.warning("Circuit breaker cleared for key=#{inspect(key)} operation=#{operation}")
     :ok
   end
 
-  @doc false
-  # public function for remote clearing
-  def do_clear(key, operation) do
-    :ets.delete(@table, {key, operation})
-    :ok
-  end
-
-  # Clears circuit breaker state globally for :auth_error operation.
-  # Propagates the clear operation to all nodes in the cluster.
-  defp maybe_clear_globally(key, :auth_error = operation) do
+  # Propagates the state clearing to all nodes in the cluster.
+  defp clear_global(key, operation) do
     nodes = Node.list()
 
     nodes
-    |> :erpc.multicall(__MODULE__, :do_clear, [key, operation], 10_000)
+    |> :erpc.multicall(__MODULE__, :clear_local, [key, operation], 10_000)
     |> then(&Enum.zip(nodes, &1))
     |> Enum.each(fn
       {node, {:ok, :ok}} ->
@@ -173,25 +166,32 @@ defmodule Supavisor.CircuitBreaker do
     end)
   end
 
-  defp maybe_clear_globally(_, _), do: :ok
-
   @doc """
-  Open the circuit arbitrary for a given key and operation.
-
-  This directly sets blocked_until without counting failures. Used for
-  propagating the opened circuit state across the cluster.
+  Opens the circuit arbitrary for a given key and operation on the current node.
   """
-  @spec open(term(), atom(), integer()) :: :ok
-  def open(key, operation, blocked_until)
-      when is_atom(operation) and is_integer(blocked_until) do
+  @spec open_local(term(), atom(), integer(), list(integer()) | nil) :: :ok
+  def open_local(key, operation, blocked_until, recent_failures \\ nil)
+      when is_atom(operation) and is_integer(blocked_until) and
+             (is_list(recent_failures) or is_nil(recent_failures)) do
     ets_key = {key, operation}
 
     case :ets.lookup(@table, ets_key) do
       [] ->
-        :ets.insert(@table, {ets_key, %{failures: [], blocked_until: blocked_until}})
+        :ets.insert(
+          @table,
+          {ets_key, %{failures: recent_failures || [], blocked_until: blocked_until}}
+        )
 
       [{^ets_key, state}] ->
-        :ets.insert(@table, {ets_key, %{state | blocked_until: blocked_until}})
+        :ets.insert(
+          @table,
+          {ets_key,
+           %{
+             state
+             | failures: recent_failures || state.failures,
+               blocked_until: blocked_until
+           }}
+        )
     end
 
     Logger.warning(
@@ -201,14 +201,12 @@ defmodule Supavisor.CircuitBreaker do
     :ok
   end
 
-  # Propagates the :auth_error ban to all nodes except for the current node.
-  # Does NOT run on the caller's node.
-  defp maybe_open_globally(key, :auth_error = operation, blocked_until)
-       when is_integer(blocked_until) do
+  # Propagates the circuit open to all nodes in the cluster.
+  defp open_global(key, operation, blocked_until) do
     nodes = Node.list()
 
     nodes
-    |> :erpc.multicall(__MODULE__, :open, [key, operation, blocked_until], 10_000)
+    |> :erpc.multicall(__MODULE__, :open_local, [key, operation, blocked_until, nil], 10_000)
     |> then(&Enum.zip(nodes, &1))
     |> Enum.each(fn
       {node, {:ok, :ok}} ->
@@ -222,8 +220,6 @@ defmodule Supavisor.CircuitBreaker do
         )
     end)
   end
-
-  defp maybe_open_globally(_, _, _), do: :ok
 
   @doc """
   Returns the user-facing explanation for a given operation.

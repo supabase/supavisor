@@ -111,7 +111,7 @@ defmodule Supavisor.CircuitBreakerTest do
   end
 
   describe "clear/2" do
-    test "removes circuit breaker state" do
+    test "clears circuit breaker state" do
       for _ <- 1..5 do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
       end
@@ -120,6 +120,22 @@ defmodule Supavisor.CircuitBreakerTest do
 
       assert :ok = CircuitBreaker.check("tenant1", :get_secrets)
       assert [] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
+    end
+  end
+
+  describe "clear_local/2" do
+    test "clears circuit breaker state on current node" do
+      key = "tenant1"
+
+      for _ <- 1..10 do
+        CircuitBreaker.record_failure(key, :auth_error)
+      end
+
+      assert {:error, :circuit_open, _} = CircuitBreaker.check(key, :auth_error)
+
+      CircuitBreaker.clear_local(key, :auth_error)
+
+      assert :ok = CircuitBreaker.check(key, :auth_error)
     end
   end
 
@@ -243,12 +259,12 @@ defmodule Supavisor.CircuitBreakerTest do
     end
   end
 
-  describe "open/3" do
+  describe "open_local/3" do
     test "sets circuit breaker to open without previous failures" do
       key = "tenant1"
       blocked_until = System.system_time(:second) + 300
 
-      CircuitBreaker.open(key, :auth_error, blocked_until)
+      CircuitBreaker.open_local(key, :auth_error, blocked_until)
 
       assert {:error, :circuit_open, ^blocked_until} =
                CircuitBreaker.check(key, :auth_error)
@@ -259,7 +275,7 @@ defmodule Supavisor.CircuitBreakerTest do
       CircuitBreaker.record_failure(key, :auth_error)
 
       blocked_until = System.system_time(:second) + 300
-      CircuitBreaker.open(key, :auth_error, blocked_until)
+      CircuitBreaker.open_local(key, :auth_error, blocked_until)
 
       assert {:error, :circuit_open, ^blocked_until} =
                CircuitBreaker.check(key, :auth_error)
