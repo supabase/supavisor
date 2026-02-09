@@ -1,10 +1,10 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.ClientHandler.Auth.{MD5Secrets, PasswordSecrets, SASLSecrets}
   alias Supavisor.DbHandler, as: Db
-  alias Supavisor.Protocol.Server
   alias Supavisor.EncryptedSecrets
-  alias Supavisor.ClientHandler.Auth.{PasswordSecrets, SASLSecrets, MD5Secrets}
+  alias Supavisor.Protocol.Server
 
   # import Mock
   @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}

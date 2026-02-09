@@ -11,8 +11,8 @@ defmodule Supavisor.ClientHandler.Auth do
 
   require Logger
 
-  alias Supavisor.{EncryptedSecrets, Helpers, Protocol.Server}
   alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.{EncryptedSecrets, Helpers, Protocol.Server}
 
   ## Secret Management
 

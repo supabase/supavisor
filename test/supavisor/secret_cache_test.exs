@@ -1,10 +1,10 @@
 defmodule Supavisor.SecretCacheTest do
   use ExUnit.Case, async: false
 
+  alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.EncryptedSecrets
   alias Supavisor.SecretCache
   alias Supavisor.TenantCache
-  alias Supavisor.EncryptedSecrets
-  alias Supavisor.ClientHandler.Auth.PasswordSecrets
 
   setup do
     Cachex.clear(Supavisor.Cache)
