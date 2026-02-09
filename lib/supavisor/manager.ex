@@ -6,9 +6,7 @@ defmodule Supavisor.Manager do
   use GenServer
   require Logger
 
-  alias Supavisor.Protocol.Server
-  alias Supavisor.Tenants
-  alias Supavisor.Helpers
+  alias Supavisor.{EncryptedSecrets, Helpers, Protocol.Server, Tenants}
 
   @check_timeout 120_000
 
@@ -117,7 +115,7 @@ defmodule Supavisor.Manager do
     tid = :ets.new(__MODULE__, [:protected])
 
     {{type, tenant}, user, mode, db_name, _search_path} = args.id
-    {method, secrets} = args.secrets
+    {method, secrets_struct} = EncryptedSecrets.decrypt_with_method(args.secrets)
 
     {tenant_record, replica_type} =
       case type do
@@ -177,15 +175,13 @@ defmodule Supavisor.Manager do
       secrets: args.secrets
     }
 
-    secrets_struct = secrets.()
-
     alias Supavisor.ClientHandler.Auth
 
     if method == :password or match?(%Auth.SASLSecrets{}, secrets_struct) do
-      Supavisor.SecretCache.put_validation_secrets(tenant, user, method, secrets)
-      Supavisor.SecretCache.put_upstream_auth_secrets(args.id, method, secrets)
+      Supavisor.SecretCache.put_validation_secrets(tenant, user, args.secrets)
+      Supavisor.SecretCache.put_upstream_auth_secrets(args.id, args.secrets)
     else
-      Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, method, secrets)
+      Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, args.secrets)
     end
 
     persisted_ps = Supavisor.TenantCache.get_parameter_status(args.id)

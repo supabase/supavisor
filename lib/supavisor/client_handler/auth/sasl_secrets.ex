@@ -8,7 +8,7 @@ defmodule Supavisor.ClientHandler.Auth.SASLSecrets do
           user: String.t(),
           client_key: binary() | nil,
           server_key: binary(),
-          digest: atom(),
+          digest: String.t(),
           iterations: pos_integer(),
           salt: binary(),
           stored_key: binary()

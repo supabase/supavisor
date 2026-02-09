@@ -28,6 +28,7 @@ defmodule Supavisor.ClientHandler do
 
   alias Supavisor.{
     DbHandler,
+    EncryptedSecrets,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
@@ -307,17 +308,18 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:handle, {method, secrets}, info},
+        {:handle, %EncryptedSecrets{} = encrypted, info},
         _state,
         %{sock: sock} = data
       ) do
+    {method, _} = EncryptedSecrets.decrypt_with_method(encrypted)
     Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(method)}")
 
     case Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error) do
       :ok ->
         case method do
           :auth_query_md5 ->
-            auth_context = Auth.create_auth_context(method, secrets, info)
+            auth_context = Auth.create_auth_context(method, encrypted, info)
             :ok = HandlerHelpers.sock_send(sock, Server.md5_request(auth_context.salt))
 
             {:next_state, :auth_md5_wait, %{data | auth_context: auth_context},
@@ -325,7 +327,7 @@ defmodule Supavisor.ClientHandler do
 
           _scram_method ->
             :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
-            auth_context = Auth.create_auth_context(method, secrets, info)
+            auth_context = Auth.create_auth_context(method, encrypted, info)
 
             {:next_state, :auth_scram_first_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
@@ -618,11 +620,11 @@ defmodule Supavisor.ClientHandler do
          {:ok, key} <-
            Auth.validate_credentials(
              auth_context.method,
-             auth_context.secrets.().secret,
+             EncryptedSecrets.decrypt(auth_context.secrets).password,
              auth_context.salt,
              client_md5
            ) do
-      handle_auth_success(data.sock, {auth_context.method, auth_context.secrets}, key, data)
+      handle_auth_success(data.sock, auth_context.secrets, key, data)
     else
       {:error, reason} ->
         handle_auth_failure(data.sock, reason, data, :auth_md5_wait)
@@ -671,7 +673,7 @@ defmodule Supavisor.ClientHandler do
            ) do
       message = Auth.build_scram_final_response(auth_context)
       :ok = HandlerHelpers.sock_send(data.sock, message)
-      handle_auth_success(data.sock, {auth_context.method, auth_context.secrets}, key, data)
+      handle_auth_success(data.sock, auth_context.secrets, key, data)
     else
       {:error, reason} ->
         handle_auth_failure(data.sock, reason, data, :auth_scram_final_wait)
@@ -827,13 +829,13 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
 
-  defp handle_auth_success(sock, {method, secrets}, client_key, data) do
-    final_secrets = Auth.prepare_final_secrets(secrets, client_key)
+  defp handle_auth_success(sock, %EncryptedSecrets{} = encrypted, client_key, data) do
+    final_encrypted = Auth.prepare_final_secrets(encrypted, client_key)
 
     # Only store in TenantCache for pool modes (transaction/session)
     # For proxy mode, secrets are passed directly to DbHandler via data.auth
     if data.mode != :proxy do
-      Supavisor.SecretCache.put_upstream_auth_secrets(data.id, method, final_secrets)
+      Supavisor.SecretCache.put_upstream_auth_secrets(data.id, final_encrypted)
 
       # Notify any waiting db handlers that secrets are now available
       Supavisor.Manager.notify_secrets_available(data.id)
@@ -843,7 +845,7 @@ defmodule Supavisor.ClientHandler do
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
     Telem.client_join(:ok, data.id)
 
-    auth = Map.put(data.auth, :secrets, {method, final_secrets})
+    auth = Map.put(data.auth, :secrets, final_encrypted)
 
     conn_type =
       if data.mode == :proxy,
@@ -851,7 +853,7 @@ defmodule Supavisor.ClientHandler do
         else: :subscribe
 
     {:next_state, :connecting,
-     %{data | auth_context: nil, auth_secrets: {method, final_secrets}, auth: auth},
+     %{data | auth_context: nil, auth_secrets: final_encrypted, auth: auth},
      {:next_event, :internal, conn_type}}
   end
 

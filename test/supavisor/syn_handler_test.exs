@@ -16,13 +16,13 @@ defmodule Supavisor.SynHandlerTest do
       password: "postgres"
     }
 
-    auth_secret = {:password, fn -> secret end}
+    encrypted_secrets = Supavisor.EncryptedSecrets.encrypt(secret)
     {:ok, pid2} = :peer.call(peer, Supavisor.FixturesHelpers, :start_pool, [@id, secret])
     assert :peer.call(peer, Supavisor, :get_global_sup, [@id]) == pid2
     assert node(pid2) == node2
 
     assert nil == Supavisor.get_global_sup(@id)
-    {:ok, pid1} = Supavisor.start(@id, auth_secret)
+    {:ok, pid1} = Supavisor.start(@id, encrypted_secrets)
     assert pid1 == Supavisor.get_global_sup(@id)
     assert node(pid1) == node()
 

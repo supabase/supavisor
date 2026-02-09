@@ -68,7 +68,9 @@ defmodule Supavisor.Integration.SecretCheckerTest do
     pool_id =
       {{:single, tenant_id}, to_string(db_conf[:username]), :transaction, alt_db_name, nil}
 
-    assert {:ok, {_method, secrets_fn}} = Supavisor.SecretChecker.get_secrets(pool_id)
-    assert %{user: _} = secrets_fn.()
+    assert {:ok, %Supavisor.EncryptedSecrets{} = encrypted} =
+             Supavisor.SecretChecker.get_secrets(pool_id)
+
+    assert %{user: _} = Supavisor.EncryptedSecrets.decrypt(encrypted)
   end
 end

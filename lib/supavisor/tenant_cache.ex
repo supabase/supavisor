@@ -45,7 +45,7 @@ defmodule Supavisor.TenantCache do
   end
 
   @spec get_upstream_auth_secrets(Supavisor.id()) ::
-          {:ok, {atom(), function()}} | {:error, :not_found}
+          {:ok, Supavisor.EncryptedSecrets.t()} | {:error, :not_found}
   def get_upstream_auth_secrets(id) do
     case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
       [{_pid, table}] ->
@@ -59,7 +59,7 @@ defmodule Supavisor.TenantCache do
     end
   end
 
-  @spec put_upstream_auth_secrets(Supavisor.id(), {atom(), function()}) :: true
+  @spec put_upstream_auth_secrets(Supavisor.id(), Supavisor.EncryptedSecrets.t()) :: true
   def put_upstream_auth_secrets(id, secrets) do
     case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
       [{_pid, table}] ->

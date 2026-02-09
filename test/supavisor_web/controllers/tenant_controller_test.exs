@@ -248,9 +248,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
       external_id = auth_tenant.external_id
 
-      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant,
-                                                                            _user,
-                                                                            _password ->
+      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant, _encrypted ->
         [{:ok, :ok}]
       end)
 
@@ -299,9 +297,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
       external_id = auth_tenant.external_id
 
-      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant,
-                                                                            _user,
-                                                                            _password ->
+      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant, _encrypted ->
         [{:ok, :ok}]
       end)
 
@@ -326,9 +322,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       {:ok, auth_tenant} = Supavisor.Tenants.create_tenant(@auth_query_tenant_attrs)
       external_id = auth_tenant.external_id
 
-      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant,
-                                                                            _user,
-                                                                            _password ->
+      :meck.expect(Supavisor, :update_secret_checker_credentials_global, fn _tenant, _encrypted ->
         [{:ok, :ok}]
       end)
 
