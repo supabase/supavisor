@@ -16,13 +16,33 @@ defmodule Supavisor.EncryptedSecrets do
 
   @aad "supavisor_encrypted_secrets"
 
+  @type_to_module %{
+    "password" => PasswordSecrets,
+    "sasl" => SASLSecrets,
+    "md5" => MD5Secrets
+  }
+
+  @module_to_type Map.new(@type_to_module, fn {k, v} -> {v, k} end)
+
   @doc """
   Encrypts a secret struct into an `%EncryptedSecrets{}`.
   """
   @spec encrypt(PasswordSecrets.t() | SASLSecrets.t() | MD5Secrets.t()) :: t()
-  def encrypt(%PasswordSecrets{} = s), do: do_encrypt(s)
-  def encrypt(%SASLSecrets{} = s), do: do_encrypt(s)
-  def encrypt(%MD5Secrets{} = s), do: do_encrypt(s)
+  def encrypt(%module{} = secret) do
+    key = derive_key()
+    iv = :crypto.strong_rand_bytes(12)
+
+    json =
+      secret
+      |> module.to_encodable_map()
+      |> Map.put(:type, Map.fetch!(@module_to_type, module))
+      |> Jason.encode!()
+
+    {ciphertext, tag} =
+      :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, json, @aad, 16, true)
+
+    %__MODULE__{data: <<iv::binary, tag::binary, ciphertext::binary>>}
+  end
 
   @doc """
   Decrypts an `%EncryptedSecrets{}` back to the original struct.
@@ -43,22 +63,11 @@ defmodule Supavisor.EncryptedSecrets do
   """
   @spec decrypt_with_method(t()) :: {:password | :auth_query | :auth_query_md5, struct()}
   def decrypt_with_method(%__MODULE__{} = encrypted) do
-    struct = decrypt(encrypted)
-    {derive_method(struct), struct}
+    %module{} = struct = decrypt(encrypted)
+    {module.auth_method(), struct}
   end
 
   ## Private
-
-  defp do_encrypt(struct) do
-    key = derive_key()
-    iv = :crypto.strong_rand_bytes(12)
-    json = to_json(struct)
-
-    {ciphertext, tag} =
-      :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, json, @aad, 16, true)
-
-    %__MODULE__{data: <<iv::binary, tag::binary, ciphertext::binary>>}
-  end
 
   defp derive_key do
     secret_key_base =
@@ -67,53 +76,9 @@ defmodule Supavisor.EncryptedSecrets do
     :crypto.hash(:sha256, secret_key_base)
   end
 
-  defp derive_method(%PasswordSecrets{}), do: :password
-  defp derive_method(%SASLSecrets{}), do: :auth_query
-  defp derive_method(%MD5Secrets{}), do: :auth_query_md5
-
-  # JSON serialization
-
-  defp to_json(%PasswordSecrets{user: u, password: p}) do
-    Jason.encode!(%{type: "password", user: u, password: p})
-  end
-
-  defp to_json(%SASLSecrets{} = s) do
-    Jason.encode!(%{
-      type: "sasl",
-      user: s.user,
-      client_key: if(s.client_key, do: Base.encode64(s.client_key)),
-      server_key: Base.encode64(s.server_key),
-      stored_key: Base.encode64(s.stored_key),
-      salt: Base.encode64(s.salt),
-      digest: s.digest,
-      iterations: s.iterations
-    })
-  end
-
-  defp to_json(%MD5Secrets{user: u, password: p}) do
-    Jason.encode!(%{type: "md5", user: u, password: p})
-  end
-
   defp from_json(json) do
     map = Jason.decode!(json)
-
-    case map["type"] do
-      "password" ->
-        %PasswordSecrets{user: map["user"], password: map["password"]}
-
-      "sasl" ->
-        %SASLSecrets{
-          user: map["user"],
-          client_key: if(map["client_key"], do: Base.decode64!(map["client_key"])),
-          server_key: Base.decode64!(map["server_key"]),
-          stored_key: Base.decode64!(map["stored_key"]),
-          salt: Base.decode64!(map["salt"]),
-          digest: map["digest"],
-          iterations: map["iterations"]
-        }
-
-      "md5" ->
-        %MD5Secrets{user: map["user"], password: map["password"]}
-    end
+    module = Map.fetch!(@type_to_module, map["type"])
+    module.from_decoded_map(map)
   end
 end

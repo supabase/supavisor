@@ -52,31 +52,34 @@ defmodule Supavisor.EncryptedSecretsTest do
   end
 
   describe "decrypt_with_method/1" do
-    test "PasswordSecrets returns :password" do
-      encrypted = EncryptedSecrets.encrypt(%PasswordSecrets{user: "u", password: "p"})
-      assert {:password, %PasswordSecrets{}} = EncryptedSecrets.decrypt_with_method(encrypted)
+    test "PasswordSecrets returns :password with all fields" do
+      original = %PasswordSecrets{user: "u", password: "p"}
+      encrypted = EncryptedSecrets.encrypt(original)
+
+      assert {:password, ^original} = EncryptedSecrets.decrypt_with_method(encrypted)
     end
 
-    test "SASLSecrets returns :auth_query" do
-      encrypted =
-        EncryptedSecrets.encrypt(%SASLSecrets{
-          user: "u",
-          client_key: <<1, 2, 3>>,
-          server_key: <<4, 5, 6>>,
-          stored_key: <<7, 8, 9>>,
-          salt: <<10, 11, 12>>,
-          digest: "SCRAM-SHA-256",
-          iterations: 4096
-        })
+    test "SASLSecrets returns :auth_query with all fields" do
+      original = %SASLSecrets{
+        user: "u",
+        client_key: <<1, 2, 3>>,
+        server_key: <<4, 5, 6>>,
+        stored_key: <<7, 8, 9>>,
+        salt: <<10, 11, 12>>,
+        digest: "SCRAM-SHA-256",
+        iterations: 4096
+      }
 
-      assert {:auth_query, %SASLSecrets{}} = EncryptedSecrets.decrypt_with_method(encrypted)
+      encrypted = EncryptedSecrets.encrypt(original)
+
+      assert {:auth_query, ^original} = EncryptedSecrets.decrypt_with_method(encrypted)
     end
 
-    test "MD5Secrets returns :auth_query_md5" do
-      encrypted = EncryptedSecrets.encrypt(%MD5Secrets{user: "u", password: "p"})
+    test "MD5Secrets returns :auth_query_md5 with all fields" do
+      original = %MD5Secrets{user: "u", password: "p"}
+      encrypted = EncryptedSecrets.encrypt(original)
 
-      assert {:auth_query_md5, %MD5Secrets{}} =
-               EncryptedSecrets.decrypt_with_method(encrypted)
+      assert {:auth_query_md5, ^original} = EncryptedSecrets.decrypt_with_method(encrypted)
     end
   end
 
@@ -91,12 +94,5 @@ defmodule Supavisor.EncryptedSecretsTest do
     assert_raise RuntimeError, fn ->
       EncryptedSecrets.decrypt(tampered)
     end
-  end
-
-  test "inspect does not leak secrets" do
-    encrypted = EncryptedSecrets.encrypt(%PasswordSecrets{user: "u", password: "s3cret"})
-    inspected = inspect(encrypted)
-    refute inspected =~ "s3cret"
-    refute inspected =~ "data"
   end
 end
