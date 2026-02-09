@@ -9,7 +9,7 @@ defmodule Supavisor.CircuitBreaker do
 
   @table __MODULE__
 
-  @thresholds %{
+  @config %{
     get_secrets: %{
       max_failures: 5,
       window_seconds: 600,
@@ -57,7 +57,7 @@ defmodule Supavisor.CircuitBreaker do
         :ets.insert(@table, {ets_key, %{failures: [now], blocked_until: nil}})
 
       [{^ets_key, state}] ->
-        threshold = Map.fetch!(@thresholds, operation)
+        threshold = Map.fetch!(@config, operation)
         window_start = now - threshold.window_seconds
 
         recent_failures = Enum.filter([now | state.failures], &(&1 >= window_start))
@@ -132,7 +132,7 @@ defmodule Supavisor.CircuitBreaker do
   @spec clear(term(), atom()) :: :ok
   def clear(key, operation) when is_atom(operation) do
     clear_local(key, operation)
-    Map.fetch!(@thresholds, operation).propagate? && clear_global(key, operation)
+    Map.fetch!(@config, operation).propagate? && clear_global(key, operation)
     :ok
   end
 
@@ -226,7 +226,7 @@ defmodule Supavisor.CircuitBreaker do
   """
   @spec explanation(atom()) :: String.t()
   def explanation(operation) when is_atom(operation) do
-    @thresholds
+    @config
     |> Map.fetch!(operation)
     |> Map.fetch!(:explanation)
   end
@@ -238,7 +238,7 @@ defmodule Supavisor.CircuitBreaker do
   @spec cleanup_stale_entries() :: non_neg_integer()
   def cleanup_stale_entries do
     now = System.system_time(:second)
-    max_window = @thresholds |> Map.values() |> Enum.map(& &1.window_seconds) |> Enum.max()
+    max_window = @config |> Map.values() |> Enum.map(& &1.window_seconds) |> Enum.max()
     cutoff = now - max_window * 2
 
     match_spec = [
