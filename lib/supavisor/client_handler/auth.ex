@@ -54,7 +54,7 @@ defmodule Supavisor.ClientHandler.Auth do
   Supports password, auth_query, and auth_query_md5 methods.
   Returns {:ok, client_key} on success or {:error, reason} on failure.
   """
-  @spec validate_credentials(atom(), term(), term(), term()) ::
+  @spec validate_credentials(Supavisor.Secret.auth_method(), term(), term(), term()) ::
           {:ok, binary() | nil} | {:error, :wrong_password}
   def validate_credentials(:password, _secrets, signatures, client_proof) do
     if client_proof == signatures.client,
@@ -138,7 +138,7 @@ defmodule Supavisor.ClientHandler.Auth do
   for future connections
   """
   @spec check_and_update_secrets(
-          atom(),
+          Supavisor.Secret.auth_method(),
           term(),
           Supavisor.id(),
           map(),
@@ -177,7 +177,7 @@ defmodule Supavisor.ClientHandler.Auth do
 
   Returns parsed credentials or error information.
   """
-  @spec parse_auth_message(binary(), atom()) ::
+  @spec parse_auth_message(binary(), Supavisor.Secret.auth_method()) ::
           {:ok, term()} | {:error, term()}
   def parse_auth_message(bin, :auth_query_md5) do
     case Server.decode_pkt(bin) do
@@ -217,7 +217,7 @@ defmodule Supavisor.ClientHandler.Auth do
   @doc """
   Creates initial authentication context for a given method and secrets.
   """
-  @spec create_auth_context(atom(), EncryptedSecrets.t(), map()) :: map()
+  @spec create_auth_context(Supavisor.Secret.auth_method(), EncryptedSecrets.t(), map()) :: map()
   def create_auth_context(:auth_query_md5, encrypted, info) do
     salt = :crypto.strong_rand_bytes(4)
 
