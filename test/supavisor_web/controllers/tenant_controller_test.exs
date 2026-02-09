@@ -396,6 +396,175 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "list network bans" do
+    setup do
+      :ets.delete_all_objects(Supavisor.CircuitBreaker)
+      :ok
+    end
+
+    test "renders a list of network bans for a tenant", %{conn: conn} do
+      now = System.system_time(:second)
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+      ip1 = "192.168.1.100"
+      ip2 = "10.0.0.50"
+
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure({external_id, ip1}, :auth_error)
+        Supavisor.CircuitBreaker.record_failure({external_id, ip2}, :auth_error)
+      end
+
+      for ip <- [ip1, ip2] do
+        assert {:error, :circuit_open, _} =
+                 Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
+      end
+
+      assert %{banned_ipv4_addresses: bans} =
+               conn
+               |> get(~p"/api/tenants/#{external_id}/network_bans")
+               |> json_response(200)
+               |> assert_schema("NetworkBanList")
+
+      assert length(bans) == 2
+
+      Enum.all?(bans, fn %{banned_address: ip, banned_until: ts} ->
+        assert ip in [ip1, ip2]
+        assert is_integer(ts)
+        assert ts > now
+      end)
+    end
+
+    test "returns an empty list when there are no bans for a tenant", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      assert %_{banned_ipv4_addresses: []} =
+               conn
+               |> get(~p"/api/tenants/#{external_id}/network_bans")
+               |> json_response(200)
+               |> assert_schema("NetworkBanList")
+    end
+
+    test "returns 404 for non-existent tenant", %{conn: conn} do
+      tenant_id = "non_existent_tenant"
+
+      assert %{"error" => "not found"} ==
+               conn
+               |> get(~p"/api/tenants/#{tenant_id}/network_bans")
+               |> json_response(404)
+               |> assert_schema("NotFound")
+    end
+
+    test "returns 403 for invalid token", %{blocked_conn: blocked_conn} do
+      tenant_id = "any_tenant"
+      assert %{status: 403} = get(blocked_conn, ~p"/api/tenants/#{tenant_id}/network_bans")
+    end
+  end
+
+  describe "clear network bans" do
+    setup do
+      :ets.delete_all_objects(Supavisor.CircuitBreaker)
+      :ok
+    end
+
+    test "clears auth error network ban", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+      ip1 = "192.168.1.100"
+      ip2 = "10.0.0.50"
+
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure({external_id, ip1}, :auth_error)
+        Supavisor.CircuitBreaker.record_failure({external_id, ip2}, :auth_error)
+      end
+
+      for ip <- [ip1, ip2] do
+        assert {:error, :circuit_open, _} =
+                 Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
+      end
+
+      assert %_{banned_ipv4_addresses: [%{banned_address: ^ip2, banned_until: ts}]} =
+               conn
+               |> delete(~p"/api/tenants/#{external_id}/network_bans", %{
+                 ipv4_addresses: [ip1]
+               })
+               |> json_response(200)
+               |> assert_schema("NetworkBanList")
+
+      assert :ok =
+               Supavisor.CircuitBreaker.check({external_id, ip1}, :auth_error)
+
+      assert {:error, :circuit_open, ^ts} =
+               Supavisor.CircuitBreaker.check({external_id, ip2}, :auth_error)
+    end
+
+    test "returns 404 when tenant does not exist", %{conn: conn} do
+      assert conn
+             |> delete(~p"/api/tenants/nonexistent/network_bans", %{
+               ipv4_addresses: ["192.168.1.100"]
+             })
+             |> json_response(404)
+             |> assert_schema("NotFound")
+    end
+
+    test "returns empty list when no bans exist", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+
+      assert %_{banned_ipv4_addresses: []} =
+               conn
+               |> delete(~p"/api/tenants/#{external_id}/network_bans", %{
+                 ipv4_addresses: ["192.168.1.100"]
+               })
+               |> json_response(200)
+               |> assert_schema("NetworkBanList")
+    end
+
+    test "clears multiple IPs", %{conn: conn} do
+      {:ok, tenant} = Supavisor.Tenants.create_tenant(@create_attrs)
+      external_id = tenant.external_id
+      ip1 = "192.168.1.100"
+      ip2 = "192.168.1.101"
+      ip3 = "192.168.1.102"
+
+      for _ <- 1..10 do
+        Supavisor.CircuitBreaker.record_failure({external_id, ip1}, :auth_error)
+        Supavisor.CircuitBreaker.record_failure({external_id, ip2}, :auth_error)
+        Supavisor.CircuitBreaker.record_failure({external_id, ip3}, :auth_error)
+      end
+
+      for ip <- [ip1, ip2, ip3] do
+        assert {:error, :circuit_open, _} =
+                 Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
+      end
+
+      assert %_{banned_ipv4_addresses: [%{banned_address: ^ip3, banned_until: ts}]} =
+               conn
+               |> delete(~p"/api/tenants/#{external_id}/network_bans", %{
+                 ipv4_addresses: [ip1, ip2]
+               })
+               |> json_response(200)
+               |> assert_schema("NetworkBanList")
+
+      for ip <- [ip1, ip2] do
+        assert :ok =
+                 Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
+      end
+
+      assert {:error, :circuit_open, ^ts} =
+               Supavisor.CircuitBreaker.check({external_id, ip3}, :auth_error)
+    end
+
+    test "returns 403 for invalid token", %{blocked_conn: blocked_conn} do
+      tenant_id = "any_tenant"
+
+      assert %{status: 403} =
+               delete(blocked_conn, ~p"/api/tenants/#{tenant_id}/network_bans", %{
+                 ipv4_addresses: ["192.168.1.100"]
+               })
+    end
+  end
+
   describe "health endpoint" do
     test "returns 204 when all health checks pass", %{conn: conn} do
       assert "" ==
