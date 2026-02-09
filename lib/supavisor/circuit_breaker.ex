@@ -139,9 +139,16 @@ defmodule Supavisor.CircuitBreaker do
   """
   @spec clear(term(), atom()) :: :ok
   def clear(key, operation) when is_atom(operation) do
-    :ets.delete(@table, {key, operation})
+    do_clear(key, operation)
     maybe_clear_globally(key, operation)
     Logger.warning("Circuit breaker cleared for key=#{inspect(key)} operation=#{operation}")
+    :ok
+  end
+
+  @doc false
+  # public function for remote clearing
+  def do_clear(key, operation) do
+    :ets.delete(@table, {key, operation})
     :ok
   end
 
@@ -151,7 +158,7 @@ defmodule Supavisor.CircuitBreaker do
     nodes = Node.list()
 
     nodes
-    |> :erpc.multicall(__MODULE__, :clear, [key, operation], 10_000)
+    |> :erpc.multicall(__MODULE__, :do_clear, [key, operation], 10_000)
     |> then(&Enum.zip(nodes, &1))
     |> Enum.each(fn
       {node, {:ok, :ok}} ->
