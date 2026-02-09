@@ -289,47 +289,6 @@ defmodule SupavisorWeb.OpenApiSchemas do
     def params, do: {"User Credentials Update Params", "application/json", __MODULE__}
   end
 
-  defmodule CircuitBreakerOperation do
-    @moduledoc false
-    require OpenApiSpex
-
-    OpenApiSpex.schema(%{
-      type: :string,
-      description: """
-      Circuit breaker operation type. Each operation has specific thresholds:
-
-      - `auth_error`: Too many authentication errors (10 failures in 5 minutes → 10 minute block)
-      - `db_connection`: Unable to establish connection to upstream database (100 failures in 5 minutes → 10 minute block)
-      - `get_secrets`: Failed to retrieve database credentials (5 failures in 10 minutes → 10 minute block)
-      """,
-      enum: ["auth_error", "db_connection", "get_secrets"]
-    })
-  end
-
-  defmodule Ban do
-    @moduledoc false
-    require OpenApiSpex
-
-    OpenApiSpex.schema(%{
-      type: :object,
-      properties: %{
-        operation: CircuitBreakerOperation,
-        blocked_until: %Schema{
-          type: :integer,
-          minimum: 0,
-          description: "Unix timestamp (seconds) until which operations are blocked"
-        }
-      },
-      required: [:operation, :blocked_until],
-      example: %{
-        operation: "auth_error",
-        blocked_until: 1_706_549_400
-      }
-    })
-
-    def response, do: {"Ban Response", "application/json", __MODULE__}
-  end
-
   defmodule NetworkBan do
     @moduledoc false
     require OpenApiSpex
@@ -345,7 +304,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         banned_until: %Schema{
           type: :integer,
           minimum: 0,
-          description: "Unix timestamp (seconds) until which operations are blocked"
+          description: "Unix timestamp (seconds) when the ban expires"
         }
       },
       required: [:banned_address, :banned_until],
@@ -358,30 +317,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
     def response, do: {"Network Ban Response", "application/json", __MODULE__}
   end
 
-  defmodule ClearNetworkBans do
-    @moduledoc false
-    require OpenApiSpex
-
-    OpenApiSpex.schema(%{
-      type: :object,
-      properties: %{
-        ipv4_addresses: %Schema{
-          type: :array,
-          items: %Schema{type: :string},
-          description: "List of IPv4 addresses to unban",
-          example: ["192.168.1.100", "10.0.0.50"]
-        }
-      },
-      required: [:ipv4_addresses],
-      example: %{
-        ipv4_addresses: ["192.168.1.100", "10.0.0.50"]
-      }
-    })
-
-    def params, do: {"Clear Network Ban Params", "application/json", __MODULE__}
-  end
-
-  defmodule BanList do
+  defmodule NetworkBanList do
     @moduledoc false
     require OpenApiSpex
 
@@ -410,5 +346,28 @@ defmodule SupavisorWeb.OpenApiSchemas do
     })
 
     def response, do: {"Network Ban List Response", "application/json", __MODULE__}
+  end
+
+  defmodule ClearNetworkBans do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        ipv4_addresses: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description: "List of IPv4 addresses to unban",
+          example: ["192.168.1.100", "10.0.0.50"]
+        }
+      },
+      required: [:ipv4_addresses],
+      example: %{
+        ipv4_addresses: ["192.168.1.100", "10.0.0.50"]
+      }
+    })
+
+    def params, do: {"Clear Network Ban Params", "application/json", __MODULE__}
   end
 end

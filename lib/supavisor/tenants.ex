@@ -719,37 +719,8 @@ defmodule Supavisor.Tenants do
     ClusterTenants.changeset(cluster_tenants, attrs)
   end
 
-  # TODO: remove?
   @doc """
-  Returns a list of currently blocked operations for a given tenant external_id.
-
-  Each entry is a map with :operation and :blocked_until keys. If there are
-  no blocked operations for a tenant, an empty list is returned.
-
-  ## Examples
-
-      iex> list_bans("tenant_external_id")
-      [%{operation: :some_operation, blocked_until: 1620000000}, ...]
-  """
-  @spec list_bans(String.t()) ::
-          {:ok,
-           [
-             %{required(:operation) => atom(), required(:blocked_until) => integer()}
-           ]}
-          | {:error, :tenant_not_found}
-  def list_bans(external_id) when is_binary(external_id) do
-    if get_tenant_by_external_id(external_id) do
-      list_network_bans(external_id)
-    else
-      {:error, :tenant_not_found}
-    end
-  end
-
-  @doc """
-  Returns a list of network bans (auth_error) for a given tenant.
-
-  This specifically lists IP-based authentication error bans across the cluster
-  along with their unblock unix timestamp.
+  Returns a list of network bans for a given tenant.
 
   ## Examples
 
@@ -774,12 +745,14 @@ defmodule Supavisor.Tenants do
   end
 
   @doc """
-  Clears network bans (auth_error) for specific IP addresses.
-
-  This completely erases the circuit breaker state globally across all cluster nodes
-  for the specified IP addresses, allowing authentication attempts to proceed immediately.
+  Clears tenant's network bans for specific IP addresses.
 
   Returns the remaining active bans after clearing.
+
+  ## Examples
+
+      iex> clear_network_bans("tenant_external_id", ["192.168.1.100", "10.0.0.1"])
+      {:ok, [%{banned_address: "10.0.0.1", banned_until: 1620000000}]}
   """
   @spec clear_network_bans(String.t(), [String.t()]) ::
           {:ok,

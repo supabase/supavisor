@@ -5,14 +5,14 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
 
   alias Supavisor.CircuitBreaker
   alias Supavisor.Support.Cluster
-  alias Cluster.PortConfig
+  alias Supavisor.Support.Cluster.PortConfig
 
   setup do
     :ets.delete_all_objects(Supavisor.CircuitBreaker)
     :ok
   end
 
-  defp start_test_node1(),
+  defp start_test_node1,
     do:
       Cluster.start_node_unclustered(
         :test_node_1,
@@ -25,7 +25,7 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
         }
       )
 
-  defp start_test_node2(),
+  defp start_test_node2,
     do:
       Cluster.start_node_unclustered(
         :test_node_2,
@@ -61,12 +61,10 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
 
     assert {:error, :circuit_open, blocked_until} = CircuitBreaker.check(key, :auth_error)
 
-    for peer <- [peer1, peer2],
-        do:
-          assert(
-            {:error, :circuit_open, ^blocked_until} =
-              :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
-          )
+    for peer <- [peer1, peer2] do
+      assert {:error, :circuit_open, ^blocked_until} =
+               :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
+    end
   end
 
   @tag cluster: true
@@ -82,8 +80,6 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
       :peer.call(peer1, CircuitBreaker, :record_failure, [key2, :auth_error])
     end
 
-    :timer.sleep(500)
-
     assert [_, _] = bans = CircuitBreaker.opened({"tenant1", :_}, :auth_error)
 
     assert Enum.sort(bans) ==
@@ -92,7 +88,7 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
   end
 
   @tag cluster: true
-  test "clear/1 removes ban from all nodes but current" do
+  test "clear/1 removes ban from all nodes" do
     {:ok, peer1, node1} = start_test_node1()
     {:ok, peer2, node2} = start_test_node2()
     cluster_nodes!(node1, node2)
@@ -103,26 +99,20 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
       CircuitBreaker.record_failure(key, :auth_error)
     end
 
-    :timer.sleep(500)
-
     assert {:error, :circuit_open, _} = CircuitBreaker.check(key, :auth_error)
 
-    for peer <- [peer1, peer2],
-        do:
-          assert(
-            {:error, :circuit_open, _} =
-              :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
-          )
+    for peer <- [peer1, peer2] do
+      assert {:error, :circuit_open, _} =
+               :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
+    end
 
     CircuitBreaker.clear(key, :auth_error)
 
-    # Give time for propagation
-    :timer.sleep(500)
-
     assert :ok == CircuitBreaker.check(key, :auth_error)
 
-    for peer <- [peer1, peer2],
-        do: assert(:ok = :peer.call(peer, CircuitBreaker, :check, [key, :auth_error]))
+    for peer <- [peer1, peer2] do
+      assert :ok = :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
+    end
   end
 
   @tag cluster: true
@@ -137,15 +127,11 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
       CircuitBreaker.record_failure(key, :auth_error)
     end
 
-    :timer.sleep(500)
-
     assert {:error, :circuit_open, blocked_until} = CircuitBreaker.check(key, :auth_error)
 
-    for peer <- [peer1, peer2],
-        do:
-          assert(
-            {:error, :circuit_open, ^blocked_until} =
-              :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
-          )
+    for peer <- [peer1, peer2] do
+      assert {:error, :circuit_open, ^blocked_until} =
+               :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
+    end
   end
 end

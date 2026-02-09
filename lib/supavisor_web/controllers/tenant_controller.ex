@@ -14,9 +14,9 @@ defmodule SupavisorWeb.TenantController do
 
   alias SupavisorWeb.OpenApiSchemas.{
     BadRequest,
-    BanList,
     Created,
     Empty,
+    NetworkBanList,
     NotFound,
     ServiceUnavailable,
     Tenant,
@@ -308,7 +308,7 @@ defmodule SupavisorWeb.TenantController do
       authorization: @authorization
     ],
     responses: %{
-      200 => BanList.response(),
+      200 => NetworkBanList.response(),
       404 => NotFound.response()
     }
   )
@@ -342,9 +342,8 @@ defmodule SupavisorWeb.TenantController do
       {"IP addresses to clear", "application/json", SupavisorWeb.OpenApiSchemas.ClearNetworkBans,
        required: true},
     responses: %{
-      200 => BanList.response(),
-      404 => NotFound.response(),
-      400 => BadRequest.response()
+      200 => NetworkBanList.response(),
+      404 => NotFound.response()
     }
   )
 

@@ -423,7 +423,7 @@ defmodule SupavisorWeb.TenantControllerTest do
                conn
                |> get(~p"/api/tenants/#{external_id}/network_bans")
                |> json_response(200)
-               |> assert_schema("BanList")
+               |> assert_schema("NetworkBanList")
 
       assert length(bans) == 2
 
@@ -442,7 +442,7 @@ defmodule SupavisorWeb.TenantControllerTest do
                conn
                |> get(~p"/api/tenants/#{external_id}/network_bans")
                |> json_response(200)
-               |> assert_schema("BanList")
+               |> assert_schema("NetworkBanList")
     end
 
     test "returns 404 for non-existent tenant", %{conn: conn} do
@@ -489,7 +489,7 @@ defmodule SupavisorWeb.TenantControllerTest do
                  ipv4_addresses: [ip1]
                })
                |> json_response(200)
-               |> assert_schema("BanList")
+               |> assert_schema("NetworkBanList")
 
       assert :ok =
                Supavisor.CircuitBreaker.check({external_id, ip1}, :auth_error)
@@ -517,7 +517,7 @@ defmodule SupavisorWeb.TenantControllerTest do
                  ipv4_addresses: ["192.168.1.100"]
                })
                |> json_response(200)
-               |> assert_schema("BanList")
+               |> assert_schema("NetworkBanList")
     end
 
     test "clears multiple IPs", %{conn: conn} do
@@ -544,7 +544,7 @@ defmodule SupavisorWeb.TenantControllerTest do
                  ipv4_addresses: [ip1, ip2]
                })
                |> json_response(200)
-               |> assert_schema("BanList")
+               |> assert_schema("NetworkBanList")
 
       for ip <- [ip1, ip2] do
         assert :ok =

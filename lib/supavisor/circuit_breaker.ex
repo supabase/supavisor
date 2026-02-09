@@ -43,9 +43,6 @@ defmodule Supavisor.CircuitBreaker do
 
   @doc """
   Records a failure for a given key and operation.
-
-  For the :auth_error, it the circuit is opened, it is opened across all the nodes
-  in the cluster.
   """
   @spec record_failure(term(), atom()) :: :ok
   def record_failure(key, operation) when is_atom(operation) do
