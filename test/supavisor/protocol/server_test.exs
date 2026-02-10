@@ -426,7 +426,7 @@ defmodule Supavisor.Protocol.ServerTest do
                data_type_oid: 23,
                data_type_size: 4,
                type_modifier: 4_294_967_295,
-               format: :text,
+               format: :text
              }
            ] = packet1.payload
 
@@ -458,7 +458,7 @@ defmodule Supavisor.Protocol.ServerTest do
                data_type_oid: 23,
                data_type_size: 4,
                type_modifier: 4_294_967_295,
-               format: :text,
+               format: :text
              }
            ] = packet1.payload
 
