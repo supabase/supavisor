@@ -170,21 +170,6 @@ defmodule Supavisor.Protocol.Server do
     {<<?K, len::32>>, payload}
   end
 
-  @spec decode_startup_packet(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
-  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
-    with {:ok, payload} <- decode_startup_packet_payload(rest) do
-      pkt = %{
-        len: len,
-        payload: payload,
-        tag: :startup
-      }
-
-      {:ok, pkt}
-    end
-  end
-
-  def decode_startup_packet(_), do: {:error, :bad_startup_payload}
-
   @spec application_name :: binary()
   def application_name, do: @application_name
 
@@ -447,33 +432,4 @@ defmodule Supavisor.Protocol.Server do
 
   defp decode_parameter_description(<<oid::integer-32, rest::binary>>, acc),
     do: decode_parameter_description(rest, [oid | acc])
-
-  # The startup packet payload is a list of key/value pairs, separated by null bytes
-  @spec decode_startup_packet_payload(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
-  defp decode_startup_packet_payload(payload) do
-    fields = String.split(payload, <<0>>, trim: true)
-
-    # If the number of fields is odd, then the payload is malformed
-    if rem(length(fields), 2) == 1 do
-      {:error, :bad_startup_payload}
-    else
-      map =
-        fields
-        |> Enum.chunk_every(2)
-        |> Enum.map(fn
-          ["options" = k, v] -> {k, URI.decode_query(v)}
-          [k, v] -> {k, v}
-        end)
-        |> Map.new()
-
-      # We only do light validation on the fields in the payload. The only field we use at the
-      # moment is `user`. If that's missing, this is a bad payload.
-      if Map.has_key?(map, "user") do
-        {:ok, map}
-      else
-        Logger.error("Bad startup payload: #{inspect(payload, limit: 200)}")
-        {:error, :bad_startup_payload}
-      end
-    end
-  end
 end

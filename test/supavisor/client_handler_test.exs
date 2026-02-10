@@ -154,4 +154,38 @@ defmodule Supavisor.ClientHandlerTest do
                )
     end
   end
+
+  describe "startup packet with empty parameter values (issue #854)" do
+    test "handles startup packet where options has an empty value" do
+      # Exact bytes from https://github.com/supabase/supavisor/issues/854
+      # options\x00\x00 means the options key has an empty string value
+      bin =
+        <<78::32,
+          "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00\x00client_encoding\x00UTF8\x00\x00">>
+
+      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil}
+
+      assert {:keep_state, %{app_name: "Supavisor"},
+              {:next_event, :internal,
+               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil}}}}} =
+               @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
+    end
+  end
+
+  describe "startup packet log_level option" do
+    test "sets process log level from options" do
+      bin =
+        <<76::32,
+          "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00log_level=debug\x00\x00">>
+
+      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil}
+
+      assert {:keep_state, %{app_name: "Supavisor"},
+              {:next_event, :internal,
+               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil}}}}} =
+               @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
+
+      assert Logger.get_process_level(self()) == :debug
+    end
+  end
 end
