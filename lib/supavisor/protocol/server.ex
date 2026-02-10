@@ -6,7 +6,7 @@ defmodule Supavisor.Protocol.Server do
   Error codes https://www.postgresql.org/docs/current/errcodes-appendix.html
   """
   require Logger
-  alias Supavisor.Protocol.{Debug, PgType}
+  alias Supavisor.Protocol.Debug
 
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
@@ -419,7 +419,6 @@ defmodule Supavisor.Protocol.Server do
          {:ok, format} <- decode_format_code(format_code) do
       field = %{
         name: field_name,
-        type_info: PgType.type(data_type_oid),
         table_oid: table_oid,
         attr_number: attr_num,
         data_type_oid: data_type_oid,

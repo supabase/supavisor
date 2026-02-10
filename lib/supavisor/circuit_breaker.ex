@@ -9,23 +9,26 @@ defmodule Supavisor.CircuitBreaker do
 
   @table __MODULE__
 
-  @thresholds %{
+  @config %{
     get_secrets: %{
       max_failures: 5,
       window_seconds: 600,
       block_seconds: 600,
+      propagate?: false,
       explanation: "Failed to retrieve database credentials"
     },
     db_connection: %{
       max_failures: 100,
       window_seconds: 300,
       block_seconds: 600,
+      propagate?: false,
       explanation: "Unable to establish connection to upstream database"
     },
     auth_error: %{
       max_failures: 10,
       window_seconds: 300,
       block_seconds: 600,
+      propagate?: true,
       explanation: "Too many authentication errors"
     }
   }
@@ -51,25 +54,18 @@ defmodule Supavisor.CircuitBreaker do
         :ets.insert(@table, {ets_key, %{failures: [now], blocked_until: nil}})
 
       [{^ets_key, state}] ->
-        threshold = Map.fetch!(@thresholds, operation)
+        threshold = Map.fetch!(@config, operation)
         window_start = now - threshold.window_seconds
 
         recent_failures = Enum.filter([now | state.failures], &(&1 >= window_start))
 
-        blocked_until =
-          if length(recent_failures) >= threshold.max_failures do
-            block_until = now + threshold.block_seconds
-
-            Logger.warning(
-              "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{block_until}"
-            )
-
-            block_until
-          else
-            state.blocked_until
-          end
-
-        :ets.insert(@table, {ets_key, %{failures: recent_failures, blocked_until: blocked_until}})
+        if length(recent_failures) >= threshold.max_failures do
+          block_until = now + threshold.block_seconds
+          open_local(key, operation, block_until, recent_failures)
+          threshold.propagate? && open_global(key, operation, block_until)
+        else
+          :ets.insert(@table, {ets_key, %{state | failures: recent_failures}})
+        end
     end
 
     :ok
@@ -101,12 +97,125 @@ defmodule Supavisor.CircuitBreaker do
   end
 
   @doc """
+  Given the operation returns a list of {key, blocked_until} for which the circuit is opened.
+
+  ## Examples
+
+      iex> opened("tenant1", :auth_error)
+      [{"tenant1", 1234567890}]
+
+      iex> opened({"tenant1", "192.168.1.100"}, :auth_error)
+      [{{"tenant1", "192.168.1.100"}, 1234567890}]
+
+      iex> opened({"tenant1", :_}, :auth_error)
+      [{{"tenant1", "192.168.1.100"}, 1234567890}, {{"tenant1", "10.0.0.1"}, 1234567891}]
+  """
+  @spec opened(term(), atom()) :: [{term(), integer()}]
+  def opened(key, operation) when is_atom(operation) do
+    now = System.system_time(:second)
+
+    :ets.select(@table, [
+      {{{key, operation}, %{blocked_until: :"$1"}},
+       [{:andalso, {:is_integer, :"$1"}, {:>, :"$1", now}}], [:"$_"]}
+    ])
+    |> Enum.map(fn {{key, _operation}, %{blocked_until: blocked_until}} ->
+      {key, blocked_until}
+    end)
+  end
+
+  @doc """
   Clears circuit breaker state for a key and operation.
   """
   @spec clear(term(), atom()) :: :ok
   def clear(key, operation) when is_atom(operation) do
-    :ets.delete(@table, {key, operation})
+    clear_local(key, operation)
+    Map.fetch!(@config, operation).propagate? && clear_global(key, operation)
     :ok
+  end
+
+  @doc """
+  Clears circuit breaker for a given key and operation on the current node.
+  """
+  @spec clear_local(term(), atom()) :: :ok
+  def clear_local(key, operation) when is_atom(operation) do
+    :ets.delete(@table, {key, operation})
+    Logger.warning("Circuit breaker cleared for key=#{inspect(key)} operation=#{operation}")
+    :ok
+  end
+
+  # Propagates the state clearing to all nodes in the cluster.
+  defp clear_global(key, operation) do
+    nodes = Node.list()
+
+    nodes
+    |> :erpc.multicall(__MODULE__, :clear_local, [key, operation], 10_000)
+    |> then(&Enum.zip(nodes, &1))
+    |> Enum.each(fn
+      {node, {:ok, :ok}} ->
+        Logger.debug(
+          "Circuit breaker cleared for key=#{inspect(key)} operation=#{operation} node=#{node}"
+        )
+
+      {node, error} ->
+        Logger.error(
+          "Circuit breaker failed to clear for key=#{inspect(key)} operation=#{operation} node=#{node} error=#{inspect(error)}"
+        )
+    end)
+  end
+
+  @doc """
+  Opens the circuit arbitrary for a given key and operation on the current node.
+  """
+  @spec open_local(term(), atom(), integer(), list(integer()) | nil) :: :ok
+  def open_local(key, operation, blocked_until, recent_failures \\ nil)
+      when is_atom(operation) and is_integer(blocked_until) and
+             (is_list(recent_failures) or is_nil(recent_failures)) do
+    ets_key = {key, operation}
+
+    case :ets.lookup(@table, ets_key) do
+      [] ->
+        :ets.insert(
+          @table,
+          {ets_key, %{failures: recent_failures || [], blocked_until: blocked_until}}
+        )
+
+      [{^ets_key, state}] ->
+        :ets.insert(
+          @table,
+          {ets_key,
+           %{
+             state
+             | failures: recent_failures || state.failures,
+               blocked_until: blocked_until
+           }}
+        )
+    end
+
+    Logger.warning(
+      "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{blocked_until}"
+    )
+
+    :ok
+  end
+
+  # Propagates the circuit open to all nodes in the cluster.
+  defp open_global(key, operation, blocked_until) do
+    nodes = Node.list()
+
+    nodes
+    |> :erpc.multicall(__MODULE__, :open_local, [key, operation, blocked_until, nil], 10_000)
+    |> then(&Enum.zip(nodes, &1))
+    |> Enum.each(fn
+      {node, {:ok, :ok}} ->
+        Logger.debug(
+          "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} node=#{node}"
+        )
+
+      {node, error} ->
+        Logger.error(
+          "Circuit breaker failed to open for key=#{inspect(key)} operation=#{operation} node=#{node} error=#{inspect(error)}"
+        )
+    end)
   end
 
   @doc """
@@ -114,7 +223,7 @@ defmodule Supavisor.CircuitBreaker do
   """
   @spec explanation(atom()) :: String.t()
   def explanation(operation) when is_atom(operation) do
-    @thresholds
+    @config
     |> Map.fetch!(operation)
     |> Map.fetch!(:explanation)
   end
@@ -126,7 +235,7 @@ defmodule Supavisor.CircuitBreaker do
   @spec cleanup_stale_entries() :: non_neg_integer()
   def cleanup_stale_entries do
     now = System.system_time(:second)
-    max_window = @thresholds |> Map.values() |> Enum.map(& &1.window_seconds) |> Enum.max()
+    max_window = @config |> Map.values() |> Enum.map(& &1.window_seconds) |> Enum.max()
     cutoff = now - max_window * 2
 
     match_spec = [
