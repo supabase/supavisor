@@ -446,28 +446,6 @@ defmodule Supavisor.Manager do
     :ok
   end
 
-  @impl true
-  def code_change(_old_vsn, state, :create_pid_to_ref_table) do
-    pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
-
-    :ets.foldl(
-      fn {ref, pid, _}, _ -> :ets.insert(pid_to_ref, {pid, ref}) end,
-      nil,
-      state.tid
-    )
-
-    new_state =
-      state
-      |> Map.put(:pid_to_ref, pid_to_ref)
-      |> Map.put_new(:waiting_for_secrets, [])
-
-    {:ok, new_state}
-  end
-
-  def code_change(_old_vsn, state, _extra) do
-    {:ok, state}
-  end
-
   ## Internal functions
 
   defp check_subscribers do

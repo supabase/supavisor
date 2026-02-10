@@ -593,12 +593,6 @@ defmodule Supavisor.DbHandler do
   end
 
   @impl true
-  def code_change(_version, state, old_data, _extra) do
-    new_data = Map.put_new(old_data, :manager_ref, nil)
-    {:ok, state, new_data}
-  end
-
-  @impl true
   def format_status(status) do
     Map.put(status, :queue, [])
   end
