@@ -16,7 +16,7 @@ defmodule Supavisor.TenantSupervisor do
   @impl true
   def init(%{replicas: replicas} = args) do
     {{type, tenant}, user, mode, db_name, search_path} = args.id
-    min_size = if no_warm_pool_user?(user), do: 0, else: 1
+    min_size = if Supavisor.Helpers.no_warm_pool_user?(user), do: 0, else: 1
 
     pools =
       replicas
@@ -76,11 +76,5 @@ defmodule Supavisor.TenantSupervisor do
       strategy: :lifo,
       idle_timeout: :timer.minutes(5)
     ]
-  end
-
-  @doc false
-  defp no_warm_pool_user?(user) do
-    no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
-    user in no_warm_pool_users
   end
 end

@@ -88,6 +88,17 @@ defmodule Supavisor.Manager do
   end
 
   @doc """
+  Unsubscribes a client from the pool.
+
+  Can be used on termination to free the client slot while cleanup is performed.
+  """
+  @spec unsubscribe(pid | Supavisor.id()) :: :ok
+  def unsubscribe(manager_or_id) do
+    manager = resolve_manager(manager_or_id)
+    GenServer.call(manager, {:unsubscribe, self()}, 5000)
+  end
+
+  @doc """
   Registers a DbHandler as waiting for secrets to become available.
   """
   @spec register_waiting_for_secrets(pid | Supavisor.id(), pid) :: :ok
@@ -115,6 +126,7 @@ defmodule Supavisor.Manager do
   def init(args) do
     Helpers.set_log_level(args.log_level)
     tid = :ets.new(__MODULE__, [:protected])
+    pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
 
     {{type, tenant}, user, mode, db_name, _search_path} = args.id
     {method, secrets} = args.secrets
@@ -194,6 +206,7 @@ defmodule Supavisor.Manager do
       id: args.id,
       check_ref: check_subscribers(),
       tid: tid,
+      pid_to_ref: pid_to_ref,
       tenant: tenant,
       parameter_status: persisted_ps,
       wait_ps: [],
@@ -232,7 +245,9 @@ defmodule Supavisor.Manager do
 
     {reply, new_state} =
       if :ets.info(state.tid, :size) < limit do
-        :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
+        ref = Process.monitor(pid)
+        :ets.insert(state.tid, {ref, pid, now()})
+        :ets.insert(state.pid_to_ref, {pid, ref})
 
         case state.parameter_status do
           [] ->
@@ -246,6 +261,20 @@ defmodule Supavisor.Manager do
       end
 
     {:reply, reply, new_state}
+  end
+
+  def handle_call({:unsubscribe, pid}, _from, state) do
+    case :ets.take(state.pid_to_ref, pid) do
+      [{^pid, ref}] ->
+        :ets.delete(state.tid, ref)
+        Process.demonitor(ref, [:flush])
+
+      [] ->
+        Logger.warning("Unsubscribe: no entry found for #{inspect(pid)}")
+    end
+
+    new_state = %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
+    {:reply, :ok, new_state}
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
@@ -356,9 +385,10 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, _, _, _}, state) do
+  def handle_info({:DOWN, ref, _, pid, _}, state) do
     Process.cancel_timer(state.check_ref)
-    :ets.take(state.tid, ref)
+    :ets.delete(state.tid, ref)
+    :ets.delete(state.pid_to_ref, pid)
 
     state =
       if state.drain_caller && :ets.info(state.tid, :size) == 0 do
