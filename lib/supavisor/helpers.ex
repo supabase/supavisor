@@ -376,6 +376,19 @@ defmodule Supavisor.Helpers do
     Process.flag(:max_heap_size, %{size: max_heap_words})
   end
 
+  @doc """
+  Sets the minimum heap size for the current process based on a percentage
+  of available system memory.
+  """
+  @spec set_min_heap_size_from_system(float()) :: non_neg_integer()
+  def set_min_heap_size_from_system(percentage)
+      when is_float(percentage) and percentage > 0.0 and percentage <= 0.05 do
+    total_memory = :memsup.get_system_memory_data()[:total_memory]
+    min_heap_bytes = round(total_memory * percentage)
+    min_heap_words = div(min_heap_bytes, :erlang.system_info(:wordsize))
+    Process.flag(:min_heap_size, min_heap_words)
+  end
+
   @spec set_log_level(atom()) :: :ok | nil
   def set_log_level(level) when level in [:debug, :info, :notice, :warning, :error] do
     Logger.notice("Setting log level to #{inspect(level)}")

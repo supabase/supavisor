@@ -7,9 +7,13 @@ defmodule SupavisorWeb.MetricsController do
   use SupavisorWeb, :controller
   require Logger
   alias Supavisor.Monitoring.PromEx
+  alias Supavisor.Helpers
 
   @spec index(Plug.Conn.t(), any()) :: Plug.Conn.t()
   def index(conn, _) do
+    :proc_lib.set_label(:metrics_handler)
+    Helpers.set_min_heap_size_from_system(0.03)
+
     cluster_metrics = PromEx.get_cluster_metrics()
 
     conn
@@ -18,6 +22,8 @@ defmodule SupavisorWeb.MetricsController do
   end
 
   def tenant(conn, %{"external_id" => ext_id}) do
+    :proc_lib.set_label({:tenant_metrics_handler, ext_id})
+
     cluster_metrics = PromEx.get_cluster_tenant_metrics(ext_id)
 
     conn

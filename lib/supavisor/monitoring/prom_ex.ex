@@ -132,14 +132,26 @@ defmodule Supavisor.Monitoring.PromEx do
 
   def fetch_cluster_metrics do
     [node() | Node.list()]
-    |> Task.async_stream(&fetch_node_metrics/1, timeout: :infinity)
+    |> Task.async_stream(
+      fn node ->
+        :proc_lib.set_label({:node_metrics_handler, node})
+        fetch_node_metrics(node)
+      end,
+      timeout: :infinity
+    )
     |> Stream.map(fn {_, map} -> map end)
     |> Enum.reduce(&merge_metrics/2)
   end
 
   def fetch_cluster_tenant_metrics(tenant) do
     [node() | Node.list()]
-    |> Task.async_stream(&fetch_node_tenant_metrics(&1, tenant), timeout: :infinity)
+    |> Task.async_stream(
+      fn node ->
+        :proc_lib.set_label({:node_tenant_metrics_handler, node, tenant})
+        fetch_node_tenant_metrics(node, tenant)
+      end,
+      timeout: :infinity
+    )
     |> Stream.map(fn {_, map} -> map end)
     |> Enum.reduce(&merge_metrics/2)
   end

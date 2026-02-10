@@ -1,6 +1,10 @@
 defmodule Supavisor.ErlSysMon do
   @moduledoc """
   Logs Erlang System Monitor events.
+
+  For better processes identification, they can be labeled using `:proc_lib.set_label/1`.
+  If a message contains a pid with a label, the label will be included in the log
+  for easier debugging and monitoring.
   """
 
   use GenServer
@@ -27,8 +31,17 @@ defmodule Supavisor.ErlSysMon do
   end
 
   def handle_info(msg, state) do
-    Logger.warning("#{__MODULE__} message: " <> inspect(msg))
-
+    enriched_msg = maybe_enrich_message(msg)
+    Logger.warning("#{__MODULE__} message: " <> inspect(enriched_msg))
     {:noreply, state}
   end
+
+  defp maybe_enrich_message({:monitor, pid, _type, _info} = msg) when is_pid(pid) do
+    case :proc_lib.get_label(pid) do
+      :undefined -> msg
+      label -> {msg, proc_label: label}
+    end
+  end
+
+  defp maybe_enrich_message(msg), do: msg
 end

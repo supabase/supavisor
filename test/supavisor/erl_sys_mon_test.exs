@@ -41,4 +41,22 @@ defmodule Supavisor.ErlSysMonTest do
 
     assert {:error, {:already_started, ^pid}} = ErlSysMon.start_link([])
   end
+
+  test "enriches log with proc label when available" do
+    pid = Process.whereis(ErlSysMon)
+    assert is_pid(pid)
+
+    :proc_lib.set_label({:test_label, self()})
+    test_msg = {:monitor, self(), :test_pid, :busy_port}
+
+    log =
+      capture_log(fn ->
+        send(pid, test_msg)
+        Process.sleep(100)
+      end)
+
+    assert log =~ "Supavisor.ErlSysMon message:"
+    assert log =~ inspect(test_msg)
+    assert log =~ "proc_label: {:test_label, #{inspect(self())}}"
+  end
 end

@@ -127,4 +127,23 @@ defmodule Supavisor.HelpersTest do
       end
     end
   end
+
+  describe "set_min_heap_size_from_system/1" do
+    test "sets the minimum heap size based on a percentage of system memory" do
+      total_memory_bytes = :memsup.get_system_memory_data()[:total_memory]
+      {:min_heap_size, old_min_heap_words} = Process.info(self(), :min_heap_size)
+
+      # Call the function (returns old min_heap_size value)
+      old_value = Helpers.set_min_heap_size_from_system(0.03)
+      assert is_integer(old_value)
+      assert old_value == old_min_heap_words
+
+      # Verify the new value is reasonable (within 10% of expected)
+      {:min_heap_size, new_min_heap_words} = Process.info(self(), :min_heap_size)
+      expected_words = div(round(total_memory_bytes * 0.03), :erlang.system_info(:wordsize))
+
+      # Erlang may round up to valid heap sizes, so check it's close to expected
+      assert_in_delta new_min_heap_words, expected_words, expected_words * 0.1
+    end
+  end
 end

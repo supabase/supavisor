@@ -61,11 +61,39 @@ defmodule SupavisorWeb.MetricsControllerTest do
     GenServer.stop(proxy)
   end
 
+  test "instrumenting cluster metrics collection", %{conn: conn} do
+    conn
+    |> auth
+    |> get(Routes.metrics_path(conn, :index))
+
+    assert :metrics_handler = :proc_lib.get_label(self())
+
+    {:min_heap_size, new_min_heap_words} = Process.info(self(), :min_heap_size)
+    expected_words = percent_of_total_available_memory_in_words(0.03)
+
+    assert_in_delta new_min_heap_words, expected_words, expected_words * 0.1
+  end
+
+  test "instrumenting tenant metrics collection", %{conn: conn} do
+    tenant_id = "proxy_tenant_id"
+
+    conn
+    |> auth
+    |> get(Routes.metrics_path(conn, :tenant, tenant_id))
+
+    assert {:tenant_metrics_handler, ^tenant_id} = :proc_lib.get_label(self())
+  end
+
   defp auth(conn, bearer \\ gen_token()) do
     put_req_header(conn, "authorization", "Bearer " <> bearer)
   end
 
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
     Supavisor.Jwt.Token.gen!(secret)
+  end
+
+  def percent_of_total_available_memory_in_words(percent) do
+    total_memory_bytes = :memsup.get_system_memory_data()[:total_memory]
+    div(round(total_memory_bytes * percent), :erlang.system_info(:wordsize))
   end
 end
