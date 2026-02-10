@@ -69,9 +69,12 @@ defmodule SupavisorWeb.MetricsControllerTest do
     assert :metrics_handler = :proc_lib.get_label(self())
 
     {:min_heap_size, new_min_heap_words} = Process.info(self(), :min_heap_size)
-    expected_words = percent_of_total_available_memory_in_words(0.03)
+    expected_words = Supavisor.Helpers.mb_to_words(100)
 
-    assert_in_delta new_min_heap_words, expected_words, expected_words * 0.1
+    # Erlang rounds up to next valid heap size, so check it's at least expected
+    # and not more than 50% larger (accounting for heap size rounding)
+    assert new_min_heap_words >= expected_words
+    assert new_min_heap_words <= expected_words * 1.5
   end
 
   test "instrumenting tenant metrics collection", %{conn: conn} do

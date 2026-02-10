@@ -377,16 +377,14 @@ defmodule Supavisor.Helpers do
   end
 
   @doc """
-  Sets the minimum heap size for the current process based on a percentage
-  of available system memory.
+  Sets the minimum heap size for the current process. The `min_heap_size` parameter is in megabytes.
+
+  Returns the previous value for the `min_heap_size`.
   """
-  @spec set_min_heap_size_from_system(float()) :: non_neg_integer()
-  def set_min_heap_size_from_system(percentage)
-      when is_float(percentage) and percentage > 0.0 and percentage <= 0.05 do
-    total_memory = :memsup.get_system_memory_data()[:total_memory]
-    min_heap_bytes = round(total_memory * percentage)
-    min_heap_words = div(min_heap_bytes, :erlang.system_info(:wordsize))
-    Process.flag(:min_heap_size, min_heap_words)
+  @spec set_min_heap_size(pos_integer()) :: pos_integer()
+  def set_min_heap_size(min_heap_size_mb) when is_integer(min_heap_size_mb) do
+    min_heap_size_words = mb_to_words(min_heap_size_mb)
+    Process.flag(:min_heap_size, min_heap_size_words)
   end
 
   @spec set_log_level(atom()) :: :ok | nil

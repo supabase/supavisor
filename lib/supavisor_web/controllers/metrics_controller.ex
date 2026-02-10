@@ -12,7 +12,11 @@ defmodule SupavisorWeb.MetricsController do
   @spec index(Plug.Conn.t(), any()) :: Plug.Conn.t()
   def index(conn, _) do
     :proc_lib.set_label(:metrics_handler)
-    Helpers.set_min_heap_size_from_system(0.03)
+
+    :erlang.process_flag(
+      :min_heap_size,
+      Helpers.mb_to_words(Application.get_env(:supavisor, __MODULE__)[:index_min_heap_size_mb])
+    )
 
     cluster_metrics = PromEx.get_cluster_metrics()
 
