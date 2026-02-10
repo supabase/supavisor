@@ -813,6 +813,7 @@ defmodule Supavisor.ClientHandler do
           Process.unlink(db_pid)
           :poolboy.checkin(pool, db_pid)
 
+        # In case of error, both processes will be terminated
         _error ->
           :ok
       end

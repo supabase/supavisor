@@ -82,6 +82,9 @@ defmodule Supavisor.DbHandler do
   @spec attempt_cleanup(pid()) :: :ok | {:error, term()}
   def attempt_cleanup(db_handler_pid) do
     :gen_statem.call(db_handler_pid, :cleanup, 5_000)
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
   end
 
   @doc """
