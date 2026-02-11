@@ -139,7 +139,10 @@ defmodule Supavisor.Monitoring.PromEx do
       end,
       timeout: :infinity
     )
-    |> Stream.map(fn {_, map} -> map end)
+    # |> Stream.map(fn {_, map} -> map end)
+    |> Enum.map(fn {:ok, binary} ->
+      :erlang.binary_to_term(binary)
+    end)
     |> Enum.reduce(&merge_metrics/2)
   end
 
@@ -152,7 +155,10 @@ defmodule Supavisor.Monitoring.PromEx do
       end,
       timeout: :infinity
     )
-    |> Stream.map(fn {_, map} -> map end)
+    # |> Stream.map(fn {_, map} -> map end)
+    |> Enum.map(fn {:ok, binary} ->
+      :erlang.binary_to_term(binary)
+    end)
     |> Enum.reduce(&merge_metrics/2)
   end
 
@@ -167,14 +173,20 @@ defmodule Supavisor.Monitoring.PromEx do
   defp do_fetch(node, f, a) do
     case :rpc.call(node, __MODULE__, f, a, 25_000) do
       binary when is_binary(binary) ->
-        :erlang.binary_to_term(binary)
+        Logger.error(
+          "[#{inspect(self())}] fetched metrics from #{node}: #{byte_size(binary)} bytes, #{byte_size(binary) * :erlang.system_info(:wordsize)}"
+        )
+
+        # :erlang.binary_to_term(binary)
+
+        binary
 
       {:badrpc, reason} ->
         Logger.error(
           "Cannot fetch metrics from the node #{inspect(node)} because #{inspect(reason)} (call #{f} with #{inspect(a)})"
         )
 
-        %{}
+        :erlang.term_to_binary(%{})
     end
   end
 
