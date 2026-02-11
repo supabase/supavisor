@@ -47,8 +47,10 @@ dev.node3:
 	CLUSTER_POSTGRES="true" \
 	PROXY_PORT_SESSION="5443" \
 	PROXY_PORT_TRANSACTION="6554" \
+	PROXY_PORT="5403" \
 	SESSION_PROXY_PORTS="12300,12301,12302,12303" \
 	TRANSACTION_PROXY_PORTS="12304,12305,12306,12307" \
+	NODE_IP=localhost \
 	ERL_AFLAGS="-kernel shell_history enabled" \
 	iex --name node3@127.0.0.1 --cookie cookie -S mix phx.server
 

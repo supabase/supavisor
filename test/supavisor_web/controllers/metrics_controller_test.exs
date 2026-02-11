@@ -123,9 +123,4 @@ defmodule SupavisorWeb.MetricsControllerTest do
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
     Supavisor.Jwt.Token.gen!(secret)
   end
-
-  def percent_of_total_available_memory_in_words(percent) do
-    total_memory_bytes = :memsup.get_system_memory_data()[:total_memory]
-    div(round(total_memory_bytes * percent), :erlang.system_info(:wordsize))
-  end
 end
