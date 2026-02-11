@@ -3,29 +3,6 @@ defmodule Supavisor.HotUpgrade do
   require Logger
 
   import Cachex.Spec
-  require Record
-
-  Record.defrecord(
-    :state,
-    [
-      :name,
-      :strategy,
-      :children,
-      :dynamics,
-      :intensity,
-      :period,
-      :restarts,
-      :dynamic_restarts,
-      :auto_shutdown,
-      :module,
-      :args
-    ]
-  )
-
-  Record.defrecord(
-    :child,
-    [:pid, :id, :mfargs, :restart_type, :significant, :shutdown, :child_type, :modules]
-  )
 
   @type app :: atom
   @type version_str :: String.t()
@@ -92,64 +69,51 @@ defmodule Supavisor.HotUpgrade do
   end
 
   def reint_funs do
-    reinit_pool_args()
     reinit_auth_query()
   end
 
-  def reinit_pool_args do
-    for [_tenant, pid, _meta] <-
-          Registry.select(Supavisor.Registry.TenantSups, [
-            {{:"$1", :"$2", :"$3"}, [], [[:"$1", :"$2", :"$3"]]}
-          ]),
-        {_, child_pid, _, [:poolboy]} <- Supervisor.which_children(pid),
-        linked_pid <- Process.info(child_pid)[:links],
-        match?(
-          {:supervisor, :poolboy_sup, _},
-          Process.info(linked_pid)[:dictionary][:"$initial_call"]
-        ),
-        {status, state} = get_state(linked_pid),
-        match?(:ok, status),
-        Record.is_record(state, :state),
-        state(state, :module) == :poolboy_sup do
-      :sys.replace_state(linked_pid, fn state ->
-        db_handler = Supavisor.DbHandler
-        {^db_handler, args} = state(state, :args)
-
-        args =
-          Map.update!(args, :auth, fn auth ->
-            Map.put(auth, :password, enc(auth.password.()))
-            |> Map.put(:secrets, enc(auth.secrets.()))
-          end)
-
-        {[^db_handler], %{^db_handler => child}} = state(state, :children)
-
-        children =
-          {[db_handler], %{db_handler => child(child, mfargs: {db_handler, :start_link, [args]})}}
-
-        state(state, args: {db_handler, args}, children: children)
-      end)
-    end
+  def reinit_auth_query do
+    reinit_validation_secrets()
+    reinit_upstream_secrets()
   end
 
-  def reinit_auth_query do
+  defp reinit_validation_secrets do
     Supavisor.Cache
     |> Cachex.stream!()
     |> Enum.each(fn entry(key: key, value: value) ->
-      case value do
-        {:cached, {:ok, {:auth_query, auth}}} when is_function(auth) ->
-          Logger.debug("Reinitializing secret auth_query: #{inspect(key)}")
-          new = {:cached, {:ok, {:auth_query, enc(auth.())}}}
+      case {key, value} do
+        {{:secrets_for_validation, tenant, user}, {:cached, {method, secrets_fn}}}
+        when is_function(secrets_fn) ->
+          Logger.debug("Reinitializing validation secrets: #{tenant}/#{user}")
+          new = {:cached, {method, enc(secrets_fn.())}}
           Cachex.put(Supavisor.Cache, key, new)
 
-        {:cached, {:ok, {:auth_query_md5, auth}}} when is_function(auth) ->
-          Logger.debug("Reinitializing secret auth_query_md5: #{inspect(key)}")
-          new = {:cached, {:ok, {:auth_query_md5, enc(auth.())}}}
+        {{:secrets_check, tenant, user}, {:cached, {method, secrets_fn}}}
+        when is_function(secrets_fn) ->
+          Logger.debug("Reinitializing secrets_check: #{tenant}/#{user}")
+          new = {:cached, {method, enc(secrets_fn.())}}
           Cachex.put(Supavisor.Cache, key, new)
 
-        other ->
-          Logger.debug("Skipping:#{inspect(key)} #{inspect(other)}")
+        _other ->
+          :ok
       end
     end)
+  end
+
+  defp reinit_upstream_secrets do
+    for [_id, _pid, table] <-
+          Registry.select(Supavisor.Registry.Tenants, [
+            {{{:cache, :"$1"}, :"$2", :"$3"}, [], [[:"$1", :"$2", :"$3"]]}
+          ]) do
+      case :ets.lookup(table, :upstream_auth_secrets) do
+        [{:upstream_auth_secrets, {method, secrets_fn}}] when is_function(secrets_fn) ->
+          Logger.debug("Reinitializing upstream_auth_secrets in tenant cache")
+          :ets.insert(table, {:upstream_auth_secrets, {method, enc(secrets_fn.())}})
+
+        _ ->
+          :ok
+      end
+    end
   end
 
   @spec enc(term) :: fun
@@ -157,12 +121,4 @@ defmodule Supavisor.HotUpgrade do
 
   @spec do_enc(term) :: fun
   def do_enc(val), do: fn -> val end
-
-  def get_state(pid) do
-    {:ok, :sys.get_state(pid)}
-  catch
-    type, exception ->
-      IO.write("Error getting state: #{inspect(exception)}")
-      {:error, {type, exception}}
-  end
 end

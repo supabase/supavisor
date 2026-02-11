@@ -6,7 +6,7 @@ defmodule Supavisor.Protocol.Server do
   Error codes https://www.postgresql.org/docs/current/errcodes-appendix.html
   """
   require Logger
-  alias Supavisor.Protocol.{Debug, PgType}
+  alias Supavisor.Protocol.Debug
 
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
@@ -140,10 +140,11 @@ defmodule Supavisor.Protocol.Server do
     [<<?E, IO.iodata_length(message) + 4::32>>, message]
   end
 
-  @spec encode_error_message(list()) :: iodata()
-  def encode_error_message(message) when is_list(message) do
-    message = Enum.join(message, <<0>>) <> <<0, 0>>
-    [<<?E, byte_size(message) + 4::32>>, message]
+  @spec encode_error_message(map()) :: iodata()
+  def encode_error_message(error_map) when is_map(error_map) do
+    sorted_fields = Enum.sort(error_map)
+    message = [Enum.map(sorted_fields, fn {char, content} -> [char, content, <<0>>] end), <<0>>]
+    [<<?E, IO.iodata_length(message) + 4::32>>, message]
   end
 
   @spec encode_parameter_status(map) :: iodata()
@@ -169,34 +170,22 @@ defmodule Supavisor.Protocol.Server do
     {<<?K, len::32>>, payload}
   end
 
-  @spec decode_startup_packet(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
-  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
-    with {:ok, payload} <- decode_startup_packet_payload(rest) do
-      pkt = %{
-        len: len,
-        payload: payload,
-        tag: :startup
-      }
-
-      {:ok, pkt}
-    end
-  end
-
-  def decode_startup_packet(_), do: {:error, :bad_startup_payload}
-
-  @spec has_read_only_error?(list()) :: boolean
-  def has_read_only_error?(pkts) do
-    Enum.any?(pkts, fn
-      %{payload: ["SERROR", "VERROR", "C25006" | _]} -> true
-      _ -> false
-    end)
-  end
-
   @spec application_name :: binary()
   def application_name, do: @application_name
 
   @spec terminate_message :: binary()
   def terminate_message, do: @terminate_message
+
+  @spec admin_shutdown :: map()
+  def admin_shutdown do
+    # PostgreSQL error code 57P01: admin_shutdown
+    %{
+      "S" => "FATAL",
+      "V" => "FATAL",
+      "C" => "57P01",
+      "M" => "terminating connection due to administrator command"
+    }
+  end
 
   @spec scram_request :: iodata()
   def scram_request, do: @scram_request
@@ -343,9 +332,17 @@ defmodule Supavisor.Protocol.Server do
   defp decode_payload(:data_row, _payload), do: nil
 
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
-  @spec decode_payload(:error_response, binary()) :: [binary()]
-  defp decode_payload(:error_response, payload),
-    do: String.split(payload, <<0>>, trim: true)
+  @spec decode_payload(:error_response, binary()) :: %{String.t() => String.t()}
+  defp decode_payload(:error_response, payload) do
+    fields = String.split(payload, <<0>>, trim: true)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      case field do
+        <<char::binary-1, content::binary>> -> Map.put(acc, char, content)
+        _ -> acc
+      end
+    end)
+  end
 
   @spec decode_payload(:password_message, binary()) ::
           {:scram_sha_256, map()} | {:md5, binary()} | :undefined
@@ -407,7 +404,6 @@ defmodule Supavisor.Protocol.Server do
          {:ok, format} <- decode_format_code(format_code) do
       field = %{
         name: field_name,
-        type_info: PgType.type(data_type_oid),
         table_oid: table_oid,
         attr_number: attr_num,
         data_type_oid: data_type_oid,
@@ -436,30 +432,4 @@ defmodule Supavisor.Protocol.Server do
 
   defp decode_parameter_description(<<oid::integer-32, rest::binary>>, acc),
     do: decode_parameter_description(rest, [oid | acc])
-
-  # The startup packet payload is a list of key/value pairs, separated by null bytes
-  @spec decode_startup_packet_payload(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
-  defp decode_startup_packet_payload(payload) do
-    fields = String.split(payload, <<0>>, trim: true)
-
-    # If the number of fields is odd, then the payload is malformed
-    if rem(length(fields), 2) == 1 do
-      {:error, :bad_startup_payload}
-    else
-      map =
-        fields
-        |> Enum.chunk_every(2)
-        |> Enum.map(fn
-          ["options" = k, v] -> {k, URI.decode_query(v)}
-          [k, v] -> {k, v}
-        end)
-        |> Map.new()
-
-      # We only do light validation on the fields in the payload. The only field we use at the
-      # moment is `user`. If that's missing, this is a bad payload.
-      if Map.has_key?(map, "user"),
-        do: {:ok, map},
-        else: {:error, :bad_startup_payload}
-    end
-  end
 end

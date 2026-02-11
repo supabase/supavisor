@@ -97,7 +97,7 @@ defmodule Supavisor.Helpers do
     Postgrex.query!(conn, auth_query, [user])
   catch
     _error, reason ->
-      {:error, "Authentication query failed: #{inspect(reason)}"}
+      {:error, "Authentication query failed: #{humanize_postgrex_error(reason)}"}
   else
     %{columns: [_, _], rows: [[^user, secret]]} ->
       parse_secret(secret, user)
@@ -111,19 +111,42 @@ defmodule Supavisor.Helpers do
        "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
   end
 
-  @spec parse_secret(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  defp humanize_postgrex_error(%DBConnection.ConnectionError{message: message, reason: reason}) do
+    case reason do
+      :queue_timeout -> "Connection to database not available"
+      :error -> message
+    end
+  end
+
+  defp humanize_postgrex_error(%Postgrex.Error{postgres: %{message: message}}) do
+    message
+  end
+
+  defp humanize_postgrex_error(reason) do
+    inspect(reason)
+  end
+
+  @spec parse_secret(String.t(), String.t()) ::
+          {:ok,
+           Supavisor.ClientHandler.Auth.SASLSecrets.t()
+           | Supavisor.ClientHandler.Auth.MD5Secrets.t()}
+          | {:error, String.t()}
   def parse_secret("SCRAM-SHA-256" <> _ = secret, user) do
     # <digest>$<iteration>:<salt>$<stored_key>:<server_key>
     case Regex.run(~r/^(.+)\$(\d+):(.+)\$(.+):(.+)$/, secret) do
       [_, digest, iterations, salt, stored_key, server_key] ->
+        decoded_stored_key = Base.decode64!(stored_key)
+        decoded_server_key = Base.decode64!(server_key)
+
         {:ok,
-         %{
+         %Supavisor.ClientHandler.Auth.SASLSecrets{
+           user: user,
            digest: digest,
            iterations: String.to_integer(iterations),
            salt: salt,
-           stored_key: Base.decode64!(stored_key),
-           server_key: Base.decode64!(server_key),
-           user: user
+           stored_key: decoded_stored_key,
+           client_key: decoded_stored_key,
+           server_key: decoded_server_key
          }}
 
       _ ->
@@ -132,7 +155,7 @@ defmodule Supavisor.Helpers do
   end
 
   def parse_secret("md5" <> secret, user) do
-    {:ok, %{digest: :md5, secret: secret, user: user}}
+    {:ok, %Supavisor.ClientHandler.Auth.MD5Secrets{user: user, password: secret}}
   end
 
   def parse_secret(_secret, _user) do
@@ -258,7 +281,7 @@ defmodule Supavisor.Helpers do
     salt = srv_first.salt
     i = srv_first.i
 
-    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(secrets), salt, i)
+    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(secrets.password), salt, i)
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
     client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
@@ -411,5 +434,10 @@ defmodule Supavisor.Helpers do
       value ->
         raise "Invalid boolean value for #{env_var}: #{inspect(value)}. Expected: true, false, 1, or 0"
     end
+  end
+
+  def no_warm_pool_user?(user) do
+    no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
+    user in no_warm_pool_users
   end
 end

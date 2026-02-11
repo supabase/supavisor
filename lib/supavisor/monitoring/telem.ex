@@ -68,8 +68,8 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
-  @spec client_query_time(integer(), Supavisor.id()) :: :ok | nil
-  def client_query_time(start, {{type, tenant}, user, mode, db_name, search_path}) do
+  @spec client_query_time(integer(), Supavisor.id(), boolean()) :: :ok | nil
+  def client_query_time(start, {{type, tenant}, user, mode, db_name, search_path}, proxy) do
     telemetry_execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
@@ -79,7 +79,8 @@ defmodule Supavisor.Monitoring.Telem do
         mode: mode,
         type: type,
         db_name: db_name,
-        search_path: search_path
+        search_path: search_path,
+        proxy: proxy
       }
     )
   end

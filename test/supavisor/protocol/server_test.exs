@@ -27,9 +27,6 @@ defmodule Supavisor.Protocol.ServerTest do
                     117, 116, 104, 46, 99, 0, 76, 51, 51, 53, 0, 82, 97, 117, 116, 104, 95, 102,
                     97, 105, 108, 101, 100, 0, 0>>
 
-  @read_only_bin <<69, 0, 0, 0, 37, 83, 69, 82, 82, 79, 82, 0, 86, 69, 82, 82, 79, 82, 0, 67, 50,
-                   53, 48, 48, 54, 0, 77, 114, 101, 97, 100, 32, 111, 110, 108, 121, 0, 0>>
-
   test "encode_parameter_status/1" do
     result = Server.encode_parameter_status(@initial_data)
 
@@ -74,15 +71,15 @@ defmodule Supavisor.Protocol.ServerTest do
                 tag: :error_response,
                 len: 112,
                 bin: @auth_bin_error,
-                payload: [
-                  "SFATAL",
-                  "VFATAL",
-                  "C28P01",
-                  "Mpassword authentication failed for user \"test_wrong_user\"",
-                  "Fauth.c",
-                  "L335",
-                  "Rauth_failed"
-                ]
+                payload: %{
+                  "S" => "FATAL",
+                  "V" => "FATAL",
+                  "C" => "28P01",
+                  "M" => "password authentication failed for user \"test_wrong_user\"",
+                  "F" => "auth.c",
+                  "L" => "335",
+                  "R" => "auth_failed"
+                }
               }
             ], ""} = Server.decode(@auth_bin_error)
   end
@@ -191,59 +188,18 @@ defmodule Supavisor.Protocol.ServerTest do
   end
 
   test "encode_error_message/1" do
-    message = ["SFATAL", "VFATAL", "C28P01", "Mpassword authentication failed"]
+    message = %{
+      "S" => "FATAL",
+      "V" => "FATAL",
+      "C" => "28P01",
+      "M" => "password authentication failed"
+    }
+
     result = Server.encode_error_message(message) |> IO.iodata_to_binary()
 
     assert result ==
-             <<69, 0, 0, 0, 58, 83, 70, 65, 84, 65, 76, 0, 86, 70, 65, 84, 65, 76, 0, 67, 50, 56,
-               80, 48, 49, 0, 77, 112, 97, 115, 115, 119, 111, 114, 100, 32, 97, 117, 116, 104,
-               101, 110, 116, 105, 99, 97, 116, 105, 111, 110, 32, 102, 97, 105, 108, 101, 100, 0,
-               0>>
-  end
-
-  test "decode_startup_packet/1" do
-    input =
-      <<0, 0, 0, 191, 0, 3, 0, 0, 117, 115, 101, 114, 0, 112, 111, 115, 116, 103, 114, 101, 115,
-        0, 100, 97, 116, 97, 98, 97, 115, 101, 0, 112, 111, 115, 116, 103, 114, 101, 115, 0, 114,
-        101, 112, 108, 105, 99, 97, 116, 105, 111, 110, 0, 100, 97, 116, 97, 98, 97, 115, 101, 0,
-        111, 112, 116, 105, 111, 110, 115, 0, 45, 99, 32, 100, 97, 116, 101, 115, 116, 121, 108,
-        101, 61, 73, 83, 79, 32, 45, 99, 32, 105, 110, 116, 101, 114, 118, 97, 108, 115, 116, 121,
-        108, 101, 61, 112, 111, 115, 116, 103, 114, 101, 115, 32, 45, 99, 32, 101, 120, 116, 114,
-        97, 95, 102, 108, 111, 97, 116, 95, 100, 105, 103, 105, 116, 115, 61, 51, 0, 97, 112, 112,
-        108, 105, 99, 97, 116, 105, 111, 110, 95, 110, 97, 109, 101, 0, 109, 121, 95, 115, 117,
-        98, 115, 99, 114, 105, 112, 116, 105, 111, 110, 0, 99, 108, 105, 101, 110, 116, 95, 101,
-        110, 99, 111, 100, 105, 110, 103, 0, 85, 84, 70, 56, 0, 0>>
-
-    assert {:ok, packet} = Server.decode_startup_packet(input)
-    assert packet.len == 191
-    assert packet.tag == :startup
-
-    assert packet.payload == %{
-             "user" => "postgres",
-             "database" => "postgres",
-             "replication" => "database",
-             "options" => %{
-               "-c datestyle" => "ISO -c intervalstyle=postgres -c extra_float_digits=3"
-             },
-             "application_name" => "my_subscription",
-             "client_encoding" => "UTF8"
-           }
-
-    assert Server.decode_startup_packet(<<1, 2, 3>>) == {:error, :bad_startup_payload}
-
-    assert Server.decode_startup_packet(<<0, 0, 0, 8, 0, 3, 0, 0>>) ==
-             {:error, :bad_startup_payload}
-  end
-
-  test "has_read_only_error?/1" do
-    {:ok, read_only_pkts, ""} = Server.decode(@read_only_bin)
-    {:ok, auth_error_pkts, ""} = Server.decode(@auth_bin_error)
-
-    assert Server.has_read_only_error?(read_only_pkts) == true
-    assert Server.has_read_only_error?(auth_error_pkts ++ read_only_pkts) == true
-
-    assert Server.has_read_only_error?(auth_error_pkts) == false
-    assert Server.has_read_only_error?([]) == false
+             <<?E, 0, 0, 0, ?:, ?C, "28P01", 0, ?M, "password authentication failed", 0, ?S,
+               "FATAL", 0, ?V, "FATAL", 0, 0>>
   end
 
   test "scram_request/0" do
@@ -436,8 +392,7 @@ defmodule Supavisor.Protocol.ServerTest do
                data_type_oid: 23,
                data_type_size: 4,
                type_modifier: 4_294_967_295,
-               format: :text,
-               type_info: :int4oid
+               format: :text
              }
            ] = packet1.payload
 
@@ -469,8 +424,7 @@ defmodule Supavisor.Protocol.ServerTest do
                data_type_oid: 23,
                data_type_size: 4,
                type_modifier: 4_294_967_295,
-               format: :text,
-               type_info: :int4oid
+               format: :text
              }
            ] = packet1.payload
 

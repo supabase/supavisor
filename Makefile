@@ -92,6 +92,9 @@ pgbench:
 clean:
 	rm -rf _build && rm -rf deps
 
+test_upgrade:
+	scripts/test_upgrade.sh $(FROM)
+
 dev_release:
 	mix deps.get && mix compile && mix release supavisor
 

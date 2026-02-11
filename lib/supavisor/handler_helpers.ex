@@ -1,8 +1,6 @@
 defmodule Supavisor.HandlerHelpers do
   @moduledoc false
 
-  alias Phoenix.PubSub
-
   require Supavisor.Protocol.Server, as: Server
 
   @spec sock_send(Supavisor.sock(), iodata()) :: :ok | {:error, term()}
@@ -24,9 +22,6 @@ defmodule Supavisor.HandlerHelpers do
 
   @spec active_once(Supavisor.sock()) :: :ok | {:error, term}
   def active_once(sock), do: setopts(sock, active: :once)
-
-  @spec activate(Supavisor.sock()) :: :ok | {:error, term}
-  def activate(sock), do: setopts(sock, active: true)
 
   @spec try_ssl_handshake(Supavisor.tcp_sock(), boolean) ::
           {:ok, Supavisor.sock()} | {:error, term()}
@@ -100,30 +95,6 @@ defmodule Supavisor.HandlerHelpers do
       [user, tenant] ->
         {:cluster, {user, tenant, db_name}}
     end
-  end
-
-  @spec send_cancel_query(non_neg_integer, non_neg_integer, term) :: :ok | {:errr, term}
-  def send_cancel_query(pid, key, msg \\ :cancel_query) do
-    PubSub.broadcast(
-      Supavisor.PubSub,
-      "cancel_req:#{pid}_#{key}",
-      msg
-    )
-  end
-
-  @spec listen_cancel_query(non_neg_integer, non_neg_integer) :: :ok | {:errr, term}
-  def listen_cancel_query(pid, key) do
-    PubSub.subscribe(Supavisor.PubSub, "cancel_req:#{pid}_#{key}")
-  end
-
-  @spec cancel_query(keyword, non_neg_integer, atom, non_neg_integer, non_neg_integer) :: :ok
-  def cancel_query(host, port, ip_version, pid, key) do
-    msg = Server.cancel_message(pid, key)
-    opts = [:binary, {:packet, :raw}, {:active, true}, ip_version]
-    {:ok, sock} = :gen_tcp.connect(host, port, opts)
-    sock = {:gen_tcp, sock}
-    :ok = sock_send(sock, msg)
-    :ok = sock_close(sock)
   end
 
   @doc """

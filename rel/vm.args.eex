@@ -16,6 +16,15 @@
 ## Set number of processes
 +P 1000000
 
+# Dist buffer busy limit in KB (2GB)
++zdbbl 2097151
+
 -kernel inet_dist_listen_min 20000
 -kernel inet_dist_listen_max 21000
-+zdbbl 2097151
+
+# Distribution socket options:
+# send buffer - 256KB
+# receive buffer - 512KB
+# buffer - set to receive buffer
+-kernel inet_dist_connect_options [{sndbuf,256000},{recbuf,512000},{buffer,512000},{nodelay,true}]
+-kernel inet_dist_listen_options [{sndbuf,256000},{recbuf,512000},{buffer,512000},{nodelay,true}]

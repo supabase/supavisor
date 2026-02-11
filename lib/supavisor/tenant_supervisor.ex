@@ -5,22 +5,18 @@ defmodule Supavisor.TenantSupervisor do
   require Logger
   alias Supavisor.Manager
   alias Supavisor.SecretChecker
-
-  def start_link(%{replicas: [%{mode: mode}]} = args)
-      when mode in [:transaction, :session] do
-    meta = Supavisor.get_local_server(args.id, mode)
-    name = {:via, :syn, {:tenants, args.id, meta}}
-    Supervisor.start_link(__MODULE__, args, name: name)
-  end
+  alias Supavisor.Terminator
 
   def start_link(args) do
-    name = {:via, :syn, {:tenants, args.id}}
+    meta = Supavisor.get_local_server(args.id)
+    name = {:via, :syn, {:tenants, args.id, meta}}
     Supervisor.start_link(__MODULE__, args, name: name)
   end
 
   @impl true
   def init(%{replicas: replicas} = args) do
     {{type, tenant}, user, mode, db_name, search_path} = args.id
+    min_size = if Supavisor.Helpers.no_warm_pool_user?(user), do: 0, else: 1
 
     pools =
       replicas
@@ -30,18 +26,32 @@ defmodule Supavisor.TenantSupervisor do
 
         %{
           id: {:pool, id},
-          start: {:poolboy, :start_link, [pool_spec(id, e), e]},
-          restart: :temporary
+          start:
+            {:poolboy, :start_link,
+             [pool_spec(id, e.replica_type, min_size, e.pool_size), %{id: args.id}]},
+          restart: :temporary,
+          type: :supervisor
         }
       end)
 
-    children = [{Manager, args}, {SecretChecker, args} | pools]
+    manager_args = %{id: args.id, secrets: args.secrets, log_level: args.log_level}
+    secret_checker_args = %{id: args.id}
+    cache_args = %{id: args.id}
+    terminator_args = %{id: args.id}
+
+    children =
+      [
+        {Supavisor.TenantCache, cache_args},
+        {Manager, manager_args},
+        {SecretChecker, secret_checker_args}
+        | pools
+      ] ++ [{Terminator, terminator_args}]
 
     map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
 
     Supervisor.init(children,
-      strategy: :one_for_all,
+      strategy: :one_for_one,
       max_restarts: 10,
       max_seconds: 60
     )
@@ -51,19 +61,18 @@ defmodule Supavisor.TenantSupervisor do
     %{
       id: args.id,
       start: {__MODULE__, :start_link, [args]},
-      restart: :transient
+      restart: :transient,
+      type: :supervisor
     }
   end
 
-  @spec pool_spec(tuple, map) :: Keyword.t()
-  defp pool_spec(id, args) do
-    {size, overflow} = {1, args.pool_size}
-
+  @spec pool_spec(tuple, atom, integer, integer) :: Keyword.t()
+  defp pool_spec(id, replica_type, min_size, pool_size) do
     [
-      name: {:via, Registry, {Supavisor.Registry.Tenants, id, args.replica_type}},
+      name: {:via, Registry, {Supavisor.Registry.Tenants, id, replica_type}},
       worker_module: Supavisor.DbHandler,
-      size: size,
-      max_overflow: overflow,
+      size: min_size,
+      max_overflow: pool_size,
       strategy: :lifo,
       idle_timeout: :timer.minutes(5)
     ]

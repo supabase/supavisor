@@ -19,10 +19,9 @@ defmodule SupavisorWeb.MetricsController do
 
   def tenant(conn, %{"external_id" => ext_id}) do
     cluster_metrics = PromEx.get_cluster_tenant_metrics(ext_id)
-    code = if cluster_metrics == [], do: 404, else: 200
 
     conn
     |> put_resp_content_type("text/plain")
-    |> send_resp(code, [cluster_metrics, "\n"])
+    |> send_resp(200, [cluster_metrics, "\n"])
   end
 end

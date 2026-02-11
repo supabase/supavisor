@@ -8,6 +8,11 @@ parse_integer_list = fn numbers when is_binary(numbers) ->
   |> Enum.map(&String.to_integer/1)
 end
 
+db_socket_options =
+  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
+    do: [:inet6],
+    else: [:inet]
+
 secret_key_base =
   if config_env() in [:dev, :test] do
     "3S1V5RyqQcuPrMVuR4BjH9XBayridj56JA0EE6wYidTEc6H84KSFY6urVX7GfOhK"
@@ -23,6 +28,7 @@ config :supavisor, SupavisorWeb.Endpoint,
   server: true,
   http: [
     port: String.to_integer(System.get_env("PORT") || "4000"),
+    compress: true,
     transport_options: [
       max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "1000"),
       num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
@@ -92,7 +98,8 @@ topologies =
       config: [
         url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
         heartbeat_interval: 5_000,
-        channel_name: "supavisor_#{region}_#{maj}_#{min}"
+        channel_name: "supavisor_#{region}_#{maj}_#{min}",
+        socket_options: db_socket_options
       ]
     ]
 
@@ -148,11 +155,6 @@ downstream_key =
     end
   end
 
-db_socket_options =
-  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
-    do: [:inet6],
-    else: [:inet]
-
 reconnect_retries =
   System.get_env("RECONNECT_RETRIES", "5")
   |> String.to_integer()
@@ -187,6 +189,14 @@ if config_env() != :test do
     reconnect_retries: reconnect_retries,
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
+    cache_bypass_users:
+      System.get_env("CACHE_BYPASS_USERS", "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1),
+    no_warm_pool_users:
+      System.get_env("NO_WARM_POOL_USERS", "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1),
     node_host: System.get_env("NODE_IP", "127.0.0.1")
 
   config :supavisor, Supavisor.FeatureFlag, %{
@@ -250,7 +260,7 @@ if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
          ),
        filter_default: :stop,
        filters: [
-         exchange: {&Supavisor.Logger.Filters.filter_client_handler/2, :exchange}
+         exchange: {&Supavisor.Logger.Filters.filter_auth_error/2, nil}
        ],
        config: %{
          file: to_charlist(path),
