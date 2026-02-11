@@ -25,7 +25,9 @@ defmodule Supavisor.Protocol.ClientTest do
              "database" => "postgres",
              "replication" => "database",
              "options" => %{
-               "-c datestyle" => "ISO -c intervalstyle=postgres -c extra_float_digits=3"
+               "datestyle" => "ISO",
+               "intervalstyle" => "postgres",
+               "extra_float_digits" => "3"
              },
              "application_name" => "my_subscription",
              "client_encoding" => "UTF8"

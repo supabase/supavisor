@@ -74,7 +74,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(payload)
 
     if Helpers.validate_name(user) and Helpers.validate_name(db_name) do
-      search_path = payload["options"]["--search_path"]
+      search_path = payload["options"]["search_path"]
       {:ok, {type, {user, tenant_or_alias, db_name, search_path}}}
     else
       {:error, {:invalid_format, {user, db_name}}}
