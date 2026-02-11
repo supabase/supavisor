@@ -30,18 +30,37 @@ defmodule Supavisor.ErlSysMon do
     {:ok, []}
   end
 
-  def handle_info(msg, state) do
-    enriched_msg = maybe_enrich_message(msg)
-    Logger.warning("#{__MODULE__} message: " <> inspect(enriched_msg))
+  def handle_info({:monitor, pid, _type, _meta} = msg, state) when is_pid(pid) do
+    log_process_info(msg, pid)
     {:noreply, state}
   end
 
-  defp maybe_enrich_message({:monitor, pid, _type, _info} = msg) when is_pid(pid) do
-    case :proc_lib.get_label(pid) do
-      :undefined -> msg
-      label -> {msg, proc_label: label}
-    end
+  def handle_info(msg, state) do
+    Logger.warning("#{__MODULE__} message: " <> inspect(msg))
+    {:noreply, state}
   end
 
-  defp maybe_enrich_message(msg), do: msg
+  defp log_process_info(msg, pid) do
+    pid_info =
+      pid
+      |> Process.info(:dictionary)
+      |> case do
+        {:dictionary, dict} when is_list(dict) ->
+          {List.keyfind(dict, :"$initial_call", 0), List.keyfind(dict, :"$ancestors", 0)}
+
+        other ->
+          other
+      end
+
+    extra_info =
+      Process.info(pid, [:registered_name, :label, :message_queue_len, :total_heap_size])
+
+    Logger.warning(
+      "#{__MODULE__} message: " <>
+        inspect(msg) <> "|\n process info: #{inspect(pid_info)} #{inspect(extra_info)}"
+    )
+  rescue
+    _ ->
+      Logger.warning("#{__MODULE__} message: " <> inspect(msg))
+  end
 end
