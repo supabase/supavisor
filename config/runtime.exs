@@ -288,4 +288,6 @@ end
 
 config :supavisor, SupavisorWeb.MetricsController,
   index_min_heap_size_mb:
-    System.get_env("METRICS_HANDLER_MIN_HEAP_SIZE_MB", "100") |> String.to_integer()
+    System.get_env("METRICS_HANDLER_INDEX_MIN_HEAP_SIZE_MB", "100") |> String.to_integer(),
+  index_fullsweep_after:
+    System.get_env("METRICS_HANDLER_INDEX_FULLSWEEP_AFTER", "0") |> String.to_integer()

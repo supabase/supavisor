@@ -70,10 +70,12 @@ This document provides a categorized list of all environment variables used in S
 
 ### Metrics
 
-| Variable           | Description                             | Default Value | Required |
-| ------------------ | --------------------------------------- | ------------- | -------- |
-| `METRICS_DISABLED` | Disable metrics collection              | `false`       | No       |
-| `PROM_POLL_RATE`   | Prometheus polling rate in milliseconds | `15000`       | No       |
+| Variable                                 | Description                                                          | Default Value | Required |
+| ---------------------------------------- | -------------------------------------------------------------------- | ------------- | -------- |
+| `METRICS_DISABLED`                       | Disable metrics collection                                           | `false`       | No       |
+| `PROM_POLL_RATE`                         | Prometheus polling rate in milliseconds                              | `15000`       | No       |
+| `METRICS_HANDLER_INDEX_MIN_HEAP_SIZE_MB` | Min heap size (MB) for GET /metrics handler (-1=system default: 233) | `100`         | No       |
+| `METRICS_HANDLER_INDEX_FULLSWEEP_AFTER`  | Full GC frequency for metrics handler (-1=default: 65535, 0=every)   | `0`           | No       |
 
 ### Logging
 

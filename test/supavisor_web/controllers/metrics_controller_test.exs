@@ -61,20 +61,49 @@ defmodule SupavisorWeb.MetricsControllerTest do
     GenServer.stop(proxy)
   end
 
-  test "instrumenting cluster metrics collection", %{conn: conn} do
+  test "instrumenting and tunning cluster metrics collection process", %{conn: conn} do
     conn
     |> auth
     |> get(Routes.metrics_path(conn, :index))
 
     assert :metrics_handler = :proc_lib.get_label(self())
 
-    {:min_heap_size, new_min_heap_words} = Process.info(self(), :min_heap_size)
+    [min_heap_size: new_min_heap_words, fullsweep_after: new_fullsweep_after] =
+      Process.info(self(), [:min_heap_size, :fullsweep_after])
+
     expected_words = Supavisor.Helpers.mb_to_words(100)
 
     # Erlang rounds up to next valid heap size, so check it's at least expected
     # and not more than 50% larger (accounting for heap size rounding)
     assert new_min_heap_words >= expected_words
     assert new_min_heap_words <= expected_words * 1.5
+
+    assert new_fullsweep_after == 0
+  end
+
+  test "setting values to negatives ones disables metrics collection process tunning", %{
+    conn: conn
+  } do
+    old_env = Application.get_env(:supavisor, SupavisorWeb.MetricsController)
+
+    Application.put_env(:supavisor, SupavisorWeb.MetricsController,
+      index_min_heap_size_mb: -1,
+      index_fullsweep_after: -1
+    )
+
+    [min_heap_size: old_heap_words, fullsweep_after: old_fullsweep_after] =
+      Process.info(self(), [:min_heap_size, :fullsweep_after])
+
+    conn
+    |> auth
+    |> get(Routes.metrics_path(conn, :index))
+
+    [min_heap_size: new_min_heap_words, fullsweep_after: new_fullsweep_after] =
+      Process.info(self(), [:min_heap_size, :fullsweep_after])
+
+    assert new_min_heap_words == old_heap_words
+    assert new_fullsweep_after == old_fullsweep_after
+    Application.put_env(:supavisor, SupavisorWeb.MetricsController, old_env)
   end
 
   test "instrumenting tenant metrics collection", %{conn: conn} do
