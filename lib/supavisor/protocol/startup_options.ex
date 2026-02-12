@@ -76,4 +76,33 @@ defmodule Supavisor.Protocol.StartupOptions do
 
   # Skip unrecognized tokens
   defp parse_tokens([_ | rest], acc), do: parse_tokens(rest, acc)
+
+  @doc """
+  Encodes a map of GUC settings into a PostgreSQL startup `options` string.
+
+  Spaces, tabs, and backslashes in values are backslash-escaped per `pg_split_opts`.
+
+  ## Examples
+
+      iex> Supavisor.Protocol.StartupOptions.encode(%{"search_path" => "public"})
+      "--search_path=public"
+
+      iex> Supavisor.Protocol.StartupOptions.encode(%{"search_path" => "schemaA, schemaB"})
+      "--search_path=schemaA,\\\\ schemaB"
+
+  """
+  @spec encode(map()) :: String.t()
+  def encode(opts) when opts == %{}, do: ""
+
+  def encode(opts) do
+    opts
+    |> Enum.map_join(" ", fn {name, value} -> "--#{name}=#{escape_value(value)}" end)
+  end
+
+  defp escape_value(value) do
+    value
+    |> String.replace("\\", "\\\\")
+    |> String.replace(" ", "\\ ")
+    |> String.replace("\t", "\\\t")
+  end
 end
