@@ -95,7 +95,6 @@ defmodule Supavisor.Protocol.StartupOptions do
   def encode(opts) when opts == %{}, do: ""
 
   def encode(opts) do
-    opts
     Enum.map_join(opts, " ", fn {name, value} -> "--#{name}=#{escape_value(value)}" end)
   end
 
