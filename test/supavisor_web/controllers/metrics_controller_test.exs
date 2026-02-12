@@ -61,59 +61,112 @@ defmodule SupavisorWeb.MetricsControllerTest do
     GenServer.stop(proxy)
   end
 
-  test "instrumenting and tunning cluster metrics collection process", %{conn: conn} do
-    conn
-    |> auth
-    |> get(Routes.metrics_path(conn, :index))
-
-    assert :metrics_handler = :proc_lib.get_label(self())
-
-    [min_heap_size: new_min_heap_words, fullsweep_after: new_fullsweep_after] =
-      Process.info(self(), [:min_heap_size, :fullsweep_after])
-
+  test "tunning cluster metrics collection process", %{conn: conn} do
+    default_min_heap_size = :erlang.system_info(:min_heap_size) |> elem(1)
+    default_fullsweep_after = :erlang.system_info(:fullsweep_after) |> elem(1)
     expected_words = Supavisor.Helpers.mb_to_words(100)
 
-    # Erlang rounds up to next valid heap size, so check it's at least expected
-    # and not more than 50% larger (accounting for heap size rounding)
-    assert new_min_heap_words >= expected_words
-    assert new_min_heap_words <= expected_words * 1.5
+    assert_mhs_and_fsa = fn
+      {min_mhs, max_mhs}, fsa ->
+        assert [min_heap_size: mhs, fullsweep_after: ^fsa] =
+                 Process.info(self(), [:min_heap_size, :fullsweep_after])
 
-    assert new_fullsweep_after == 0
-  end
+        assert mhs >= min_mhs
+        assert mhs <= max_mhs
 
-  test "setting values to negatives ones disables metrics collection process tunning", %{
-    conn: conn
-  } do
-    old_env = Application.get_env(:supavisor, SupavisorWeb.MetricsController)
-
-    Application.put_env(:supavisor, SupavisorWeb.MetricsController,
-      index_min_heap_size_mb: -1,
-      index_fullsweep_after: -1
-    )
-
-    [min_heap_size: old_heap_words, fullsweep_after: old_fullsweep_after] =
-      Process.info(self(), [:min_heap_size, :fullsweep_after])
+      mhs, fsa ->
+        assert [min_heap_size: ^mhs, fullsweep_after: ^fsa] =
+                 Process.info(self(), [:min_heap_size, :fullsweep_after])
+    end
 
     conn
     |> auth
     |> get(Routes.metrics_path(conn, :index))
 
-    [min_heap_size: new_min_heap_words, fullsweep_after: new_fullsweep_after] =
-      Process.info(self(), [:min_heap_size, :fullsweep_after])
+    assert_mhs_and_fsa.(default_min_heap_size, default_fullsweep_after)
 
-    assert new_min_heap_words == old_heap_words
-    assert new_fullsweep_after == old_fullsweep_after
-    Application.put_env(:supavisor, SupavisorWeb.MetricsController, old_env)
+    SupavisorWeb.MetricsController.configure_tune_index_proc(_min_heap_size_mb = 100, 0)
+
+    # we need a new process as if it was a new connection, as the changes apply to NEW conns
+    parent = self()
+
+    spawn_link(fn ->
+      conn
+      |> auth
+      |> get(Routes.metrics_path(conn, :index))
+
+      # Erlang rounds up to next valid heap size, so check it's at least expected
+      # and not more than 50% larger (accounting for heap size rounding)
+      assert_mhs_and_fsa.({expected_words, expected_words * 1.5}, 0)
+      send(parent, :done)
+    end)
+
+    receive do
+      :done -> :ok
+    after
+      2000 ->
+        flunk("Did not receive response in time")
+    end
+
+    SupavisorWeb.MetricsController.configure_tune_index_proc(
+      default_min_heap_size,
+      default_fullsweep_after
+    )
   end
 
-  test "instrumenting tenant metrics collection", %{conn: conn} do
+  test "restoring cluster metrics collection process to defaults", %{
+    conn: conn
+  } do
+    default_min_heap_size = :erlang.system_info(:min_heap_size) |> elem(1)
+    default_fullsweep_after = :erlang.system_info(:fullsweep_after) |> elem(1)
+
+    conn
+    |> auth
+    |> get(Routes.metrics_path(conn, :index))
+
+    SupavisorWeb.MetricsController.configure_tune_index_proc(
+      _min_heap_size_mb = 100,
+      _fullsweep_after = 0
+    )
+
+    SupavisorWeb.MetricsController.configure_tune_index_proc(nil, nil)
+
+    # we need a new process as if it was a new connection, as the changes apply to NEW conns
+    parent = self()
+
+    spawn_link(fn ->
+      conn
+      |> auth
+      |> get(Routes.metrics_path(conn, :index))
+
+      assert [min_heap_size: ^default_min_heap_size, fullsweep_after: ^default_fullsweep_after] =
+               Process.info(self(), [:min_heap_size, :fullsweep_after])
+
+      send(parent, :done)
+    end)
+
+    receive do
+      :done -> :ok
+    after
+      2000 ->
+        flunk("Did not receive response in time")
+    end
+  end
+
+  test "instrumenting metrics collection", %{conn: conn} do
     tenant_id = "proxy_tenant_id"
 
     conn
     |> auth
     |> get(Routes.metrics_path(conn, :tenant, tenant_id))
 
-    assert {:tenant_metrics_handler, ^tenant_id} = :proc_lib.get_label(self())
+    assert {:metrics_handler, ^tenant_id} = :proc_lib.get_label(self())
+
+    conn
+    |> auth
+    |> get(Routes.metrics_path(conn, :index))
+
+    assert :metrics_handler = :proc_lib.get_label(self())
   end
 
   defp auth(conn, bearer \\ gen_token()) do

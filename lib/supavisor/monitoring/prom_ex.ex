@@ -114,6 +114,8 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   def fetch_metrics_compressed do
+    :proc_lib.set_label(:metrics_fetcher)
+
     fetch_metrics()
     |> :erlang.term_to_binary(compressed: 6)
   end
@@ -126,6 +128,8 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   def fetch_tenant_metrics_compressed(tenant) do
+    :proc_lib.set_label({:metrics_fetcher, tenant})
+
     fetch_tenant_metrics(tenant)
     |> :erlang.term_to_binary(compressed: 6)
   end
@@ -134,7 +138,7 @@ defmodule Supavisor.Monitoring.PromEx do
     [node() | Node.list()]
     |> Task.async_stream(
       fn node ->
-        :proc_lib.set_label({:node_metrics_handler, node})
+        :proc_lib.set_label({:metrics_fetcher_task, node})
         fetch_node_metrics(node)
       end,
       timeout: :infinity
@@ -147,7 +151,7 @@ defmodule Supavisor.Monitoring.PromEx do
     [node() | Node.list()]
     |> Task.async_stream(
       fn node ->
-        :proc_lib.set_label({:node_tenant_metrics_handler, node, tenant})
+        :proc_lib.set_label({:metric_fetcher_task, node, tenant})
         fetch_node_tenant_metrics(node, tenant)
       end,
       timeout: :infinity
