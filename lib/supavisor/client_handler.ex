@@ -182,8 +182,9 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, _log_level} ->
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, log_level} ->
         event = {:hello, {type, {user, tenant_or_alias, db_name, search_path}}}
+        if log_level, do: Logger.put_process_level(self(), log_level)
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
 

@@ -18,7 +18,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     HandlerHelpers,
     Helpers,
     Protocol.MessageStreamer,
-    Protocol.Server
+    Protocol.Client
   }
 
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
@@ -45,7 +45,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   """
   @spec parse_startup_packet(binary()) :: startup_result()
   def parse_startup_packet(bin) do
-    case Server.decode_startup_packet(bin) do
+    case Client.decode_startup_packet(bin) do
       {:ok, hello} ->
         Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
 
@@ -74,7 +74,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(payload)
 
     if Helpers.validate_name(user) and Helpers.validate_name(db_name) do
-      search_path = payload["options"]["--search_path"]
+      search_path = payload["options"]["search_path"]
       {:ok, {type, {user, tenant_or_alias, db_name, search_path}}}
     else
       {:error, {:invalid_format, {user, db_name}}}
@@ -127,7 +127,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   Returns atom log level or nil if not specified or invalid.
   """
   @spec extract_log_level(map()) :: atom() | nil
-  def extract_log_level(%{"payload" => %{"options" => options}}) do
+  def extract_log_level(%{payload: %{"options" => options}}) do
     level = options["log_level"] && String.to_existing_atom(options["log_level"])
 
     if level in [:debug, :info, :notice, :warning, :error] do

@@ -154,4 +154,21 @@ defmodule Supavisor.ClientHandlerTest do
                )
     end
   end
+
+  describe "startup packet log_level option" do
+    test "sets process log level from options" do
+      bin =
+        <<79::32,
+          "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00">>
+
+      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil}
+
+      assert {:keep_state, %{app_name: "Supavisor"},
+              {:next_event, :internal,
+               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil}}}}} =
+               @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
+
+      assert Logger.get_process_level(self()) == :debug
+    end
+  end
 end
