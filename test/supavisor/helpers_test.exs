@@ -127,4 +127,31 @@ defmodule Supavisor.HelpersTest do
       end
     end
   end
+
+  describe "set_min_heap_size/1" do
+    test "sets min heap size to configured value" do
+      expected_words = Supavisor.Helpers.mb_to_words(100)
+      parent = self()
+
+      pid =
+        spawn_link(fn ->
+          Supavisor.Helpers.set_min_heap_size(100)
+          send(parent, {self(), :done})
+          Process.sleep(:infinity)
+        end)
+
+      receive do
+        {^pid, :done} ->
+          :ok
+      after
+        1000 ->
+          flunk("Process did not finish setting min heap size in time")
+      end
+
+      {:min_heap_size, new_min_heap_words} = Process.info(pid, :min_heap_size)
+
+      # Erlang rounds up to next valid heap size, so check it's at least expected
+      assert new_min_heap_words >= expected_words
+    end
+  end
 end
