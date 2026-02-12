@@ -241,11 +241,6 @@ defmodule Supavisor.ClientHandler do
             Telem.client_join(:fail, id)
             {:stop, :normal}
 
-          !data.local and info.tenant.use_jit and !data.ssl ->
-            Error.maybe_log_and_send_error(sock, {:error, :ssl_required, user})
-            Telem.client_join(:fail, id)
-            {:stop, :normal}
-
           HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] ->
             Error.maybe_log_and_send_error(sock, {:error, :address_not_allowed, addr})
             Telem.client_join(:fail, id)
@@ -268,7 +263,7 @@ defmodule Supavisor.ClientHandler do
 
             case Supavisor.CircuitBreaker.check(tenant_or_alias, :get_secrets) do
               :ok ->
-                case Auth.get_user_secrets(data.id, info, user, tenant_or_alias) do
+                case Auth.get_user_secrets(data.id, info, user, tenant_or_alias, data.ssl) do
                   {:ok, auth_secrets} ->
                     Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
 
@@ -937,7 +932,8 @@ defmodule Supavisor.ClientHandler do
       auth_context.info,
       data.tenant,
       data.user,
-      auth_context.secrets
+      auth_context.secrets,
+      data.ssl
     )
 
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)

@@ -25,13 +25,14 @@ defmodule Supavisor.ClientHandler.Auth do
   For password auth (require_user: true), returns password-based secrets.
   For auth_query, uses cache with TTL or fetches from database.
   """
-  @spec get_user_secrets(Supavisor.id(), map(), String.t(), String.t()) ::
+  @spec get_user_secrets(Supavisor.id(), map(), String.t(), String.t(), boolean()) ::
           {:ok, auth_secrets()} | {:error, term()}
   def get_user_secrets(
         _id,
         %{user: user, tenant: %{require_user: true}},
         _db_user,
-        _tenant_or_alias
+        _tenant_or_alias,
+        _ssl
       ) do
     secrets = %PasswordSecrets{
       user: user.db_user,
@@ -41,12 +42,36 @@ defmodule Supavisor.ClientHandler.Auth do
     {:ok, {:password, fn -> secrets end}}
   end
 
-  def get_user_secrets(id, info, db_user, tenant_or_alias) do
+  def get_user_secrets(id, info, db_user, tenant_or_alias, ssl) do
     fetch_fn = fn ->
-      fetch_secrets_from_database(id, info, db_user)
+      fetch_secrets_from_database(id, info, db_user, ssl)
     end
 
-    Supavisor.SecretCache.fetch_validation_secrets(tenant_or_alias, db_user, fetch_fn)
+    case Supavisor.SecretCache.fetch_validation_secrets(tenant_or_alias, db_user, fetch_fn) do
+      {:ok, {cached_method, secrets_fn}} ->
+        # Adjust the method based on SSL status, even when using cached secrets
+        adjusted_method = adjust_auth_method_for_ssl(cached_method, info.tenant.use_jit, ssl)
+        {:ok, {adjusted_method, secrets_fn}}
+
+      error ->
+        error
+    end
+  end
+
+  # Helper function to adjust auth method based on SSL status
+  defp adjust_auth_method_for_ssl(:auth_query_jit, true, false) do
+    # If cached method is :auth_query_jit but SSL is not used, downgrade to :auth_query
+    :auth_query
+  end
+
+  defp adjust_auth_method_for_ssl(:auth_query, true, true) do
+    # If cached method is :auth_query but JIT is enabled and SSL is used, upgrade to :auth_query_jit
+    :auth_query_jit
+  end
+
+  defp adjust_auth_method_for_ssl(method, _use_jit, _ssl) do
+    # For all other cases (md5, password, or matching conditions), keep the method as is
+    method
   end
 
   ## Authentication Validation
@@ -193,12 +218,22 @@ defmodule Supavisor.ClientHandler.Auth do
           map(),
           String.t(),
           String.t(),
-          function()
+          function(),
+          boolean()
         ) :: :ok
-  def check_and_update_secrets(method, reason, client_id, info, tenant, user, current_secrets_fn) do
+  def check_and_update_secrets(
+        method,
+        reason,
+        client_id,
+        info,
+        tenant,
+        user,
+        current_secrets_fn,
+        ssl
+      ) do
     if method != :password and reason == :wrong_password and
          not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
-      case fetch_secrets_from_database(client_id, info, user) do
+      case fetch_secrets_from_database(client_id, info, user, ssl) do
         {:ok, {method2, secrets2}} ->
           current_secrets = current_secrets_fn.()
           new_secrets = secrets2.()
@@ -355,9 +390,9 @@ defmodule Supavisor.ClientHandler.Auth do
 
   ## Private Helpers
 
-  @spec fetch_secrets_from_database(Supavisor.id(), map(), String.t()) ::
+  @spec fetch_secrets_from_database(Supavisor.id(), map(), String.t(), boolean()) ::
           {:ok, auth_secrets()} | {:error, term()}
-  defp fetch_secrets_from_database(id, %{user: user, tenant: tenant}, db_user) do
+  defp fetch_secrets_from_database(id, %{user: user, tenant: tenant}, db_user, ssl) do
     case Supavisor.SecretChecker.get_secrets(id) do
       {:error, :not_started} ->
         Logger.info(
@@ -390,10 +425,10 @@ defmodule Supavisor.ClientHandler.Auth do
 
           with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
             auth_type =
-              case {tenant.use_jit, secret} do
-                {true, _} -> :auth_query_jit
-                {_, %MD5Secrets{}} -> :auth_query_md5
-                {_, %SASLSecrets{}} -> :auth_query
+              case {tenant.use_jit, ssl, secret} do
+                {true, true, _} -> :auth_query_jit
+                {_, _, %MD5Secrets{}} -> :auth_query_md5
+                {_, _, %SASLSecrets{}} -> :auth_query
               end
 
             {:ok, {auth_type, fn -> secret end}}
