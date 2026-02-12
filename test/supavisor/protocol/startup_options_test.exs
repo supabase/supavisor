@@ -46,5 +46,35 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
       opts = %{"search_path" => "public", "work_mem" => "64MB"}
       assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
     end
+
+    test "value with tab" do
+      opts = %{"search_path" => "a\tb"}
+      assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
+    end
+
+    test "value with newline" do
+      opts = %{"search_path" => "a\nb"}
+      assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
+    end
+
+    test "value with carriage return" do
+      opts = %{"search_path" => "a\rb"}
+      assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
+    end
+
+    test "value with vertical tab" do
+      opts = %{"search_path" => "a\vb"}
+      assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
+    end
+
+    test "value with form feed" do
+      opts = %{"search_path" => "a\fb"}
+      assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
+    end
+
+    test "value with mixed whitespace" do
+      opts = %{"search_path" => "a \t\n\r\v\fb"}
+      assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
+    end
   end
 end

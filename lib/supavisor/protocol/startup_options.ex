@@ -8,6 +8,11 @@ defmodule Supavisor.Protocol.StartupOptions do
   and `--name=value` GUC settings into a map.
   """
 
+  # All characters matched by C's isspace(): space, tab, newline,
+  # carriage return, vertical tab, form feed.
+  @whitespace [?\s, ?\t, ?\n, ?\r, ?\v, ?\f]
+  @escape_targets ["\\", " ", "\t", "\n", "\r", "\v", "\f"]
+
   @doc """
   Parses a PostgreSQL startup `options` string into a map of GUC settings.
 
@@ -27,7 +32,7 @@ defmodule Supavisor.Protocol.StartupOptions do
     |> parse_tokens(%{})
   end
 
-  # Tokenize by whitespace (spaces and tabs), handling backslash escapes
+  # Tokenize by whitespace, handling backslash escapes
   # per pg_split_opts (src/backend/utils/init/postinit.c:497).
   #
   # - Backslash followed by any char => literal char (backslash consumed)
@@ -39,10 +44,10 @@ defmodule Supavisor.Protocol.StartupOptions do
   defp tokenize(<<>>, current, acc),
     do: Enum.reverse([current |> Enum.reverse() |> IO.iodata_to_binary() | acc])
 
-  defp tokenize(<<c, rest::binary>>, [], acc) when c in [?\s, ?\t],
+  defp tokenize(<<c, rest::binary>>, [], acc) when c in @whitespace,
     do: tokenize(rest, [], acc)
 
-  defp tokenize(<<c, rest::binary>>, current, acc) when c in [?\s, ?\t] do
+  defp tokenize(<<c, rest::binary>>, current, acc) when c in @whitespace do
     token = current |> Enum.reverse() |> IO.iodata_to_binary()
     tokenize(rest, [], [token | acc])
   end
@@ -80,7 +85,7 @@ defmodule Supavisor.Protocol.StartupOptions do
   @doc """
   Encodes a map of GUC settings into a PostgreSQL startup `options` string.
 
-  Spaces, tabs, and backslashes in values are backslash-escaped per `pg_split_opts`.
+  All `isspace()` characters and backslashes in values are backslash-escaped per `pg_split_opts`.
 
   ## Examples
 
@@ -99,9 +104,6 @@ defmodule Supavisor.Protocol.StartupOptions do
   end
 
   defp escape_value(value) do
-    value
-    |> String.replace("\\", "\\\\")
-    |> String.replace(" ", "\\ ")
-    |> String.replace("\t", "\\\t")
+    :binary.replace(value, @escape_targets, <<"\\">>, [:global, {:insert_replaced, 1}])
   end
 end
