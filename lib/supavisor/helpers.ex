@@ -382,7 +382,8 @@ defmodule Supavisor.Helpers do
   Returns the previous value for the `min_heap_size`.
   """
   @spec set_min_heap_size(pos_integer()) :: pos_integer()
-  def set_min_heap_size(min_heap_size_mb) when is_integer(min_heap_size_mb) do
+  def set_min_heap_size(min_heap_size_mb)
+      when is_integer(min_heap_size_mb) and min_heap_size_mb > 0 do
     min_heap_size_words = mb_to_words(min_heap_size_mb)
     Process.flag(:min_heap_size, min_heap_size_words)
   end

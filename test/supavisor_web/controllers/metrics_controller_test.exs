@@ -101,17 +101,9 @@ defmodule SupavisorWeb.MetricsControllerTest do
       send(parent, :done)
     end)
 
-    receive do
-      :done -> :ok
-    after
-      2000 ->
-        flunk("Did not receive response in time")
-    end
+    assert_receive :done, 2000
 
-    SupavisorWeb.MetricsController.configure_tune_index_proc(
-      default_min_heap_size,
-      default_fullsweep_after
-    )
+    SupavisorWeb.MetricsController.configure_tune_index_proc(nil, nil)
   end
 
   test "restoring cluster metrics collection process to defaults", %{
@@ -145,12 +137,7 @@ defmodule SupavisorWeb.MetricsControllerTest do
       send(parent, :done)
     end)
 
-    receive do
-      :done -> :ok
-    after
-      2000 ->
-        flunk("Did not receive response in time")
-    end
+    assert_receive :done, 2000
   end
 
   test "instrumenting metrics collection", %{conn: conn} do

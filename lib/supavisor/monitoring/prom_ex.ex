@@ -151,7 +151,7 @@ defmodule Supavisor.Monitoring.PromEx do
     [node() | Node.list()]
     |> Task.async_stream(
       fn node ->
-        :proc_lib.set_label({:metric_fetcher_task, node, tenant})
+        :proc_lib.set_label({:metrics_fetcher_task, node, tenant})
         fetch_node_tenant_metrics(node, tenant)
       end,
       timeout: :infinity
