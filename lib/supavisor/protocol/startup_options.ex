@@ -8,6 +8,11 @@ defmodule Supavisor.Protocol.StartupOptions do
   and `--name=value` GUC settings into a map.
   """
 
+  # All characters matched by C's isspace(): space, tab, newline,
+  # carriage return, vertical tab, form feed.
+  @whitespace [?\s, ?\t, ?\n, ?\r, ?\v, ?\f]
+  @escape_targets ["\\", " ", "\t", "\n", "\r", "\v", "\f"]
+
   @doc """
   Parses a PostgreSQL startup `options` string into a map of GUC settings.
 
@@ -27,7 +32,7 @@ defmodule Supavisor.Protocol.StartupOptions do
     |> parse_tokens(%{})
   end
 
-  # Tokenize by whitespace (spaces and tabs), handling backslash escapes
+  # Tokenize by whitespace, handling backslash escapes
   # per pg_split_opts (src/backend/utils/init/postinit.c:497).
   #
   # - Backslash followed by any char => literal char (backslash consumed)
@@ -39,10 +44,10 @@ defmodule Supavisor.Protocol.StartupOptions do
   defp tokenize(<<>>, current, acc),
     do: Enum.reverse([current |> Enum.reverse() |> IO.iodata_to_binary() | acc])
 
-  defp tokenize(<<c, rest::binary>>, [], acc) when c in [?\s, ?\t],
+  defp tokenize(<<c, rest::binary>>, [], acc) when c in @whitespace,
     do: tokenize(rest, [], acc)
 
-  defp tokenize(<<c, rest::binary>>, current, acc) when c in [?\s, ?\t] do
+  defp tokenize(<<c, rest::binary>>, current, acc) when c in @whitespace do
     token = current |> Enum.reverse() |> IO.iodata_to_binary()
     tokenize(rest, [], [token | acc])
   end
@@ -76,4 +81,29 @@ defmodule Supavisor.Protocol.StartupOptions do
 
   # Skip unrecognized tokens
   defp parse_tokens([_ | rest], acc), do: parse_tokens(rest, acc)
+
+  @doc """
+  Encodes a map of GUC settings into a PostgreSQL startup `options` string.
+
+  All `isspace()` characters and backslashes in values are backslash-escaped per `pg_split_opts`.
+
+  ## Examples
+
+      iex> Supavisor.Protocol.StartupOptions.encode(%{"search_path" => "public"})
+      "--search_path=public"
+
+      iex> Supavisor.Protocol.StartupOptions.encode(%{"search_path" => "schemaA, schemaB"})
+      "--search_path=schemaA,\\\\ schemaB"
+
+  """
+  @spec encode(map()) :: String.t()
+  def encode(opts) when opts == %{}, do: ""
+
+  def encode(opts) do
+    Enum.map_join(opts, " ", fn {name, value} -> "--#{name}=#{escape_value(value)}" end)
+  end
+
+  defp escape_value(value) do
+    :binary.replace(value, @escape_targets, <<"\\">>, [:global, {:insert_replaced, 1}])
+  end
 end
