@@ -242,7 +242,7 @@ defmodule Supavisor.ClientHandler do
          :ok <- check_ssl_enforcement(data, info, user),
          :ok <- check_address_allowed(sock, info),
          :ok <- Manager.check_client_limit(id, info, data.mode),
-         {:ok, auth_secrets} <- get_secrets(data.id, info, user, tenant_or_alias) do
+         {:ok, auth_secrets} <- get_secrets(id, info, user, tenant_or_alias) do
       Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
       new_data = set_tenant_info(data, info, user, id, db_name)
       {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
