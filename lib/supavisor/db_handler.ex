@@ -16,8 +16,7 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
   alias Supavisor.Errors.DbHandlerExitedError
-
-  alias Supavisor.Protocol.PreparedStatements
+  alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
 
   alias Supavisor.{
     ClientHandler,
@@ -333,6 +332,12 @@ defmodule Supavisor.DbHandler do
 
       {:error_response, %{"S" => "FATAL", "C" => "42501"} = error} ->
         Logger.error("DbHandler: Insufficient privilege: #{inspect(error)}")
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
+
+      {:error_response, %{"S" => "FATAL", "C" => "22023"} = error} ->
+        Logger.error("DbHandler: Invalid parameter value: #{inspect(error)}")
 
         {:keep_state_and_data,
          {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
@@ -673,7 +678,11 @@ defmodule Supavisor.DbHandler do
           {"user", user},
           {"database", auth.database},
           {"application_name", auth.application_name}
-        ] ++ if(search_path, do: [{"options", "--search_path=#{search_path}"}], else: [])
+        ] ++
+          if(search_path,
+            do: [{"options", StartupOptions.encode(%{"search_path" => search_path})}],
+            else: []
+          )
       )
 
     HandlerHelpers.sock_send(sock, msg)

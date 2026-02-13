@@ -376,6 +376,18 @@ defmodule Supavisor.Helpers do
     Process.flag(:max_heap_size, %{size: max_heap_words})
   end
 
+  @doc """
+  Sets the minimum heap size for the current process. The `min_heap_size` parameter is in megabytes.
+
+  Returns the previous value for the `min_heap_size`.
+  """
+  @spec set_min_heap_size(pos_integer()) :: pos_integer()
+  def set_min_heap_size(min_heap_size_mb)
+      when is_integer(min_heap_size_mb) and min_heap_size_mb > 0 do
+    min_heap_size_words = mb_to_words(min_heap_size_mb)
+    Process.flag(:min_heap_size, min_heap_size_words)
+  end
+
   @spec set_log_level(atom()) :: :ok | nil
   def set_log_level(level) when level in [:debug, :info, :notice, :warning, :error] do
     Logger.notice("Setting log level to #{inspect(level)}")
