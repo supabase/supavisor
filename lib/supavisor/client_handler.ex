@@ -816,7 +816,6 @@ defmodule Supavisor.ClientHandler do
     start = System.monotonic_time(:microsecond)
 
     with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout, data.mode),
-         true <- Process.link(db_pid),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
