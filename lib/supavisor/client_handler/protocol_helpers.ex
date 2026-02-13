@@ -47,7 +47,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   Returns parsed user info, application name, and log level if successful.
   """
   @spec parse_startup_packet(binary()) ::
-          {:ok, startup_message_data()}
+          {:ok, startup_message_data(), String.t() | nil, Logger.level() | nil}
           | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
