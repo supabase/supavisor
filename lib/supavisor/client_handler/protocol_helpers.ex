@@ -57,12 +57,6 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
       app_name = normalize_app_name(hello.payload["application_name"])
       log_level = extract_log_level(hello)
       {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, log_level}
-    else
-      {:error, exception} when is_exception(exception) ->
-        {:error, exception}
-
-      {:error, reason} ->
-        {:error, %StartupMessageError{reason: reason}}
     end
   end
 

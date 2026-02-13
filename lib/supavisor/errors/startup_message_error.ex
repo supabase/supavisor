@@ -6,7 +6,7 @@ defmodule Supavisor.Errors.StartupMessageError do
   use Supavisor.Error, [:reason, code: "ESTARTUPMESSAGE"]
 
   @type t() :: %__MODULE__{
-          reason: term(),
+          reason: atom(),
           code: binary()
         }
 
