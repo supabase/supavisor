@@ -25,6 +25,7 @@ defmodule Supavisor.ClientHandler do
   @timeout_subscribe 500
   @clients_registry Supavisor.Registry.TenantClients
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
+  @max_startup_packet_size Supavisor.Protocol.max_startup_packet_size()
 
   alias Supavisor.{
     DbHandler,
@@ -190,7 +191,8 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {_, _, bin}, :handshake, data) when byte_size(bin) > 1024 do
+  def handle_event(:info, {_, _, bin}, :handshake, data)
+      when byte_size(bin) > @max_startup_packet_size do
     Error.terminate_with_error(
       data,
       %StartupPacketTooLargeError{packet_size: byte_size(bin)},

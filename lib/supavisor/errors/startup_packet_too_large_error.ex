@@ -12,7 +12,7 @@ defmodule Supavisor.Errors.StartupPacketTooLargeError do
 
   @impl Supavisor.Error
   def error_message(%{packet_size: packet_size}) do
-    "Startup packet too large: #{packet_size} bytes (max 1024 bytes)"
+    "Startup packet too large: #{packet_size} bytes (max #{Supavisor.Protocol.max_startup_packet_size()} bytes)"
   end
 
   @impl Supavisor.Error
