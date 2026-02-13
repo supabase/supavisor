@@ -58,18 +58,19 @@ defmodule Supavisor do
     end
   end
 
-  @spec stop(id) :: :ok | {:error, :tenant_not_found}
+  @spec stop(id) :: :ok | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def stop(id) do
     case get_global_sup(id) do
       nil ->
-        {:error, :tenant_not_found}
+        {:error, %Supavisor.Errors.WorkerNotFoundError{id: id}}
 
       pid ->
         Supervisor.stop(pid)
     end
   end
 
-  @spec get_local_workers(id) :: {:ok, workers} | {:error, :worker_not_found}
+  @spec get_local_workers(id) ::
+          {:ok, workers} | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def get_local_workers(id) do
     workers = %{
       manager: get_local_manager(id),
@@ -77,8 +78,7 @@ defmodule Supavisor do
     }
 
     if nil in Map.values(workers) do
-      Logger.error("Could not get workers for tenant #{inspect(id)}")
-      {:error, :worker_not_found}
+      {:error, %Supavisor.Errors.WorkerNotFoundError{id: id}}
     else
       {:ok, workers}
     end
@@ -86,8 +86,10 @@ defmodule Supavisor do
 
   @spec subscribe_local(pid, id) ::
           {:ok, subscribe_opts}
-          | {:error, :max_clients_reached}
-          | {:error, :terminating, term()}
+          | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
+          | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
+          | {:error, Supavisor.Errors.PoolTerminatingError.t()}
+          | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def subscribe_local(pid, id) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
@@ -97,8 +99,10 @@ defmodule Supavisor do
 
   @spec subscribe(pid, id, pid) ::
           {:ok, subscribe_opts}
-          | {:error, :max_clients_reached}
-          | {:error, :terminating, term()}
+          | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
+          | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
+          | {:error, Supavisor.Errors.PoolTerminatingError.t()}
+          | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def subscribe(sup, id, pid \\ self()) do
     dest_node = node(sup)
 
@@ -319,7 +323,7 @@ defmodule Supavisor do
   def try_start_local_pool(id, secrets, log_level) do
     if count_pools(tenant(id)) < @max_pools,
       do: start_local_pool(id, secrets, log_level),
-      else: {:error, :max_pools_reached}
+      else: {:error, %Supavisor.Errors.MaxPoolsReachedError{}}
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
@@ -374,9 +378,8 @@ defmodule Supavisor do
         end
 
       error ->
-        Logger.error("Can't find tenant with external_id #{inspect(id)} #{inspect(error)}")
-
-        {:error, :tenant_not_found}
+        Logger.error("Can't find pool config for #{inspect(id)} #{inspect(error)}")
+        {:error, %Supavisor.Errors.PoolConfigNotFoundError{id: id}}
     end
   end
 
@@ -391,11 +394,11 @@ defmodule Supavisor do
     end
   end
 
-  @spec get_pool_ranch(id) :: {:ok, map()} | {:error, :not_found}
+  @spec get_pool_ranch(id) :: {:ok, map()} | {:error, Supavisor.Errors.PoolRanchNotFoundError.t()}
   def get_pool_ranch(id) do
     case :syn.lookup(:tenants, id) do
       {_sup_pid, %{port: _port, host: _host} = meta} -> {:ok, meta}
-      _ -> {:error, :not_found}
+      _ -> {:error, %Supavisor.Errors.PoolRanchNotFoundError{id: id}}
     end
   end
 

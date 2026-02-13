@@ -112,7 +112,8 @@ defmodule Supavisor.Protocol.PreparedStatements do
   Handles a Bind (B) message for prepared statements.
   """
   @spec handle_bind_message(Storage.t(), non_neg_integer(), binary()) ::
-          {:ok, Storage.t(), pkt() | handled_pkt()} | {:error, atom()}
+          {:ok, Storage.t(), pkt() | handled_pkt()}
+          | {:error, Supavisor.Errors.PreparedStatementNotFoundError.t()}
   def handle_bind_message(client_statements, len, payload) do
     {_portal_name, after_portal} = extract_null_terminated_string(payload)
 
@@ -132,7 +133,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
             {:ok, client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}
 
           nil ->
-            {:error, :prepared_statement_not_found, client_side_name}
+            {:error, %Supavisor.Errors.PreparedStatementNotFoundError{name: client_side_name}}
         end
     end
   end
@@ -170,7 +171,8 @@ defmodule Supavisor.Protocol.PreparedStatements do
   Handles a Describe (D) message for prepared statements.
   """
   @spec handle_describe_message(Storage.t(), non_neg_integer(), binary()) ::
-          {:ok, Storage.t(), pkt() | handled_pkt()} | {:error, atom()} | {:error, atom(), term()}
+          {:ok, Storage.t(), pkt() | handled_pkt()}
+          | {:error, Supavisor.Errors.PreparedStatementNotFoundError.t()}
   def handle_describe_message(client_statements, len, payload) do
     <<type, rest::binary>> = payload
     {name, _} = extract_null_terminated_string(rest)
@@ -190,7 +192,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
             {:ok, client_statements, {:describe_pkt, server_name, new_bin}}
 
           nil ->
-            {:error, :prepared_statement_not_found, name}
+            {:error, %Supavisor.Errors.PreparedStatementNotFoundError{name: name}}
         end
     end
   end

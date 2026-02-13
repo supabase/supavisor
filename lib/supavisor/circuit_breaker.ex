@@ -7,6 +7,8 @@ defmodule Supavisor.CircuitBreaker do
 
   require Logger
 
+  alias Supavisor.Errors.CircuitBreakerError
+
   @table __MODULE__
 
   @config %{
@@ -14,22 +16,24 @@ defmodule Supavisor.CircuitBreaker do
       max_failures: 5,
       window_seconds: 600,
       block_seconds: 600,
-      propagate?: false,
-      explanation: "Failed to retrieve database credentials"
+      explanation:
+        "failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked",
+      propagate?: false
     },
     db_connection: %{
       max_failures: 100,
       window_seconds: 300,
       block_seconds: 600,
-      propagate?: false,
-      explanation: "Unable to establish connection to upstream database"
+      explanation:
+        "too many failed attempts to connect to the database, new connections are temporarily blocked",
+      propagate?: false
     },
     auth_error: %{
       max_failures: 10,
       window_seconds: 300,
       block_seconds: 600,
-      propagate?: true,
-      explanation: "Too many authentication errors"
+      explanation: "too many authentication failures, new connections are temporarily blocked",
+      propagate?: true
     }
   }
 
@@ -73,9 +77,9 @@ defmodule Supavisor.CircuitBreaker do
 
   @doc """
   Checks if a circuit breaker is open for a given key and operation.
-  Returns :ok if operation is allowed, {:error, :circuit_open, blocked_until} otherwise.
+  Returns :ok if operation is allowed, {:error, CircuitBreakerError.t()} otherwise.
   """
-  @spec check(term(), atom()) :: :ok | {:error, :circuit_open, integer()}
+  @spec check(term(), atom()) :: :ok | {:error, CircuitBreakerError.t()}
   def check(key, operation) when is_atom(operation) do
     now = System.system_time(:second)
     ets_key = {key, operation}
@@ -88,7 +92,7 @@ defmodule Supavisor.CircuitBreaker do
         :ok
 
       [{^ets_key, %{blocked_until: blocked_until}}] when blocked_until > now ->
-        {:error, :circuit_open, blocked_until}
+        {:error, %CircuitBreakerError{operation: operation, blocked_until: blocked_until}}
 
       [{^ets_key, state}] ->
         :ets.insert(@table, {ets_key, %{state | blocked_until: nil}})

@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
 
   alias Postgrex, as: P
+  alias Supavisor.Protocol.Server
   alias Supavisor.Support.{Cluster, SSLHelper}
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
@@ -54,12 +55,29 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :invalid_password,
-                  message: "password authentication failed for user \"" <> _,
+                  message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
                   severity: "FATAL",
                   pg_code: "28P01"
                 }
               }} = parse_uri(url) |> single_connection()
     end
+  end
+
+  test "tenant or user not found" do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url =
+      "postgresql://postgres.nonexistent_tenant:any_password@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "(ENOTFOUND) tenant/user postgres.nonexistent_tenant not found",
+                severity: "FATAL",
+                pg_code: "XX000"
+              }
+            }} = parse_uri(url) |> single_connection()
   end
 
   for tenant <- @tenants do
@@ -182,8 +200,7 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size",
-                unknown: "FATAL",
+                  "(EMAXCLIENTSESSION) max clients reached in session mode - max clients are limited to pool_size: 2",
                 severity: "FATAL",
                 pg_code: "XX000"
               }
@@ -237,12 +254,46 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Max client connections reached",
+                message: "(EMAXCLIENTCONN) max client connections reached, limit: 0",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = single_connection(connection_opts)
+  end
+
+  test "checkout timeout in transaction mode" do
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_transaction),
+      username: "checkout_timeout_test.proxy_tenant1",
+      database: "postgres",
+      password: "postgres"
+    ]
+
+    # Start 2 connections and keep them busy with transactions (pool_size is 2)
+    {:ok, conn1} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn1, {:query, "BEGIN;"})
+
+    {:ok, conn2} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn2, {:query, "BEGIN;"})
+
+    {:ok, conn3} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn3, {:query, "BEGIN;"})
+
+    {:ok, conn4} = single_connection(connection_opts)
+
+    # Try to execute query on 4th connection - should timeout after 500ms
+    assert %Postgrex.Error{
+             postgres: %{
+               code: :internal_error,
+               message:
+                 "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 500ms in Transaction mode",
+               pg_code: "XX000",
+               severity: "FATAL"
+             }
+           } = P.SimpleConnection.call(conn4, {:query, "BEGIN;"})
   end
 
   test "change role password" do
@@ -267,7 +318,7 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :invalid_password,
-                message: "password authentication failed for user \"" <> _,
+                message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
                 severity: "FATAL",
                 pg_code: "28P01"
               }
@@ -329,10 +380,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Authentication error, reason: \"Invalid format for user or db_name\"",
+                message:
+                  "(EINVALIDUSERINFO) Authentication error, reason: \"Invalid format for user or db_name\"",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
   end
@@ -422,10 +473,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Circuit breaker open: Failed to retrieve database credentials",
+                message:
+                  "(ECIRCUITBREAKER) failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -448,10 +499,9 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "Circuit breaker open: Unable to establish connection to upstream database",
+                  "(ECIRCUITBREAKER) too many failed attempts to connect to the database, new connections are temporarily blocked",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -471,7 +521,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :invalid_password,
-                  message: "password authentication failed for user \"" <> _,
+                  message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
                   severity: "FATAL",
                   pg_code: "28P01"
                 }
@@ -483,10 +533,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Circuit breaker open: Too many authentication errors",
+                message:
+                  "(ECIRCUITBREAKER) too many authentication failures, new connections are temporarily blocked",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -684,6 +734,17 @@ defmodule Supavisor.Integration.ProxyTest do
       bin = <<1108::32, 3::16, 0::16, padding::binary>>
 
       :ok = :gen_tcp.send(sock, bin)
+      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+               Server.decode_pkt(data)
+
+      assert %{
+               "C" => "08P01",
+               "M" =>
+                 "(ESTARTUPPACKETTOOLARGE) Startup packet too large: 1108 bytes (max 1024 bytes)"
+             } = payload
+
       assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
     end
 
@@ -693,6 +754,16 @@ defmodule Supavisor.Integration.ProxyTest do
       bin = <<13::32, 3::16, 0::16, "nope", 0>>
 
       :ok = :gen_tcp.send(sock, bin)
+      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+               Server.decode_pkt(data)
+
+      assert %{
+               "C" => "08P01",
+               "M" => "(ESTARTUPMESSAGE) Invalid startup message: :bad_startup_payload"
+             } = payload
+
       assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
     end
 
@@ -712,6 +783,39 @@ defmodule Supavisor.Integration.ProxyTest do
 
       :gen_tcp.close(sock)
     end
+  end
+
+  test "max pools reached returns proper error" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "max_pool_tenant"
+    port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+    base_opts = [
+      hostname: db_conf[:hostname],
+      port: port,
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> tenant
+    ]
+
+    # Open 10 connections with different search_paths to create 10 distinct pools
+    # (max_pools is 10 in test config)
+    for i <- 1..10 do
+      opts = Keyword.put(base_opts, :parameters, search_path: "schema_#{i}")
+      {:ok, conn} = start_supervised({Postgrex, opts}, id: :"conn_#{i}")
+      assert %Postgrex.Result{} = Postgrex.query!(conn, "SELECT 1", [])
+    end
+
+    # Eleventh connection should fail at startup with MaxPoolsReachedError
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "(EMAXPOOLSREACHED) max pools count reached",
+                pg_code: "XX000",
+                severity: "FATAL"
+              }
+            }} = single_connection(base_opts)
   end
 
   defp parse_uri(uri) do

@@ -415,7 +415,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       end
 
       for ip <- [ip1, ip2] do
-        assert {:error, :circuit_open, _} =
+        assert {:error, %Supavisor.Errors.CircuitBreakerError{}} =
                  Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
       end
 
@@ -479,7 +479,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       end
 
       for ip <- [ip1, ip2] do
-        assert {:error, :circuit_open, _} =
+        assert {:error, %Supavisor.Errors.CircuitBreakerError{}} =
                  Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
       end
 
@@ -494,7 +494,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert :ok =
                Supavisor.CircuitBreaker.check({external_id, ip1}, :auth_error)
 
-      assert {:error, :circuit_open, ^ts} =
+      assert {:error, %Supavisor.Errors.CircuitBreakerError{blocked_until: ^ts}} =
                Supavisor.CircuitBreaker.check({external_id, ip2}, :auth_error)
     end
 
@@ -534,7 +534,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       end
 
       for ip <- [ip1, ip2, ip3] do
-        assert {:error, :circuit_open, _} =
+        assert {:error, %Supavisor.Errors.CircuitBreakerError{}} =
                  Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
       end
 
@@ -551,7 +551,7 @@ defmodule SupavisorWeb.TenantControllerTest do
                  Supavisor.CircuitBreaker.check({external_id, ip}, :auth_error)
       end
 
-      assert {:error, :circuit_open, ^ts} =
+      assert {:error, %Supavisor.Errors.CircuitBreakerError{blocked_until: ^ts}} =
                Supavisor.CircuitBreaker.check({external_id, ip3}, :auth_error)
     end
 

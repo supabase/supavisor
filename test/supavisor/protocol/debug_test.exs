@@ -1,7 +1,7 @@
 defmodule Supavisor.Protocol.DebugTest do
   use ExUnit.Case
 
-  alias Supavisor.Protocol.{Client, Debug, PreparedStatements, Server}
+  alias Supavisor.Protocol.{Debug, PreparedStatements, Server}
 
   describe "packet_to_string/2" do
     test "formats frontend Query message" do
@@ -96,13 +96,6 @@ defmodule Supavisor.Protocol.DebugTest do
       {:ok, server_pkt, _} = Server.decode_pkt(packet)
 
       assert Debug.packet_to_string(server_pkt, :backend) == "ReadyForQuery(idle)"
-    end
-
-    test "formats Client.Pkt struct" do
-      packet = <<?Q, 13::32, "SELECT 1", 0>>
-      {:ok, client_pkt, _} = Client.decode_pkt(packet)
-
-      assert Debug.packet_to_string(client_pkt, :frontend) == "Query(\"SELECT 1\")"
     end
 
     test "formats prepared statement tuple" do

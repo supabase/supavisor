@@ -7,7 +7,7 @@ defmodule Supavisor.ClientHandler.Proxy do
   """
 
   @spec prepare_proxy_connection(map()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, map()} | {:error, Supavisor.Errors.PoolRanchNotFoundError.t()}
   def prepare_proxy_connection(data) do
     case Supavisor.get_pool_ranch(data.id) do
       {:ok, %{port: port, host: host}} ->
@@ -23,8 +23,8 @@ defmodule Supavisor.ClientHandler.Proxy do
 
         {:ok, %{data | auth: updated_auth}}
 
-      error ->
-        {:error, error}
+      {:error, _} = error ->
+        error
     end
   end
 

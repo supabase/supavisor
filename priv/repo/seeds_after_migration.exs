@@ -77,6 +77,14 @@ end
             "pool_checkout_timeout" => 500
           },
           %{
+            "db_user" => "checkout_timeout_test",
+            "db_password" => "postgres",
+            "pool_size" => 2,
+            "max_clients" => 100,
+            "mode_type" => "transaction",
+            "pool_checkout_timeout" => 500
+          },
+          %{
             "db_user" => "no_warm_pool_user",
             "db_password" => "postgres",
             "pool_size" => 5,
@@ -185,6 +193,8 @@ end
       "create user session with password 'postgres';",
       "drop user if exists max_clients;",
       "create user max_clients with password 'postgres';",
+      "drop user if exists checkout_timeout_test;",
+      "create user checkout_timeout_test with password 'postgres';",
       "drop user if exists no_warm_pool_user;",
       "create user no_warm_pool_user with password 'postgres';",
       "drop table if exists \"public\".\"test\";",

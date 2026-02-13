@@ -10,6 +10,12 @@ defmodule Supavisor.Manager do
   alias Supavisor.Tenants
   alias Supavisor.Helpers
 
+  alias Supavisor.Errors.{
+    MaxClientConnectionsError,
+    PoolTerminatingError,
+    SessionMaxClientsError
+  }
+
   @check_timeout 120_000
 
   @doc """
@@ -29,10 +35,36 @@ defmodule Supavisor.Manager do
   """
   @spec subscribe(pid, pid) ::
           {:ok, iodata() | [], integer}
-          | {:error, :max_clients_reached}
-          | {:error, :terminating, term()}
+          | {:error, MaxClientConnectionsError.t()}
+          | {:error, SessionMaxClientsError.t()}
+          | {:error, PoolTerminatingError.t()}
   def subscribe(manager, pid) do
     GenServer.call(manager, {:subscribe, pid})
+  end
+
+  @doc """
+  Checks if the client limit has been reached for a pool.
+
+  This is used by ClientHandler for early rejection before authentication.
+  If the Manager's ETS table exists, checks the current count against the limit.
+  If the table doesn't exist yet (pool not started), allows the connection to proceed.
+
+  The limit is determined by mode:
+  - `:session` mode: limited by pool_size (each client holds a connection)
+  - `:transaction` mode: limited by max_clients
+  """
+  @spec check_client_limit(Supavisor.id(), map(), :session | :transaction) ::
+          :ok | {:error, MaxClientConnectionsError.t() | SessionMaxClientsError.t()}
+  def check_client_limit(id, info, mode) do
+    case Registry.lookup(Supavisor.Registry.ManagerTables, id) do
+      [{_pid, tid}] ->
+        pool_size = info.user.pool_size || info.tenant.default_pool_size
+        max_clients = info.user.max_clients || info.tenant.default_max_clients
+        check_limit(mode, pool_size, max_clients, :ets.info(tid, :size))
+
+      _ ->
+        :ok
+    end
   end
 
   @doc """
@@ -235,32 +267,31 @@ defmodule Supavisor.Manager do
   def handle_call({:subscribe, _pid}, _, %{terminating_error: error} = state)
       when not is_nil(error) do
     Logger.warning("Rejecting subscription to terminating pool #{inspect(state.id)}")
-    {:reply, {:error, :terminating, error}, state}
+    {:reply, {:error, %PoolTerminatingError{underlying_error: error}}, state}
   end
 
   def handle_call({:subscribe, pid}, _, state) do
     Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect(state.id)}")
+    current_count = :ets.info(state.tid, :size)
 
-    limit = if state.mode == :session, do: state.pool_size, else: state.max_clients
-
-    {reply, new_state} =
-      if :ets.info(state.tid, :size) < limit do
+    case check_limit(state.mode, state.pool_size, state.max_clients, current_count) do
+      :ok ->
         ref = Process.monitor(pid)
         :ets.insert(state.tid, {ref, pid, now()})
         :ets.insert(state.pid_to_ref, {pid, ref})
 
-        case state.parameter_status do
-          [] ->
-            {{:ok, [], state.idle_timeout}, update_in(state.wait_ps, &[pid | &1])}
+        new_state =
+          if state.parameter_status == [] do
+            update_in(state.wait_ps, &[pid | &1])
+          else
+            state
+          end
 
-          ps ->
-            {{:ok, ps, state.idle_timeout}, state}
-        end
-      else
-        {{:error, :max_clients_reached}, state}
-      end
+        {:reply, {:ok, state.parameter_status, state.idle_timeout}, new_state}
 
-    {:reply, reply, new_state}
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
   end
 
   def handle_call({:unsubscribe, pid}, _from, state) do
@@ -507,4 +538,18 @@ defmodule Supavisor.Manager do
       pid -> pid
     end
   end
+
+  @spec check_limit(Supavisor.mode(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
+          :ok | {:error, SessionMaxClientsError.t()} | {:error, MaxClientConnectionsError.t()}
+  defp check_limit(:session, pool_size, _max_clients, current_count)
+       when current_count >= pool_size do
+    {:error, %SessionMaxClientsError{pool_size: pool_size}}
+  end
+
+  defp check_limit(:transaction, _pool_size, max_clients, current_count)
+       when current_count >= max_clients do
+    {:error, %MaxClientConnectionsError{limit: max_clients}}
+  end
+
+  defp check_limit(_mode, _pool_size, _max_clients, _current_count), do: :ok
 end

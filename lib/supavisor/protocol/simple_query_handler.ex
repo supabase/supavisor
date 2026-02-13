@@ -23,7 +23,7 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
   otherwise passes the query through unchanged.
   """
   @spec handle_simple_query_message(any(), non_neg_integer(), binary()) ::
-          {:ok, any(), pkt()} | {:error, atom()}
+          {:ok, any(), pkt()} | {:error, Supavisor.Errors.SimpleQueryNotSupportedError.t()}
   def handle_simple_query_message(state, len, payload) do
     # Some clients may send null terminators
     clean_payload = String.trim_trailing(payload, <<0>>)
@@ -33,7 +33,7 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
         if MapSet.disjoint?(MapSet.new(types), @prepared_statements_stmts) do
           {:ok, state, <<?Q, len::32, payload::binary>>}
         else
-          {:error, :prepared_statement_on_simple_query}
+          {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}}
         end
 
       {:error, error} ->

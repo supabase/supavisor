@@ -178,7 +178,6 @@ defmodule Supavisor.Protocol.Server do
 
   @spec admin_shutdown :: map()
   def admin_shutdown do
-    # PostgreSQL error code 57P01: admin_shutdown
     %{
       "S" => "FATAL",
       "V" => "FATAL",

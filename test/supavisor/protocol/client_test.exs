@@ -33,9 +33,10 @@ defmodule Supavisor.Protocol.ClientTest do
              "client_encoding" => "UTF8"
            }
 
-    assert Client.decode_startup_packet(<<1, 2, 3>>) == {:error, :bad_startup_payload}
+    assert Client.decode_startup_packet(<<1, 2, 3>>) ==
+             {:error, %Supavisor.Errors.StartupMessageError{reason: :bad_startup_payload}}
 
     assert Client.decode_startup_packet(<<0, 0, 0, 8, 0, 3, 0, 0>>) ==
-             {:error, :bad_startup_payload}
+             {:error, %Supavisor.Errors.StartupMessageError{reason: :bad_startup_payload}}
   end
 end
