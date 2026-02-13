@@ -174,7 +174,8 @@ defmodule Supavisor.TenantsTest do
       external_id = "cache_test_tenant_#{System.unique_integer([:positive])}"
       user = "cache_test_user"
 
-      assert {:error, :not_found} = Tenants.get_user_cache(:single, user, external_id, nil)
+      assert {:error, %Supavisor.Errors.TenantOrUserNotFoundError{}} =
+               Tenants.get_user_cache(:single, user, external_id, nil)
 
       {:ok, tenant} =
         Tenants.create_tenant(%{

@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
 
   alias Postgrex, as: P
+  alias Supavisor.Protocol.Server
   alias Supavisor.Support.{Cluster, SSLHelper}
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
@@ -733,6 +734,17 @@ defmodule Supavisor.Integration.ProxyTest do
       bin = <<1108::32, 3::16, 0::16, padding::binary>>
 
       :ok = :gen_tcp.send(sock, bin)
+      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+               Server.decode_pkt(data)
+
+      assert %{
+               "C" => "08P01",
+               "M" =>
+                 "(ESTARTUPPACKETTOOLARGE) Startup packet too large: 1108 bytes (max 1024 bytes)"
+             } = payload
+
       assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
     end
 
@@ -742,6 +754,16 @@ defmodule Supavisor.Integration.ProxyTest do
       bin = <<13::32, 3::16, 0::16, "nope", 0>>
 
       :ok = :gen_tcp.send(sock, bin)
+      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+               Server.decode_pkt(data)
+
+      assert %{
+               "C" => "08P01",
+               "M" => "(ESTARTUPMESSAGE) Invalid startup message: :bad_startup_payload"
+             } = payload
+
       assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
     end
 
