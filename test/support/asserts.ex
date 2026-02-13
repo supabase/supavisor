@@ -73,7 +73,7 @@ defmodule Supavisor.Asserts do
 
           other ->
             raise ExUnit.AssertionError,
-              message: "expected a exception or error tuple, got #{inspect(other)}"
+              message: "expected an exception or error tuple, got #{inspect(other)}"
         end
 
       module = error_struct.__struct__
@@ -89,8 +89,9 @@ defmodule Supavisor.Asserts do
       rescue
         ArgumentError ->
           reraise %ExUnit.AssertionError{
-            message: "expected #{inspect(module)}.error_message/1 to return valid iodata"
-          }, __STACKTRACE__
+                    message: "expected #{inspect(module)}.error_message/1 to return valid iodata"
+                  },
+                  __STACKTRACE__
       end
 
       message = module.message(error_struct)
@@ -115,8 +116,10 @@ defmodule Supavisor.Asserts do
         rescue
           ArgumentError ->
             reraise %ExUnit.AssertionError{
-              message: "expected #{inspect(module)}.log_message/1 to return valid iodata or nil"
-            }, __STACKTRACE__
+                      message:
+                        "expected #{inspect(module)}.log_message/1 to return valid iodata or nil"
+                    },
+                    __STACKTRACE__
         end
       end
 
