@@ -303,7 +303,7 @@ defmodule Supavisor.ClientHandler do
            ),
          :not_proxy <-
            if(node(sup) != node() and data.mode != :proxy, do: :proxy, else: :not_proxy),
-         {:ok, opts} <- Supavisor.subscribe(sup, data.id),
+         {:ok, opts} <- Supavisor.subscribe(data.id),
          manager_ref = Process.monitor(opts.workers.manager),
          data = Map.merge(data, opts.workers),
          {:ok, db_connection} <- maybe_checkout(:on_connect, data) do

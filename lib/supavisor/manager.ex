@@ -38,7 +38,7 @@ defmodule Supavisor.Manager do
           | {:error, MaxClientConnectionsError.t()}
           | {:error, SessionMaxClientsError.t()}
           | {:error, PoolTerminatingError.t()}
-  def subscribe(manager, pid) do
+  def subscribe(manager, pid) when node(manager) == node() do
     GenServer.call(manager, {:subscribe, pid})
   end
 

@@ -84,32 +84,16 @@ defmodule Supavisor do
     end
   end
 
-  @spec subscribe_local(pid, id) ::
+  @spec subscribe(id, pid) ::
           {:ok, subscribe_opts}
           | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
           | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
           | {:error, Supavisor.Errors.PoolTerminatingError.t()}
           | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
-  def subscribe_local(pid, id) do
+  def subscribe(id, pid \\ self()) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
       {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
-    end
-  end
-
-  @spec subscribe(pid, id, pid) ::
-          {:ok, subscribe_opts}
-          | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
-          | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
-          | {:error, Supavisor.Errors.PoolTerminatingError.t()}
-          | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
-  def subscribe(sup, id, pid \\ self()) do
-    dest_node = node(sup)
-
-    if node() == dest_node do
-      subscribe_local(pid, id)
-    else
-      Helpers.rpc(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
     end
   end
 
