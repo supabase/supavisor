@@ -1,8 +1,11 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
   alias Supavisor.Errors.DbHandlerExitedError
+
+  import Supavisor.Asserts
 
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.Server
@@ -30,11 +33,24 @@ defmodule Supavisor.DbHandlerTest do
           raise "simulated crash"
 
         :normal_exit ->
-          exit(:normal)
+          {:stop, :normal, state}
+
+        :db_termination ->
+          {:stop, {:shutdown, :db_termination}, state}
 
         :timeout ->
           # Don't reply to simulate timeout
           {:noreply, state}
+
+        :terminating_with_error ->
+          pg_error = %{"S" => "FATAL", "C" => "28P01", "M" => "password authentication failed"}
+
+          {:reply,
+           {:error,
+            %Supavisor.Errors.CheckoutError{
+              pid: self(),
+              postgres_error: pg_error
+            }}, state}
       end
     end
   end
@@ -663,7 +679,9 @@ defmodule Supavisor.DbHandlerTest do
       caller = self()
 
       assert {:error, %DbHandlerExitedError{pid: ^mock_pid}} =
-               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
     end
 
     test "handles process normal exit during checkout" do
@@ -671,8 +689,22 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: {:normal, _}}} =
-               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: :normal}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
+    end
+
+    test "handles db_termination exit during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :db_termination})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: {:shutdown, :db_termination}}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      {:error, error} = assert_valid_error(result)
+      assert Exception.message(error) =~ "connection to database closed"
     end
 
     test "handles checkout timeout" do
@@ -681,7 +713,21 @@ defmodule Supavisor.DbHandlerTest do
       caller = self()
 
       assert {:error, %CheckoutTimeoutError{timeout_ms: 100, mode: :transaction}} =
-               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 100)
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 100)
+
+      assert_valid_error(result)
+    end
+
+    test "handles checkout during terminating_with_error state" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :terminating_with_error})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, %CheckoutError{pid: _, postgres_error: %{"S" => "FATAL"}}} =
+               result =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
     end
   end
 

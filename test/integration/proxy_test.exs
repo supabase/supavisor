@@ -785,6 +785,39 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  test "max pools reached returns proper error" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "max_pool_tenant"
+    port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+    base_opts = [
+      hostname: db_conf[:hostname],
+      port: port,
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> tenant
+    ]
+
+    # Open 10 connections with different search_paths to create 10 distinct pools
+    # (max_pools is 10 in test config)
+    for i <- 1..10 do
+      opts = Keyword.put(base_opts, :parameters, search_path: "schema_#{i}")
+      {:ok, conn} = start_supervised({Postgrex, opts}, id: :"conn_#{i}")
+      assert %Postgrex.Result{} = Postgrex.query!(conn, "SELECT 1", [])
+    end
+
+    # Eleventh connection should fail at startup with MaxPoolsReachedError
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "(EMAXPOOLSREACHED) max pools count reached",
+                pg_code: "XX000",
+                severity: "FATAL"
+              }
+            }} = single_connection(base_opts)
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,

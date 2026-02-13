@@ -76,7 +76,7 @@ defmodule Supavisor.DbHandler do
     :exit, {:timeout, _} ->
       {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
 
-    :exit, reason ->
+    :exit, {reason, _} ->
       {:error, %DbHandlerExitedError{pid: pid, reason: reason}}
   end
 

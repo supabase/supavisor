@@ -12,7 +12,7 @@ defmodule Supavisor.Errors.DbHandlerExitedError do
         }
 
   @impl Supavisor.Error
-  def error_message(%{reason: :db_termination}) do
+  def error_message(%{reason: {:shutdown, :db_termination}}) do
     "connection to database closed. Check logs for more information"
   end
 

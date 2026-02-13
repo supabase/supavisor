@@ -100,10 +100,6 @@ defmodule Supavisor.Error do
     end
   end
 
-  def add_error_code(error_code, message) do
-    IO.iodata_to_binary([?(, error_code, ?), ?\s, message])
-  end
-
   def protocol_error(level, pg_code, message) do
     %{"S" => level, "C" => pg_code, "M" => message}
   end
