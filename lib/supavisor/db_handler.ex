@@ -31,13 +31,20 @@ defmodule Supavisor.DbHandler do
     Protocol.Server
   }
 
-  @type state :: :connect | :authentication | :idle | :busy | :terminating_with_error
+  @type state ::
+          :connect
+          | :authentication
+          | :idle
+          | :busy
+          | :terminating_with_error
+          | :waiting_for_secrets
 
   @reconnect_timeout 2_500
   @reconnect_timeout_proxy 500
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
+  @cleanup_buffer_limit 65_536
 
   @doc """
   Starts a DbHandler state machine
@@ -75,10 +82,20 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
-  Checks in a DbHandler process
+  Attempts to clean up session state by sending DISCARD ALL to the database.
+
+  The caller is responsible for ensuring that:
+  - The DbHandler is NOT actively processing a query
+  - The DbHandler is NOT in a transaction (no uncommitted changes)
+  - The DbHandler is in session mode (not transaction mode)
   """
-  @spec checkin(pid()) :: :ok
-  def checkin(pid), do: :gen_statem.cast(pid, :checkin)
+  @spec attempt_cleanup(pid()) :: :ok | {:error, term()}
+  def attempt_cleanup(db_handler_pid) do
+    :gen_statem.call(db_handler_pid, :cleanup, 5_000)
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
+  end
 
   @doc """
   Sends prepared statement packets to a DbHandler
@@ -99,6 +116,14 @@ defmodule Supavisor.DbHandler do
   def stop(pid) do
     Logger.debug("DbHandler: Stop pid #{inspect(pid)}")
     :gen_statem.stop(pid, {:shutdown, :client_termination}, 5_000)
+  end
+
+  @doc """
+  Notifies a DbHandler that secrets are now available
+  """
+  @spec notify_secrets_available(pid()) :: :ok
+  def notify_secrets_available(pid) do
+    :gen_statem.cast(pid, :secrets_available)
   end
 
   @impl true
@@ -124,38 +149,56 @@ defmodule Supavisor.DbHandler do
     auth =
       if config[:proxy] do
         # Proxy mode: secrets already in config.auth from ClientHandler
-        config.auth
+        {:ok, config.auth}
       else
         # Pool mode: fetch secrets from TenantCache
         get_auth_with_secrets(config.auth, id)
       end
 
-    data =
-      %{
-        id: id,
-        sock: nil,
-        auth: auth,
-        user: config.user,
-        tenant: config.tenant,
-        tenant_feature_flags: config.tenant_feature_flags,
-        db_state: nil,
-        parameter_status: %{},
-        nonce: nil,
-        server_proof: nil,
-        stats: %{},
-        prepared_statements: MapSet.new(),
-        proxy: Map.get(config, :proxy, false),
-        stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
-        mode: config.mode,
-        replica_type: config.replica_type,
-        caller: Map.get(config, :caller) || nil,
-        client_sock: Map.get(config, :client_sock) || nil,
-        reconnect_retries: 0,
-        terminating_error: nil
-      }
+    {auth_value, manager_ref} =
+      case auth do
+        {:ok, auth_with_secrets} ->
+          {auth_with_secrets, nil}
+
+        {:error, :no_secrets} ->
+          Logger.warning("DbHandler: Secrets not available, entering waiting state")
+          manager_pid = Supavisor.get_local_manager(id)
+          ref = Process.monitor(manager_pid)
+          Supavisor.Manager.register_waiting_for_secrets(id, self())
+          {config.auth, ref}
+      end
+
+    data = %{
+      id: id,
+      sock: nil,
+      auth: auth_value,
+      user: config.user,
+      tenant: config.tenant,
+      tenant_feature_flags: config.tenant_feature_flags,
+      db_state: nil,
+      parameter_status: %{},
+      nonce: nil,
+      server_proof: nil,
+      stats: %{},
+      prepared_statements: MapSet.new(),
+      proxy: Map.get(config, :proxy, false),
+      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
+      mode: config.mode,
+      replica_type: config.replica_type,
+      caller: Map.get(config, :caller) || nil,
+      client_sock: Map.get(config, :client_sock) || nil,
+      reconnect_retries: 0,
+      terminating_error: nil,
+      manager_ref: manager_ref
+    }
 
     Telem.handler_action(:db_handler, :started, id)
-    {:ok, :connect, data, {:next_event, :internal, :connect}}
+
+    if manager_ref do
+      {:ok, :waiting_for_secrets, data}
+    else
+      {:ok, :connect, data, {:next_event, :internal, :connect}}
+    end
   end
 
   @impl true
@@ -242,6 +285,11 @@ defmodule Supavisor.DbHandler do
     Logger.warning("DbHandler: Reconnect #{retry} to DB")
 
     {:keep_state, %{data | reconnect_retries: retry + 1}, {:next_event, :internal, :connect}}
+  end
+
+  def handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, _data) do
+    Logger.error("DbHandler: Cleanup timeout, shutting down")
+    {:stop, :normal}
   end
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
@@ -347,6 +395,24 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  def handle_event(:info, {proto, _, bin}, :waiting_cleanup, %{caller: caller} = data)
+      when is_pid(caller) and proto in @proto do
+    buffered_bin = data.pending_bin <> bin
+
+    cond do
+      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
+        new_data = %{data | caller: nil, waiting_cleanup: nil, pending_bin: nil}
+        {:next_state, :idle, new_data, {:reply, data.waiting_cleanup, :ok}}
+
+      byte_size(buffered_bin) > @cleanup_buffer_limit ->
+        Logger.error("DbHandler: Cleanup buffer limit exceeded, shutting down")
+        {:stop, :normal}
+
+      true ->
+        {:keep_state, %{data | pending_bin: buffered_bin}}
+    end
+  end
+
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
     {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
@@ -374,10 +440,25 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
+  def handle_event({:call, from}, {:checkout, _sock, _caller}, :waiting_for_secrets, _data) do
+    Logger.debug("DbHandler: checkout call during waiting_for_secrets, replying with error")
+
+    error = %{
+      "S" => "FATAL",
+      "C" => "28P01",
+      "M" =>
+        "Authentication credentials are invalid. Please reconnect with fresh credentials to restore pool functionality."
+    }
+
+    {:keep_state_and_data, {:reply, from, {:error, error}}}
+  end
+
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
+      Process.link(caller)
+
       if data.mode == :proxy do
         bin_ps = Server.encode_parameter_status(data.parameter_status)
         send(caller, {:parameter_status, bin_ps})
@@ -393,6 +474,33 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, :ps, :busy, data) do
     Logger.debug("DbHandler: get parameter status")
     {:keep_state_and_data, {:reply, from, data.parameter_status}}
+  end
+
+  def handle_event({:call, from}, :cleanup, state, data) do
+    Logger.debug("DbHandler: Cleanup requested, current state: #{inspect(state)}")
+
+    cond do
+      data.mode == :transaction ->
+        Logger.error(
+          "DbHandler: Cleanup called on transaction mode - only supported in session mode"
+        )
+
+        {:keep_state_and_data,
+         {:reply, from, {:error, :cleanup_not_supported_in_transaction_mode}}}
+
+      state in [:idle, :busy] ->
+        Logger.debug("DbHandler: Starting cleanup, sending DISCARD ALL")
+        msg = :pgo_protocol.encode_query_message("DISCARD ALL")
+        :ok = HandlerHelpers.sock_send(data.sock, msg)
+
+        {:next_state, :waiting_cleanup,
+         Map.merge(data, %{waiting_cleanup: from, pending_bin: <<>>}),
+         {:state_timeout, 5_000, :cleanup_timeout}}
+
+      true ->
+        Logger.warning("DbHandler: Cannot cleanup in state #{inspect(state)}")
+        {:keep_state_and_data, {:reply, from, {:error, :cant_cleanup_now}}}
+    end
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
@@ -420,6 +528,32 @@ defmodule Supavisor.DbHandler do
     HandlerHelpers.sock_send(data.sock, Server.terminate_message())
     HandlerHelpers.sock_close(data.sock)
     {:stop, :normal}
+  end
+
+  def handle_event({:call, from}, :get_state_and_mode, state, data) do
+    {:keep_state_and_data, {:reply, from, {state, data.mode}}}
+  end
+
+  def handle_event(:cast, :secrets_available, :waiting_for_secrets, data) do
+    Logger.info("DbHandler: Secrets are now available, transitioning to connect state")
+
+    Process.demonitor(data.manager_ref, [:flush])
+
+    case get_auth_with_secrets(data.auth, data.id) do
+      {:ok, auth_with_secrets} ->
+        {:next_state, :connect, %{data | auth: auth_with_secrets, manager_ref: nil},
+         {:next_event, :internal, :connect}}
+
+      {:error, :no_secrets} ->
+        Logger.error("DbHandler: Still no secrets available after notification")
+        :keep_state_and_data
+    end
+  end
+
+  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, :waiting_for_secrets, data)
+      when ref == data.manager_ref do
+    Logger.error("DbHandler: Manager died while waiting for secrets: #{inspect(reason)}")
+    {:stop, :normal, data}
   end
 
   def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
@@ -691,6 +825,7 @@ defmodule Supavisor.DbHandler do
   defp handle_authentication_error(%{mode: _other} = data, _reason) do
     tenant = Supavisor.tenant(data.id)
     Supavisor.SecretCache.invalidate(tenant, data.user)
+    Supavisor.SecretCache.delete_upstream_auth_secrets(data.id)
   end
 
   @spec reconnect_timeout(map()) :: pos_integer()
@@ -823,10 +958,10 @@ defmodule Supavisor.DbHandler do
   defp get_auth_with_secrets(auth, id) do
     case Supavisor.SecretCache.get_upstream_auth_secrets(id) do
       {:ok, upstream_auth_secrets} ->
-        Map.put(auth, :secrets, upstream_auth_secrets)
+        {:ok, Map.put(auth, :secrets, upstream_auth_secrets)}
 
       _other ->
-        raise "Upstream connection secrets not found"
+        {:error, :no_secrets}
     end
   end
 

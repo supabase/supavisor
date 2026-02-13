@@ -6,7 +6,7 @@ defmodule Supavisor.Protocol.Server do
   Error codes https://www.postgresql.org/docs/current/errcodes-appendix.html
   """
   require Logger
-  alias Supavisor.Protocol.{Debug, PgType}
+  alias Supavisor.Protocol.Debug
 
   @pkt_header_size 5
   @authentication_ok <<?R, 8::32, 0::32>>
@@ -169,21 +169,6 @@ defmodule Supavisor.Protocol.Server do
     len = IO.iodata_length(payload) + 4
     {<<?K, len::32>>, payload}
   end
-
-  @spec decode_startup_packet(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
-  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
-    with {:ok, payload} <- decode_startup_packet_payload(rest) do
-      pkt = %{
-        len: len,
-        payload: payload,
-        tag: :startup
-      }
-
-      {:ok, pkt}
-    end
-  end
-
-  def decode_startup_packet(_), do: {:error, :bad_startup_payload}
 
   @spec application_name :: binary()
   def application_name, do: @application_name
@@ -419,7 +404,6 @@ defmodule Supavisor.Protocol.Server do
          {:ok, format} <- decode_format_code(format_code) do
       field = %{
         name: field_name,
-        type_info: PgType.type(data_type_oid),
         table_oid: table_oid,
         attr_number: attr_num,
         data_type_oid: data_type_oid,
@@ -448,33 +432,4 @@ defmodule Supavisor.Protocol.Server do
 
   defp decode_parameter_description(<<oid::integer-32, rest::binary>>, acc),
     do: decode_parameter_description(rest, [oid | acc])
-
-  # The startup packet payload is a list of key/value pairs, separated by null bytes
-  @spec decode_startup_packet_payload(binary()) :: {:ok, map()} | {:error, :bad_startup_payload}
-  defp decode_startup_packet_payload(payload) do
-    fields = String.split(payload, <<0>>, trim: true)
-
-    # If the number of fields is odd, then the payload is malformed
-    if rem(length(fields), 2) == 1 do
-      {:error, :bad_startup_payload}
-    else
-      map =
-        fields
-        |> Enum.chunk_every(2)
-        |> Enum.map(fn
-          ["options" = k, v] -> {k, URI.decode_query(v)}
-          [k, v] -> {k, v}
-        end)
-        |> Map.new()
-
-      # We only do light validation on the fields in the payload. The only field we use at the
-      # moment is `user`. If that's missing, this is a bad payload.
-      if Map.has_key?(map, "user") do
-        {:ok, map}
-      else
-        Logger.error("Bad startup payload: #{inspect(payload, limit: 200)}")
-        {:error, :bad_startup_payload}
-      end
-    end
-  end
 end

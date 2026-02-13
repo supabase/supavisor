@@ -119,12 +119,46 @@ defmodule Supavisor.Manager do
     GenServer.call(manager, {:graceful_shutdown, timeout}, :infinity)
   end
 
+  @doc """
+  Unsubscribes a client from the pool.
+
+  Can be used on termination to free the client slot while cleanup is performed.
+  """
+  @spec unsubscribe(pid | Supavisor.id()) :: :ok
+  def unsubscribe(manager_or_id) do
+    manager = resolve_manager(manager_or_id)
+    GenServer.call(manager, {:unsubscribe, self()}, 5000)
+  end
+
+  @doc """
+  Registers a DbHandler as waiting for secrets to become available.
+  """
+  @spec register_waiting_for_secrets(pid | Supavisor.id(), pid) :: :ok
+  def register_waiting_for_secrets(manager_or_id, db_handler_pid) do
+    manager = resolve_manager(manager_or_id)
+    GenServer.cast(manager, {:register_waiting_for_secrets, db_handler_pid})
+  end
+
+  @doc """
+  Notifies waiting DbHandlers that secrets are now available.
+
+  If the manager is not found, this is a no-op (pool may not be started yet).
+  """
+  @spec notify_secrets_available(Supavisor.id()) :: :ok
+  def notify_secrets_available(id) do
+    case Supavisor.get_local_manager(id) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, :notify_secrets_available)
+    end
+  end
+
   ## Callbacks
 
   @impl true
   def init(args) do
     Helpers.set_log_level(args.log_level)
     tid = :ets.new(__MODULE__, [:protected])
+    pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
 
     {{type, tenant}, user, mode, db_name, _search_path} = args.id
     {method, secrets} = args.secrets
@@ -204,6 +238,7 @@ defmodule Supavisor.Manager do
       id: args.id,
       check_ref: check_subscribers(),
       tid: tid,
+      pid_to_ref: pid_to_ref,
       tenant: tenant,
       parameter_status: persisted_ps,
       wait_ps: [],
@@ -218,7 +253,8 @@ defmodule Supavisor.Manager do
       tenant_feature_flags: feature_flags,
       terminating_error: nil,
       drain_caller: nil,
-      drain_timer: nil
+      drain_timer: nil,
+      waiting_for_secrets: []
     }
 
     Logger.metadata(project: tenant, user: user, type: type, db_name: db_name)
@@ -240,7 +276,9 @@ defmodule Supavisor.Manager do
 
     case check_limit(state.mode, state.pool_size, state.max_clients, current_count) do
       :ok ->
-        :ets.insert(state.tid, {Process.monitor(pid), pid, now()})
+        ref = Process.monitor(pid)
+        :ets.insert(state.tid, {ref, pid, now()})
+        :ets.insert(state.pid_to_ref, {pid, ref})
 
         new_state =
           if state.parameter_status == [] do
@@ -254,6 +292,20 @@ defmodule Supavisor.Manager do
       {:error, _} = error ->
         {:reply, error, state}
     end
+  end
+
+  def handle_call({:unsubscribe, pid}, _from, state) do
+    case :ets.take(state.pid_to_ref, pid) do
+      [{^pid, ref}] ->
+        :ets.delete(state.tid, ref)
+        Process.demonitor(ref, [:flush])
+
+      [] ->
+        Logger.warning("Unsubscribe: no entry found for #{inspect(pid)}")
+    end
+
+    new_state = %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
+    {:reply, :ok, new_state}
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
@@ -333,10 +385,41 @@ defmodule Supavisor.Manager do
     {:noreply, %{state | terminating_error: error}}
   end
 
+  def handle_cast({:register_waiting_for_secrets, db_handler_pid}, state) do
+    Logger.debug("Manager: Registering #{inspect(db_handler_pid)} as waiting for secrets")
+
+    # Check if secrets are already available to avoid race condition
+    case Supavisor.SecretCache.get_upstream_auth_secrets(state.id) do
+      {:ok, _secrets} ->
+        Supavisor.DbHandler.notify_secrets_available(db_handler_pid)
+        {:noreply, state}
+
+      {:error, :not_found} ->
+        ref = Process.monitor(db_handler_pid, tag: :DB_HANDLER_DOWN)
+
+        {:noreply,
+         %{state | waiting_for_secrets: [{ref, db_handler_pid} | state.waiting_for_secrets]}}
+    end
+  end
+
+  def handle_cast(:notify_secrets_available, state) do
+    Logger.info(
+      "Manager: Notifying #{length(state.waiting_for_secrets)} db handlers that secrets are available"
+    )
+
+    for {ref, pid} <- state.waiting_for_secrets do
+      Process.demonitor(ref, [:flush])
+      Supavisor.DbHandler.notify_secrets_available(pid)
+    end
+
+    {:noreply, %{state | waiting_for_secrets: []}}
+  end
+
   @impl true
-  def handle_info({:DOWN, ref, _, _, _}, state) do
+  def handle_info({:DOWN, ref, _, pid, _}, state) do
     Process.cancel_timer(state.check_ref)
-    :ets.take(state.tid, ref)
+    :ets.delete(state.tid, ref)
+    :ets.delete(state.pid_to_ref, pid)
 
     state =
       if state.drain_caller && :ets.info(state.tid, :size) == 0 do
@@ -348,6 +431,12 @@ defmodule Supavisor.Manager do
       end
 
     {:noreply, %{state | check_ref: check_subscribers()}}
+  end
+
+  def handle_info({:DB_HANDLER_DOWN, ref, _, _, _}, state) do
+    waiting_for_secrets = Enum.reject(state.waiting_for_secrets, fn {r, _} -> r == ref end)
+
+    {:noreply, %{state | waiting_for_secrets: waiting_for_secrets}}
   end
 
   def handle_info(:drain_timeout, state) do

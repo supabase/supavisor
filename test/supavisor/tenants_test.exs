@@ -170,6 +170,38 @@ defmodule Supavisor.TenantsTest do
                Tenants.get_user_cache(:single, "postgres", "dev_tenant", nil)
     end
 
+    test "get_user_cache/4 returns error when tenant doesn't exist, then returns tenant after creation" do
+      external_id = "cache_test_tenant_#{System.unique_integer([:positive])}"
+      user = "cache_test_user"
+
+      assert {:error, :not_found} = Tenants.get_user_cache(:single, user, external_id, nil)
+
+      {:ok, tenant} =
+        Tenants.create_tenant(%{
+          db_database: "test_db",
+          db_host: "localhost",
+          db_port: 5432,
+          external_id: external_id,
+          default_parameter_status: %{"server_version" => "15.0"},
+          require_user: true,
+          users: [
+            %{
+              "db_user" => user,
+              "db_password" => "test_password",
+              "pool_size" => 3,
+              "mode_type" => "transaction"
+            }
+          ]
+        })
+
+      assert {:ok, %{tenant: returned_tenant, user: returned_user}} =
+               Tenants.get_user_cache(:single, user, external_id, nil)
+
+      assert returned_tenant.id == tenant.id
+      assert returned_tenant.external_id == external_id
+      assert returned_user.db_user == user
+    end
+
     test "update_tenant_ps/2 updates the tenant's default_parameter_status" do
       _tenant = tenant_fixture()
       default_parameter_status = %{"server_version" => "17.0"}

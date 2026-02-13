@@ -69,4 +69,15 @@ defmodule Supavisor.TenantCache do
         true
     end
   end
+
+  @spec delete_upstream_auth_secrets(Supavisor.id()) :: true
+  def delete_upstream_auth_secrets(id) do
+    case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
+      [{_pid, table}] ->
+        :ets.delete(table, :upstream_auth_secrets)
+
+      _ ->
+        true
+    end
+  end
 end

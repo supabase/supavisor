@@ -6,6 +6,7 @@ defmodule Supavisor.Tenants do
   import Ecto.Query, warn: false
   alias Supavisor.Repo
 
+  alias Supavisor.CircuitBreaker
   alias Supavisor.ClientHandler.Auth.ManagerSecrets
   alias Supavisor.Errors.TenantOrUserNotFoundError
   alias Supavisor.Tenants.Cluster
@@ -259,6 +260,7 @@ defmodule Supavisor.Tenants do
     %Tenant{}
     |> Tenant.changeset(attrs)
     |> Repo.insert()
+    |> with_cache_invalidation(operation: "create")
   end
 
   @doc """
@@ -277,6 +279,7 @@ defmodule Supavisor.Tenants do
     tenant
     |> Tenant.changeset(attrs)
     |> Repo.update()
+    |> with_cache_invalidation(operation: "update", terminate_pools: true)
   end
 
   def update_tenant_ps(external_id, new_ps) do
@@ -299,7 +302,9 @@ defmodule Supavisor.Tenants do
 
   """
   def delete_tenant(%Tenant{} = tenant) do
-    Repo.delete(tenant)
+    tenant
+    |> Repo.delete()
+    |> with_cache_invalidation(operation: "delete")
   end
 
   @spec delete_tenant_by_external_id(String.t()) :: boolean()
@@ -308,11 +313,39 @@ defmodule Supavisor.Tenants do
     |> Repo.delete_all()
     |> case do
       {num, _} when num > 0 ->
+        cleanup_result = Supavisor.del_all_cache_dist(id)
+        Logger.info("Delete cache dist on delete #{id}: #{inspect(cleanup_result)}")
         true
 
       _ ->
         false
     end
+  end
+
+  defp with_cache_invalidation(result, opts) do
+    case result do
+      {:ok, %Tenant{external_id: external_id}} ->
+        operation = Keyword.get(opts, :operation, "operation")
+
+        cleanup_result = Supavisor.del_all_cache_dist(external_id)
+
+        Logger.info(
+          "Delete cache dist on #{operation} #{external_id}: #{inspect(cleanup_result)}"
+        )
+
+        if opts[:terminate_pools] do
+          terminate_result = Supavisor.terminate_global(external_id)
+
+          Logger.warning(
+            "Terminate pools on #{operation} #{external_id}: #{inspect(terminate_result)}"
+          )
+        end
+
+      _ ->
+        :ok
+    end
+
+    result
   end
 
   @spec delete_cluster_by_alias(String.t()) :: boolean()
@@ -699,5 +732,54 @@ defmodule Supavisor.Tenants do
   """
   def change_cluster_tenants(%ClusterTenants{} = cluster_tenants, attrs \\ %{}) do
     ClusterTenants.changeset(cluster_tenants, attrs)
+  end
+
+  @doc """
+  Returns a list of network bans for a given tenant.
+
+  ## Examples
+
+      iex> list_network_bans("tenant_external_id")
+      {:ok, [%{banned_address: "192.168.1.100", banned_until: 1620000000}, ...]}
+  """
+  @spec list_network_bans(String.t()) ::
+          {:ok,
+           [%{required(:banned_address) => String.t(), required(:banned_until) => integer()}]}
+          | {:error, :tenant_not_found}
+  def list_network_bans(external_id) when is_binary(external_id) do
+    if get_tenant_by_external_id(external_id) do
+      {external_id, :_}
+      |> CircuitBreaker.opened(:auth_error)
+      |> Enum.map(fn {{_tenant, ip}, blocked_until} ->
+        %{banned_address: ip, banned_until: blocked_until}
+      end)
+      |> then(&{:ok, &1})
+    else
+      {:error, :tenant_not_found}
+    end
+  end
+
+  @doc """
+  Clears tenant's network bans for specific IP addresses.
+
+  Returns the remaining active bans after clearing.
+
+  ## Examples
+
+      iex> clear_network_bans("tenant_external_id", ["192.168.1.100", "10.0.0.1"])
+      {:ok, [%{banned_address: "10.0.0.1", banned_until: 1620000000}]}
+  """
+  @spec clear_network_bans(String.t(), [String.t()]) ::
+          {:ok,
+           [%{required(:banned_address) => String.t(), required(:banned_until) => integer()}]}
+          | {:error, :tenant_not_found}
+  def clear_network_bans(external_id, ip_addresses)
+      when is_binary(external_id) and is_list(ip_addresses) do
+    if get_tenant_by_external_id(external_id) do
+      Enum.each(ip_addresses, &CircuitBreaker.clear({external_id, &1}, :auth_error))
+      list_network_bans(external_id)
+    else
+      {:error, :tenant_not_found}
+    end
   end
 end

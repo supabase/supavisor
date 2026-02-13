@@ -678,6 +678,91 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  test "cleanup resets session state in session mode" do
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_session),
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> List.first(@tenants)
+    ]
+
+    test_timeout = "12345ms"
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+
+    assert [%P.Result{rows: [[backend_pid_1]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    assert [%P.Result{}] =
+             P.SimpleConnection.call(
+               conn1,
+               {:query, "SET statement_timeout = '#{test_timeout}';"}
+             )
+
+    assert [%P.Result{rows: [[^test_timeout]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SHOW statement_timeout;"})
+
+    stop_supervised(:conn1)
+    Process.sleep(100)
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+
+    assert [%P.Result{rows: [[backend_pid_2]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
+
+    assert backend_pid_1 == backend_pid_2
+
+    assert [%P.Result{rows: [[timeout]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})
+
+    assert timeout != test_timeout
+  end
+
+  describe "startup packet edge cases" do
+    setup do
+      %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
+    end
+
+    test "closes connection when startup packet is too large", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      padding = :binary.copy(<<0>>, 1100)
+      bin = <<1108::32, 3::16, 0::16, padding::binary>>
+
+      :ok = :gen_tcp.send(sock, bin)
+      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
+    end
+
+    test "closes connection when startup packet is malformed", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      bin = <<13::32, 3::16, 0::16, "nope", 0>>
+
+      :ok = :gen_tcp.send(sock, bin)
+      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
+    end
+
+    # Regression: issue #854
+    test "handles startup packet where options has an empty value", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      bin =
+        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+          "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
+
+      :ok = :gen_tcp.send(sock, bin)
+      {:ok, response} = :gen_tcp.recv(sock, 0, 5000)
+
+      # Authentication response
+      assert <<?R, _::binary>> = response
+
+      :gen_tcp.close(sock)
+    end
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,
