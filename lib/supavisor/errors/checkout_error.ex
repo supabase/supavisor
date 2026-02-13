@@ -16,6 +16,7 @@ defmodule Supavisor.Errors.CheckoutError do
     "checkout failed due to #{inspect(postgres_error)}"
   end
 
+  @impl Supavisor.Error
   def postgres_error(%{postgres_error: postgres_error}) do
     postgres_error
   end
