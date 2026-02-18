@@ -133,7 +133,7 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
 
       new_state = :sys.get_state(secret_checker_pid)
       assert new_state.auth.user == new_manager_user
-      assert new_state.auth.password.() == new_manager_password
+      assert new_state.auth.password == new_manager_password
       assert Process.alive?(new_state.conn)
 
       GenServer.stop(proxy)

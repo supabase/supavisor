@@ -17,6 +17,7 @@ defmodule Supavisor.DbHandler do
 
   alias Supavisor.{
     ClientHandler,
+    EncryptedSecrets,
     FeatureFlag,
     HandlerHelpers,
     Helpers,
@@ -698,9 +699,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp get_user(auth) do
-    {_method, secrets_fn} = auth.secrets
-    secrets_map = secrets_fn.()
-    secrets_map.user
+    EncryptedSecrets.decrypt(auth.secrets).user
   end
 
   @spec handle_auth_pkts(map(), map(), map()) :: any()
@@ -759,8 +758,7 @@ defmodule Supavisor.DbHandler do
     nonce = data.nonce
     server_first_parts = Helpers.parse_server_first(server_first, nonce)
 
-    {_method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    secrets = EncryptedSecrets.decrypt(data.auth.secrets)
 
     {client_final_message, server_proof} =
       Helpers.get_client_final(
@@ -795,8 +793,7 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {_method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    secrets = EncryptedSecrets.decrypt(data.auth.secrets)
 
     digest =
       if data.auth.method == :password do
@@ -814,8 +811,7 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {_method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    secrets = EncryptedSecrets.decrypt(data.auth.secrets)
 
     payload = <<secrets.password::binary, 0>>
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]

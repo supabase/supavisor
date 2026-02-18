@@ -20,6 +20,8 @@ defmodule Supavisor.SecretCache do
 
   require Logger
 
+  alias Supavisor.EncryptedSecrets
+
   @default_secrets_ttl :timer.hours(24)
 
   @doc """
@@ -27,8 +29,8 @@ defmodule Supavisor.SecretCache do
   """
   def get_validation_secrets(tenant, user) do
     case Cachex.get(Supavisor.Cache, {:secrets_for_validation, tenant, user}) do
-      {:ok, {:cached, {method, secrets_fn}}} ->
-        {:ok, {method, secrets_fn}}
+      {:ok, {:cached, %EncryptedSecrets{} = encrypted}} ->
+        {:ok, encrypted}
 
       _other ->
         {:error, :not_found}
@@ -49,9 +51,9 @@ defmodule Supavisor.SecretCache do
 
       cachex_fetch_fn = fn _key ->
         case fetch_fn.() do
-          {:ok, {method, secrets_fn} = secrets} ->
-            put_validation_secrets(tenant, user, method, secrets_fn)
-            {:commit, {:cached, secrets}, ttl: @default_secrets_ttl}
+          {:ok, %EncryptedSecrets{} = encrypted} ->
+            put_validation_secrets(tenant, user, encrypted)
+            {:commit, {:cached, encrypted}, ttl: @default_secrets_ttl}
 
           {:error, _} = resp ->
             {:ignore, resp}
@@ -76,22 +78,22 @@ defmodule Supavisor.SecretCache do
   @doc """
   Caches validation secrets.
 
+  Strips :client_key from the decrypted struct before caching for validation.
   For users in the cache bypass list, this function does nothing (no caching occurs).
   """
-  def put_validation_secrets(tenant, user, method, secrets_fn) do
+  def put_validation_secrets(tenant, user, %EncryptedSecrets{} = encrypted) do
     if should_bypass_cache?(user) do
       :ok
     else
-      secrets_map = secrets_fn.()
-
-      validation_secrets_fn = fn ->
-        Map.delete(secrets_map, :client_key)
-      end
+      validation_encrypted =
+        encrypted
+        |> EncryptedSecrets.decrypt()
+        |> strip_client_key()
+        |> EncryptedSecrets.encrypt()
 
       validation_key = {:secrets_for_validation, tenant, user}
-      validation_value = {method, validation_secrets_fn}
 
-      Cachex.put(Supavisor.Cache, validation_key, {:cached, validation_value},
+      Cachex.put(Supavisor.Cache, validation_key, {:cached, validation_encrypted},
         ttl: @default_secrets_ttl
       )
     end
@@ -100,14 +102,14 @@ defmodule Supavisor.SecretCache do
   @doc """
   Caches upstream auth secrets in the tenant-specific cache.
   """
-  def put_upstream_auth_secrets(id, method, secrets_with_client_key_fn) do
-    Supavisor.TenantCache.put_upstream_auth_secrets(id, {method, secrets_with_client_key_fn})
+  def put_upstream_auth_secrets(id, %EncryptedSecrets{} = encrypted) do
+    Supavisor.TenantCache.put_upstream_auth_secrets(id, encrypted)
   end
 
   @doc """
   Caches validation secrets only if missing.
   """
-  def put_validation_secrets_if_missing(tenant, user, method, secrets_fn) do
+  def put_validation_secrets_if_missing(tenant, user, %EncryptedSecrets{} = encrypted) do
     validation_key = {:secrets_for_validation, tenant, user}
 
     case Cachex.get(Supavisor.Cache, validation_key) do
@@ -115,7 +117,7 @@ defmodule Supavisor.SecretCache do
         :ok
 
       _other ->
-        put_validation_secrets(tenant, user, method, secrets_fn)
+        put_validation_secrets(tenant, user, encrypted)
     end
   end
 
@@ -123,10 +125,9 @@ defmodule Supavisor.SecretCache do
   Short-term cache indicating that cached validation secrets were checked against
   the upstream database recently.
   """
-  def put_check(tenant, user, method, secrets_fn) do
+  def put_check(tenant, user, %EncryptedSecrets{} = encrypted) do
     key = {:secrets_check, tenant, user}
-    value = {method, secrets_fn}
-    Cachex.put(Supavisor.Cache, key, {:cached, value}, ttl: 5_000)
+    Cachex.put(Supavisor.Cache, key, {:cached, encrypted}, ttl: 5_000)
   end
 
   @doc """
@@ -145,6 +146,11 @@ defmodule Supavisor.SecretCache do
   def delete_upstream_auth_secrets(id) do
     Supavisor.TenantCache.delete_upstream_auth_secrets(id)
   end
+
+  defp strip_client_key(%Supavisor.ClientHandler.Auth.SASLSecrets{} = s),
+    do: %{s | client_key: nil}
+
+  defp strip_client_key(other), do: other
 
   @doc false
   defp should_bypass_cache?(user) do

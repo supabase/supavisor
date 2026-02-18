@@ -4,7 +4,8 @@ defmodule Supavisor.SecretChecker do
   use GenServer
   require Logger
 
-  alias Supavisor.ClientHandler.Auth
+  alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.EncryptedSecrets
   alias Supavisor.Helpers
 
   @interval :timer.seconds(15)
@@ -15,7 +16,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   @spec get_secrets(Supavisor.id()) ::
-          {:ok, {method :: atom(), Supavisor.secrets()}} | {:error, :not_started}
+          {:ok, EncryptedSecrets.t()} | {:error, :not_started}
   def get_secrets(id) do
     erpc_call_node(id, fn ->
       case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
@@ -28,16 +29,16 @@ defmodule Supavisor.SecretChecker do
     end)
   end
 
-  @spec update_credentials(Supavisor.id(), String.t(), (-> String.t())) ::
+  @spec update_credentials(Supavisor.id(), EncryptedSecrets.t()) ::
           :ok | {:error, :not_started}
-  def update_credentials(id, new_user, password_fn) do
+  def update_credentials(id, encrypted_credentials) do
     erpc_call_node(id, fn ->
       case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
         [] ->
           {:error, :not_started}
 
         [{pid, _}] ->
-          GenServer.call(pid, {:update_credentials, new_user, password_fn})
+          GenServer.call(pid, {:update_credentials, encrypted_credentials})
       end
     end)
   end
@@ -59,7 +60,7 @@ defmodule Supavisor.SecretChecker do
           manager_secrets: manager_secrets,
           auth_query: tenant.auth_query,
           database: tenant.db_database,
-          password: fn -> manager_secrets.db_password end,
+          password: manager_secrets.db_password,
           application_name: "Supavisor",
           ip_version: Supavisor.Helpers.ip_version(tenant.ip_version, tenant.db_host),
           upstream_ssl: tenant.upstream_ssl,
@@ -118,17 +119,16 @@ defmodule Supavisor.SecretChecker do
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
-        method =
-          case secret do
-            %Auth.MD5Secrets{} -> :auth_query_md5
-            %Auth.SASLSecrets{} -> :auth_query
-          end
+        encrypted = EncryptedSecrets.encrypt(secret)
 
         update_cache =
           case Supavisor.SecretCache.get_validation_secrets(state.tenant, state.user) do
-            {:ok, {old_method, old_secrets_fn}} ->
-              method != old_method or
-                Map.delete(secret, :client_key) != Map.delete(old_secrets_fn.(), :client_key)
+            {:ok, old_encrypted} ->
+              {old_method, old_secrets} = EncryptedSecrets.decrypt_with_method(old_encrypted)
+              {new_method, _} = EncryptedSecrets.decrypt_with_method(encrypted)
+
+              new_method != old_method or
+                Map.delete(secret, :client_key) != Map.delete(old_secrets, :client_key)
 
             _other ->
               true
@@ -136,13 +136,10 @@ defmodule Supavisor.SecretChecker do
 
         if update_cache do
           Logger.info("Secrets changed or not present, updating cache")
-
-          Supavisor.SecretCache.put_validation_secrets(state.tenant, state.user, method, fn ->
-            secret
-          end)
+          Supavisor.SecretCache.put_validation_secrets(state.tenant, state.user, encrypted)
         end
 
-        {:ok, {method, fn -> secret end}}
+        {:ok, encrypted}
 
       other ->
         Logger.error("Failed to get secret: #{inspect(other)}")
@@ -158,13 +155,16 @@ defmodule Supavisor.SecretChecker do
     {:reply, check_secrets(state.user, state), state}
   end
 
-  def handle_call({:update_credentials, new_user, password_fn}, _from, state) do
+  def handle_call({:update_credentials, encrypted_credentials}, _from, state) do
+    %PasswordSecrets{user: new_user, password: new_password} =
+      EncryptedSecrets.decrypt(encrypted_credentials)
+
     Logger.info("SecretChecker: changing auth_query user to #{new_user}")
 
     new_auth = %{
       state.auth
       | user: new_user,
-        password: password_fn
+        password: new_password
     }
 
     {:ok, new_conn} = start_postgrex_connection(new_auth)
@@ -208,7 +208,7 @@ defmodule Supavisor.SecretChecker do
       hostname: auth.host,
       port: auth.port,
       database: auth.database,
-      password: auth.password.(),
+      password: auth.password,
       username: auth.user,
       parameters: [application_name: "Supavisor (auth_query)"],
       ssl: auth.upstream_ssl,

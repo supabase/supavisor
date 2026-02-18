@@ -1,8 +1,10 @@
 defmodule Supavisor.FixturesHelpers do
   @moduledoc false
 
+  alias Supavisor.EncryptedSecrets
+
   def start_pool(id, secret) do
-    secret = {:password, fn -> secret end}
-    Supavisor.start(id, secret)
+    encrypted = EncryptedSecrets.encrypt(secret)
+    Supavisor.start(id, encrypted)
   end
 end

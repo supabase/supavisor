@@ -11,11 +11,8 @@ defmodule Supavisor.ClientHandler.Auth do
 
   require Logger
 
-  alias Supavisor.{Helpers, Protocol.Server}
-  alias Supavisor.ClientHandler.Auth.{MD5Secrets, PasswordSecrets, SASLSecrets}
-
-  @type auth_method :: :password | :auth_query | :auth_query_md5
-  @type auth_secrets :: {auth_method(), function()}
+  alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.{EncryptedSecrets, Helpers, Protocol.Server}
 
   ## Secret Management
 
@@ -26,7 +23,7 @@ defmodule Supavisor.ClientHandler.Auth do
   For auth_query, uses cache with TTL or fetches from database.
   """
   @spec get_user_secrets(Supavisor.id(), map(), String.t(), String.t()) ::
-          {:ok, auth_secrets()} | {:error, term()}
+          {:ok, EncryptedSecrets.t()} | {:error, term()}
   def get_user_secrets(
         _id,
         %{user: user, tenant: %{require_user: true}},
@@ -38,7 +35,7 @@ defmodule Supavisor.ClientHandler.Auth do
       password: user.db_password
     }
 
-    {:ok, {:password, fn -> secrets end}}
+    {:ok, EncryptedSecrets.encrypt(secrets)}
   end
 
   def get_user_secrets(id, info, db_user, tenant_or_alias) do
@@ -57,7 +54,7 @@ defmodule Supavisor.ClientHandler.Auth do
   Supports password, auth_query, and auth_query_md5 methods.
   Returns {:ok, client_key} on success or {:error, reason} on failure.
   """
-  @spec validate_credentials(auth_method(), term(), term(), term()) ::
+  @spec validate_credentials(Supavisor.Secret.auth_method(), term(), term(), term()) ::
           {:ok, binary() | nil} | {:error, :wrong_password}
   def validate_credentials(:password, _secrets, signatures, client_proof) do
     if client_proof == signatures.client,
@@ -65,10 +62,10 @@ defmodule Supavisor.ClientHandler.Auth do
       else: {:error, :wrong_password}
   end
 
-  def validate_credentials(:auth_query, secrets, signatures, client_proof) do
+  def validate_credentials(:auth_query, encrypted, signatures, client_proof) do
     client_key = :crypto.exor(Base.decode64!(client_proof), signatures.client)
 
-    if Helpers.hash(client_key) == secrets.().stored_key do
+    if Helpers.hash(client_key) == EncryptedSecrets.decrypt(encrypted).stored_key do
       {:ok, client_key}
     else
       {:error, :wrong_password}
@@ -90,16 +87,16 @@ defmodule Supavisor.ClientHandler.Auth do
 
   Generates the initial server message and signatures needed for the auth exchange.
   """
-  @spec prepare_auth_challenge(auth_method(), function(), binary(), binary(), binary()) ::
+  @spec prepare_auth_challenge(atom(), EncryptedSecrets.t(), binary(), binary(), binary()) ::
           {binary(), map()}
-  def prepare_auth_challenge(:password, secret_fn, nonce, user, channel) do
+  def prepare_auth_challenge(:password, encrypted, nonce, user, channel) do
     message = Server.exchange_first_message(nonce)
     server_first_parts = Helpers.parse_server_first(message, nonce)
 
     {client_final_message, server_proof} =
       Helpers.get_client_final(
         :password,
-        secret_fn.(),
+        EncryptedSecrets.decrypt(encrypted),
         server_first_parts,
         nonce,
         user,
@@ -114,8 +111,8 @@ defmodule Supavisor.ClientHandler.Auth do
     {message, signatures}
   end
 
-  def prepare_auth_challenge(:auth_query, secret_fn, nonce, user, channel) do
-    secret = secret_fn.()
+  def prepare_auth_challenge(:auth_query, encrypted, nonce, user, channel) do
+    secret = EncryptedSecrets.decrypt(encrypted)
     message = Server.exchange_first_message(nonce, secret.salt)
     server_first_parts = Helpers.parse_server_first(message, nonce)
 
@@ -141,26 +138,26 @@ defmodule Supavisor.ClientHandler.Auth do
   for future connections
   """
   @spec check_and_update_secrets(
-          auth_method(),
+          Supavisor.Secret.auth_method(),
           term(),
           Supavisor.id(),
           map(),
           String.t(),
           String.t(),
-          function()
+          EncryptedSecrets.t()
         ) :: :ok
-  def check_and_update_secrets(method, reason, client_id, info, tenant, user, current_secrets_fn) do
+  def check_and_update_secrets(method, reason, client_id, info, tenant, user, current_encrypted) do
     if method != :password and reason == :wrong_password and
          not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
       case fetch_secrets_from_database(client_id, info, user) do
-        {:ok, {method2, secrets2}} ->
-          current_secrets = current_secrets_fn.()
-          new_secrets = secrets2.()
+        {:ok, new_encrypted} ->
+          {method2, new_secrets} = EncryptedSecrets.decrypt_with_method(new_encrypted)
+          current_secrets = EncryptedSecrets.decrypt(current_encrypted)
 
           if method != method2 or
                Map.delete(current_secrets, :client_key) != Map.delete(new_secrets, :client_key) do
             Logger.warning("ClientHandler: Update secrets")
-            Supavisor.SecretCache.put_validation_secrets(tenant, user, method2, secrets2)
+            Supavisor.SecretCache.put_validation_secrets(tenant, user, new_encrypted)
           end
 
         other ->
@@ -180,7 +177,7 @@ defmodule Supavisor.ClientHandler.Auth do
 
   Returns parsed credentials or error information.
   """
-  @spec parse_auth_message(binary(), auth_method()) ::
+  @spec parse_auth_message(binary(), Supavisor.Secret.auth_method()) ::
           {:ok, term()} | {:error, term()}
   def parse_auth_message(bin, :auth_query_md5) do
     case Server.decode_pkt(bin) do
@@ -220,23 +217,23 @@ defmodule Supavisor.ClientHandler.Auth do
   @doc """
   Creates initial authentication context for a given method and secrets.
   """
-  @spec create_auth_context(auth_method(), function(), map()) :: map()
-  def create_auth_context(:auth_query_md5, secrets, info) do
+  @spec create_auth_context(Supavisor.Secret.auth_method(), EncryptedSecrets.t(), map()) :: map()
+  def create_auth_context(:auth_query_md5, encrypted, info) do
     salt = :crypto.strong_rand_bytes(4)
 
     %{
       method: :auth_query_md5,
-      secrets: secrets,
+      secrets: encrypted,
       salt: salt,
       info: info,
       signatures: nil
     }
   end
 
-  def create_auth_context(method, secrets, info) when method in [:password, :auth_query] do
+  def create_auth_context(method, encrypted, info) when method in [:password, :auth_query] do
     %{
       method: method,
-      secrets: secrets,
+      secrets: encrypted,
       info: info,
       signatures: nil
     }
@@ -268,17 +265,20 @@ defmodule Supavisor.ClientHandler.Auth do
 
   Adds client_key to secrets if provided, otherwise returns original secrets.
   """
-  @spec prepare_final_secrets(function(), binary() | nil) :: function()
-  def prepare_final_secrets(secrets_fn, nil), do: secrets_fn
+  @spec prepare_final_secrets(EncryptedSecrets.t(), binary() | nil) :: EncryptedSecrets.t()
+  def prepare_final_secrets(encrypted, nil), do: encrypted
 
-  def prepare_final_secrets(secrets_fn, client_key) do
-    fn -> Map.put(secrets_fn.(), :client_key, client_key) end
+  def prepare_final_secrets(encrypted, client_key) do
+    encrypted
+    |> EncryptedSecrets.decrypt()
+    |> Map.put(:client_key, client_key)
+    |> EncryptedSecrets.encrypt()
   end
 
   ## Private Helpers
 
   @spec fetch_secrets_from_database(Supavisor.id(), map(), String.t()) ::
-          {:ok, auth_secrets()} | {:error, term()}
+          {:ok, EncryptedSecrets.t()} | {:error, term()}
   defp fetch_secrets_from_database(id, %{user: user, tenant: tenant}, db_user) do
     case Supavisor.SecretChecker.get_secrets(id) do
       {:error, :not_started} ->
@@ -311,13 +311,7 @@ defmodule Supavisor.ClientHandler.Auth do
           )
 
           with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
-            auth_type =
-              case secret do
-                %MD5Secrets{} -> :auth_query_md5
-                %SASLSecrets{} -> :auth_query
-              end
-
-            {:ok, {auth_type, fn -> secret end}}
+            {:ok, EncryptedSecrets.encrypt(secret)}
           end
         rescue
           exception ->

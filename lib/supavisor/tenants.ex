@@ -440,13 +440,16 @@ defmodule Supavisor.Tenants do
               "Updating auth credentials for tenant #{tenant.external_id}, user #{updated_user.db_user}"
             )
 
-            password_fn = fn -> updated_user.db_password end
+            encrypted_credentials =
+              Supavisor.EncryptedSecrets.encrypt(%Supavisor.ClientHandler.Auth.PasswordSecrets{
+                user: updated_user.db_user,
+                password: updated_user.db_password
+              })
 
             checker_result =
               Supavisor.update_secret_checker_credentials_global(
                 tenant.external_id,
-                updated_user.db_user,
-                password_fn
+                encrypted_credentials
               )
 
             Logger.info(
