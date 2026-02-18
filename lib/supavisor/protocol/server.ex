@@ -112,6 +112,9 @@ defmodule Supavisor.Protocol.Server do
   @spec md5_request(<<_::32>>) :: iodata()
   def md5_request(salt), do: [<<?R, 12::32, 5::32>>, salt]
 
+  @spec password_request() :: iodata()
+  def password_request, do: [<<?R, 8::32, 3::32>>]
+
   @spec exchange_first_message(binary, binary | boolean, pos_integer) :: binary
   def exchange_first_message(nonce, salt \\ false, iterations \\ 4096) do
     server_nonce =
@@ -373,11 +376,18 @@ defmodule Supavisor.Protocol.Server do
   end
 
   @spec decode_payload(:password_message, binary()) ::
-          {:first_msg_response, map()} | :undefined
+          {:first_msg_response, map()} | {:cleartext_password, binary()} | :undefined
   defp decode_payload(:password_message, bin) do
-    case kv_to_map(bin) do
-      {:ok, map} -> {:first_msg_response, map}
-      {:error, _} -> :undefined
+    # cleartext passwords will be null terminated, scram messages not
+    case :binary.split(bin, <<0>>) do
+      [password, ""] ->
+        {:cleartext_password, password}
+
+      _ ->
+        case kv_to_map(bin) do
+          {:ok, map} -> {:first_msg_response, map}
+          {:error, _} -> :undefined
+        end
     end
   end
 

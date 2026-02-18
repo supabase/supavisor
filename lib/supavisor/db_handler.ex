@@ -325,6 +325,14 @@ defmodule Supavisor.DbHandler do
         {:keep_state_and_data,
          {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
 
+      {:error_response, %{"S" => "FATAL", "C" => "28000"} = error} ->
+        reason = error["M"] || "Authentication failed"
+        handle_authentication_error(data, reason)
+        Logger.error("DbHandler: Auth error #{inspect(error)}")
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
+
       {:error_response, %{"S" => "FATAL", "C" => "3D000"} = error} ->
         Logger.error("DbHandler: Database does not exist: #{inspect(error)}")
 
@@ -814,10 +822,17 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {_method, secrets_fn} = data.auth.secrets
+    {method, secrets_fn} = data.auth.secrets
     secrets = secrets_fn.()
 
-    payload = <<secrets.password::binary, 0>>
+    password =
+      if method == :password do
+        secrets.password
+      else
+        secrets.cls_password
+      end
+
+    payload = <<password::binary, 0>>
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
     :ok = HandlerHelpers.sock_send(data.sock, bin)
     :authentication_cleartext
