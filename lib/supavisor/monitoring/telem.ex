@@ -54,6 +54,12 @@ defmodule Supavisor.Monitoring.Telem do
 
   @spec pool_checkout_time(integer(), Supavisor.id(), :local | :remote) :: :ok | nil
   def pool_checkout_time(time, {{type, tenant}, user, mode, db_name, search_path}, same_box) do
+    if time > 1_000_000 do
+      Logger.warning(
+        "Pool checkout took over 1s (#{div(time, 1_000)}ms), consider increasing pool size or checking for slow queries"
+      )
+    end
+
     telemetry_execute(
       [:supavisor, :pool, :checkout, :stop, same_box],
       %{duration: time},
