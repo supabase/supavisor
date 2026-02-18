@@ -59,6 +59,10 @@ defmodule Supavisor.ClientHandler.Auth do
   end
 
   # Helper function to adjust auth method based on SSL status
+  defp adjust_auth_method_for_ssl(:auth_query_jit, false, _ssl) do
+    :auth_query
+  end
+
   defp adjust_auth_method_for_ssl(:auth_query_jit, true, false) do
     # If cached method is :auth_query_jit but SSL is not used, downgrade to :auth_query
     :auth_query
@@ -114,7 +118,14 @@ defmodule Supavisor.ClientHandler.Auth do
     secret = secrets.()
 
     if Helpers.token_matches?(password) do
-      case Helpers.check_user_has_jit_role(tenant.jit_api_url, password, secret.user, rhost) do
+      result =
+        try do
+          Helpers.check_user_has_jit_role(tenant.jit_api_url, password, secret.user, rhost)
+        rescue
+          _ -> {:error, :request_failed}
+        end
+
+      case result do
         {:ok, true} ->
           # set a fake client_key incase upstream switches away from pam mid auth
           {:ok, :crypto.hash(:sha256, password), :auth_query_jit}

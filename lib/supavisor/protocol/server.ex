@@ -378,14 +378,15 @@ defmodule Supavisor.Protocol.Server do
   @spec decode_payload(:password_message, binary()) ::
           {:first_msg_response, map()} | {:cleartext_password, binary()} | :undefined
   defp decode_payload(:password_message, bin) do
-    case kv_to_map(bin) do
-      {:ok, map} ->
-        {:first_msg_response, map}
+    # cleartext passwords will be null terminated, scram messages not
+    case :binary.split(bin, <<0>>) do
+      [password, ""] ->
+        {:cleartext_password, password}
 
-      {:error, _} ->
-        case :binary.split(bin, <<0>>) do
-          [password, ""] -> {:cleartext_password, password}
-          _ -> :undefined
+      _ ->
+        case kv_to_map(bin) do
+          {:ok, map} -> {:first_msg_response, map}
+          {:error, _} -> :undefined
         end
     end
   end

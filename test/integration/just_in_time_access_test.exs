@@ -11,6 +11,8 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     cert_path = Path.join(cert_dir, "server.crt")
     key_path = Path.join(cert_dir, "server.key")
 
+    prev_cert = Application.get_env(:supavisor, :global_downstream_cert)
+    prev_key = Application.get_env(:supavisor, :global_downstream_key)
     Application.put_env(:supavisor, :global_downstream_cert, cert_path)
     Application.put_env(:supavisor, :global_downstream_key, key_path)
 
@@ -25,6 +27,8 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
     # Add a small delay between tests to allow connections to clean up
     on_exit(fn ->
+      Application.put_env(:supavisor, :global_downstream_cert, prev_cert)
+      Application.put_env(:supavisor, :global_downstream_key, prev_key)
       Process.sleep(100)
     end)
 
@@ -151,6 +155,37 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
                  # from postgres/init.sql
                  password: "56lRXbZStSL9vY3cJJxLZd5wQxpWvfl9",
                  username: "supabase_admin.#{tenant_id}",
+                 ssl: true,
+                 ssl_opts: [
+                   verify: :verify_peer,
+                   cacertfile: ca_cert
+                 ]
+               )
+
+      assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+
+      GenServer.stop(proxy)
+    after
+      Supavisor.Tenants.delete_tenant_by_external_id(tenant_id)
+    end
+  end
+
+  test "valid credentials for role that contains = in password", %{db_conf: db_conf} do
+    # the pg_hba.conf can be set to only allow
+    # JIT access for some roles and use scram_sha256 for others.
+    # those roles should still be able to log in, even if the tenant
+    # has use_jit enabled.
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
+
+    try do
+      assert {:ok, proxy} =
+               Postgrex.start_link(
+                 hostname: db_conf[:hostname],
+                 port: Application.get_env(:supavisor, :proxy_port_transaction),
+                 database: db_conf[:database],
+                 # from postgres/init.sql
+                 password: "56lRXbZStSL9=Y3cJJxLZd5wQxpWvfl9",
+                 username: "user_with_equal.#{tenant_id}",
                  ssl: true,
                  ssl_opts: [
                    verify: :verify_peer,

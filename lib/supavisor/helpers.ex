@@ -502,27 +502,21 @@ defmodule Supavisor.Helpers do
       }
       |> Jason.encode!()
 
-    response =
-      Req.post!(
-        url,
-        opts
-        |> Keyword.put(:body, body)
-      )
+    case Req.post(url, opts |> Keyword.put(:body, body)) do
+      {:ok, %Req.Response{status: 200, body: %{"user_role" => %{"role" => urole}}}} ->
+        {:ok, urole == role}
 
-    case response.status do
-      200 ->
-        %{"user_role" => %{"role" => urole}} = response.body
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        {:error, {:invalid_response_format, body}}
 
-        # double check server response
-        has_valid_role? = urole == role
-
-        {:ok, has_valid_role?}
-
-      status when status in [401, 403] ->
+      {:ok, %Req.Response{status: status}} when status in [401, 403] ->
         {:error, :unauthorized_or_forbidden}
 
-      status ->
+      {:ok, %Req.Response{status: status}} ->
         {:error, {:unexpected_status, status}}
+
+      {:error, exception} ->
+        {:error, {:request_failed, Exception.message(exception)}}
     end
   end
 end

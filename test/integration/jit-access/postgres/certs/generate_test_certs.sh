@@ -3,7 +3,6 @@
 set -e
 
 CERT_DIR="$1"
-DAYS_VALID=1
 
 # Create certs directory
 mkdir -p $CERT_DIR

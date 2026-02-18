@@ -329,7 +329,9 @@ defmodule Supavisor.DbHandler do
         reason = error["M"] || "Authentication failed"
         handle_authentication_error(data, reason)
         Logger.error("DbHandler: Auth error #{inspect(error)}")
-        {:stop, :invalid_password, data}
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
 
       {:error_response, %{"S" => "FATAL", "C" => "3D000"} = error} ->
         Logger.error("DbHandler: Database does not exist: #{inspect(error)}")
