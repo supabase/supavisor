@@ -117,6 +117,52 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  @tag cluster: true
+  test "pool starts on remote node when tenant has different availability zone" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "az_tenant"
+    user = db_conf[:username]
+
+    assert {:ok, _peer_pid, node2} = Cluster.start_node()
+
+    Node.connect(node2)
+
+    # Wait for :syn to gossip the peer's AZ membership to the primary node
+    assert :ok =
+             wait_until(
+               fn ->
+                 case :syn.members(:availability_zone, "ap-southeast-1c") do
+                   members when members != [] ->
+                     peer_nodes = Enum.map(members, fn {_, [node: n]} -> n end)
+                     node2 in peer_nodes
+
+                   _ ->
+                     false
+                 end
+               end,
+               5000
+             )
+
+    assert {:ok, proxy} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: Application.get_env(:supavisor, :proxy_port_transaction),
+               database: db_conf[:database],
+               password: db_conf[:password],
+               username: user <> "." <> tenant
+             )
+
+    # Wait for the pool supervisor to appear globally
+    id = {{:single, tenant}, user, :transaction, db_conf[:database], nil}
+    assert :ok = wait_until(fn -> Supavisor.get_global_sup(id) != nil end, 3000)
+
+    sup = Supavisor.get_global_sup(id)
+    assert is_pid(sup)
+    assert node(sup) == node2
+
+    assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+  end
+
   for tenant <- @tenants do
     test "select with #{tenant}" do
       %{proxy: proxy, origin: origin} = setup_tenant_connections(unquote(tenant))
