@@ -154,4 +154,96 @@ defmodule Supavisor.HelpersTest do
       assert new_min_heap_words >= expected_words
     end
   end
+
+  describe "token_matches/1" do
+    test "supabase pat is recognised" do
+      assert @subject.token_matches?("sbp_dfe467a1-f7e4-4c27-87de-a930270f4622")
+    end
+
+    test "JWT is recognised" do
+      assert @subject.token_matches?(
+               "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30"
+             )
+    end
+  end
+end
+
+defmodule Supavisor.HelpersJitAuthTest do
+  use ExUnit.Case, async: true
+
+  alias Supavisor.Helpers
+
+  @subject Supavisor.Helpers
+
+  describe "check_user_has_jit_role/4" do
+    test "returns {:ok, true} when user has role" do
+      Req.Test.stub(TestStubReq, fn conn ->
+        Plug.Conn.put_status(conn, 200)
+        |> Req.Test.json(%{
+          "user_role" => %{"role" => "postgres"}
+        })
+      end)
+
+      assert {:ok, true} =
+               @subject.check_user_has_jit_role(
+                 "https://fake.url",
+                 "fake-token",
+                 "postgres",
+                 "10.0.0.1",
+                 plug: {Req.Test, TestStubReq}
+               )
+    end
+
+    test "returns {:error, :unauthorized_or_forbidden} when 401 or 403" do
+      Req.Test.stub(TestStubReq, fn conn ->
+        Plug.Conn.put_status(conn, 401)
+        |> Req.Test.json(%{
+          "message" => "unauthorized"
+        })
+      end)
+
+      assert {:error, :unauthorized_or_forbidden} =
+               @subject.check_user_has_jit_role(
+                 "https://fake.url",
+                 "fake-token",
+                 "postgres",
+                 "10.0.0.1",
+                 plug: {Req.Test, TestStubReq}
+               )
+
+      Req.Test.stub(TestStubReq, fn conn ->
+        Plug.Conn.put_status(conn, 403)
+        |> Req.Test.json(%{
+          "message" => "unauthorized"
+        })
+      end)
+
+      assert {:error, :unauthorized_or_forbidden} =
+               @subject.check_user_has_jit_role(
+                 "https://fake.url",
+                 "fake-token",
+                 "postgres",
+                 "10.0.0.1",
+                 plug: {Req.Test, TestStubReq}
+               )
+    end
+
+    test "returns {:error, {:unexpected_status, status}} on all other status" do
+      Req.Test.stub(TestStubReq, fn conn ->
+        Plug.Conn.put_status(conn, 500)
+        |> Req.Test.json(%{
+          "message" => "internal server error"
+        })
+      end)
+
+      assert {:error, {:unexpected_status, 500}} =
+               @subject.check_user_has_jit_role(
+                 "https://fake.url",
+                 "fake-token",
+                 "postgres",
+                 "10.0.0.1",
+                 plug: {Req.Test, TestStubReq}
+               )
+    end
+  end
 end

@@ -398,9 +398,12 @@ defmodule Supavisor.Helpers do
 
   @spec peer_ip(:gen_tcp.socket()) :: String.t()
   def peer_ip(socket) do
-    case :inet.peername(socket) do
+    peername_fn =
+      if match?({:sslsocket, _, _}, socket), do: &:ssl.peername/1, else: &:inet.peername/1
+
+    case peername_fn.(socket) do
       {:ok, {ip, _port}} -> List.to_string(:inet.ntoa(ip))
-      _error -> "undefined"
+      _ -> "undefined"
     end
   end
 
@@ -451,5 +454,69 @@ defmodule Supavisor.Helpers do
   def no_warm_pool_user?(user) do
     no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
     user in no_warm_pool_users
+  end
+
+  @doc """
+  Checks if a token matches either a PAT or JWT.
+
+  ## Parameters
+
+  - `token`: The token string
+  """
+  def token_matches?(<<"sbp_", _rest::binary>>), do: true
+
+  def token_matches?(token) do
+    case String.split(token, ".") do
+      ["eyJ" <> _, "eyJ" <> _, _sig] ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  @doc """
+  Makes an HTTPS GET request to `url` with a Bearer `token`
+  and checks if the given `role` is present in the returned `user_roles` list.
+
+  Returns:
+    - `{:ok, true}` if role is present
+    - `{:ok, false}` if role is absent
+    - `{:error, :unauthorized}` for 401
+    - `{:error, :forbidden}` for 403
+    - `{:error, {:unexpected_status, status}}` for other HTTP codes
+  """
+  def check_user_has_jit_role(url, token, role \\ "postgres", rhost, opts \\ []) do
+    opts =
+      Keyword.merge(opts,
+        headers: [
+          authorization: "Bearer #{token}",
+          "content-type": "application/json"
+        ]
+      )
+
+    body =
+      %{
+        rhost: rhost,
+        role: role
+      }
+      |> Jason.encode!()
+
+    case Req.post(url, opts |> Keyword.put(:body, body)) do
+      {:ok, %Req.Response{status: 200, body: %{"user_role" => %{"role" => urole}}}} ->
+        {:ok, urole == role}
+
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        {:error, {:invalid_response_format, body}}
+
+      {:ok, %Req.Response{status: status}} when status in [401, 403] ->
+        {:error, :unauthorized_or_forbidden}
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, {:unexpected_status, status}}
+
+      {:error, exception} ->
+        {:error, {:request_failed, Exception.message(exception)}}
+    end
   end
 end

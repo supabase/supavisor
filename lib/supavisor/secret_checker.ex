@@ -64,7 +64,9 @@ defmodule Supavisor.SecretChecker do
           ip_version: Supavisor.Helpers.ip_version(tenant.ip_version, tenant.db_host),
           upstream_ssl: tenant.upstream_ssl,
           upstream_verify: tenant.upstream_verify,
-          upstream_tls_ca: Supavisor.Helpers.upstream_cert(tenant.upstream_tls_ca)
+          upstream_tls_ca: Supavisor.Helpers.upstream_cert(tenant.upstream_tls_ca),
+          use_jit: tenant.use_jit,
+          jit_api_url: tenant.jit_api_url
         }
       else
         nil
@@ -116,12 +118,19 @@ defmodule Supavisor.SecretChecker do
     do: Process.send_after(self(), :check, interval + jitter())
 
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
+    alias Supavisor.ClientHandler.Auth
+
+    # get tenant information so that we can check configuration information
+    # that affects secrets, like :use_jit
+    t = Supavisor.Tenants.get_tenant_cache(state.tenant, state.auth.sni_hostname)
+
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
         method =
-          case secret do
-            %Auth.MD5Secrets{} -> :auth_query_md5
-            %Auth.SASLSecrets{} -> :auth_query
+          case {t.use_jit, secret} do
+            {true, %Auth.SASLSecrets{}} -> :auth_query_jit
+            {_, %Auth.MD5Secrets{}} -> :auth_query_md5
+            {_, %Auth.SASLSecrets{}} -> :auth_query
           end
 
         update_cache =
