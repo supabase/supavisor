@@ -46,7 +46,19 @@ defmodule Supavisor.Integration.PromExClusterTest do
     {:ok, _peer2, node2} = start_test_node2()
     cluster_nodes!(node1, node2)
 
-    assert is_map(PromEx.fetch_cluster_metrics())
+    metrics = IO.iodata_to_binary(PromEx.fetch_cluster_metrics())
+
+    File.write("out.txt", metrics)
+
+    # Assert we have metrics from the primary node (region=eu)
+    assert metrics =~
+             ~s(supavisor_prom_ex_beam_system_logical_processors_online_info{az="nil",instance_id="nil",location="eu",nodehost="nohost",region="eu")
+
+    # Assert we have metrics from test nodes (region=usa)
+    assert metrics =~
+             ~s(supavisor_prom_ex_beam_system_logical_processors_online_info{az="ap-southeast-1c",instance_id="nil",location="usa",nodehost="127.0.0.1",region="usa")
+
+    assert String.ends_with?(metrics, "# EOF\n")
   end
 
   @tag cluster: true
@@ -55,6 +67,7 @@ defmodule Supavisor.Integration.PromExClusterTest do
     {:ok, _peer2, node2} = start_test_node2()
     cluster_nodes!(node1, node2)
 
-    assert is_map(PromEx.fetch_cluster_tenant_metrics("test_tenant"))
+    metrics = IO.iodata_to_binary(PromEx.fetch_cluster_tenant_metrics("test_tenant"))
+    assert String.ends_with?(metrics, "# EOF\n")
   end
 end

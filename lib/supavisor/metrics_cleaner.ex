@@ -64,21 +64,27 @@ defmodule Supavisor.MetricsCleaner do
   defp check, do: Process.send_after(self(), :check, @interval)
 
   defp loop_and_cleanup_metrics_table do
-    {_, tids} = Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
+    {_, {tags_tid, metric_tids, reverse_tags_tid, cache_tid}} =
+      Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
 
-    tids
-    |> List.wrap()
-    |> Enum.sum_by(&clean_table/1)
+    metric_tids
+    |> Tuple.to_list()
+    |> Enum.sum_by(&clean_table(&1, tags_tid, reverse_tags_tid, cache_tid))
   end
 
-  defp clean_table(tid) do
+  defp clean_table(tid, _tags_tid, reverse_tags_tid, cache_tid) do
     :ets.foldl(
-      fn {key, _val}, acc ->
-        # We use elem/2 instead of pattern matching because the key may be a tuple with size 2 or 3
-        tags = elem(key, 1)
+      fn {{metric_id, tags_id}, _val}, acc ->
+        tags = resolve_tags(reverse_tags_tid, tags_id)
 
         if tags[:tenant] && tenant_down?(tags) do
-          :ets.delete(tid, key)
+          :ets.delete(tid, {metric_id, tags_id})
+          # Clean up tag mappings and label cache for this tags_id.
+          # Other scheduler tables may still reference this tags_id,
+          # but orphaned entries in tags/reverse_tags/cache are harmless
+          # and will be cleaned on subsequent passes once all references
+          # are gone.
+          :ets.delete(cache_tid, tags_id)
           acc + 1
         else
           acc
@@ -87,6 +93,13 @@ defmodule Supavisor.MetricsCleaner do
       0,
       tid
     )
+  end
+
+  defp resolve_tags(reverse_tags_tid, tags_id) do
+    case :ets.lookup(reverse_tags_tid, tags_id) do
+      [{_, tags}] -> tags
+      [] -> %{}
+    end
   end
 
   defp tenant_down?(%{
