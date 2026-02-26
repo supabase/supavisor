@@ -23,7 +23,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   current in the low 32 bits). This lets us read a consistent snapshot of both
   counts with a single `get`, and update them atomically via CAS loops.
 
-  #### Recording events (`record/3`)
+  #### Recording events (`record/2`)
 
   1. **Rotate** if the window index has advanced (see below).
   2. **Increment** current count: `:atomics.add(ref, @counts, 1)`. Since
@@ -66,20 +66,28 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
 
   @low_mask 0xFFFFFFFF
 
+  @enforce_keys [:ref, :window_seconds]
+  defstruct [:ref, :window_seconds]
+
+  @type t :: %__MODULE__{ref: reference(), window_seconds: pos_integer()}
+
   @doc """
-  Creates a new sliding window reference.
+  Creates a new sliding window with the given window size in seconds.
   """
-  @spec new() :: reference()
-  def new do
-    :atomics.new(3, signed: false)
+  @spec new(pos_integer()) :: t()
+  def new(window_seconds) do
+    %__MODULE__{
+      ref: :atomics.new(3, signed: false),
+      window_seconds: window_seconds
+    }
   end
 
   @doc """
   Records one event, rotating the window if needed.
   Returns the estimated count after the increment.
   """
-  @spec record(reference(), integer(), pos_integer()) :: non_neg_integer()
-  def record(ref, now, window_seconds) do
+  @spec record(t(), integer()) :: non_neg_integer()
+  def record(%__MODULE__{ref: ref, window_seconds: window_seconds}, now) do
     current_window = div(now, window_seconds)
     rotate(ref, current_window)
     :atomics.add(ref, @counts, 1)
@@ -89,32 +97,32 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   @doc """
   Returns the blocked_until timestamp (0 means not blocked).
   """
-  @spec blocked_until(reference()) :: non_neg_integer()
-  def blocked_until(ref) do
+  @spec blocked_until(t()) :: non_neg_integer()
+  def blocked_until(%__MODULE__{ref: ref}) do
     :atomics.get(ref, @blocked_until)
   end
 
   @doc """
   Sets the blocked_until timestamp.
   """
-  @spec block_until(reference(), non_neg_integer()) :: :ok
-  def block_until(ref, timestamp) do
+  @spec block_until(t(), non_neg_integer()) :: :ok
+  def block_until(%__MODULE__{ref: ref}, timestamp) do
     :atomics.put(ref, @blocked_until, timestamp)
   end
 
   @doc """
   Clears the blocked state (sets blocked_until to 0).
   """
-  @spec unblock(reference()) :: :ok
-  def unblock(ref) do
+  @spec unblock(t()) :: :ok
+  def unblock(%__MODULE__{ref: ref}) do
     :atomics.put(ref, @blocked_until, 0)
   end
 
   @doc """
   Returns the current window index stored in the ref.
   """
-  @spec window_index(reference()) :: non_neg_integer()
-  def window_index(ref) do
+  @spec window_index(t()) :: non_neg_integer()
+  def window_index(%__MODULE__{ref: ref}) do
     :atomics.get(ref, @window_index)
   end
 
@@ -128,7 +136,8 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
     stored_window = :atomics.get(ref, @window_index)
 
     cond do
-      stored_window == current_window ->
+      stored_window >= current_window ->
+        # Same window or clock went backwards — don't rotate.
         :ok
 
       stored_window == current_window - 1 ->
@@ -145,8 +154,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
       true ->
         case :atomics.compare_exchange(ref, @window_index, stored_window, current_window) do
           :ok ->
-            # We won — stale window, reset prev and zero current via CAS loop
-            # to avoid wiping concurrent increments.
+            # We won — stale window, reset both prev and current via CAS loop.
             reset_counts(ref)
 
           _ ->
@@ -168,15 +176,13 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
     end
   end
 
-  # CAS loop to zero prev while preserving concurrent increments to current.
+  # Zeros both prev and current. Used when the window advanced by 2+,
+  # meaning both counts are from irrelevant windows.
+  #
+  # A concurrent add from a process that already passed rotate can land
+  # just before the put and get wiped, meaning some event may be lost.
   defp reset_counts(ref) do
-    old = :atomics.get(ref, @counts)
-    new_packed = old &&& @low_mask
-
-    case :atomics.compare_exchange(ref, @counts, old, new_packed) do
-      :ok -> :ok
-      _ -> reset_counts(ref)
-    end
+    :atomics.put(ref, @counts, 0)
   end
 
   defp estimated_count(ref, now, window_seconds) do

@@ -32,9 +32,9 @@ defmodule Supavisor.CircuitBreakerTest do
     end
 
     test "returns :ok after block period expires" do
-      ref = SlidingWindow.new()
-      SlidingWindow.block_until(ref, System.system_time(:second) - 1)
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
+      sw = SlidingWindow.new(600)
+      SlidingWindow.block_until(sw, System.system_time(:second) - 1)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw})
 
       assert :ok = CircuitBreaker.check("tenant1", :get_secrets)
     end
@@ -120,10 +120,10 @@ defmodule Supavisor.CircuitBreakerTest do
   describe "cleanup_stale_entries/0" do
     test "removes old entries" do
       now = System.system_time(:second)
-      ref = SlidingWindow.new()
+      sw = SlidingWindow.new(600)
       # Record into a very old window
-      SlidingWindow.record(ref, now - 2000, 600)
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
+      SlidingWindow.record(sw, now - 2000)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
@@ -142,10 +142,10 @@ defmodule Supavisor.CircuitBreakerTest do
 
     test "removes expired blocks" do
       now = System.system_time(:second)
-      ref = SlidingWindow.new()
-      SlidingWindow.record(ref, now - 2000, 600)
-      SlidingWindow.block_until(ref, now - 100)
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
+      sw = SlidingWindow.new(600)
+      SlidingWindow.record(sw, now - 2000)
+      SlidingWindow.block_until(sw, now - 100)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
@@ -154,10 +154,10 @@ defmodule Supavisor.CircuitBreakerTest do
 
     test "keeps active blocks" do
       now = System.system_time(:second)
-      ref = SlidingWindow.new()
-      SlidingWindow.record(ref, now, 600)
-      SlidingWindow.block_until(ref, now + 100)
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
+      sw = SlidingWindow.new(600)
+      SlidingWindow.record(sw, now)
+      SlidingWindow.block_until(sw, now + 100)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
