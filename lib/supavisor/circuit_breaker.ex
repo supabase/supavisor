@@ -1,11 +1,15 @@
 defmodule Supavisor.CircuitBreaker do
   @moduledoc """
-  Simple ETS-based circuit breaker for pool operations.
+  Atomics-based circuit breaker for pool operations.
 
-  Tracks failures per tenant and blocks operations when thresholds are exceeded.
+  Each `{key, operation}` maps to a `SlidingWindow` ref stored in an ETS table.
+  Uses a sliding window approximation for failure counting — O(1) writes,
+  O(1) reads, no race conditions on counting.
   """
 
   require Logger
+
+  alias Supavisor.CircuitBreaker.SlidingWindow
 
   @table __MODULE__
 
@@ -46,26 +50,21 @@ defmodule Supavisor.CircuitBreaker do
   """
   @spec record_failure(term(), atom()) :: :ok
   def record_failure(key, operation) when is_atom(operation) do
+    threshold = Map.fetch!(@config, operation)
+    ref = get_or_create_ref({key, operation})
     now = System.system_time(:second)
-    ets_key = {key, operation}
 
-    case :ets.lookup(@table, ets_key) do
-      [] ->
-        :ets.insert(@table, {ets_key, %{failures: [now], blocked_until: nil}})
+    estimated = SlidingWindow.record(ref, now, threshold.window_seconds)
 
-      [{^ets_key, state}] ->
-        threshold = Map.fetch!(@config, operation)
-        window_start = now - threshold.window_seconds
+    if estimated >= threshold.max_failures do
+      block_until = now + threshold.block_seconds
+      SlidingWindow.block_until(ref, block_until)
 
-        recent_failures = Enum.filter([now | state.failures], &(&1 >= window_start))
+      Logger.warning(
+        "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{block_until}"
+      )
 
-        if length(recent_failures) >= threshold.max_failures do
-          block_until = now + threshold.block_seconds
-          open_local(key, operation, block_until, recent_failures)
-          threshold.propagate? && open_global(key, operation, block_until)
-        else
-          :ets.insert(@table, {ets_key, %{state | failures: recent_failures}})
-        end
+      threshold.propagate? && open_global(key, operation, block_until)
     end
 
     :ok
@@ -77,22 +76,26 @@ defmodule Supavisor.CircuitBreaker do
   """
   @spec check(term(), atom()) :: :ok | {:error, :circuit_open, integer()}
   def check(key, operation) when is_atom(operation) do
-    now = System.system_time(:second)
     ets_key = {key, operation}
 
     case :ets.lookup(@table, ets_key) do
       [] ->
         :ok
 
-      [{^ets_key, %{blocked_until: nil}}] ->
-        :ok
+      [{^ets_key, ref}] ->
+        blocked = SlidingWindow.blocked_until(ref)
 
-      [{^ets_key, %{blocked_until: blocked_until}}] when blocked_until > now ->
-        {:error, :circuit_open, blocked_until}
+        cond do
+          blocked == 0 ->
+            :ok
 
-      [{^ets_key, state}] ->
-        :ets.insert(@table, {ets_key, %{state | blocked_until: nil}})
-        :ok
+          blocked > System.system_time(:second) ->
+            {:error, :circuit_open, blocked}
+
+          true ->
+            SlidingWindow.unblock(ref)
+            :ok
+        end
     end
   end
 
@@ -114,12 +117,15 @@ defmodule Supavisor.CircuitBreaker do
   def opened(key, operation) when is_atom(operation) do
     now = System.system_time(:second)
 
-    :ets.select(@table, [
-      {{{key, operation}, %{blocked_until: :"$1"}},
-       [{:andalso, {:is_integer, :"$1"}, {:>, :"$1", now}}], [:"$_"]}
-    ])
-    |> Enum.map(fn {{key, _operation}, %{blocked_until: blocked_until}} ->
-      {key, blocked_until}
+    :ets.match_object(@table, {{key, operation}, :_})
+    |> Enum.reduce([], fn {{k, _op}, ref}, acc ->
+      blocked = SlidingWindow.blocked_until(ref)
+
+      if blocked > now do
+        [{k, blocked} | acc]
+      else
+        acc
+      end
     end)
   end
 
@@ -167,29 +173,10 @@ defmodule Supavisor.CircuitBreaker do
   Opens the circuit arbitrary for a given key and operation on the current node.
   """
   @spec open_local(term(), atom(), integer(), list(integer()) | nil) :: :ok
-  def open_local(key, operation, blocked_until, recent_failures \\ nil)
-      when is_atom(operation) and is_integer(blocked_until) and
-             (is_list(recent_failures) or is_nil(recent_failures)) do
-    ets_key = {key, operation}
-
-    case :ets.lookup(@table, ets_key) do
-      [] ->
-        :ets.insert(
-          @table,
-          {ets_key, %{failures: recent_failures || [], blocked_until: blocked_until}}
-        )
-
-      [{^ets_key, state}] ->
-        :ets.insert(
-          @table,
-          {ets_key,
-           %{
-             state
-             | failures: recent_failures || state.failures,
-               blocked_until: blocked_until
-           }}
-        )
-    end
+  def open_local(key, operation, blocked_until, _recent_failures \\ nil)
+      when is_atom(operation) and is_integer(blocked_until) do
+    ref = get_or_create_ref({key, operation})
+    SlidingWindow.block_until(ref, blocked_until)
 
     Logger.warning(
       "Circuit breaker opened for key=#{inspect(key)} operation=#{operation} until=#{blocked_until}"
@@ -236,22 +223,22 @@ defmodule Supavisor.CircuitBreaker do
   def cleanup_stale_entries do
     now = System.system_time(:second)
     max_window = @config |> Map.values() |> Enum.map(& &1.window_seconds) |> Enum.max()
-    cutoff = now - max_window * 2
+    stale_window_cutoff = div(now, max_window) - 2
 
-    match_spec = [
-      {{{:"$1", :"$2"}, %{failures: :"$3", blocked_until: :"$4"}}, [],
-       [{{:"$1", :"$2", :"$3", :"$4"}}]}
-    ]
-
-    entries = :ets.select(@table, match_spec)
+    entries = :ets.tab2list(@table)
 
     deleted =
-      Enum.reduce(entries, 0, fn {tenant, operation, failures, blocked_until}, acc ->
-        latest_failure = List.first(failures) || 0
-        expired_block = blocked_until && blocked_until < now
+      Enum.reduce(entries, 0, fn {{_key, operation} = ets_key, ref}, acc ->
+        blocked = SlidingWindow.blocked_until(ref)
+        window = SlidingWindow.window_index(ref)
+        op_config = Map.fetch!(@config, operation)
+        op_stale_cutoff = div(now, op_config.window_seconds) - 2
 
-        if latest_failure < cutoff and (is_nil(blocked_until) or expired_block) do
-          :ets.delete(@table, {tenant, operation})
+        not_blocked = blocked == 0 or blocked < now
+        stale_window = window < op_stale_cutoff and window < stale_window_cutoff
+
+        if not_blocked and stale_window do
+          :ets.delete(@table, ets_key)
           acc + 1
         else
           acc
@@ -263,5 +250,25 @@ defmodule Supavisor.CircuitBreaker do
     end
 
     deleted
+  end
+
+  # Returns existing ref or creates a new one for the given ETS key.
+  # Uses insert_new to handle concurrent creation races — only the first insert wins,
+  # and the loser re-reads the winning ref.
+  defp get_or_create_ref(ets_key) do
+    case :ets.lookup(@table, ets_key) do
+      [{^ets_key, ref}] ->
+        ref
+
+      [] ->
+        ref = SlidingWindow.new()
+
+        if :ets.insert_new(@table, {ets_key, ref}) do
+          ref
+        else
+          [{^ets_key, existing_ref}] = :ets.lookup(@table, ets_key)
+          existing_ref
+        end
+    end
   end
 end

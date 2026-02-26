@@ -2,6 +2,7 @@ defmodule Supavisor.CircuitBreakerTest do
   use ExUnit.Case, async: false
 
   alias Supavisor.CircuitBreaker
+  alias Supavisor.CircuitBreaker.SlidingWindow
 
   setup do
     :ets.delete_all_objects(Supavisor.CircuitBreaker)
@@ -31,24 +32,15 @@ defmodule Supavisor.CircuitBreakerTest do
     end
 
     test "returns :ok after block period expires" do
-      now = System.system_time(:second)
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [now], blocked_until: now - 1}
-      :ets.insert(CircuitBreaker, {key, state})
+      ref = SlidingWindow.new()
+      SlidingWindow.block_until(ref, System.system_time(:second) - 1)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
 
       assert :ok = CircuitBreaker.check("tenant1", :get_secrets)
     end
   end
 
   describe "record_failure/2" do
-    test "records first failure" do
-      CircuitBreaker.record_failure("tenant1", :get_secrets)
-
-      assert [{_, %{failures: failures}}] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
-      assert length(failures) == 1
-    end
-
     test "opens circuit when threshold exceeded" do
       for _ <- 1..4 do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
@@ -59,20 +51,6 @@ defmodule Supavisor.CircuitBreakerTest do
       CircuitBreaker.record_failure("tenant1", :get_secrets)
 
       assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :get_secrets)
-    end
-
-    test "filters old failures outside window" do
-      now = System.system_time(:second)
-      old_time = now - 700
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [old_time, old_time, old_time], blocked_until: nil}
-      :ets.insert(CircuitBreaker, {key, state})
-
-      CircuitBreaker.record_failure("tenant1", :get_secrets)
-
-      assert [{_, %{failures: failures}}] = :ets.lookup(CircuitBreaker, key)
-      assert length(failures) == 1
     end
 
     test "maintains separate state per tenant" do
@@ -142,16 +120,15 @@ defmodule Supavisor.CircuitBreakerTest do
   describe "cleanup_stale_entries/0" do
     test "removes old entries" do
       now = System.system_time(:second)
-      old_time = now - 2000
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [old_time], blocked_until: nil}
-      :ets.insert(CircuitBreaker, {key, state})
+      ref = SlidingWindow.new()
+      # Record into a very old window
+      SlidingWindow.record(ref, now - 2000, 600)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
       assert deleted == 1
-      assert [] = :ets.lookup(CircuitBreaker, key)
+      assert [] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
     end
 
     test "keeps recent entries" do
@@ -165,11 +142,10 @@ defmodule Supavisor.CircuitBreakerTest do
 
     test "removes expired blocks" do
       now = System.system_time(:second)
-      old_time = now - 2000
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [old_time], blocked_until: now - 100}
-      :ets.insert(CircuitBreaker, {key, state})
+      ref = SlidingWindow.new()
+      SlidingWindow.record(ref, now - 2000, 600)
+      SlidingWindow.block_until(ref, now - 100)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
@@ -178,10 +154,10 @@ defmodule Supavisor.CircuitBreakerTest do
 
     test "keeps active blocks" do
       now = System.system_time(:second)
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [now], blocked_until: now + 100}
-      :ets.insert(CircuitBreaker, {key, state})
+      ref = SlidingWindow.new()
+      SlidingWindow.record(ref, now, 600)
+      SlidingWindow.block_until(ref, now + 100)
+      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, ref})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
