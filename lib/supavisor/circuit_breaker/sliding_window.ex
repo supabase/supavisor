@@ -152,10 +152,14 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
         end
 
       true ->
+        # Read counts before the window_index CAS. At this point no CAS loser
+        # has started adding new-window events yet, so this is purely stale.
+        stale_counts = :atomics.get(ref, @counts)
+
         case :atomics.compare_exchange(ref, @window_index, stored_window, current_window) do
           :ok ->
-            # We won — stale window, reset both prev and current via CAS loop.
-            reset_counts(ref)
+            # We won — stale window, subtract the stale counts.
+            reset_counts(ref, stale_counts)
 
           _ ->
             :ok
@@ -176,13 +180,19 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
     end
   end
 
-  # Zeros both prev and current. Used when the window advanced by 2+,
-  # meaning both counts are from irrelevant windows.
-  #
-  # A concurrent add from a process that already passed rotate can land
-  # just before the put and get wiped, meaning some event may be lost.
-  defp reset_counts(ref) do
-    :atomics.put(ref, @counts, 0)
+  # Subtracts the stale counts via CAS loop. The stale value is captured
+  # before the window_index CAS, so it doesn't include any new-window adds.
+  # Concurrent adds are preserved because they sit on top of the stale value
+  # — we only subtract the stale amount. If an add lands between our read
+  # and CAS, the CAS fails and we retry, still subtracting the same amount.
+  defp reset_counts(ref, stale) do
+    current = :atomics.get(ref, @counts)
+    new = current - stale
+
+    case :atomics.compare_exchange(ref, @counts, current, new) do
+      :ok -> :ok
+      _ -> reset_counts(ref, stale)
+    end
   end
 
   defp estimated_count(ref, now, window_seconds) do

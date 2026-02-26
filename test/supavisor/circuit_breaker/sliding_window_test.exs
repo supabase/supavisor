@@ -205,7 +205,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
             packed = :atomics.get(sw.ref, 1)
             current = packed &&& 0xFFFFFFFF
             assert current in 4_500..5_000
-            assert (packed >>> 32) == 0
+            assert packed >>> 32 == 0
             assert SlidingWindow.window_index(sw) == 10
 
             # 10 processes each emit 500 events at time 150 (window 15, stale rotation)
@@ -222,13 +222,12 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
             packed = :atomics.get(sw.ref, 1)
             current = packed &&& 0xFFFFFFFF
             assert current in 4_500..5_000
-            assert (packed >>> 32) == 0
+            assert packed >>> 32 == 0
             assert SlidingWindow.window_index(sw) == 15
           end)
         end
 
       Task.await_many(outer_tasks, 60_000)
     end
-
   end
 end
