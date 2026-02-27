@@ -1,16 +1,15 @@
 defmodule Supavisor.CircuitBreaker.SlidingWindow do
   @moduledoc """
-  Atomics-based sliding window counter with blocking support.
+  Atomics-based sliding window counter.
 
   Maintains an approximate count of events over a time window using two
   adjacent windows and linear interpolation. All operations are O(1)
   and lock-free via `:atomics`.
 
-  ### Layout (3 unsigned atomics slots)
+  ### Layout (2 unsigned atomics slots)
 
   - Slot 1: packed counts — high 32 bits = prev count, low 32 bits = current count
   - Slot 2: window index (`div(now, window_seconds)`)
-  - Slot 3: blocked_until (unix timestamp, 0 = not blocked)
 
   ### How it works
 
@@ -62,7 +61,6 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
 
   @counts 1
   @window_index 2
-  @blocked_until 3
 
   @low_mask 0xFFFFFFFF
 
@@ -77,7 +75,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   @spec new(pos_integer()) :: t()
   def new(window_seconds) do
     %__MODULE__{
-      ref: :atomics.new(3, signed: false),
+      ref: :atomics.new(2, signed: false),
       window_seconds: window_seconds
     }
   end
@@ -92,30 +90,6 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
     rotate(ref, current_window)
     :atomics.add(ref, @counts, 1)
     estimated_count(ref, now, window_seconds)
-  end
-
-  @doc """
-  Returns the blocked_until timestamp (0 means not blocked).
-  """
-  @spec blocked_until(t()) :: non_neg_integer()
-  def blocked_until(%__MODULE__{ref: ref}) do
-    :atomics.get(ref, @blocked_until)
-  end
-
-  @doc """
-  Sets the blocked_until timestamp.
-  """
-  @spec block_until(t(), non_neg_integer()) :: :ok
-  def block_until(%__MODULE__{ref: ref}, timestamp) do
-    :atomics.put(ref, @blocked_until, timestamp)
-  end
-
-  @doc """
-  Clears the blocked state (sets blocked_until to 0).
-  """
-  @spec unblock(t()) :: :ok
-  def unblock(%__MODULE__{ref: ref}) do
-    :atomics.put(ref, @blocked_until, 0)
   end
 
   @doc """
