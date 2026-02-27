@@ -75,6 +75,24 @@ defmodule Supavisor.CircuitBreakerTest do
       assert :ok = CircuitBreaker.check("tenant1", :db_connection)
     end
 
+    test "does not re-trip when already blocked" do
+      # Trip the circuit
+      for _ <- 1..5 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      assert {:error, :circuit_open, blocked_until} =
+               CircuitBreaker.check("tenant1", :get_secrets)
+
+      # Record more failures while blocked — should not update blocked_until
+      for _ <- 1..10 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      assert {:error, :circuit_open, ^blocked_until} =
+               CircuitBreaker.check("tenant1", :get_secrets)
+    end
+
     test "db_connection requires 100 failures" do
       for _ <- 1..99 do
         CircuitBreaker.record_failure("tenant1", :db_connection)
