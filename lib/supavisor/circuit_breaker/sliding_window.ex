@@ -73,9 +73,11 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   @doc """
   Creates a new sliding window with the given window size in seconds.
   """
-  @spec new(pos_integer()) :: t()
-  def new(window_seconds) do
-    sw(ref: :atomics.new(2, signed: false), window_seconds: window_seconds)
+  @spec new(pos_integer(), non_neg_integer()) :: t()
+  def new(window_seconds, starting_time) do
+    ref = :atomics.new(2, signed: false)
+    :atomics.put(ref, @window_index, div(starting_time, window_seconds))
+    sw(ref: ref, window_seconds: window_seconds)
   end
 
   @doc """

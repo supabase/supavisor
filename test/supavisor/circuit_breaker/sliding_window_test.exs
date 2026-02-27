@@ -3,15 +3,17 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
   alias Supavisor.CircuitBreaker.SlidingWindow
 
+  require Supavisor.CircuitBreaker.SlidingWindow
+
   describe "record/2 within a single window" do
     test "returns 1 after first event" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       # now=100, window_seconds=10 => window index 10, elapsed=0
       assert SlidingWindow.record(sw, 100) == 1
     end
 
     test "returns incremented count for successive events in same window" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       assert SlidingWindow.record(sw, 100) == 1
       assert SlidingWindow.record(sw, 101) == 2
       assert SlidingWindow.record(sw, 109) == 3
@@ -20,7 +22,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
   describe "adjacent window rotation (window advances by 1)" do
     test "current count moves to prev on rotation" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       # Record 5 events in window index 10 (now=100..104)
       for t <- 100..104, do: SlidingWindow.record(sw, t)
 
@@ -38,7 +40,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
     end
 
     test "prev weight decays linearly within the window" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       # Record 10 events in window index 10
       for t <- 100..109, do: SlidingWindow.record(sw, t)
 
@@ -56,7 +58,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
     end
 
     test "prev is fully weighted at the start of a new window" do
-      sw = SlidingWindow.new(20)
+      sw = SlidingWindow.new(20, 100)
       # 20 events in window 5
       for t <- 100..119, do: SlidingWindow.record(sw, t)
 
@@ -66,7 +68,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
     end
 
     test "prev has zero weight at the end of the window" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 50)
       # 8 events in window 5 (now=50..57)
       for t <- 50..57, do: SlidingWindow.record(sw, t)
 
@@ -78,7 +80,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
   describe "stale window rotation (window advances by 2+)" do
     test "both counts are zeroed when window skips ahead by 2" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       # 5 events in window 10
       for t <- 100..104, do: SlidingWindow.record(sw, t)
 
@@ -91,7 +93,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
     end
 
     test "both counts are zeroed when window skips ahead by many" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       # 3 events in window 10
       for t <- 100..102, do: SlidingWindow.record(sw, t)
 
@@ -103,7 +105,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
     end
 
     test "after stale rotation, subsequent adjacent rotation works correctly" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       # 3 events in window 10
       for t <- 100..102, do: SlidingWindow.record(sw, t)
 
@@ -119,7 +121,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
   describe "estimation math" do
     test "interpolation with non-trivial fractional weight" do
-      sw = SlidingWindow.new(60)
+      sw = SlidingWindow.new(60, 0)
       # 12 events in window 0
       for t <- 0..11, do: SlidingWindow.record(sw, t)
 
@@ -129,7 +131,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
     end
 
     test "estimation truncates (floors) the result" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 0)
       # 7 events in window 0
       for t <- 0..6, do: SlidingWindow.record(sw, t)
 
@@ -139,7 +141,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
     end
 
     test "zero events in prev window contributes nothing" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 10)
       # No events in window 0, jump straight to window 1
       # prev=0, current=1 => 0 + 1 = 1
       assert SlidingWindow.record(sw, 10) == 1
@@ -148,7 +150,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
   describe "no rotation (same window)" do
     test "window_index remains the same when recording in the same window" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
       SlidingWindow.record(sw, 100)
       assert SlidingWindow.window_index(sw) == 10
 
@@ -159,7 +161,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
   describe "multiple rotations in sequence" do
     test "three consecutive window rotations" do
-      sw = SlidingWindow.new(10)
+      sw = SlidingWindow.new(10, 100)
 
       # Window 10: 4 events
       for t <- 100..103, do: SlidingWindow.record(sw, t)
@@ -187,7 +189,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
         for _ <- 1..1_000 do
           Task.async(fn ->
             # window_seconds=10: time 100 is window 10, time 150 is window 15
-            sw = SlidingWindow.new(10)
+            sw = SlidingWindow.new(10, 100)
 
             # 10 processes each emit 500 events at time 100 (window 10)
             tasks =
@@ -199,12 +201,11 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
             Task.await_many(tasks, 30_000)
 
-            # The first record triggers a stale rotation (window 0 -> 10),
-            # and the second batch triggers another (window 10 -> 15).
-            # The put in reset_counts can wipe a few concurrent adds.
-            packed = :atomics.get(sw.ref, 1)
+            # Starting window is 10, so all records land in the same window
+            # with no rotation — counts should be exact.
+            packed = :atomics.get(SlidingWindow.sw(sw, :ref), 1)
             current = packed &&& 0xFFFFFFFF
-            assert current in 4_500..5_000
+            assert current == 5_000
             assert packed >>> 32 == 0
             assert SlidingWindow.window_index(sw) == 10
 
@@ -219,7 +220,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
 
             Task.await_many(tasks, 30_000)
 
-            packed = :atomics.get(sw.ref, 1)
+            packed = :atomics.get(SlidingWindow.sw(sw, :ref), 1)
             current = packed &&& 0xFFFFFFFF
             assert current in 4_500..5_000
             assert packed >>> 32 == 0

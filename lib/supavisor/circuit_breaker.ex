@@ -76,7 +76,7 @@ defmodule Supavisor.CircuitBreaker do
         :ok
 
       _ ->
-        sw = get_or_create_sw(ets_key, threshold.window_seconds)
+        sw = get_or_create_sw(ets_key, threshold.window_seconds, now)
         estimated = SlidingWindow.record(sw, now)
 
         if estimated >= threshold.max_failures do
@@ -110,7 +110,7 @@ defmodule Supavisor.CircuitBreaker do
         if blocked > System.system_time(:second) do
           {:error, :circuit_open, blocked}
         else
-          :ets.delete(@blocks_table, ets_key)
+          :ets.delete_object(@blocks_table, {ets_key, blocked})
           :ok
         end
     end
@@ -269,7 +269,7 @@ defmodule Supavisor.CircuitBreaker do
       end)
 
     if deleted > 0 do
-      Logger.debug("Circuit breaker cleaned up #{deleted} stale entries")
+      Logger.info("Circuit breaker cleaned up #{deleted} stale entries")
     end
 
     deleted
@@ -278,19 +278,24 @@ defmodule Supavisor.CircuitBreaker do
   # Returns existing sw or creates a new one for the given ETS key.
   # Uses insert_new to handle concurrent creation races — only the first insert wins,
   # and the loser re-reads the winning ref.
-  defp get_or_create_sw(ets_key, window_seconds) do
+  defp get_or_create_sw(ets_key, window_seconds, now, attempt \\ 0) do
     case :ets.lookup(@windows_table, ets_key) do
       [{^ets_key, sw}] ->
         sw
 
       [] ->
-        sw = SlidingWindow.new(window_seconds)
+        sw = SlidingWindow.new(window_seconds, now)
 
         if :ets.insert_new(@windows_table, {ets_key, sw}) do
           sw
         else
-          [{^ets_key, existing_sw}] = :ets.lookup(@windows_table, ets_key)
-          existing_sw
+          case :ets.lookup(@windows_table, ets_key) do
+            [{^ets_key, existing_sw}] ->
+              existing_sw
+
+            [] ->
+              get_or_create_sw(ets_key, window_seconds, now, attempt + 1)
+          end
         end
     end
   end

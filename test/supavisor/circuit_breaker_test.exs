@@ -139,8 +139,9 @@ defmodule Supavisor.CircuitBreakerTest do
   describe "cleanup_stale_entries/0" do
     test "removes old entries" do
       now = System.system_time(:second)
-      sw = SlidingWindow.new(600)
-      SlidingWindow.record(sw, now - 2000)
+      stale = now - 2000
+      sw = SlidingWindow.new(600, stale)
+      SlidingWindow.record(sw, stale)
       :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
@@ -160,8 +161,9 @@ defmodule Supavisor.CircuitBreakerTest do
 
     test "removes expired blocks" do
       now = System.system_time(:second)
-      sw = SlidingWindow.new(600)
-      SlidingWindow.record(sw, now - 2000)
+      stale = now - 2000
+      sw = SlidingWindow.new(600, stale)
+      SlidingWindow.record(sw, stale)
       :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
       :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, now - 100})
 
@@ -172,7 +174,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
     test "keeps active blocks" do
       now = System.system_time(:second)
-      sw = SlidingWindow.new(600)
+      sw = SlidingWindow.new(600, now)
       SlidingWindow.record(sw, now)
       :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
       :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, now + 100})
