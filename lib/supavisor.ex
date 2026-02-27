@@ -242,6 +242,13 @@ defmodule Supavisor do
   end
 
   @spec get_local_pool(id) :: map | pid | nil
+  def get_local_pool({{:single, _}, _, _, _, _} = id) do
+    case Registry.lookup(@registry, {:pool, :write, 0, id}) do
+      [{pid, _}] -> pid
+      _ -> nil
+    end
+  end
+
   def get_local_pool(id) do
     match = {{:pool, :_, :_, id}, :"$2", :"$3"}
     body = [{{:"$2", :"$3"}}]
