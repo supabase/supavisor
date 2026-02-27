@@ -240,13 +240,25 @@ defmodule Supavisor.CircuitBreaker do
   Removes stale entries from the circuit breaker table.
   Called periodically by the Janitor process.
   """
+  @cleanup_chunk_size 100
+
   @spec cleanup_stale_entries() :: non_neg_integer()
   def cleanup_stale_entries do
     now = System.system_time(:second)
+    match_spec = [{:_, [], [:"$_"]}]
+    deleted = cleanup_chunk(:ets.select(@windows_table, match_spec, @cleanup_chunk_size), now, 0)
 
-    entries = :ets.tab2list(@windows_table)
+    if deleted > 0 do
+      Logger.info("Circuit breaker cleaned up #{deleted} stale entries")
+    end
 
-    deleted =
+    deleted
+  end
+
+  defp cleanup_chunk(:"$end_of_table", _now, deleted), do: deleted
+
+  defp cleanup_chunk({entries, continuation}, now, deleted) do
+    chunk_deleted =
       Enum.reduce(entries, 0, fn {{key, operation} = ets_key, sw}, acc ->
         pre_delete_window = SlidingWindow.window_index(sw)
         op_config = Map.fetch!(@config, operation)
@@ -291,11 +303,7 @@ defmodule Supavisor.CircuitBreaker do
         end
       end)
 
-    if deleted > 0 do
-      Logger.info("Circuit breaker cleaned up #{deleted} stale entries")
-    end
-
-    deleted
+    cleanup_chunk(:ets.select(continuation), now, deleted + chunk_deleted)
   end
 
   # Returns existing sw or creates a new one for the given ETS key.
