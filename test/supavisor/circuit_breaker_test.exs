@@ -5,7 +5,8 @@ defmodule Supavisor.CircuitBreakerTest do
   alias Supavisor.CircuitBreaker.SlidingWindow
 
   setup do
-    :ets.delete_all_objects(Supavisor.CircuitBreaker)
+    :ets.delete_all_objects(Supavisor.CircuitBreaker.Blocks)
+    :ets.delete_all_objects(Supavisor.CircuitBreaker.Windows)
     :ok
   end
 
@@ -32,9 +33,8 @@ defmodule Supavisor.CircuitBreakerTest do
     end
 
     test "returns :ok after block period expires" do
-      sw = SlidingWindow.new(600)
       expired = System.system_time(:second) - 1
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw, expired})
+      :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, expired})
 
       assert :ok = CircuitBreaker.check("tenant1", :get_secrets)
     end
@@ -97,7 +97,8 @@ defmodule Supavisor.CircuitBreakerTest do
       CircuitBreaker.clear("tenant1", :get_secrets)
 
       assert :ok = CircuitBreaker.check("tenant1", :get_secrets)
-      assert [] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Blocks, {"tenant1", :get_secrets})
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :get_secrets})
     end
   end
 
@@ -121,14 +122,13 @@ defmodule Supavisor.CircuitBreakerTest do
     test "removes old entries" do
       now = System.system_time(:second)
       sw = SlidingWindow.new(600)
-      # Record into a very old window
       SlidingWindow.record(sw, now - 2000)
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw, 0})
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
       assert deleted == 1
-      assert [] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :get_secrets})
     end
 
     test "keeps recent entries" do
@@ -137,14 +137,15 @@ defmodule Supavisor.CircuitBreakerTest do
       deleted = CircuitBreaker.cleanup_stale_entries()
 
       assert deleted == 0
-      assert [{_, _, _}] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
+      assert [{_, _}] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :get_secrets})
     end
 
     test "removes expired blocks" do
       now = System.system_time(:second)
       sw = SlidingWindow.new(600)
       SlidingWindow.record(sw, now - 2000)
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw, now - 100})
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
+      :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, now - 100})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
@@ -155,7 +156,8 @@ defmodule Supavisor.CircuitBreakerTest do
       now = System.system_time(:second)
       sw = SlidingWindow.new(600)
       SlidingWindow.record(sw, now)
-      :ets.insert(CircuitBreaker, {{"tenant1", :get_secrets}, sw, now + 100})
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
+      :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, now + 100})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 

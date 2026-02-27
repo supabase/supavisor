@@ -64,20 +64,18 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
 
   @low_mask 0xFFFFFFFF
 
-  @enforce_keys [:ref, :window_seconds]
-  defstruct [:ref, :window_seconds]
+  require Record
 
-  @type t :: %__MODULE__{ref: reference(), window_seconds: pos_integer()}
+  Record.defrecord(:sw, ref: nil, window_seconds: nil)
+
+  @type t :: record(:sw, ref: reference(), window_seconds: pos_integer())
 
   @doc """
   Creates a new sliding window with the given window size in seconds.
   """
   @spec new(pos_integer()) :: t()
   def new(window_seconds) do
-    %__MODULE__{
-      ref: :atomics.new(2, signed: false),
-      window_seconds: window_seconds
-    }
+    sw(ref: :atomics.new(2, signed: false), window_seconds: window_seconds)
   end
 
   @doc """
@@ -85,7 +83,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   Returns the estimated count after the increment.
   """
   @spec record(t(), integer()) :: non_neg_integer()
-  def record(%__MODULE__{ref: ref, window_seconds: window_seconds}, now) do
+  def record(sw(ref: ref, window_seconds: window_seconds), now) do
     current_window = div(now, window_seconds)
     rotate(ref, current_window)
     :atomics.add(ref, @counts, 1)
@@ -96,7 +94,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   Returns the current window index stored in the ref.
   """
   @spec window_index(t()) :: non_neg_integer()
-  def window_index(%__MODULE__{ref: ref}) do
+  def window_index(sw(ref: ref)) do
     :atomics.get(ref, @window_index)
   end
 

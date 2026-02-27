@@ -398,7 +398,8 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   describe "list network bans" do
     setup do
-      :ets.delete_all_objects(Supavisor.CircuitBreaker)
+      :ets.delete_all_objects(Supavisor.CircuitBreaker.Blocks)
+      :ets.delete_all_objects(Supavisor.CircuitBreaker.Windows)
       :ok
     end
 
@@ -463,7 +464,8 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   describe "clear network bans" do
     setup do
-      :ets.delete_all_objects(Supavisor.CircuitBreaker)
+      :ets.delete_all_objects(Supavisor.CircuitBreaker.Blocks)
+      :ets.delete_all_objects(Supavisor.CircuitBreaker.Windows)
       :ok
     end
 
