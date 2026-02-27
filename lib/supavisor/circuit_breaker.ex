@@ -250,10 +250,11 @@ defmodule Supavisor.CircuitBreaker do
         op_config = Map.fetch!(@config, operation)
         op_stale_cutoff = div(now, op_config.window_seconds) - 2
 
-        blocked = case :ets.lookup(@blocks_table, ets_key) do
-          [{^ets_key, b}] -> b
-          [] -> 0
-        end
+        blocked =
+          case :ets.lookup(@blocks_table, ets_key) do
+            [{^ets_key, b}] -> b
+            [] -> 0
+          end
 
         not_blocked = blocked == 0 or blocked < now
         stale_window = window < op_stale_cutoff and window < stale_window_cutoff
