@@ -243,8 +243,6 @@ defmodule Supavisor.CircuitBreaker do
   @spec cleanup_stale_entries() :: non_neg_integer()
   def cleanup_stale_entries do
     now = System.system_time(:second)
-    max_window = @config |> Map.values() |> Enum.map(& &1.window_seconds) |> Enum.max()
-    stale_window_cutoff = div(now, max_window) - 2
 
     entries = :ets.tab2list(@windows_table)
 
@@ -262,8 +260,7 @@ defmodule Supavisor.CircuitBreaker do
 
         not_blocked = blocked == 0 or blocked < now
 
-        stale_window =
-          pre_delete_window < op_stale_cutoff and pre_delete_window < stale_window_cutoff
+        stale_window = pre_delete_window < op_stale_cutoff
 
         if not_blocked and stale_window do
           # Delete window first — record_failure callers that already hold the

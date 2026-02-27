@@ -172,6 +172,20 @@ defmodule Supavisor.CircuitBreakerTest do
       assert deleted == 1
     end
 
+    # regression: stale entries for operations with smaller window_seconds were not cleaned up
+    test "removes stale entries for operations with smaller window_seconds" do
+      now = System.system_time(:second)
+      stale = now - 1000
+      sw = SlidingWindow.new(300, stale)
+      SlidingWindow.record(sw, stale)
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :db_connection}, sw})
+
+      deleted = CircuitBreaker.cleanup_stale_entries()
+
+      assert deleted == 1
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :db_connection})
+    end
+
     test "keeps active blocks" do
       now = System.system_time(:second)
       sw = SlidingWindow.new(600, now)
