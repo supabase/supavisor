@@ -269,6 +269,58 @@ defmodule Supavisor.CircuitBreakerTest do
     end
   end
 
+  describe "info/2" do
+    test "returns nil failures and closed status when no state exists" do
+      result = CircuitBreaker.info("tenant1", :get_secrets)
+
+      assert %{
+               key: "tenant1",
+               operation: :get_secrets,
+               status: :closed,
+               estimated_failures: nil,
+               max_failures: 5,
+               sliding_window_seconds: 300,
+               window_seconds: 600,
+               block_seconds: 600,
+               blocked_until: nil
+             } = result
+    end
+
+    test "returns estimated failures when window exists" do
+      for _ <- 1..3 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      result = CircuitBreaker.info("tenant1", :get_secrets)
+
+      assert result.status == :closed
+      assert result.estimated_failures == 3
+      assert result.blocked_until == nil
+    end
+
+    test "returns open status and blocked_until when circuit is open" do
+      for _ <- 1..5 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      result = CircuitBreaker.info("tenant1", :get_secrets)
+      now = System.system_time(:second)
+
+      assert result.status == :open
+      assert result.estimated_failures >= 5
+      assert result.blocked_until > now
+    end
+
+    test "returns correct config for different operations" do
+      result = CircuitBreaker.info("tenant1", :db_connection)
+
+      assert result.max_failures == 100
+      assert result.sliding_window_seconds == 150
+      assert result.window_seconds == 300
+      assert result.block_seconds == 600
+    end
+  end
+
   describe "open_local/3" do
     test "sets circuit breaker to open without previous failures" do
       key = "tenant1"

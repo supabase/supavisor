@@ -18,24 +18,31 @@ defmodule Supavisor.CircuitBreaker do
   @config %{
     get_secrets: %{
       max_failures: 5,
-      window_seconds: 600,
+      sliding_window_seconds: 300,
       block_seconds: 600,
       propagate?: false,
       explanation: "Failed to retrieve database credentials"
     },
     db_connection: %{
       max_failures: 100,
-      window_seconds: 300,
+      sliding_window_seconds: 150,
       block_seconds: 600,
       propagate?: false,
       explanation: "Unable to establish connection to upstream database"
     },
     auth_error: %{
       max_failures: 10,
-      window_seconds: 300,
+      sliding_window_seconds: 150,
       block_seconds: 600,
       propagate?: true,
       explanation: "Too many authentication errors"
+    },
+    test: %{
+      max_failures: 10,
+      sliding_window_seconds: 15,
+      block_seconds: 30,
+      propagate?: false,
+      explanation: "Test circuit breaker"
     }
   }
 
@@ -80,7 +87,7 @@ defmodule Supavisor.CircuitBreaker do
         :ok
 
       _ ->
-        sw = get_or_create_sw(ets_key, threshold.window_seconds, now)
+        sw = get_or_create_sw(ets_key, threshold.sliding_window_seconds, now)
         estimated = SlidingWindow.record(sw, now, count)
 
         if estimated >= threshold.max_failures do
@@ -227,6 +234,40 @@ defmodule Supavisor.CircuitBreaker do
   end
 
   @doc """
+  Returns a map with the circuit breaker state for a given key and operation.
+  """
+  @spec info(term(), atom()) :: map()
+  def info(key, operation) when is_atom(operation) do
+    ets_key = {key, operation}
+    config = Map.fetch!(@config, operation)
+    now = System.system_time(:second)
+
+    {status, blocked_until} =
+      case :ets.lookup(@blocks_table, ets_key) do
+        [{^ets_key, blocked}] when blocked > now -> {:open, blocked}
+        _ -> {:closed, nil}
+      end
+
+    estimated =
+      case :ets.lookup(@windows_table, ets_key) do
+        [{^ets_key, sw}] -> SlidingWindow.estimated_count(sw, now)
+        [] -> nil
+      end
+
+    %{
+      key: key,
+      operation: operation,
+      status: status,
+      estimated_failures: estimated,
+      max_failures: config.max_failures,
+      sliding_window_seconds: config.sliding_window_seconds,
+      window_seconds: config.sliding_window_seconds * 2,
+      block_seconds: config.block_seconds,
+      blocked_until: blocked_until
+    }
+  end
+
+  @doc """
   Returns the user-facing explanation for a given operation.
   """
   @spec explanation(atom()) :: String.t()
@@ -261,8 +302,6 @@ defmodule Supavisor.CircuitBreaker do
     chunk_deleted =
       Enum.reduce(entries, 0, fn {{key, operation} = ets_key, sw}, acc ->
         pre_delete_window = SlidingWindow.window_index(sw)
-        op_config = Map.fetch!(@config, operation)
-        op_stale_cutoff = div(now, op_config.window_seconds) - 2
 
         blocked =
           case :ets.lookup(@blocks_table, ets_key) do
@@ -272,7 +311,7 @@ defmodule Supavisor.CircuitBreaker do
 
         not_blocked = blocked == 0 or blocked < now
 
-        stale_window = pre_delete_window < op_stale_cutoff
+        stale_window = SlidingWindow.stale?(sw, now)
 
         if not_blocked and stale_window do
           # Delete window first — record_failure callers that already hold the
@@ -287,6 +326,9 @@ defmodule Supavisor.CircuitBreaker do
           # If window_index was rotated since our staleness check, a concurrent
           # record_failure was in-flight. Replay the estimated count so those
           # failures aren't lost.
+          #
+          # It is safe to assume that the estimate will only contain current
+          # window data
           post_delete_window = SlidingWindow.window_index(sw)
 
           if post_delete_window != pre_delete_window do

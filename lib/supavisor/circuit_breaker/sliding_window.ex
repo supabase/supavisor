@@ -9,12 +9,12 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   ### Layout (2 unsigned atomics slots)
 
   - Slot 1: packed counts — high 32 bits = prev count, low 32 bits = current count
-  - Slot 2: window index (`div(now, window_seconds)`)
+  - Slot 2: window index (`div(now - time_offset, window_seconds)`)
 
   ### How it works
 
   Time is divided into fixed-size windows (`window_seconds`). Each window is
-  identified by its index: `div(now, window_seconds)`. We keep counts for the
+  identified by its index: `div(now - time_offset, window_seconds)`. We keep counts for the
   current and previous windows, and estimate the sliding total using linear
   interpolation between them.
 
@@ -48,7 +48,10 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
 
       prev * ((window_seconds - elapsed) / window_seconds) + current
 
-  where `elapsed = rem(now, window_seconds)`.
+  where `elapsed = rem(now - time_offset, window_seconds)`.
+
+  The `time_offset` aligns window boundaries to creation time, so the first
+  window always starts full-length rather than mid-window.
 
   ### Known race
 
@@ -66,9 +69,14 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
 
   require Record
 
-  Record.defrecord(:sw, ref: nil, window_seconds: nil)
+  Record.defrecord(:sw, ref: nil, window_seconds: nil, time_offset: nil)
 
-  @opaque t :: record(:sw, ref: :atomics.atomics_ref(), window_seconds: pos_integer())
+  @opaque t ::
+            record(:sw,
+              ref: :atomics.atomics_ref(),
+              window_seconds: pos_integer(),
+              time_offset: non_neg_integer()
+            )
 
   @doc """
   Creates a new sliding window with the given window size in seconds.
@@ -76,8 +84,10 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   @spec new(pos_integer(), non_neg_integer()) :: t()
   def new(window_seconds, starting_time) do
     ref = :atomics.new(2, signed: false)
-    :atomics.put(ref, @window_index, div(starting_time, window_seconds))
-    sw(ref: ref, window_seconds: window_seconds)
+    time_offset = rem(starting_time, window_seconds)
+    adjusted = starting_time - time_offset
+    :atomics.put(ref, @window_index, div(adjusted, window_seconds))
+    sw(ref: ref, window_seconds: window_seconds, time_offset: time_offset)
   end
 
   @doc """
@@ -85,11 +95,16 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   Returns the estimated count after the increment.
   """
   @spec record(t(), integer(), pos_integer()) :: non_neg_integer()
-  def record(sw(ref: ref, window_seconds: window_seconds) = s, now, count \\ 1) do
-    current_window = div(now, window_seconds)
+  def record(
+        sw(ref: ref, window_seconds: window_seconds, time_offset: time_offset) = s,
+        now,
+        count \\ 1
+      ) do
+    adjusted = now - time_offset
+    current_window = div(adjusted, window_seconds)
     rotate(ref, current_window)
     :atomics.add(ref, @counts, count)
-    estimated_count(s, now)
+    unsafe_estimated_count(s, now)
   end
 
   @doc """
@@ -98,6 +113,17 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   @spec window_index(t()) :: non_neg_integer()
   def window_index(sw(ref: ref)) do
     :atomics.get(ref, @window_index)
+  end
+
+  @doc """
+  Returns true if the sliding window is stale (no activity for 2+ windows).
+  """
+  @spec stale?(t(), integer()) :: boolean()
+  def stale?(sw(ref: ref, window_seconds: window_seconds, time_offset: time_offset), now) do
+    stored_window = :atomics.get(ref, @window_index)
+    adjusted = now - time_offset
+    current_window = div(adjusted, window_seconds)
+    current_window - stored_window >= 2
   end
 
   # Rotates the sliding window if the current window index has advanced.
@@ -170,15 +196,54 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   end
 
   @doc """
-  Returns the estimated count for the sliding window at the given time.
+  Returns the estimated count, assuming the window has already been rotated.
+  Cheaper than `estimated_count/2` (no window index read). Use only when the
+  caller has just called `record/2` or `rotate` — otherwise the result may be
+  stale. See `estimated_count/2` for the safe version.
   """
-  @spec estimated_count(t(), integer()) :: non_neg_integer()
-  def estimated_count(sw(ref: ref, window_seconds: window_seconds), now) do
+  @spec unsafe_estimated_count(t(), integer()) :: non_neg_integer()
+  def unsafe_estimated_count(
+        sw(ref: ref, window_seconds: window_seconds, time_offset: time_offset),
+        now
+      ) do
     packed = :atomics.get(ref, @counts)
     current = packed &&& @low_mask
     prev = packed >>> 32
-    elapsed = rem(now, window_seconds)
+    adjusted = now - time_offset
+    elapsed = rem(adjusted, window_seconds)
     weight = (window_seconds - elapsed) / window_seconds
-    trunc(prev * weight + current)
+    round(prev * weight + current)
+  end
+
+  @doc """
+  Returns the estimated count for the sliding window at the given time.
+  Accounts for the window possibly having advanced past the stored window index.
+  """
+  @spec estimated_count(t(), integer()) :: non_neg_integer()
+  def estimated_count(sw(ref: ref, window_seconds: window_seconds, time_offset: time_offset), now) do
+    stored_window = :atomics.get(ref, @window_index)
+    adjusted = now - time_offset
+    current_window = div(adjusted, window_seconds)
+    gap = current_window - stored_window
+
+    cond do
+      gap >= 2 ->
+        0
+
+      gap == 1 ->
+        packed = :atomics.get(ref, @counts)
+        current = packed &&& @low_mask
+        elapsed = rem(adjusted, window_seconds)
+        weight = (window_seconds - elapsed) / window_seconds
+        round(current * weight)
+
+      true ->
+        packed = :atomics.get(ref, @counts)
+        current = packed &&& @low_mask
+        prev = packed >>> 32
+        elapsed = rem(adjusted, window_seconds)
+        weight = (window_seconds - elapsed) / window_seconds
+        round(prev * weight + current)
+    end
   end
 end

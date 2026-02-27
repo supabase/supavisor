@@ -73,8 +73,8 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
       for t <- 50..57, do: SlidingWindow.record(sw, t)
 
       # Rotate to window 6. Record at now=69 (elapsed=9, weight=0.1)
-      # prev=8, current=1 => trunc(8*0.1 + 1) = trunc(1.8) = 1
-      assert SlidingWindow.record(sw, 69) == 1
+      # prev=8, current=1 => round(8*0.1 + 1) = round(1.8) = 2
+      assert SlidingWindow.record(sw, 69) == 2
     end
   end
 
@@ -130,14 +130,14 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
       assert SlidingWindow.record(sw, 80) == 9
     end
 
-    test "estimation truncates (floors) the result" do
+    test "estimation rounds the result" do
       sw = SlidingWindow.new(10, 0)
       # 7 events in window 0
       for t <- 0..6, do: SlidingWindow.record(sw, t)
 
       # Rotate to window 1, now=13 (elapsed=3, weight=7/10=0.7)
-      # prev=7, current=1 => trunc(7*0.7 + 1) = trunc(4.9 + 1) = trunc(5.9) = 5
-      assert SlidingWindow.record(sw, 13) == 5
+      # prev=7, current=1 => round(7*0.7 + 1) = round(4.9 + 1) = round(5.9) = 6
+      assert SlidingWindow.record(sw, 13) == 6
     end
 
     test "zero events in prev window contributes nothing" do
@@ -175,8 +175,58 @@ defmodule Supavisor.CircuitBreaker.SlidingWindowTest do
       # Now: prev=4, current=3 (1 from the rotation record + 2 more)
 
       # Window 12 at now=125 (elapsed=5, weight=0.5): prev=3, current=1
-      # estimate = trunc(3*0.5 + 1) = trunc(2.5) = 2
-      assert SlidingWindow.record(sw, 125) == 2
+      # estimate = round(3*0.5 + 1) = round(2.5) = 3
+      assert SlidingWindow.record(sw, 125) == 3
+    end
+  end
+
+  describe "estimated_count/2 (safe, without prior rotation)" do
+    test "returns correct count in the same window" do
+      sw = SlidingWindow.new(10, 100)
+      SlidingWindow.record(sw, 100)
+      SlidingWindow.record(sw, 101)
+
+      assert SlidingWindow.estimated_count(sw, 102) == 2
+    end
+
+    test "returns faded prev when one window ahead" do
+      sw = SlidingWindow.new(10, 100)
+      # 5 events in window 10
+      for t <- 100..104, do: SlidingWindow.record(sw, t)
+
+      # Don't record in window 11 — just read at now=115 (elapsed=5, weight=0.5)
+      # gap=1: current (5) becomes prev, faded by weight
+      # round(5 * 0.5) = 3
+      assert SlidingWindow.estimated_count(sw, 115) == 3
+    end
+
+    test "returns zero when two or more windows ahead" do
+      sw = SlidingWindow.new(10, 100)
+      for t <- 100..104, do: SlidingWindow.record(sw, t)
+
+      # gap=2, all stale
+      assert SlidingWindow.estimated_count(sw, 120) == 0
+    end
+
+    test "returns zero when many windows ahead" do
+      sw = SlidingWindow.new(10, 100)
+      for t <- 100..104, do: SlidingWindow.record(sw, t)
+
+      assert SlidingWindow.estimated_count(sw, 200) == 0
+    end
+
+    test "handles adjacent window with prev and current counts" do
+      sw = SlidingWindow.new(10, 100)
+      # 3 events in window 10
+      for t <- 100..102, do: SlidingWindow.record(sw, t)
+      # 2 events in window 11 (this rotates: prev=3, current=2)
+      SlidingWindow.record(sw, 110)
+      SlidingWindow.record(sw, 111)
+
+      # Read at now=125 without recording (gap=1 from window 11 to 12)
+      # current=2 becomes prev, faded by weight: elapsed=5, weight=0.5
+      # trunc(2 * 0.5) = 1
+      assert SlidingWindow.estimated_count(sw, 125) == 1
     end
   end
 
