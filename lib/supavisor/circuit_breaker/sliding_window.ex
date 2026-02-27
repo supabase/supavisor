@@ -68,7 +68,7 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
 
   Record.defrecord(:sw, ref: nil, window_seconds: nil)
 
-  @type t :: record(:sw, ref: reference(), window_seconds: pos_integer())
+  @opaque t :: record(:sw, ref: :atomics.atomics_ref(), window_seconds: pos_integer())
 
   @doc """
   Creates a new sliding window with the given window size in seconds.
