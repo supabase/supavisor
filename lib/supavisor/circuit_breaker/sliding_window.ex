@@ -81,15 +81,15 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
   end
 
   @doc """
-  Records one event, rotating the window if needed.
+  Records events, rotating the window if needed.
   Returns the estimated count after the increment.
   """
-  @spec record(t(), integer()) :: non_neg_integer()
-  def record(sw(ref: ref, window_seconds: window_seconds), now) do
+  @spec record(t(), integer(), pos_integer()) :: non_neg_integer()
+  def record(sw(ref: ref, window_seconds: window_seconds) = s, now, count \\ 1) do
     current_window = div(now, window_seconds)
     rotate(ref, current_window)
-    :atomics.add(ref, @counts, 1)
-    estimated_count(ref, now, window_seconds)
+    :atomics.add(ref, @counts, count)
+    estimated_count(s, now)
   end
 
   @doc """
@@ -169,7 +169,11 @@ defmodule Supavisor.CircuitBreaker.SlidingWindow do
     end
   end
 
-  defp estimated_count(ref, now, window_seconds) do
+  @doc """
+  Returns the estimated count for the sliding window at the given time.
+  """
+  @spec estimated_count(t(), integer()) :: non_neg_integer()
+  def estimated_count(sw(ref: ref, window_seconds: window_seconds), now) do
     packed = :atomics.get(ref, @counts)
     current = packed &&& @low_mask
     prev = packed >>> 32

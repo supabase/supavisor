@@ -66,6 +66,10 @@ defmodule Supavisor.CircuitBreaker do
   """
   @spec record_failure(term(), atom()) :: :ok
   def record_failure(key, operation) when is_atom(operation) do
+    record_failures(key, operation, 1)
+  end
+
+  defp record_failures(key, operation, count) do
     threshold = Map.fetch!(@config, operation)
     ets_key = {key, operation}
     now = System.system_time(:second)
@@ -77,7 +81,7 @@ defmodule Supavisor.CircuitBreaker do
 
       _ ->
         sw = get_or_create_sw(ets_key, threshold.window_seconds, now)
-        estimated = SlidingWindow.record(sw, now)
+        estimated = SlidingWindow.record(sw, now, count)
 
         if estimated >= threshold.max_failures do
           block_until = now + threshold.block_seconds
@@ -245,8 +249,8 @@ defmodule Supavisor.CircuitBreaker do
     entries = :ets.tab2list(@windows_table)
 
     deleted =
-      Enum.reduce(entries, 0, fn {{_key, operation} = ets_key, sw}, acc ->
-        window = SlidingWindow.window_index(sw)
+      Enum.reduce(entries, 0, fn {{key, operation} = ets_key, sw}, acc ->
+        pre_delete_window = SlidingWindow.window_index(sw)
         op_config = Map.fetch!(@config, operation)
         op_stale_cutoff = div(now, op_config.window_seconds) - 2
 
@@ -257,11 +261,33 @@ defmodule Supavisor.CircuitBreaker do
           end
 
         not_blocked = blocked == 0 or blocked < now
-        stale_window = window < op_stale_cutoff and window < stale_window_cutoff
+
+        stale_window =
+          pre_delete_window < op_stale_cutoff and pre_delete_window < stale_window_cutoff
 
         if not_blocked and stale_window do
+          # Delete window first — record_failure callers that already hold the
+          # atomics ref will still increment it, but new callers will create a
+          # fresh window.
           :ets.delete(@windows_table, ets_key)
-          :ets.delete(@blocks_table, ets_key)
+
+          # Only delete the exact block tuple we observed, not a fresh one that
+          # a concurrent record_failure may have inserted after our lookup.
+          if blocked > 0, do: :ets.delete_object(@blocks_table, {ets_key, blocked})
+
+          # If window_index was rotated since our staleness check, a concurrent
+          # record_failure was in-flight. Replay the estimated count so those
+          # failures aren't lost.
+          post_delete_window = SlidingWindow.window_index(sw)
+
+          if post_delete_window != pre_delete_window do
+            estimated = SlidingWindow.estimated_count(sw, now)
+
+            if estimated > 0 do
+              record_failures(key, operation, estimated)
+            end
+          end
+
           acc + 1
         else
           acc
