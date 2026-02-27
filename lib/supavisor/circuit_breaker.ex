@@ -42,7 +42,13 @@ defmodule Supavisor.CircuitBreaker do
   Called by the application supervisor.
   """
   def init do
-    :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(@table, [
+      :named_table,
+      :public,
+      :set,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
   end
 
   @doc """
