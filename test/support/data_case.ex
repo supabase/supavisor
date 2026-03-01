@@ -26,6 +26,7 @@ defmodule Supavisor.DataCase do
       import Ecto.Changeset
       import Ecto.Query
       import Supavisor.DataCase
+      import Supavisor.Support.Polling
     end
   end
 
