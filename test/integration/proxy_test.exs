@@ -770,20 +770,30 @@ defmodule Supavisor.Integration.ProxyTest do
     # proxy_pool_tenant has max_clients: 2. Fire 5 connections concurrently —
     # at least one must be rejected by the local proxy pool even though the
     # remote manager is unresponsive and can't enforce limits itself.
-    results =
+    monitored_tasks =
       Enum.map(1..5, fn i ->
         {:ok, pid} =
           start_supervised(%{
             id: {:conn_task, i},
-            start: {Task, :start_link, [fn -> SingleConnection.connect(conn_opts) end]},
+            start:
+              {Task, :start_link,
+               [
+                 fn ->
+                   receive do
+                     :go -> SingleConnection.connect(conn_opts)
+                   end
+                 end
+               ]},
             restart: :temporary
           })
 
-        pid
+        {pid, Process.monitor(pid)}
       end)
-      |> Enum.map(fn pid ->
-        ref = Process.monitor(pid)
 
+    Enum.each(monitored_tasks, fn {pid, _} -> send(pid, :go) end)
+
+    results =
+      Enum.map(monitored_tasks, fn {pid, ref} ->
         receive do
           {:DOWN, ^ref, :process, ^pid, :normal} -> :ok
           {:DOWN, ^ref, :process, ^pid, reason} -> {:error, reason}
@@ -792,19 +802,20 @@ defmodule Supavisor.Integration.ProxyTest do
         end
       end)
 
-    assert Enum.any?(results, fn
-             {:error,
-              %Postgrex.Error{
-                postgres: %{
-                  code: :internal_error,
-                  message: "Max client connections reached"
-                }
-              }} ->
-               true
+    {max_conn_errors, other_errors} =
+      Enum.split_with(results, fn
+        {:error,
+         %Postgrex.Error{
+           postgres: %{code: :internal_error, message: "Max client connections reached"}
+         }} ->
+          true
 
-             _ ->
-               false
-           end)
+        _ ->
+          false
+      end)
+
+    assert length(max_conn_errors) == 3
+    assert length(other_errors) == 2
 
     :erpc.call(node2, :sys, :resume, [manager_pid])
     GenServer.stop(node2_conn)

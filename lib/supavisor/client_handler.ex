@@ -437,14 +437,11 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :connect_db, _state, data) do
     Logger.debug("ClientHandler: Trying to connect to DB")
 
-    with {:ok, pool} <- Proxy.get_or_start_proxy_pool(data.id, data.max_clients),
-         {:ok, db_pid} <- Proxy.checkout_proxy_pool(pool) do
-      args = Proxy.build_db_handler_args(data)
-      :ok = DbHandler.configure(db_pid, args)
-
+    with args = Proxy.build_db_handler_args(data),
+         {:ok, db_pid} <- Proxy.start_proxy_connection(data.id, data.max_clients, args) do
       case DbHandler.checkout(db_pid, data.sock, self()) do
         {:ok, db_sock} ->
-          {:keep_state, %{data | db_connection: {pool, db_pid, db_sock}, mode: :proxy}}
+          {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
 
         {:error, {:exit, {:timeout, _}}} ->
           timeout_error(data)

@@ -8,7 +8,7 @@ defmodule Supavisor.DbHandler do
 
   ## Startup modes
 
-  DbHandler has three startup paths depending on the mode:
+  DbHandler has two startup paths depending on the mode:
 
   ### Pool mode (transaction/session)
 
@@ -19,13 +19,9 @@ defmodule Supavisor.DbHandler do
 
   ### Proxy mode
 
-  Started via `start_link/1` by poolboy with `%{proxy_pool: true}`. Enters
-  `:proxy_waiting_for_configure` with empty state.
-
-  The ClientHandler checks out a worker from the pool, then calls
-  `configure/2` to provide connection args, which transitions the worker to
-  `:connect`. One worker per client, managed by a poolboy pool for connection
-  counting.
+  Started via `start_link/1` under a DynamicSupervisor with full connection
+  args. Connects to the database immediately. One worker per client, with the
+  DynamicSupervisor's `:max_children` enforcing the connection limit.
   """
 
   @behaviour :gen_statem
@@ -49,8 +45,7 @@ defmodule Supavisor.DbHandler do
   }
 
   @type state ::
-          :proxy_waiting_for_configure
-          | :connect
+          :connect
           | :authentication
           | :idle
           | :busy
@@ -69,6 +64,14 @@ defmodule Supavisor.DbHandler do
   """
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
+
+  def child_spec(config) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [config]},
+      restart: :temporary
+    }
+  end
 
   @doc """
   Checks out a DbHandler process
@@ -142,21 +145,43 @@ defmodule Supavisor.DbHandler do
     :gen_statem.cast(pid, :secrets_available)
   end
 
-  @doc """
-  Configures a proxy pool DbHandler with connection details and triggers connect.
-
-  Called after poolboy checkout to provide the actual proxy connection args.
-  """
-  @spec configure(pid(), map()) :: :ok
-  def configure(pid, args) do
-    :gen_statem.call(pid, {:configure, args}, 1_000)
-  end
-
-  # Proxy path
+  # Proxy path — started with full args under a DynamicSupervisor
   @impl true
-  def init(%{proxy_pool: true}) do
+  def init(%{proxy: true} = args) do
     Process.flag(:trap_exit, true)
-    {:ok, :proxy_waiting_for_configure, %{}}
+
+    Helpers.set_log_level(args.log_level)
+    Helpers.set_max_heap_size(90)
+
+    {_, tenant} = args.tenant
+    Logger.metadata(project: tenant, user: args.user, mode: args.mode)
+
+    data = %{
+      id: args.id,
+      sock: nil,
+      auth: args.auth,
+      user: args.user,
+      tenant: args.tenant,
+      tenant_feature_flags: args.tenant_feature_flags,
+      db_state: nil,
+      parameter_status: %{},
+      nonce: nil,
+      server_proof: nil,
+      stats: %{},
+      prepared_statements: MapSet.new(),
+      proxy: true,
+      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
+      mode: args.mode,
+      replica_type: args.replica_type,
+      caller: nil,
+      client_sock: nil,
+      reconnect_retries: 0,
+      terminating_error: nil,
+      manager_ref: nil
+    }
+
+    Telem.handler_action(:db_handler, :started, args.id)
+    {:ok, :connect, data, {:next_event, :internal, :connect}}
   end
 
   # Non proxy-path
@@ -467,41 +492,6 @@ defmodule Supavisor.DbHandler do
     {:keep_state, data, {:reply, from, :ok}}
   end
 
-  def handle_event({:call, from}, {:configure, args}, :proxy_waiting_for_configure, _data) do
-    Helpers.set_log_level(args.log_level)
-    Helpers.set_max_heap_size(90)
-
-    {_, tenant} = args.tenant
-    Logger.metadata(project: tenant, user: args.user, mode: args.mode)
-
-    data = %{
-      id: args.id,
-      sock: nil,
-      auth: args.auth,
-      user: args.user,
-      tenant: args.tenant,
-      tenant_feature_flags: args.tenant_feature_flags,
-      db_state: nil,
-      parameter_status: %{},
-      nonce: nil,
-      server_proof: nil,
-      stats: %{},
-      prepared_statements: MapSet.new(),
-      proxy: true,
-      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
-      mode: args.mode,
-      replica_type: args.replica_type,
-      caller: nil,
-      client_sock: nil,
-      reconnect_retries: 0,
-      terminating_error: nil,
-      manager_ref: nil
-    }
-
-    Telem.handler_action(:db_handler, :started, args.id)
-    {:next_state, :connect, data, [{:reply, from, :ok}, {:next_event, :internal, :connect}]}
-  end
-
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
     {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
@@ -642,8 +632,6 @@ defmodule Supavisor.DbHandler do
   end
 
   @impl true
-  def terminate(_reason, :proxy_waiting_for_configure, _data), do: :ok
-
   def terminate(_reason, :terminating_with_error, data) do
     Telem.handler_action(:db_handler, :stopped, data.id)
   end

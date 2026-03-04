@@ -8,73 +8,57 @@ defmodule Supavisor.ClientHandler.Proxy do
 
   require Logger
 
+  alias Supavisor.ClientHandler.ProxySupervisor
+
   @registry Supavisor.Registry.Tenants
 
   @doc """
-  Gets or starts a proxy poolboy pool for the given tenant id.
+  Starts a proxy DbHandler for the given tenant.
 
-  The pool uses DbHandler as worker module with `proxy_pool: true` init.
-  Workers start idle and receive connection details via `DbHandler.configure/2`.
+  Ensures the proxy supervisor tree exists, then starts a DbHandler under it.
+  Returns `{:ok, db_pid}` if a slot is available, or
+  `{:error, :max_proxy_connections_reached}` if the connection limit has been reached.
   """
-  @spec get_or_start_proxy_pool(Supavisor.id(), pos_integer()) ::
-          {:ok, pid()} | {:error, term()}
-  def get_or_start_proxy_pool(id, max_clients) do
-    key = {:proxy_pool, id}
-
-    case Registry.lookup(@registry, key) do
-      [{pid, _}] ->
-        {:ok, pid}
-
-      [] ->
-        start_proxy_pool(key, id, max_clients)
+  @spec start_proxy_connection(Supavisor.id(), pos_integer(), map()) ::
+          {:ok, pid()} | {:error, :max_proxy_connections_reached | term()}
+  def start_proxy_connection(id, max_clients, args) do
+    with :ok <- ensure_proxy_sup(id, max_clients) do
+      case ProxySupervisor.start_connection(id, {Supavisor.DbHandler, args}) do
+        {:ok, pid} -> {:ok, pid}
+        {:error, :max_children} -> {:error, :max_proxy_connections_reached}
+        error -> error
+      end
     end
   end
 
-  defp start_proxy_pool(key, id, max_clients) do
-    pool_config = [
-      name: {:via, Registry, {@registry, key}},
-      worker_module: Supavisor.DbHandler,
-      size: 0,
-      max_overflow: max_clients,
-      strategy: :lifo
-    ]
+  defp ensure_proxy_sup(id, max_clients) do
+    case Registry.lookup(@registry, {:proxy_dyn_sup, id}) do
+      [{_, _}] ->
+        :ok
 
+      [] ->
+        start_proxy_sup(id, max_clients)
+    end
+  end
+
+  defp start_proxy_sup(id, max_clients) do
     case DynamicSupervisor.start_child(
            {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
            %{
-             id: key,
-             start: {:poolboy, :start_link, [pool_config, %{proxy_pool: true}]},
+             id: {:proxy_sup, id},
+             start: {ProxySupervisor, :start_link, [[id: id, max_clients: max_clients]]},
              restart: :temporary,
              type: :supervisor
            }
          ) do
       {:ok, _} ->
-        lookup_pool(key)
+        :ok
 
       {:error, {:shutdown, {:failed_to_start_child, _, {:already_started, _}}}} ->
-        lookup_pool(key)
+        :ok
 
       error ->
         error
-    end
-  end
-
-  defp lookup_pool(key) do
-    [{pool_pid, _}] = Registry.lookup(@registry, key)
-    {:ok, pool_pid}
-  end
-
-  @doc """
-  Attempts a non-blocking checkout from the proxy pool.
-
-  Returns `{:ok, db_pid}` if a slot is available, or
-  `{:error, :max_proxy_connections_reached}` if the pool is full.
-  """
-  @spec checkout_proxy_pool(pid()) :: {:ok, pid()} | {:error, :max_proxy_connections_reached}
-  def checkout_proxy_pool(pool) do
-    case :poolboy.checkout(pool, false) do
-      :full -> {:error, :max_proxy_connections_reached}
-      pid when is_pid(pid) -> {:ok, pid}
     end
   end
 
