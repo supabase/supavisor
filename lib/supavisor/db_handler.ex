@@ -5,6 +5,27 @@ defmodule Supavisor.DbHandler do
 
   The state machine uses the Supavisor.Protocol.Server module to decode messages
   from the database and sends messages to the client socket it received on checkout.
+
+  ## Startup modes
+
+  DbHandler has three startup paths depending on the mode:
+
+  ### Pool mode (transaction/session)
+
+  Started via `start_link/1` by poolboy with a Manager config. Fetches auth
+  secrets (or enters `:waiting_for_secrets` if unavailable), then connects to
+  the database immediately. Workers are long-lived and shared across clients
+  via checkout/checkin.
+
+  ### Proxy mode
+
+  Started via `start_link/1` by poolboy with `%{proxy_pool: true}`. Enters
+  `:proxy_waiting_for_configure` with empty state.
+
+  The ClientHandler checks out a worker from the pool, then calls
+  `configure/2` to provide connection args, which transitions the worker to
+  `:connect`. One worker per client, managed by a poolboy pool for connection
+  counting.
   """
 
   @behaviour :gen_statem
@@ -28,7 +49,8 @@ defmodule Supavisor.DbHandler do
   }
 
   @type state ::
-          :connect
+          :proxy_waiting_for_configure
+          | :connect
           | :authentication
           | :idle
           | :busy
@@ -43,13 +65,7 @@ defmodule Supavisor.DbHandler do
   @cleanup_buffer_limit 65_536
 
   @doc """
-  Starts a DbHandler state machine
-
-  Accepts two different types of args:
-
-  TODO: details about required arguments in each
-  - proxied
-  - not proxied
+  Starts a DbHandler state machine.
   """
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
@@ -126,19 +142,29 @@ defmodule Supavisor.DbHandler do
     :gen_statem.cast(pid, :secrets_available)
   end
 
+  @doc """
+  Configures a proxy pool DbHandler with connection details and triggers connect.
+
+  Called after poolboy checkout to provide the actual proxy connection args.
+  """
+  @spec configure(pid(), map()) :: :ok
+  def configure(pid, args) do
+    :gen_statem.call(pid, {:configure, args}, 1_000)
+  end
+
+  # Proxy path
   @impl true
+  def init(%{proxy_pool: true}) do
+    Process.flag(:trap_exit, true)
+    {:ok, :proxy_waiting_for_configure, %{}}
+  end
+
+  # Non proxy-path
   def init(args) do
     Process.flag(:trap_exit, true)
 
-    {id, config} =
-      case args do
-        %{proxy: true} ->
-          {args.id, args}
-
-        %{} ->
-          config = Supavisor.Manager.get_config(args.id)
-          {args.id, config}
-      end
+    config = Supavisor.Manager.get_config(args.id)
+    id = args.id
 
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
@@ -146,14 +172,7 @@ defmodule Supavisor.DbHandler do
     {_, tenant} = config.tenant
     Logger.metadata(project: tenant, user: config.user, mode: config.mode)
 
-    auth =
-      if config[:proxy] do
-        # Proxy mode: secrets already in config.auth from ClientHandler
-        {:ok, config.auth}
-      else
-        # Pool mode: fetch secrets from TenantCache
-        get_auth_with_secrets(config.auth, id)
-      end
+    auth = get_auth_with_secrets(config.auth, id)
 
     {auth_value, manager_ref} =
       case auth do
@@ -448,6 +467,41 @@ defmodule Supavisor.DbHandler do
     {:keep_state, data, {:reply, from, :ok}}
   end
 
+  def handle_event({:call, from}, {:configure, args}, :proxy_waiting_for_configure, _data) do
+    Helpers.set_log_level(args.log_level)
+    Helpers.set_max_heap_size(90)
+
+    {_, tenant} = args.tenant
+    Logger.metadata(project: tenant, user: args.user, mode: args.mode)
+
+    data = %{
+      id: args.id,
+      sock: nil,
+      auth: args.auth,
+      user: args.user,
+      tenant: args.tenant,
+      tenant_feature_flags: args.tenant_feature_flags,
+      db_state: nil,
+      parameter_status: %{},
+      nonce: nil,
+      server_proof: nil,
+      stats: %{},
+      prepared_statements: MapSet.new(),
+      proxy: true,
+      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
+      mode: args.mode,
+      replica_type: args.replica_type,
+      caller: nil,
+      client_sock: nil,
+      reconnect_retries: 0,
+      terminating_error: nil,
+      manager_ref: nil
+    }
+
+    Telem.handler_action(:db_handler, :started, args.id)
+    {:next_state, :connect, data, [{:reply, from, :ok}, {:next_event, :internal, :connect}]}
+  end
+
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
     {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
@@ -588,6 +642,8 @@ defmodule Supavisor.DbHandler do
   end
 
   @impl true
+  def terminate(_reason, :proxy_waiting_for_configure, _data), do: :ok
+
   def terminate(_reason, :terminating_with_error, data) do
     Telem.handler_action(:db_handler, :stopped, data.id)
   end

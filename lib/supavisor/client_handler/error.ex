@@ -193,6 +193,13 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
+  defp process({:error, :max_proxy_connections_reached}, _context) do
+    %{
+      error: Server.error_message("XX000", "Max client connections reached"),
+      log_message: "Max proxy connections reached"
+    }
+  end
+
   defp process({:error, :max_clients_reached_session}, _context) do
     message =
       "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size"

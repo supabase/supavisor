@@ -437,33 +437,44 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :connect_db, _state, data) do
     Logger.debug("ClientHandler: Trying to connect to DB")
 
-    args = Proxy.build_db_handler_args(data)
+    with {:ok, pool} <- Proxy.get_or_start_proxy_pool(data.id, data.max_clients),
+         {:ok, db_pid} <- Proxy.checkout_proxy_pool(pool) do
+      args = Proxy.build_db_handler_args(data)
+      :ok = DbHandler.configure(db_pid, args)
 
-    {:ok, db_pid} = DbHandler.start_link(args)
+      case DbHandler.checkout(db_pid, data.sock, self()) do
+        {:ok, db_sock} ->
+          {:keep_state, %{data | db_connection: {pool, db_pid, db_sock}, mode: :proxy}}
 
-    case DbHandler.checkout(db_pid, data.sock, self()) do
-      {:ok, db_sock} ->
-        {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
+        {:error, {:exit, {:timeout, _}}} ->
+          timeout_error(data)
 
-      {:error, {:exit, {:timeout, _}}} ->
-        timeout_error(data)
+        {:error, %{"S" => "FATAL"} = error_map} ->
+          Logger.debug(
+            "ClientHandler: Received error from DbHandler checkout (proxy): #{inspect(error_map)}"
+          )
 
-      {:error, %{"S" => "FATAL"} = error_map} ->
-        Logger.debug(
-          "ClientHandler: Received error from DbHandler checkout (proxy): #{inspect(error_map)}"
-        )
+          error_message = Server.encode_error_message(error_map)
+          HandlerHelpers.sock_send(data.sock, error_message)
+          {:stop, :normal}
 
-        error_message = Server.encode_error_message(error_map)
-        HandlerHelpers.sock_send(data.sock, error_message)
+        # Errors are already forwarded to the client socket, so we can safely ignore them
+        # here.
+        {:error, {:exit, {reason, _}}} ->
+          Logger.error(
+            "ClientHandler: error checking out DbHandler (proxy), exit with reason: #{inspect(reason)}"
+          )
+
+          {:stop, :normal}
+      end
+    else
+      {:error, :max_proxy_connections_reached} ->
+        Error.maybe_log_and_send_error(data.sock, {:error, :max_proxy_connections_reached})
+        Telem.client_join(:fail, data.id)
         {:stop, :normal}
 
-      # Errors are already forwarded to the client socket, so we can safely ignore them
-      # here.
-      {:error, {:exit, {reason, _}}} ->
-        Logger.error(
-          "ClientHandler: error checking out DbHandler (proxy), exit with reason: #{inspect(reason)}"
-        )
-
+      {:error, other} ->
+        Logger.error("ClientHandler: Connect DB proxy error: #{inspect(other)}")
         {:stop, :normal}
     end
   end
@@ -1112,7 +1123,8 @@ defmodule Supavisor.ClientHandler do
         ps: info.tenant.default_parameter_status,
         proxy_type: proxy_type,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
-        auth: auth
+        auth: auth,
+        max_clients: info.user.max_clients || info.tenant.default_max_clients
     }
   end
 
