@@ -40,6 +40,7 @@ defmodule Supavisor.ClientHandler.Data do
     :state_entered_at,
     :subscribe_retries,
     :client_ready,
-    :max_clients
+    :max_clients,
+    :pool_ranch
   ]
 end
