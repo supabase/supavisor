@@ -444,32 +444,9 @@ defmodule Supavisor.ClientHandler do
              data.auth,
              data.tenant_feature_flags,
              data.pool_ranch
-           ) do
-      case DbHandler.checkout(db_pid, data.sock, self()) do
-        {:ok, db_sock} ->
-          {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
-
-        {:error, {:exit, {:timeout, _}}} ->
-          timeout_error(data)
-
-        {:error, %{"S" => "FATAL"} = error_map} ->
-          Logger.debug(
-            "ClientHandler: Received error from DbHandler checkout (proxy): #{inspect(error_map)}"
-          )
-
-          error_message = Server.encode_error_message(error_map)
-          HandlerHelpers.sock_send(data.sock, error_message)
-          {:stop, :normal}
-
-        # Errors are already forwarded to the client socket, so we can safely ignore them
-        # here.
-        {:error, {:exit, {reason, _}}} ->
-          Logger.error(
-            "ClientHandler: error checking out DbHandler (proxy), exit with reason: #{inspect(reason)}"
-          )
-
-          {:stop, :normal}
-      end
+           ),
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self()) do
+      {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
     else
       {:error, reason}
       when reason in [
@@ -479,6 +456,27 @@ defmodule Supavisor.ClientHandler do
            ] ->
         Error.maybe_log_and_send_error(data.sock, {:error, reason})
         Telem.client_join(:fail, data.id)
+        {:stop, :normal}
+
+      {:error, {:exit, {:timeout, _}}} ->
+        timeout_error(data)
+
+      {:error, %{"S" => "FATAL"} = error_map} ->
+        Logger.debug(
+          "ClientHandler: Received error from DbHandler checkout (proxy): #{inspect(error_map)}"
+        )
+
+        error_message = Server.encode_error_message(error_map)
+        HandlerHelpers.sock_send(data.sock, error_message)
+        {:stop, :normal}
+
+      # Errors are already forwarded to the client socket, so we can safely ignore them
+      # here.
+      {:error, {:exit, {reason, _}}} ->
+        Logger.error(
+          "ClientHandler: error checking out DbHandler (proxy), exit with reason: #{inspect(reason)}"
+        )
+
         {:stop, :normal}
     end
   end
