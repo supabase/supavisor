@@ -20,7 +20,7 @@ defmodule Supavisor.DbHandler do
   ### Proxy mode
 
   Started via `start_link/1` under a DynamicSupervisor with full connection
-  args. Connects to the database immediately. One worker per client, with the
+  args. Connects to the proxy node immediately. One worker per client, with the
   DynamicSupervisor's `:max_children` enforcing the connection limit.
   """
 
