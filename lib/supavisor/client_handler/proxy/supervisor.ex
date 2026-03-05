@@ -68,7 +68,6 @@ defmodule Supavisor.ClientHandler.Proxy.Supervisor do
 
   defp formatted_reason(:ignore), do: "returned ignore"
 
-  # TODO: support exits and throws here
   defp formatted_reason({:error, error_reason}) do
     case error_reason do
       {exception, stacktrace} when is_exception(exception) ->
