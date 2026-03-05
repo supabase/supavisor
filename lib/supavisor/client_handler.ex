@@ -416,12 +416,13 @@ defmodule Supavisor.ClientHandler do
         {:stop, :normal}
 
       :proxy ->
-        case Proxy.prepare_proxy_connection(data) do
-          {:ok, updated_data} ->
+        case Proxy.prepare_proxy_connection(data.id) do
+          {:ok, auth_overrides} ->
             Logger.metadata(proxy: true)
             Registry.register(@proxy_clients_registry, data.id, [])
+            updated_auth = Map.merge(data.auth, auth_overrides)
 
-            {:keep_state, updated_data, {:next_event, :internal, :connect_db}}
+            {:keep_state, %{data | auth: updated_auth}, {:next_event, :internal, :connect_db}}
 
           {:error, other} ->
             Logger.error("ClientHandler: Subscribe proxy error: #{inspect(other)}")
@@ -437,8 +438,13 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :connect_db, _state, data) do
     Logger.debug("ClientHandler: Trying to connect to DB")
 
-    with args = Proxy.build_db_handler_args(data),
-         {:ok, db_pid} <- Proxy.start_proxy_connection(data.id, data.max_clients, args) do
+    with {:ok, db_pid} <-
+           Proxy.start_proxy_connection(
+             data.id,
+             data.max_clients,
+             data.auth,
+             data.tenant_feature_flags
+           ) do
       case DbHandler.checkout(db_pid, data.sock, self()) do
         {:ok, db_sock} ->
           {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}

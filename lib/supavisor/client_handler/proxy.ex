@@ -15,6 +15,15 @@ defmodule Supavisor.ClientHandler.Proxy do
           | :failed_to_start_proxy_connection
           | :proxy_supervisor_unavailable
 
+  @type auth_overrides :: %{
+          port: :inet.port_number(),
+          host: charlist(),
+          ip_version: :inet | :inet6,
+          upstream_ssl: boolean(),
+          upstream_tls_ca: String.t() | nil,
+          upstream_verify: String.t() | nil
+        }
+
   @doc """
   Starts a proxy DbHandler for the given tenant.
 
@@ -28,10 +37,10 @@ defmodule Supavisor.ClientHandler.Proxy do
   - `{:error, :failed_to_start_proxy_connection}` if the child process failed to start
   - `{:error, :proxy_supervisor_unavailable}` if the supervisor could not be started after retries
   """
-  @spec start_proxy_connection(Supavisor.id(), pos_integer(), map()) ::
+  @spec start_proxy_connection(Supavisor.id(), pos_integer(), map(), map()) ::
           {:ok, pid()} | {:error, start_error()}
-  def start_proxy_connection(id, max_clients, args) do
-    child_spec = {Supavisor.DbHandler, args}
+  def start_proxy_connection(id, max_clients, auth, tenant_feature_flags) do
+    child_spec = {Supavisor.DbHandler, build_db_handler_args(id, auth, tenant_feature_flags)}
     do_start_proxy_connection(id, max_clients, child_spec, @max_sup_retries)
   end
 
@@ -91,36 +100,36 @@ defmodule Supavisor.ClientHandler.Proxy do
     end
   end
 
-  @spec prepare_proxy_connection(map()) ::
-          {:ok, map()} | {:error, term()}
-  def prepare_proxy_connection(data) do
-    case Supavisor.get_pool_ranch(data.id) do
+  @spec prepare_proxy_connection(Supavisor.id()) ::
+          {:ok, auth_overrides()} | {:error, term()}
+  def prepare_proxy_connection(id) do
+    case Supavisor.get_pool_ranch(id) do
       {:ok, %{port: port, host: host}} ->
-        updated_auth =
-          Map.merge(data.auth, %{
-            port: port,
-            host: to_charlist(host),
-            ip_version: :inet,
-            upstream_ssl: false,
-            upstream_tls_ca: nil,
-            upstream_verify: nil
-          })
-
-        {:ok, %{data | auth: updated_auth}}
+        {:ok,
+         %{
+           port: port,
+           host: to_charlist(host),
+           ip_version: :inet,
+           upstream_ssl: false,
+           upstream_tls_ca: nil,
+           upstream_verify: nil
+         }}
 
       error ->
         {:error, error}
     end
   end
 
-  @spec build_db_handler_args(map()) :: map()
-  def build_db_handler_args(data) do
+  @spec build_db_handler_args(Supavisor.id(), map(), map()) :: map()
+  defp build_db_handler_args(id, auth, tenant_feature_flags) do
+    {tenant, user, _mode, _db_name, _search_path} = id
+
     %{
-      id: data.id,
-      auth: data.auth,
-      user: data.user,
-      tenant: {:single, data.tenant},
-      tenant_feature_flags: data.tenant_feature_flags,
+      id: id,
+      auth: auth,
+      user: user,
+      tenant: tenant,
+      tenant_feature_flags: tenant_feature_flags,
       replica_type: :write,
       mode: :proxy,
       proxy: true,
