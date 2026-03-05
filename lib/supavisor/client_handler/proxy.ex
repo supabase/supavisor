@@ -39,6 +39,13 @@ defmodule Supavisor.ClientHandler.Proxy do
   # This function is public for test purposes, so we can test the logic
   # with mock processes, not DbHandlers
   @doc false
+  @spec do_start_proxy_connection(
+          Supavisor.id(),
+          max_clients :: pos_integer(),
+          Supervisor.child_spec(),
+          attempts_remaining :: non_neg_integer()
+        ) ::
+          {:ok, pid()} | {:error, start_error()}
   def do_start_proxy_connection(_id, _max_clients, _child_spec, 0) do
     {:error, :proxy_supervisor_unavailable}
   end

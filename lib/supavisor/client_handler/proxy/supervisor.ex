@@ -52,10 +52,12 @@ defmodule Supavisor.ClientHandler.Proxy.Supervisor do
     end
   end
 
+  @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     Supervisor.start_link(__MODULE__, opts)
   end
 
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
     %{
       id: __MODULE__,
