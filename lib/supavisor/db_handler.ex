@@ -145,51 +145,15 @@ defmodule Supavisor.DbHandler do
     :gen_statem.cast(pid, :secrets_available)
   end
 
-  # Proxy path — started with full args under a DynamicSupervisor
   @impl true
-  def init(%{proxy: true} = args) do
-    Process.flag(:trap_exit, true)
-
-    Helpers.set_log_level(args.log_level)
-    Helpers.set_max_heap_size(90)
-
-    {_, tenant} = args.tenant
-    Logger.metadata(project: tenant, user: args.user, mode: args.mode)
-
-    data = %{
-      id: args.id,
-      sock: nil,
-      auth: args.auth,
-      user: args.user,
-      tenant: args.tenant,
-      tenant_feature_flags: args.tenant_feature_flags,
-      db_state: nil,
-      parameter_status: %{},
-      nonce: nil,
-      server_proof: nil,
-      stats: %{},
-      prepared_statements: MapSet.new(),
-      proxy: true,
-      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
-      mode: args.mode,
-      replica_type: args.replica_type,
-      caller: nil,
-      client_sock: nil,
-      reconnect_retries: 0,
-      terminating_error: nil,
-      manager_ref: nil
-    }
-
-    Telem.handler_action(:db_handler, :started, args.id)
-    {:ok, :connect, data, {:next_event, :internal, :connect}}
-  end
-
-  # Non proxy-path
   def init(args) do
     Process.flag(:trap_exit, true)
 
-    config = Supavisor.Manager.get_config(args.id)
-    id = args.id
+    {id, config} =
+      case args do
+        %{proxy: true} -> {args.id, args}
+        %{} -> {args.id, Supavisor.Manager.get_config(args.id)}
+      end
 
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
@@ -197,19 +161,21 @@ defmodule Supavisor.DbHandler do
     {_, tenant} = config.tenant
     Logger.metadata(project: tenant, user: config.user, mode: config.mode)
 
-    auth = get_auth_with_secrets(config.auth, id)
-
     {auth_value, manager_ref} =
-      case auth do
-        {:ok, auth_with_secrets} ->
-          {auth_with_secrets, nil}
+      if config[:proxy] do
+        {config.auth, nil}
+      else
+        case get_auth_with_secrets(config.auth, id) do
+          {:ok, auth_with_secrets} ->
+            {auth_with_secrets, nil}
 
-        {:error, :no_secrets} ->
-          Logger.warning("DbHandler: Secrets not available, entering waiting state")
-          manager_pid = Supavisor.get_local_manager(id)
-          ref = Process.monitor(manager_pid)
-          Supavisor.Manager.register_waiting_for_secrets(id, self())
-          {config.auth, ref}
+          {:error, :no_secrets} ->
+            Logger.warning("DbHandler: Secrets not available, entering waiting state")
+            manager_pid = Supavisor.get_local_manager(id)
+            ref = Process.monitor(manager_pid)
+            Supavisor.Manager.register_waiting_for_secrets(id, self())
+            {config.auth, ref}
+        end
       end
 
     data = %{
@@ -229,8 +195,8 @@ defmodule Supavisor.DbHandler do
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
       mode: config.mode,
       replica_type: config.replica_type,
-      caller: Map.get(config, :caller) || nil,
-      client_sock: Map.get(config, :client_sock) || nil,
+      caller: nil,
+      client_sock: nil,
       reconnect_retries: 0,
       terminating_error: nil,
       manager_ref: manager_ref
