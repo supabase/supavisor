@@ -72,20 +72,19 @@ defmodule Supavisor.ClientHandler.Proxy.Watchdog do
   defp check_children(
          %{id: id, empty_checks: empty_checks, check_interval: interval, jitter: jitter} = state
        ) do
-    [{dyn_sup, _}] = Registry.lookup(@registry, {:proxy_dyn_sup, id})
-
-    case DynamicSupervisor.count_children(dyn_sup) do
-      %{active: 0} when empty_checks >= 1 ->
+    with [{dyn_sup, _}] <- Registry.lookup(@registry, {:proxy_dyn_sup, id}),
+         %{active: 0} <- DynamicSupervisor.count_children(dyn_sup) do
+      if empty_checks >= 1 do
         Logger.debug(
           "ProxySupervisorWatchdog: shutting down empty proxy supervisor for #{inspect(id)}"
         )
 
         {:stop, state}
-
-      %{active: 0} ->
+      else
         schedule_check(interval, jitter)
         {:alive, %{state | empty_checks: empty_checks + 1}}
-
+      end
+    else
       _ ->
         schedule_check(interval, jitter)
         {:alive, %{state | empty_checks: 0}}
