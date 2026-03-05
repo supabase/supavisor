@@ -2,9 +2,11 @@ defmodule Supavisor.CircuitBreakerTest do
   use ExUnit.Case, async: false
 
   alias Supavisor.CircuitBreaker
+  alias Supavisor.CircuitBreaker.SlidingWindow
 
   setup do
-    :ets.delete_all_objects(Supavisor.CircuitBreaker)
+    :ets.delete_all_objects(Supavisor.CircuitBreaker.Blocks)
+    :ets.delete_all_objects(Supavisor.CircuitBreaker.Windows)
     :ok
   end
 
@@ -31,24 +33,14 @@ defmodule Supavisor.CircuitBreakerTest do
     end
 
     test "returns :ok after block period expires" do
-      now = System.system_time(:second)
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [now], blocked_until: now - 1}
-      :ets.insert(CircuitBreaker, {key, state})
+      expired = System.system_time(:second) - 1
+      :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, expired})
 
       assert :ok = CircuitBreaker.check("tenant1", :get_secrets)
     end
   end
 
   describe "record_failure/2" do
-    test "records first failure" do
-      CircuitBreaker.record_failure("tenant1", :get_secrets)
-
-      assert [{_, %{failures: failures}}] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
-      assert length(failures) == 1
-    end
-
     test "opens circuit when threshold exceeded" do
       for _ <- 1..4 do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
@@ -59,20 +51,6 @@ defmodule Supavisor.CircuitBreakerTest do
       CircuitBreaker.record_failure("tenant1", :get_secrets)
 
       assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :get_secrets)
-    end
-
-    test "filters old failures outside window" do
-      now = System.system_time(:second)
-      old_time = now - 700
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [old_time, old_time, old_time], blocked_until: nil}
-      :ets.insert(CircuitBreaker, {key, state})
-
-      CircuitBreaker.record_failure("tenant1", :get_secrets)
-
-      assert [{_, %{failures: failures}}] = :ets.lookup(CircuitBreaker, key)
-      assert length(failures) == 1
     end
 
     test "maintains separate state per tenant" do
@@ -97,6 +75,24 @@ defmodule Supavisor.CircuitBreakerTest do
       assert :ok = CircuitBreaker.check("tenant1", :db_connection)
     end
 
+    test "does not re-trip when already blocked" do
+      # Trip the circuit
+      for _ <- 1..5 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      assert {:error, :circuit_open, blocked_until} =
+               CircuitBreaker.check("tenant1", :get_secrets)
+
+      # Record more failures while blocked — should not update blocked_until
+      for _ <- 1..10 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      assert {:error, :circuit_open, ^blocked_until} =
+               CircuitBreaker.check("tenant1", :get_secrets)
+    end
+
     test "db_connection requires 100 failures" do
       for _ <- 1..99 do
         CircuitBreaker.record_failure("tenant1", :db_connection)
@@ -119,7 +115,8 @@ defmodule Supavisor.CircuitBreakerTest do
       CircuitBreaker.clear("tenant1", :get_secrets)
 
       assert :ok = CircuitBreaker.check("tenant1", :get_secrets)
-      assert [] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Blocks, {"tenant1", :get_secrets})
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :get_secrets})
     end
   end
 
@@ -142,16 +139,15 @@ defmodule Supavisor.CircuitBreakerTest do
   describe "cleanup_stale_entries/0" do
     test "removes old entries" do
       now = System.system_time(:second)
-      old_time = now - 2000
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [old_time], blocked_until: nil}
-      :ets.insert(CircuitBreaker, {key, state})
+      stale = now - 2000
+      sw = SlidingWindow.new(600, stale)
+      SlidingWindow.record(sw, stale)
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
       assert deleted == 1
-      assert [] = :ets.lookup(CircuitBreaker, key)
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :get_secrets})
     end
 
     test "keeps recent entries" do
@@ -160,28 +156,42 @@ defmodule Supavisor.CircuitBreakerTest do
       deleted = CircuitBreaker.cleanup_stale_entries()
 
       assert deleted == 0
-      assert [{_, _}] = :ets.lookup(CircuitBreaker, {"tenant1", :get_secrets})
+      assert [{_, _}] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :get_secrets})
     end
 
     test "removes expired blocks" do
       now = System.system_time(:second)
-      old_time = now - 2000
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [old_time], blocked_until: now - 100}
-      :ets.insert(CircuitBreaker, {key, state})
+      stale = now - 2000
+      sw = SlidingWindow.new(600, stale)
+      SlidingWindow.record(sw, stale)
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
+      :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, now - 100})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
       assert deleted == 1
     end
 
+    # regression: stale entries for operations with smaller window_seconds were not cleaned up
+    test "removes stale entries for operations with smaller window_seconds" do
+      now = System.system_time(:second)
+      stale = now - 1000
+      sw = SlidingWindow.new(300, stale)
+      SlidingWindow.record(sw, stale)
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :db_connection}, sw})
+
+      deleted = CircuitBreaker.cleanup_stale_entries()
+
+      assert deleted == 1
+      assert [] = :ets.lookup(Supavisor.CircuitBreaker.Windows, {"tenant1", :db_connection})
+    end
+
     test "keeps active blocks" do
       now = System.system_time(:second)
-
-      key = {"tenant1", :get_secrets}
-      state = %{failures: [now], blocked_until: now + 100}
-      :ets.insert(CircuitBreaker, {key, state})
+      sw = SlidingWindow.new(600, now)
+      SlidingWindow.record(sw, now)
+      :ets.insert(Supavisor.CircuitBreaker.Windows, {{"tenant1", :get_secrets}, sw})
+      :ets.insert(Supavisor.CircuitBreaker.Blocks, {{"tenant1", :get_secrets}, now + 100})
 
       deleted = CircuitBreaker.cleanup_stale_entries()
 
@@ -256,6 +266,58 @@ defmodule Supavisor.CircuitBreakerTest do
 
       assert is_integer(blocked_until)
       assert blocked_until > System.system_time(:second)
+    end
+  end
+
+  describe "info/2" do
+    test "returns nil failures and closed status when no state exists" do
+      result = CircuitBreaker.info("tenant1", :get_secrets)
+
+      assert %{
+               key: "tenant1",
+               operation: :get_secrets,
+               status: :closed,
+               estimated_failures: nil,
+               max_failures: 5,
+               sliding_window_seconds: 300,
+               window_seconds: 600,
+               block_seconds: 600,
+               blocked_until: nil
+             } = result
+    end
+
+    test "returns estimated failures when window exists" do
+      for _ <- 1..3 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      result = CircuitBreaker.info("tenant1", :get_secrets)
+
+      assert result.status == :closed
+      assert result.estimated_failures == 3
+      assert result.blocked_until == nil
+    end
+
+    test "returns open status and blocked_until when circuit is open" do
+      for _ <- 1..5 do
+        CircuitBreaker.record_failure("tenant1", :get_secrets)
+      end
+
+      result = CircuitBreaker.info("tenant1", :get_secrets)
+      now = System.system_time(:second)
+
+      assert result.status == :open
+      assert result.estimated_failures >= 5
+      assert result.blocked_until > now
+    end
+
+    test "returns correct config for different operations" do
+      result = CircuitBreaker.info("tenant1", :db_connection)
+
+      assert result.max_failures == 100
+      assert result.sliding_window_seconds == 150
+      assert result.window_seconds == 300
+      assert result.block_seconds == 600
     end
   end
 
