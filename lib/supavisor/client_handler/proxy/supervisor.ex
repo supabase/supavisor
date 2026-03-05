@@ -17,6 +17,41 @@ defmodule Supavisor.ClientHandler.Proxy.Supervisor do
 
   @registry Supavisor.Registry.Tenants
 
+  @doc """
+  Ensures the proxy supervisor tree for the given tenant exists.
+
+  If a DynamicSupervisor is already registered for `id`, returns `:ok`.
+  Otherwise, starts a new proxy supervisor under the partitioned DynamicSupervisor.
+  """
+  @spec ensure_started(Supavisor.id(), pos_integer()) :: :ok
+  def ensure_started(id, max_clients) do
+    case Registry.lookup(@registry, {:proxy_dyn_sup, id}) do
+      [{_, _}] ->
+        :ok
+
+      [] ->
+        start(id, max_clients)
+    end
+  end
+
+  defp start(id, max_clients) do
+    case DynamicSupervisor.start_child(
+           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
+           %{
+             id: {:proxy_sup, id},
+             start: {__MODULE__, :start_link, [[id: id, max_clients: max_clients]]},
+             restart: :temporary,
+             type: :supervisor
+           }
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {:shutdown, {:failed_to_start_child, _, {:already_started, _}}}} ->
+        :ok
+    end
+  end
+
   def start_link(opts) do
     Supervisor.start_link(__MODULE__, opts)
   end

@@ -7,7 +7,6 @@ defmodule Supavisor.ClientHandler.Proxy do
 
   alias Supavisor.ClientHandler.Proxy.Supervisor, as: ProxySupervisor
 
-  @registry Supavisor.Registry.Tenants
   @max_sup_retries 3
 
   @type start_error ::
@@ -45,7 +44,7 @@ defmodule Supavisor.ClientHandler.Proxy do
   end
 
   def do_start_proxy_connection(id, max_clients, child_spec, retries) do
-    with :ok <- ensure_proxy_sup(id, max_clients),
+    with :ok <- ProxySupervisor.ensure_started(id, max_clients),
          {:ok, pid} <- ProxySupervisor.start_connection(id, child_spec) do
       {:ok, pid}
     else
@@ -61,34 +60,6 @@ defmodule Supavisor.ClientHandler.Proxy do
   catch
     :exit, _reason ->
       do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
-  end
-
-  defp ensure_proxy_sup(id, max_clients) do
-    case Registry.lookup(@registry, {:proxy_dyn_sup, id}) do
-      [{_, _}] ->
-        :ok
-
-      [] ->
-        start_proxy_sup(id, max_clients)
-    end
-  end
-
-  defp start_proxy_sup(id, max_clients) do
-    case DynamicSupervisor.start_child(
-           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
-           %{
-             id: {:proxy_sup, id},
-             start: {ProxySupervisor, :start_link, [[id: id, max_clients: max_clients]]},
-             restart: :temporary,
-             type: :supervisor
-           }
-         ) do
-      {:ok, _} ->
-        :ok
-
-      {:error, {:shutdown, {:failed_to_start_child, _, {:already_started, _}}}} ->
-        :ok
-    end
   end
 
   @spec build_db_handler_args(Supavisor.id(), map(), map(), map()) :: map()
