@@ -1,33 +1,65 @@
 defmodule Supavisor.ClientHandler.Proxy do
   @moduledoc """
   Handles proxy connection logic for ClientHandler.
-
-  This module prepares proxy connections and database handler arguments
-  while leaving socket operations and process management to ClientHandler.
   """
 
   require Logger
 
-  alias Supavisor.ClientHandler.ProxySupervisor
+  alias Supavisor.ClientHandler.Proxy.Supervisor, as: ProxySupervisor
 
   @registry Supavisor.Registry.Tenants
+  @max_sup_retries 3
+
+  @type start_error ::
+          :max_proxy_connections_reached
+          | :failed_to_start_proxy_connection
+          | :proxy_supervisor_unavailable
 
   @doc """
   Starts a proxy DbHandler for the given tenant.
 
   Ensures the proxy supervisor tree exists, then starts a DbHandler under it.
-  Returns `{:ok, db_pid}` if a slot is available, or
-  `{:error, :max_proxy_connections_reached}` if the connection limit has been reached.
+
+  Retries up to #{@max_sup_retries} times when the supervisor disappears between
+  lookup and use (race with watchdog shutdown).
+
+  Returns `{:ok, db_pid}` on success, or one of:
+  - `{:error, :max_proxy_connections_reached}` if the connection limit has been reached
+  - `{:error, :failed_to_start_proxy_connection}` if the child process failed to start
+  - `{:error, :proxy_supervisor_unavailable}` if the supervisor could not be started after retries
   """
   @spec start_proxy_connection(Supavisor.id(), pos_integer(), map()) ::
-          {:ok, pid()} | {:error, :max_proxy_connections_reached | term()}
+          {:ok, pid()} | {:error, start_error()}
   def start_proxy_connection(id, max_clients, args) do
-    with :ok <- ensure_proxy_sup(id, max_clients) do
-      case ProxySupervisor.start_connection(id, {Supavisor.DbHandler, args}) do
-        {:ok, pid} -> {:ok, pid}
-        {:error, :max_children} -> {:error, :max_proxy_connections_reached}
-        error -> error
+    child_spec = {Supavisor.DbHandler, args}
+    do_start_proxy_connection(id, max_clients, child_spec, @max_sup_retries)
+  end
+
+  # This function is public for test purposes, so we can test the logic
+  # with mock processes, not DbHandlers
+  @doc false
+  def do_start_proxy_connection(_id, _max_clients, _child_spec, 0) do
+    {:error, :proxy_supervisor_unavailable}
+  end
+
+  def do_start_proxy_connection(id, max_clients, child_spec, retries) do
+    try do
+      with :ok <- ensure_proxy_sup(id, max_clients),
+           {:ok, pid} <- ProxySupervisor.start_connection(id, child_spec) do
+        {:ok, pid}
+      else
+        {:error, :max_children} ->
+          {:error, :max_proxy_connections_reached}
+
+        {:error, :proxy_sup_not_found} ->
+          do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
+
+        {:error, :failed_to_start} ->
+          {:error, :failed_to_start_proxy_connection}
       end
+    catch
+      :exit, _reason ->
+        do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
     end
   end
 
@@ -56,9 +88,6 @@ defmodule Supavisor.ClientHandler.Proxy do
 
       {:error, {:shutdown, {:failed_to_start_child, _, {:already_started, _}}}} ->
         :ok
-
-      error ->
-        error
     end
   end
 

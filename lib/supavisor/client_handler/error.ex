@@ -200,6 +200,24 @@ defmodule Supavisor.ClientHandler.Error do
     }
   end
 
+  defp process({:error, :failed_to_start_proxy_connection}, _context) do
+    %{
+      error:
+        Server.error_message(
+          "XX000",
+          "Failed to start proxy connection. Check logs for more information"
+        ),
+      log_message: "Failed to start proxy connection"
+    }
+  end
+
+  defp process({:error, :proxy_supervisor_unavailable}, _context) do
+    %{
+      error: Server.error_message("XX000", "Proxy supervisor unavailable"),
+      log_message: "Proxy supervisor unavailable after retries"
+    }
+  end
+
   defp process({:error, :max_clients_reached_session}, _context) do
     message =
       "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size"

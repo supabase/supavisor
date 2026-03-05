@@ -1,11 +1,10 @@
-defmodule Supavisor.ClientHandler.ProxySupervisorWatchdog do
+defmodule Supavisor.ClientHandler.Proxy.Watchdog do
   @moduledoc """
   Watchdog process for proxy connection supervisors.
 
   Sibling of the proxy DynamicSupervisor under `ProxySupervisor`. Periodically
   checks if the DynamicSupervisor has no children. Requires two consecutive
-  empty checks before terminating. Since it's a significant child, its
-  termination triggers `auto_shutdown: :any_significant` on the parent `ProxySupervisor`.
+  empty checks before terminating.
   """
 
   use GenServer
@@ -17,13 +16,31 @@ defmodule Supavisor.ClientHandler.ProxySupervisorWatchdog do
   @default_jitter :timer.seconds(5)
 
   @doc """
+  Returns a child spec for the watchdog, marked as significant and temporary.
+  """
+  @spec child_spec({Supavisor.id(), keyword()}) :: Supervisor.child_spec()
+  def child_spec({id, opts}) do
+    %{
+      id: :watchdog,
+      start: {__MODULE__, :start_link, [id, opts]},
+      significant: true,
+      restart: :temporary
+    }
+  end
+
+  @doc """
   Triggers an immediate check. Returns `:alive` if the watchdog stays up,
   or `:stopping` if it decided to shut down.
   """
+  @spec check_now(pid) :: :alive | :stopping
   def check_now(pid) do
     GenServer.call(pid, :check)
   end
 
+  @doc """
+  Starts the watchdog process.
+  """
+  @spec start_link(Supavisor.id(), keyword()) :: GenServer.on_start()
   def start_link(id, opts \\ []) do
     GenServer.start_link(__MODULE__, {id, opts})
   end

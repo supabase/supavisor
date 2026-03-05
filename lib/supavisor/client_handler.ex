@@ -465,13 +465,14 @@ defmodule Supavisor.ClientHandler do
           {:stop, :normal}
       end
     else
-      {:error, :max_proxy_connections_reached} ->
-        Error.maybe_log_and_send_error(data.sock, {:error, :max_proxy_connections_reached})
+      {:error, reason}
+      when reason in [
+             :max_proxy_connections_reached,
+             :failed_to_start_proxy_connection,
+             :proxy_supervisor_unavailable
+           ] ->
+        Error.maybe_log_and_send_error(data.sock, {:error, reason})
         Telem.client_join(:fail, data.id)
-        {:stop, :normal}
-
-      {:error, other} ->
-        Logger.error("ClientHandler: Connect DB proxy error: #{inspect(other)}")
         {:stop, :normal}
     end
   end
