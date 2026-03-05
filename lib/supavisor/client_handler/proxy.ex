@@ -31,7 +31,9 @@ defmodule Supavisor.ClientHandler.Proxy do
           {:ok, pid()} | {:error, start_error()}
   def start_proxy_connection(id, max_clients, auth, tenant_feature_flags, pool_ranch) do
     child_spec =
-      {Supavisor.DbHandler, build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch)}
+      Supavisor.DbHandler.child_spec(
+        build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch)
+      )
 
     do_start_proxy_connection(id, max_clients, child_spec, @max_sup_retries)
   end

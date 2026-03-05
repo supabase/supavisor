@@ -54,12 +54,22 @@ defmodule Supavisor.ClientHandler.Proxy.Watchdog do
   end
 
   @impl true
-  def handle_call(:check, _from, state), do: do_check(state)
+  def handle_call(:check, _from, state) do
+    case check_children(state) do
+      {:stop, new_state} -> {:stop, :normal, :stopping, new_state}
+      {:alive, new_state} -> {:reply, :alive, new_state}
+    end
+  end
 
   @impl true
-  def handle_info(:check, state), do: do_check(state)
+  def handle_info(:check, state) do
+    case check_children(state) do
+      {:stop, new_state} -> {:stop, :normal, new_state}
+      {:alive, new_state} -> {:noreply, new_state}
+    end
+  end
 
-  defp do_check(
+  defp check_children(
          %{id: id, empty_checks: empty_checks, check_interval: interval, jitter: jitter} = state
        ) do
     [{dyn_sup, _}] = Registry.lookup(@registry, {:proxy_dyn_sup, id})
@@ -70,15 +80,15 @@ defmodule Supavisor.ClientHandler.Proxy.Watchdog do
           "ProxySupervisorWatchdog: shutting down empty proxy supervisor for #{inspect(id)}"
         )
 
-        {:stop, :normal, :stopping, state}
+        {:stop, state}
 
       %{active: 0} ->
         schedule_check(interval, jitter)
-        {:reply, :alive, %{state | empty_checks: empty_checks + 1}}
+        {:alive, %{state | empty_checks: empty_checks + 1}}
 
       _ ->
         schedule_check(interval, jitter)
-        {:reply, :alive, %{state | empty_checks: 0}}
+        {:alive, %{state | empty_checks: 0}}
     end
   end
 
