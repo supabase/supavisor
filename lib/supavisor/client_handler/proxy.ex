@@ -45,24 +45,22 @@ defmodule Supavisor.ClientHandler.Proxy do
   end
 
   def do_start_proxy_connection(id, max_clients, child_spec, retries) do
-    try do
-      with :ok <- ensure_proxy_sup(id, max_clients),
-           {:ok, pid} <- ProxySupervisor.start_connection(id, child_spec) do
-        {:ok, pid}
-      else
-        {:error, :max_children} ->
-          {:error, :max_proxy_connections_reached}
+    with :ok <- ensure_proxy_sup(id, max_clients),
+         {:ok, pid} <- ProxySupervisor.start_connection(id, child_spec) do
+      {:ok, pid}
+    else
+      {:error, :max_children} ->
+        {:error, :max_proxy_connections_reached}
 
-        {:error, :proxy_sup_not_found} ->
-          do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
-
-        {:error, :failed_to_start} ->
-          {:error, :failed_to_start_proxy_connection}
-      end
-    catch
-      :exit, _reason ->
+      {:error, :proxy_sup_not_found} ->
         do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
+
+      {:error, :failed_to_start} ->
+        {:error, :failed_to_start_proxy_connection}
     end
+  catch
+    :exit, _reason ->
+      do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
   end
 
   defp ensure_proxy_sup(id, max_clients) do
