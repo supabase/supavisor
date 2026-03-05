@@ -416,12 +416,12 @@ defmodule Supavisor.ClientHandler do
         {:stop, :normal}
 
       :proxy ->
-        case Proxy.prepare_proxy_connection(data) do
-          {:ok, updated_data} ->
+        case Supavisor.get_pool_ranch(data.id) do
+          {:ok, pool_ranch} ->
             Logger.metadata(proxy: true)
             Registry.register(@proxy_clients_registry, data.id, [])
 
-            {:keep_state, updated_data, {:next_event, :internal, :connect_db}}
+            {:keep_state, %{data | pool_ranch: pool_ranch}, {:next_event, :internal, :connect_db}}
 
           {:error, other} ->
             Logger.error("ClientHandler: Subscribe proxy error: #{inspect(other)}")
@@ -437,13 +437,26 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :connect_db, _state, data) do
     Logger.debug("ClientHandler: Trying to connect to DB")
 
-    args = Proxy.build_db_handler_args(data)
-
-    {:ok, db_pid} = DbHandler.start_link(args)
-
-    case DbHandler.checkout(db_pid, data.sock, self()) do
-      {:ok, db_sock} ->
-        {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
+    with {:ok, db_pid} <-
+           Proxy.start_proxy_connection(
+             data.id,
+             data.max_clients,
+             data.auth,
+             data.tenant_feature_flags,
+             data.pool_ranch
+           ),
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self()) do
+      {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
+    else
+      {:error, reason}
+      when reason in [
+             :max_proxy_connections_reached,
+             :failed_to_start_proxy_connection,
+             :proxy_supervisor_unavailable
+           ] ->
+        Error.maybe_log_and_send_error(data.sock, {:error, reason})
+        Telem.client_join(:fail, data.id)
+        {:stop, :normal}
 
       {:error, {:exit, {:timeout, _}}} ->
         timeout_error(data)
@@ -1112,7 +1125,8 @@ defmodule Supavisor.ClientHandler do
         ps: info.tenant.default_parameter_status,
         proxy_type: proxy_type,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
-        auth: auth
+        auth: auth,
+        max_clients: info.user.max_clients || info.tenant.default_max_clients
     }
   end
 

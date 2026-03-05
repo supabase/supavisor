@@ -1,41 +1,96 @@
 defmodule Supavisor.ClientHandler.Proxy do
   @moduledoc """
   Handles proxy connection logic for ClientHandler.
-
-  This module prepares proxy connections and database handler arguments
-  while leaving socket operations and process management to ClientHandler.
   """
 
-  @spec prepare_proxy_connection(map()) ::
-          {:ok, map()} | {:error, term()}
-  def prepare_proxy_connection(data) do
-    case Supavisor.get_pool_ranch(data.id) do
-      {:ok, %{port: port, host: host}} ->
-        updated_auth =
-          Map.merge(data.auth, %{
-            port: port,
-            host: to_charlist(host),
-            ip_version: :inet,
-            upstream_ssl: false,
-            upstream_tls_ca: nil,
-            upstream_verify: nil
-          })
+  require Logger
 
-        {:ok, %{data | auth: updated_auth}}
+  alias Supavisor.ClientHandler.Proxy.Supervisor, as: ProxySupervisor
 
-      error ->
-        {:error, error}
-    end
+  @max_sup_retries 3
+
+  @type start_error ::
+          :max_proxy_connections_reached
+          | :failed_to_start_proxy_connection
+          | :proxy_supervisor_unavailable
+
+  @doc """
+  Starts a proxy DbHandler for the given tenant.
+
+  Ensures the proxy supervisor tree exists, then starts a DbHandler under it.
+
+  Retries up to #{@max_sup_retries} times when the supervisor disappears between
+  lookup and use (race with watchdog shutdown).
+
+  Returns `{:ok, db_pid}` on success, or one of:
+  - `{:error, :max_proxy_connections_reached}` if the connection limit has been reached
+  - `{:error, :failed_to_start_proxy_connection}` if the child process failed to start
+  - `{:error, :proxy_supervisor_unavailable}` if the supervisor could not be started after retries
+  """
+  @spec start_proxy_connection(Supavisor.id(), pos_integer(), map(), map(), map()) ::
+          {:ok, pid()} | {:error, start_error()}
+  def start_proxy_connection(id, max_clients, auth, tenant_feature_flags, pool_ranch) do
+    child_spec =
+      Supavisor.DbHandler.child_spec(
+        build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch)
+      )
+
+    do_start_proxy_connection(id, max_clients, child_spec, @max_sup_retries)
   end
 
-  @spec build_db_handler_args(map()) :: map()
-  def build_db_handler_args(data) do
+  # This function is public for test purposes, so we can test the logic
+  # with mock processes, not DbHandlers
+  @doc false
+  @spec do_start_proxy_connection(
+          Supavisor.id(),
+          max_clients :: pos_integer(),
+          Supervisor.child_spec(),
+          attempts_remaining :: non_neg_integer()
+        ) ::
+          {:ok, pid()} | {:error, start_error()}
+  def do_start_proxy_connection(_id, _max_clients, _child_spec, 0) do
+    {:error, :proxy_supervisor_unavailable}
+  end
+
+  def do_start_proxy_connection(id, max_clients, child_spec, retries) do
+    with :ok <- ProxySupervisor.ensure_started(id, max_clients),
+         {:ok, pid} <- ProxySupervisor.start_connection(id, child_spec) do
+      {:ok, pid}
+    else
+      {:error, :max_children} ->
+        {:error, :max_proxy_connections_reached}
+
+      {:error, :proxy_sup_not_found} ->
+        do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
+
+      {:error, :failed_to_start} ->
+        {:error, :failed_to_start_proxy_connection}
+    end
+  catch
+    :exit, _reason ->
+      do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
+  end
+
+  @spec build_db_handler_args(Supavisor.id(), map(), map(), map()) :: map()
+  defp build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch) do
+    {tenant, user, _mode, _db_name, _search_path} = id
+
+    proxy_auth =
+      Map.merge(auth, %{
+        port: pool_ranch.port,
+        host: to_charlist(pool_ranch.host),
+        ip_version: :inet,
+        upstream_ssl: false,
+        upstream_tls_ca: nil,
+        upstream_verify: nil
+      })
+
     %{
-      id: data.id,
-      auth: data.auth,
-      user: data.user,
-      tenant: {:single, data.tenant},
-      tenant_feature_flags: data.tenant_feature_flags,
+      id: id,
+      auth: proxy_auth,
+      user: user,
+      tenant: tenant,
+      tenant_feature_flags: tenant_feature_flags,
       replica_type: :write,
       mode: :proxy,
       proxy: true,

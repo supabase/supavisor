@@ -714,6 +714,113 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  @tag cluster: true
+  test "local node enforces proxy pool limit when remote manager is unresponsive" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "proxy_pool_tenant"
+    username = db_conf[:username] <> "." <> tenant
+    id = {{:single, tenant}, db_conf[:username], :transaction, db_conf[:database], nil}
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    node2_port = Application.get_env(:supavisor, :secondary_proxy_port)
+
+    # Start the pool on node2 by connecting through it
+    {:ok, node2_conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: node2_port,
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: username,
+        connect_timeout: 5000
+      )
+
+    assert %P.Result{rows: [[1]]} = P.query!(node2_conn, "SELECT 1", [])
+
+    # Verify the pool supervisor lives on node2
+    assert :ok =
+             Enum.reduce_while(1..30, nil, fn _, _ ->
+               case Supavisor.get_global_sup(id) do
+                 pid when is_pid(pid) and node(pid) == node2 ->
+                   {:halt, :ok}
+
+                 _ ->
+                   Process.sleep(100)
+                   {:cont, nil}
+               end
+             end)
+
+    local_port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+    conn_opts = [
+      hostname: db_conf[:hostname],
+      port: local_port,
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: username
+    ]
+
+    # Suspend the manager on node2 to simulate it being overloaded/unresponsive
+    manager_pid = :erpc.call(node2, Supavisor, :get_local_manager, [id])
+    assert is_pid(manager_pid)
+    :erpc.call(node2, :sys, :suspend, [manager_pid])
+
+    # proxy_pool_tenant has max_clients: 2. Fire 5 connections concurrently —
+    # at least one must be rejected by the local proxy pool even though the
+    # remote manager is unresponsive and can't enforce limits itself.
+    monitored_tasks =
+      Enum.map(1..5, fn i ->
+        {:ok, pid} =
+          start_supervised(%{
+            id: {:conn_task, i},
+            start:
+              {Task, :start_link,
+               [
+                 fn ->
+                   receive do
+                     :go -> SingleConnection.connect(conn_opts)
+                   end
+                 end
+               ]},
+            restart: :temporary
+          })
+
+        {pid, Process.monitor(pid)}
+      end)
+
+    Enum.each(monitored_tasks, fn {pid, _} -> send(pid, :go) end)
+
+    results =
+      Enum.map(monitored_tasks, fn {pid, ref} ->
+        receive do
+          {:DOWN, ^ref, :process, ^pid, :normal} -> :ok
+          {:DOWN, ^ref, :process, ^pid, reason} -> {:error, reason}
+        after
+          15_000 -> {:error, :timeout}
+        end
+      end)
+
+    {max_conn_errors, other_errors} =
+      Enum.split_with(results, fn
+        {:error,
+         %Postgrex.Error{
+           postgres: %{code: :internal_error, message: "Max client connections reached"}
+         }} ->
+          true
+
+        _ ->
+          false
+      end)
+
+    assert length(max_conn_errors) == 3
+    assert length(other_errors) == 2
+
+    :erpc.call(node2, :sys, :resume, [manager_pid])
+    GenServer.stop(node2_conn)
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,

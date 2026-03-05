@@ -5,6 +5,23 @@ defmodule Supavisor.DbHandler do
 
   The state machine uses the Supavisor.Protocol.Server module to decode messages
   from the database and sends messages to the client socket it received on checkout.
+
+  ## Startup modes
+
+  DbHandler has two startup paths depending on the mode:
+
+  ### Pool mode (transaction/session)
+
+  Started via `start_link/1` by poolboy with a Manager config. Fetches auth
+  secrets (or enters `:waiting_for_secrets` if unavailable), then connects to
+  the database immediately. Workers are long-lived and shared across clients
+  via checkout/checkin.
+
+  ### Proxy mode
+
+  Started via `start_link/1` under a DynamicSupervisor with full connection
+  args. Connects to the proxy node immediately. One worker per client, with the
+  DynamicSupervisor's `:max_children` enforcing the connection limit.
   """
 
   @behaviour :gen_statem
@@ -43,16 +60,18 @@ defmodule Supavisor.DbHandler do
   @cleanup_buffer_limit 65_536
 
   @doc """
-  Starts a DbHandler state machine
-
-  Accepts two different types of args:
-
-  TODO: details about required arguments in each
-  - proxied
-  - not proxied
+  Starts a DbHandler state machine.
   """
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
+
+  def child_spec(config) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [config]},
+      restart: :temporary
+    }
+  end
 
   @doc """
   Checks out a DbHandler process
@@ -132,12 +151,8 @@ defmodule Supavisor.DbHandler do
 
     {id, config} =
       case args do
-        %{proxy: true} ->
-          {args.id, args}
-
-        %{} ->
-          config = Supavisor.Manager.get_config(args.id)
-          {args.id, config}
+        %{proxy: true} -> {args.id, args}
+        %{} -> {args.id, Supavisor.Manager.get_config(args.id)}
       end
 
     Helpers.set_log_level(config.log_level)
@@ -146,26 +161,21 @@ defmodule Supavisor.DbHandler do
     {_, tenant} = config.tenant
     Logger.metadata(project: tenant, user: config.user, mode: config.mode)
 
-    auth =
-      if config[:proxy] do
-        # Proxy mode: secrets already in config.auth from ClientHandler
-        {:ok, config.auth}
-      else
-        # Pool mode: fetch secrets from TenantCache
-        get_auth_with_secrets(config.auth, id)
-      end
-
     {auth_value, manager_ref} =
-      case auth do
-        {:ok, auth_with_secrets} ->
-          {auth_with_secrets, nil}
+      if config[:proxy] do
+        {config.auth, nil}
+      else
+        case get_auth_with_secrets(config.auth, id) do
+          {:ok, auth_with_secrets} ->
+            {auth_with_secrets, nil}
 
-        {:error, :no_secrets} ->
-          Logger.warning("DbHandler: Secrets not available, entering waiting state")
-          manager_pid = Supavisor.get_local_manager(id)
-          ref = Process.monitor(manager_pid)
-          Supavisor.Manager.register_waiting_for_secrets(id, self())
-          {config.auth, ref}
+          {:error, :no_secrets} ->
+            Logger.warning("DbHandler: Secrets not available, entering waiting state")
+            manager_pid = Supavisor.get_local_manager(id)
+            ref = Process.monitor(manager_pid)
+            Supavisor.Manager.register_waiting_for_secrets(id, self())
+            {config.auth, ref}
+        end
       end
 
     data = %{
@@ -185,8 +195,8 @@ defmodule Supavisor.DbHandler do
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
       mode: config.mode,
       replica_type: config.replica_type,
-      caller: Map.get(config, :caller) || nil,
-      client_sock: Map.get(config, :client_sock) || nil,
+      caller: nil,
+      client_sock: nil,
       reconnect_retries: 0,
       terminating_error: nil,
       manager_ref: manager_ref
