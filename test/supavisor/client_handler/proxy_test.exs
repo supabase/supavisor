@@ -26,8 +26,16 @@ defmodule Supavisor.ClientHandler.ProxyTest do
       spawn_link(fn ->
         Enum.map(1..1_000, fn _ ->
           case Registry.lookup(@registry, {:proxy_dyn_sup, id}) do
-            [{pid, _}] -> GenServer.stop(pid, :shutdown)
-            [] -> :noop
+            [{pid, _}] ->
+              try do
+                GenServer.stop(pid, :shutdown)
+              catch
+                :exit, _ ->
+                  :ok
+              end
+
+            [] ->
+              :noop
           end
 
           :timer.sleep(2)
