@@ -81,18 +81,6 @@ defmodule Supavisor.ClientHandler.Proxy.Supervisor do
     end
   end
 
-  @doc """
-  Returns the watchdog pid for the given proxy supervisor.
-  """
-  def get_watchdog(proxy_sup) do
-    {_, pid, _, _} =
-      proxy_sup
-      |> Supervisor.which_children()
-      |> List.keyfind(:watchdog, 0)
-
-    pid
-  end
-
   @impl true
   def init(opts) do
     id = Keyword.fetch!(opts, :id)
