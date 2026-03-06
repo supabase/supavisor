@@ -13,6 +13,7 @@ defmodule Supavisor.ClientHandler.Auth do
 
   alias Supavisor.{Helpers, Protocol.Server}
   alias Supavisor.ClientHandler.Auth.{MD5Secrets, PasswordSecrets, SASLSecrets}
+  alias Supavisor.Errors.{JitRequestFailedError, JitUnauthorizedError, WrongPasswordError}
 
   @type auth_method :: :password | :auth_query | :auth_query_md5 | :auth_query_jit
   @type auth_secrets :: {auth_method(), function()}
@@ -122,7 +123,7 @@ defmodule Supavisor.ClientHandler.Auth do
         try do
           Helpers.check_user_has_jit_role(tenant.jit_api_url, password, secret.user, rhost)
         rescue
-          _ -> {:error, :request_failed}
+          _ -> {:error, %JitRequestFailedError{user: secret.user, reason: :request_crashed}}
         end
 
       case result do
@@ -131,15 +132,13 @@ defmodule Supavisor.ClientHandler.Auth do
           {:ok, :crypto.hash(:sha256, password), :auth_query_jit}
 
         {:ok, false} ->
-          Logger.debug("User token is valid but can't assume this role")
-          {:error, :wrong_password, :auth_query_jit}
+          {:error, %JitUnauthorizedError{user: secret.user, reason: :role_not_granted}}
 
         {:error, :unauthorized_or_forbidden} ->
-          {:error, :wrong_password, :auth_query_jit}
+          {:error, %JitUnauthorizedError{user: secret.user, reason: :unauthorized_or_forbidden}}
 
         {:error, _} ->
-          Logger.debug("Unexpected error while calling API")
-          {:error, :wrong_password, :auth_query_jit}
+          {:error, %JitRequestFailedError{user: secret.user, reason: :unexpected_api_error}}
       end
     else
       # match against the scram-sha-256 / md5 we have from auth_query
@@ -155,12 +154,12 @@ defmodule Supavisor.ClientHandler.Auth do
 
           if :crypto.hash_equals(stored_key, secret.stored_key),
             do: {:ok, client_key, :auth_query},
-            else: {:error, :wrong_password, :auth_query}
+            else: {:error, %WrongPasswordError{user: secret.user}}
 
         _ ->
           # reject md5 auth as it isn't supported and doesn't work in
           # non-jit access mode either
-          {:error, :wrong_password, :auth_query_md5}
+          {:error, %WrongPasswordError{user: secret.user}}
       end
     end
   end
@@ -272,7 +271,8 @@ defmodule Supavisor.ClientHandler.Auth do
         _info,
         _tenant,
         _user,
-        _current_secrets_fn
+        _current_secrets_fn,
+        _ssl
       ) do
     # For other exceptions (protocol errors, timeouts), no cache update is needed
     Logger.debug("ClientHandler: No cache check needed for non-password error")

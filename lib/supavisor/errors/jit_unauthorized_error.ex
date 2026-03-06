@@ -1,12 +1,14 @@
-defmodule Supavisor.Errors.WrongPasswordError do
+defmodule Supavisor.Errors.JitUnauthorizedError do
   @moduledoc """
-  This error is returned when password authentication fails for a user.
+  This error is returned when a JIT token is valid but the user cannot assume the requested role,
+  or when the API returns 401/403.
   """
 
-  use Supavisor.Error, [:user, code: "EWRONGPASSWORD"]
+  use Supavisor.Error, [:user, :reason, code: "EJITUNAUTHORIZED"]
 
   @type t() :: %__MODULE__{
           user: binary(),
+          reason: :role_not_granted | :unauthorized_or_forbidden,
           code: binary()
         }
 
@@ -16,13 +18,11 @@ defmodule Supavisor.Errors.WrongPasswordError do
   end
 
   @impl Supavisor.Error
-  def log_message(%{user: user}) do
-    "Exchange error: password authentication failed for user \"#{user}\""
+  def log_message(%{user: user, reason: reason}) do
+    "JIT unauthorized for user \"#{user}\": #{reason}"
   end
 
   @impl Supavisor.Error
-  # Use the plain message without the error code prefix to match
-  # the standard PostgreSQL authentication error format on the wire.
   def postgres_error(%{user: user}) do
     Supavisor.Error.protocol_error(
       "FATAL",
