@@ -72,7 +72,7 @@ defmodule Supavisor.SynHandler do
       end)
     else
       Logger.warning(
-        "SynHandler: Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}"
+        "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, remote pid: #{inspect(stop)}"
       )
     end
 

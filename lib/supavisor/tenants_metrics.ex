@@ -33,7 +33,7 @@ defmodule Supavisor.TenantsMetrics do
 
     MapSet.difference(state.pools, active_pools)
     |> Enum.each(fn Supavisor.id(tenant: tenant) = pool ->
-      Logger.debug("Removing cached metrics for #{inspect(pool)}")
+      Logger.debug("Removing cached metrics for #{Supavisor.inspect_id(pool)}")
       Cachex.del(Supavisor.Cache, {:metrics, tenant})
     end)
 
