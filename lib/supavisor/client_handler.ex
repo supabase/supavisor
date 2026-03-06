@@ -244,7 +244,7 @@ defmodule Supavisor.ClientHandler do
          :ok <- check_ssl_enforcement(data, info, user),
          :ok <- check_address_allowed(sock, info),
          :ok <- Manager.check_client_limit(id, info, data.mode),
-         {:ok, auth_secrets} <- get_secrets(id, info, user, tenant_or_alias) do
+         {:ok, auth_secrets} <- get_secrets(id, info, user, tenant_or_alias, data.ssl) do
       Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
       new_data = set_tenant_info(data, info, user, id, db_name)
       {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
@@ -265,13 +265,6 @@ defmodule Supavisor.ClientHandler do
     case Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error) do
       :ok ->
         case method do
-          :auth_query_md5 ->
-            auth_context = Auth.create_auth_context(method, secrets, info)
-            :ok = HandlerHelpers.sock_send(sock, Server.md5_request(auth_context.salt))
-
-            {:next_state, :auth_md5_wait, %{data | auth_context: auth_context},
-             {:timeout, 15_000, :auth_timeout}}
-
           :auth_query_jit ->
             auth_context = Auth.create_auth_context(method, secrets, info)
             :ok = HandlerHelpers.sock_send(sock, Server.password_request())
@@ -361,7 +354,7 @@ defmodule Supavisor.ClientHandler do
              data.tenant_feature_flags,
              data.pool_ranch
            ),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self()) do
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
     else
       {:error, exception} ->
@@ -524,26 +517,6 @@ defmodule Supavisor.ClientHandler do
 
   # Authentication state handlers
 
-  # MD5 authentication - waiting for password response
-  def handle_event(:info, {proto, _socket, bin}, :auth_md5_wait, data) when proto in @proto do
-    auth_context = data.auth_context
-
-    with {:ok, client_md5} <- Auth.parse_auth_message(bin, auth_context.method, :auth_md5_wait),
-         {:ok, key} <-
-           Auth.validate_credentials(
-             auth_context.method,
-             auth_context.secrets.().secret,
-             auth_context.salt,
-             client_md5,
-             data.user
-           ) do
-      handle_auth_success(data.sock, {auth_context.method, auth_context.secrets}, key, data)
-    else
-      {:error, exception} ->
-        handle_auth_failure(exception, data)
-    end
-  end
-
   def handle_event(:info, {proto, socket, bin}, :auth_password_wait, data)
       when proto in @proto do
     auth_context = data.auth_context
@@ -566,8 +539,8 @@ defmodule Supavisor.ClientHandler do
         data
       )
     else
-      {:error, reason, _} ->
-        handle_auth_failure(data.sock, reason, data, :auth_password_wait)
+      {:error, exception} ->
+        handle_auth_failure(exception, data)
     end
   end
 
@@ -576,7 +549,7 @@ defmodule Supavisor.ClientHandler do
       when proto in @proto do
     auth_context = data.auth_context
 
-    case Auth.parse_auth_message(bin, auth_context.method, :auth_scram_first_wait) do
+    case Auth.parse_auth_message(bin, :auth_scram_first_wait) do
       {:ok, {user, nonce, channel}} ->
         {message, signatures} =
           Auth.prepare_auth_challenge(
@@ -603,7 +576,7 @@ defmodule Supavisor.ClientHandler do
       when proto in @proto do
     auth_context = data.auth_context
 
-    with {:ok, p} <- Auth.parse_auth_message(bin, auth_context.method, :auth_scram_final_wait),
+    with {:ok, p} <- Auth.parse_auth_message(bin, :auth_scram_final_wait),
          {:ok, key} <-
            Auth.validate_credentials(
              auth_context.method,
@@ -624,7 +597,6 @@ defmodule Supavisor.ClientHandler do
   # Authentication timeout handler
   def handle_event(:timeout, :auth_timeout, auth_state, data)
       when auth_state in [
-             :auth_md5_wait,
              :auth_scram_first_wait,
              :auth_scram_final_wait,
              :auth_password_wait
@@ -1020,9 +992,9 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  defp get_secrets(id, info, user, tenant_or_alias) do
+  defp get_secrets(id, info, user, tenant_or_alias, ssl) do
     with :ok <- Supavisor.CircuitBreaker.check(tenant_or_alias, :get_secrets),
-         {:ok, auth_secrets} <- Auth.get_user_secrets(id, info, user, tenant_or_alias) do
+         {:ok, auth_secrets} <- Auth.get_user_secrets(id, info, user, tenant_or_alias, ssl) do
       {:ok, auth_secrets}
     else
       {:error, %CircuitBreakerError{}} = error ->

@@ -235,11 +235,12 @@ defmodule Supavisor.ClientHandler.Auth do
   def check_and_update_secrets(
         method,
         %Supavisor.Errors.WrongPasswordError{} = _exception,
-        reason,
         client_id,
         info,
         tenant,
         user,
+        current_secrets_fn,
+        ssl
       ) do
     if method != :password and
          not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
@@ -282,33 +283,8 @@ defmodule Supavisor.ClientHandler.Auth do
 
   @doc """
   Parses authentication response packets for different auth methods.
-
-  Returns parsed credentials or error information.
   """
-  @spec parse_auth_message(binary(), auth_method(), atom()) ::
-          {:ok, term()} | {:error, Supavisor.Errors.AuthProtocolError.t()}
-  def parse_auth_message(bin, :auth_query_md5, context) do
-    case Server.decode_pkt(bin) do
-      {:ok, %{tag: :password_message, payload: {:md5, client_md5}}, _} ->
-        {:ok, client_md5}
-
-      {:error, error} ->
-        {:error,
-         %Supavisor.Errors.AuthProtocolError{
-           details: {:decode_error, error},
-           context: context
-         }}
-
-      other ->
-        {:error,
-         %Supavisor.Errors.AuthProtocolError{
-           details: {:unexpected_message, other},
-           context: context
-         }}
-    end
-  end
-
-  def parse_auth_message(bin, _scram_method, context) do
+  def parse_auth_message(bin, context) do
     case Server.decode_pkt(bin) do
       {:ok, %{tag: :password_message, payload: {:cleartext_password, cls_password}}, _} ->
         {:ok, cls_password}

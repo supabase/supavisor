@@ -122,7 +122,7 @@ defmodule Supavisor.CircuitBreaker do
 
       [{^ets_key, blocked}] ->
         if blocked > System.system_time(:second) do
-          {:error, %CircuitBreakerError{operation: operation, blocked_until: blocked_until}}
+          {:error, %CircuitBreakerError{operation: operation, blocked_until: blocked}}
         else
           :ets.delete_object(@blocks_table, {ets_key, blocked})
           :ok
