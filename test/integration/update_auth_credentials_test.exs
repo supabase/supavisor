@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
   use SupavisorWeb.ConnCase, async: false
 
   require Logger
+  require Supavisor
 
   alias Postgrex, as: P
 
@@ -100,8 +101,13 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
       Process.sleep(100)
 
       id =
-        {{:single, tenant_id}, to_string(db_conf[:username]), :transaction, db_conf[:database],
-         nil}
+        Supavisor.id(
+          type: :single,
+          tenant: tenant_id,
+          user: to_string(db_conf[:username]),
+          mode: :transaction,
+          db: db_conf[:database]
+        )
 
       [{secret_checker_pid, _}] =
         Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id})

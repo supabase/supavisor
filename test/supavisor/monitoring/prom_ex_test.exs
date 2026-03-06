@@ -2,6 +2,8 @@ defmodule Supavisor.Monitoring.PromExTest do
   use Supavisor.DataCase, async: true
   use ExUnitProperties
 
+  require Supavisor
+
   @subject Supavisor.Monitoring.PromEx
 
   describe "get_metrics/1" do
@@ -37,7 +39,7 @@ defmodule Supavisor.Monitoring.PromExTest do
       check all db_name <- string(:printable, min_length: 1, max_length: 63) do
         Supavisor.Monitoring.Telem.client_join(
           :ok,
-          {{:single, tenant}, user, :session, db_name, nil}
+          Supavisor.id(type: :single, tenant: tenant, user: user, mode: :session, db: db_name)
         )
 
         metrics = @subject.get_metrics()
@@ -65,7 +67,7 @@ defmodule Supavisor.Monitoring.PromExTest do
       check all user <- string(:printable, min_length: 1, max_length: 63) do
         Supavisor.Monitoring.Telem.client_join(
           :ok,
-          {{:single, tenant}, user, :session, db_name, nil}
+          Supavisor.id(type: :single, tenant: tenant, user: user, mode: :session, db: db_name)
         )
 
         metrics = @subject.get_metrics()
@@ -93,7 +95,7 @@ defmodule Supavisor.Monitoring.PromExTest do
       check all tenant <- string(:printable, min_length: 1) do
         Supavisor.Monitoring.Telem.client_join(
           :ok,
-          {{:single, tenant}, user, :session, db_name, nil}
+          Supavisor.id(type: :single, tenant: tenant, user: user, mode: :session, db: db_name)
         )
 
         metrics = @subject.get_metrics()

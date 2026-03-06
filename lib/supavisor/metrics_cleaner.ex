@@ -3,6 +3,7 @@ defmodule Supavisor.MetricsCleaner do
 
   use GenServer
   require Logger
+  require Supavisor
 
   @interval :timer.minutes(30)
   @name __MODULE__
@@ -97,7 +98,17 @@ defmodule Supavisor.MetricsCleaner do
          db_name: db,
          search_path: search_path
        }) do
-    :ets.lookup(@tenant_registry_table, {{type, tenant}, user, mode, db, search_path}) == []
+    id =
+      Supavisor.id(
+        type: type,
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        db: db,
+        search_path: search_path
+      )
+
+    :ets.lookup(@tenant_registry_table, id) == []
   end
 
   defp tenant_down?(%{tenant: tenant}) do

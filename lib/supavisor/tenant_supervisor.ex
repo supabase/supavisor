@@ -3,6 +3,7 @@ defmodule Supavisor.TenantSupervisor do
   use Supervisor
 
   require Logger
+  require Supavisor
   alias Supavisor.Manager
   alias Supavisor.SecretChecker
   alias Supavisor.Terminator
@@ -15,7 +16,15 @@ defmodule Supavisor.TenantSupervisor do
 
   @impl true
   def init(%{replicas: replicas} = args) do
-    {{type, tenant}, user, mode, db_name, search_path} = args.id
+    Supavisor.id(
+      type: type,
+      tenant: tenant,
+      user: user,
+      mode: mode,
+      db: db_name,
+      search_path: search_path
+    ) = args.id
+
     min_size = if Supavisor.Helpers.no_warm_pool_user?(user), do: 0, else: 1
 
     pools =
@@ -47,7 +56,7 @@ defmodule Supavisor.TenantSupervisor do
         | pools
       ] ++ [{Terminator, terminator_args}]
 
-    map_id = %{user: user, mode: mode, type: type, db_name: db_name, search_path: search_path}
+    map_id = %{user: user, mode: mode, type: type, db: db_name, search_path: search_path}
     Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
 
     Supervisor.init(children,

@@ -4,8 +4,16 @@ defmodule Supavisor.DbHandlerTest do
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.Server
 
+  require Supavisor
+
   # import Mock
-  @id {{:single, "tenant"}, "user", :transaction, "postgres", nil}
+  @id Supavisor.id(
+        type: :single,
+        tenant: "tenant",
+        user: "user",
+        mode: :transaction,
+        db: "postgres"
+      )
 
   defmodule MockDbHandler do
     use GenServer

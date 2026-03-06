@@ -1,6 +1,7 @@
 defmodule Supavisor.HotUpgradeTest do
   use Supavisor.DataCase, async: false
 
+  require Supavisor
   alias Supavisor.HotUpgrade
   alias Postgrex, as: P
 
@@ -66,7 +67,15 @@ defmodule Supavisor.HotUpgradeTest do
     test "reinit_upstream_secrets replaces cached function in #{mode} mode" do
       %{user: user, db_conf: db_conf, proxy: proxy, port: port} = setup_pool(unquote(mode))
 
-      id = {{:single, @tenant}, user, unquote(mode), db_conf[:database], nil}
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: @tenant,
+          user: user,
+          mode: unquote(mode),
+          db: db_conf[:database]
+        )
+
       table = get_tenant_table(id)
 
       [{:upstream_auth_secrets, {method, original_fn}}] =

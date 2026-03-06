@@ -76,7 +76,7 @@ defmodule Supavisor.ClientHandler.Proxy.Watchdog do
          %{active: 0} <- DynamicSupervisor.count_children(dyn_sup) do
       if empty_checks >= 1 do
         Logger.debug(
-          "ProxySupervisorWatchdog: shutting down empty proxy supervisor for #{inspect(id)}"
+          "ProxySupervisorWatchdog: shutting down empty proxy supervisor for #{Supavisor.inspect_id(id)}"
         )
 
         {:stop, state}

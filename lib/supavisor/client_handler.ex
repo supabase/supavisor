@@ -10,6 +10,7 @@ defmodule Supavisor.ClientHandler do
   require Logger
 
   require Record
+  require Supavisor
 
   # Import the sslsocket record definition
   Record.defrecord(
@@ -216,12 +217,12 @@ defmodule Supavisor.ClientHandler do
 
         id =
           Supavisor.id(
-            {type, tenant_or_alias},
-            user,
-            data.mode,
-            info.user.mode_type,
-            db_name,
-            search_path
+            type: type,
+            tenant: tenant_or_alias,
+            user: user,
+            mode: data.mode,
+            db: db_name,
+            search_path: search_path
           )
 
         Logger.metadata(
@@ -352,7 +353,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:internal, :subscribe, _state, data) do
-    Logger.debug("ClientHandler: Subscribe to tenant #{inspect(data.id)}")
+    Logger.debug("ClientHandler: Subscribe to tenant #{Supavisor.inspect_id(data.id)}")
 
     with :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
          {:ok, sup} <-

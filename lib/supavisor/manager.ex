@@ -5,6 +5,7 @@ defmodule Supavisor.Manager do
 
   use GenServer
   require Logger
+  require Supavisor
 
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
@@ -128,7 +129,8 @@ defmodule Supavisor.Manager do
     tid = :ets.new(__MODULE__, [:protected])
     pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
 
-    {{type, tenant}, user, mode, db_name, _search_path} = args.id
+    Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db_name) = args.id
+
     {method, secrets} = args.secrets
 
     {tenant_record, replica_type} =
@@ -234,12 +236,12 @@ defmodule Supavisor.Manager do
   @impl true
   def handle_call({:subscribe, _pid}, _, %{terminating_error: error} = state)
       when not is_nil(error) do
-    Logger.warning("Rejecting subscription to terminating pool #{inspect(state.id)}")
+    Logger.warning("Rejecting subscription to terminating pool #{Supavisor.inspect_id(state.id)}")
     {:reply, {:error, :terminating, error}, state}
   end
 
   def handle_call({:subscribe, pid}, _, state) do
-    Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect(state.id)}")
+    Logger.debug("Subscribing #{inspect(pid)} to tenant #{Supavisor.inspect_id(state.id)}")
 
     limit = if state.mode == :session, do: state.pool_size, else: state.max_clients
 
@@ -314,12 +316,15 @@ defmodule Supavisor.Manager do
 
   def handle_call({:graceful_shutdown, _timeout}, _from, %{terminating_error: error} = state)
       when not is_nil(error) do
-    Logger.debug("Pool #{inspect(state.id)} already terminating, skipping graceful shutdown")
+    Logger.debug(
+      "Pool #{Supavisor.inspect_id(state.id)} already terminating, skipping graceful shutdown"
+    )
+
     {:reply, :ok, state}
   end
 
   def handle_call({:graceful_shutdown, timeout}, from, state) do
-    Logger.info("Pool #{inspect(state.id)} shutting down gracefully")
+    Logger.info("Pool #{Supavisor.inspect_id(state.id)} shutting down gracefully")
 
     each_client(state, fn {_, pid, _} ->
       Supavisor.ClientHandler.graceful_shutdown(pid)
@@ -342,7 +347,10 @@ defmodule Supavisor.Manager do
 
   @impl true
   def handle_cast({:shutdown_with_error, error}, state) do
-    Logger.warning("Shutting down pool #{inspect(state.id)} with error: #{inspect(error)}")
+    Logger.warning(
+      "Shutting down pool #{Supavisor.inspect_id(state.id)} with error: #{inspect(error)}"
+    )
+
     error_message = Server.encode_error_message(error)
 
     each_client(state, fn {_, pid, _} ->
@@ -409,7 +417,9 @@ defmodule Supavisor.Manager do
   end
 
   def handle_info(:drain_timeout, state) do
-    Logger.warning("Pool #{inspect(state.id)} drain timeout, force terminating remaining clients")
+    Logger.warning(
+      "Pool #{Supavisor.inspect_id(state.id)} drain timeout, force terminating remaining clients"
+    )
 
     error_message = Server.encode_error_message(Server.admin_shutdown())
 
@@ -428,7 +438,7 @@ defmodule Supavisor.Manager do
     Process.cancel_timer(state.check_ref)
 
     if :ets.info(state.tid, :size) == 0 do
-      Logger.info("No subscribers for pool #{inspect(state.id)}, shutting down")
+      Logger.info("No subscribers for pool #{Supavisor.inspect_id(state.id)}, shutting down")
       async_stop_sup(state)
       {:noreply, state}
     else
@@ -503,7 +513,7 @@ defmodule Supavisor.Manager do
 
   defp resolve_manager(id) do
     case Supavisor.get_local_manager(id) do
-      nil -> raise "Manager not found for pool #{inspect(id)}"
+      nil -> raise "Manager not found for pool #{Supavisor.inspect_id(id)}"
       pid -> pid
     end
   end

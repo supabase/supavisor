@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
   use Supavisor.DataCase, async: false
 
   require Logger
+  require Supavisor
 
   alias Postgrex, as: P
   alias Supavisor.Manager
@@ -56,7 +57,15 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
 
   setup do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
-    id = {{:single, @tenant}, db_conf[:username], :transaction, db_conf[:database], nil}
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: @tenant,
+        user: db_conf[:username],
+        mode: :transaction,
+        db: db_conf[:database]
+      )
 
     on_exit(fn ->
       Supavisor.stop(id)

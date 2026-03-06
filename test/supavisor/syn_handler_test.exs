@@ -2,10 +2,17 @@ defmodule Supavisor.SynHandlerTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
   require Logger
+  require Supavisor
   alias Ecto.Adapters.SQL.Sandbox
   alias Supavisor.Support.Cluster
 
-  @id {{:single, "syn_tenant"}, "postgres", :session, "postgres", nil}
+  @id Supavisor.id(
+        type: :single,
+        tenant: "syn_tenant",
+        user: "postgres",
+        mode: :session,
+        db: "postgres"
+      )
 
   @tag cluster: true
   test "resolving conflict" do
