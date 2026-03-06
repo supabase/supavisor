@@ -14,27 +14,6 @@ defmodule Supavisor.Monitoring.Telem do
     end
   end
 
-  @spec id_to_tags(Supavisor.id()) :: map()
-  defp id_to_tags(
-         Supavisor.id(
-           type: type,
-           tenant: tenant,
-           user: user,
-           mode: mode,
-           db: db_name,
-           search_path: search_path
-         )
-       ) do
-    %{
-      type: type,
-      tenant: tenant,
-      user: user,
-      mode: mode,
-      db_name: db_name,
-      search_path: search_path
-    }
-  end
-
   @spec network_usage(:client | :db, Supavisor.sock(), Supavisor.id(), map()) ::
           {:ok | :error, map()}
   if @disabled do
@@ -136,5 +115,26 @@ defmodule Supavisor.Monitoring.Telem do
       %{count: count},
       id_to_tags(id)
     )
+  end
+
+  @spec id_to_tags(Supavisor.id()) :: map()
+  defp id_to_tags(
+         Supavisor.id(
+           type: type,
+           tenant: tenant,
+           user: user,
+           mode: mode,
+           db: db_name,
+           search_path: search_path
+         )
+       ) do
+    %{
+      type: type,
+      tenant: tenant,
+      user: user,
+      mode: mode,
+      db_name: db_name,
+      search_path: search_path
+    }
   end
 end
