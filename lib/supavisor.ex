@@ -433,17 +433,17 @@ defmodule Supavisor do
     import Inspect.Algebra
 
     fields = [
-      {"type:", type},
-      {"tenant:", tenant},
-      {"mode:", mode},
-      {"user:", user},
-      {"db:", db},
-      {"search_path:", search_path}
+      {"type: ", type},
+      {"tenant: ", tenant},
+      {"mode: ", mode},
+      {"user: ", user},
+      {"db: ", db},
+      {"search_path: ", search_path}
     ]
 
     fun = fn {key, value}, doc_opts ->
       if value do
-        glue(key, to_doc(value, doc_opts))
+        concat(key, to_doc(value, doc_opts))
       else
         empty()
       end
