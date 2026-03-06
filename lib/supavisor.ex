@@ -86,8 +86,7 @@ defmodule Supavisor do
 
   @spec subscribe(id, pid) ::
           {:ok, subscribe_opts}
-          | {:error, Supavisor.Errors.SessionMaxClientsError.t()}
-          | {:error, Supavisor.Errors.MaxClientConnectionsError.t()}
+          | {:error, Supavisor.Errors.MaxConnectionsError.t()}
           | {:error, Supavisor.Errors.PoolTerminatingError.t()}
           | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def subscribe(id, pid \\ self()) do

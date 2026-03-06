@@ -11,9 +11,8 @@ defmodule Supavisor.Manager do
   alias Supavisor.Helpers
 
   alias Supavisor.Errors.{
-    MaxClientConnectionsError,
-    PoolTerminatingError,
-    SessionMaxClientsError
+    MaxConnectionsError,
+    PoolTerminatingError
   }
 
   @check_timeout 120_000
@@ -35,8 +34,7 @@ defmodule Supavisor.Manager do
   """
   @spec subscribe(pid, pid) ::
           {:ok, iodata() | [], integer}
-          | {:error, MaxClientConnectionsError.t()}
-          | {:error, SessionMaxClientsError.t()}
+          | {:error, MaxConnectionsError.t()}
           | {:error, PoolTerminatingError.t()}
   def subscribe(manager, pid) when node(manager) == node() do
     GenServer.call(manager, {:subscribe, pid})
@@ -54,7 +52,7 @@ defmodule Supavisor.Manager do
   - `:transaction` mode: limited by max_clients
   """
   @spec check_client_limit(Supavisor.id(), map(), :session | :transaction) ::
-          :ok | {:error, MaxClientConnectionsError.t() | SessionMaxClientsError.t()}
+          :ok | {:error, MaxConnectionsError.t()}
   def check_client_limit(id, info, mode) do
     case Registry.lookup(Supavisor.Registry.ManagerTables, id) do
       [{_pid, tid}] ->
@@ -546,15 +544,15 @@ defmodule Supavisor.Manager do
   end
 
   @spec check_limit(Supavisor.mode(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
-          :ok | {:error, SessionMaxClientsError.t()} | {:error, MaxClientConnectionsError.t()}
+          :ok | {:error, MaxConnectionsError.t()}
   defp check_limit(:session, pool_size, _max_clients, current_count)
        when current_count >= pool_size do
-    {:error, %SessionMaxClientsError{pool_size: pool_size}}
+    {:error, MaxConnectionsError.new(:session, pool_size)}
   end
 
   defp check_limit(:transaction, _pool_size, max_clients, current_count)
        when current_count >= max_clients do
-    {:error, %MaxClientConnectionsError{limit: max_clients}}
+    {:error, MaxConnectionsError.new(:transaction, max_clients)}
   end
 
   defp check_limit(_mode, _pool_size, _max_clients, _current_count), do: :ok

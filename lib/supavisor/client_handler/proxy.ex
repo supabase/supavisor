@@ -8,7 +8,7 @@ defmodule Supavisor.ClientHandler.Proxy do
   alias Supavisor.ClientHandler.Proxy.Supervisor, as: ProxySupervisor
 
   alias Supavisor.Errors.{
-    MaxProxyConnectionsReachedError,
+    MaxConnectionsError,
     FailedToStartProxyConnectionError,
     ProxySupervisorUnavailableError
   }
@@ -16,7 +16,7 @@ defmodule Supavisor.ClientHandler.Proxy do
   @max_sup_retries 3
 
   @type start_error ::
-          MaxProxyConnectionsReachedError.t()
+          MaxConnectionsError.t()
           | FailedToStartProxyConnectionError.t()
           | ProxySupervisorUnavailableError.t()
 
@@ -61,7 +61,7 @@ defmodule Supavisor.ClientHandler.Proxy do
       {:ok, pid}
     else
       {:error, :max_children} ->
-        {:error, %MaxProxyConnectionsReachedError{limit: max_clients}}
+        {:error, MaxConnectionsError.new(:proxy, max_clients)}
 
       {:error, :proxy_sup_not_found} ->
         do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
