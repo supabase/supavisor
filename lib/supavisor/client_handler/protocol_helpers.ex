@@ -14,6 +14,12 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   require Logger
 
   alias Supavisor.{
+    Errors.InvalidUserInfoError,
+    Errors.StartupMessageError,
+    Errors.MaxPreparedStatementsError,
+    Errors.PreparedStatementNotFoundError,
+    Errors.SimpleQueryNotSupportedError,
+    Errors.DuplicatePreparedStatementError,
     FeatureFlag,
     HandlerHelpers,
     Helpers,
@@ -23,18 +29,15 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
 
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
 
-  @type startup_result ::
-          {:ok, {atom(), {String.t(), String.t(), String.t() | nil, String.t() | nil}},
-           String.t(), atom() | nil}
-          | {:error, term()}
-
   @type packet_processing_result ::
           {:ok, MessageStreamer.stream_state(), [PreparedStatements.handled_pkt()] | binary()}
-          | {:error, :max_prepared_statements}
-          | {:error, :max_prepared_statements_memory}
-          | {:error, :prepared_statement_on_simple_query}
-          | {:error, :duplicate_prepared_statement, PreparedStatements.statement_name()}
-          | {:error, :prepared_statement_not_found, PreparedStatements.statement_name()}
+          | {:error, MaxPreparedStatementsError.t()}
+          | {:error, SimpleQueryNotSupportedError.t()}
+          | {:error, DuplicatePreparedStatementError.t()}
+          | {:error, PreparedStatementNotFoundError.t()}
+
+  @type startup_message_data() ::
+          {atom(), {String.t(), String.t(), String.t() | nil, String.t() | nil}}
 
   ## Startup Packet Processing
 
@@ -43,24 +46,17 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
 
   Returns parsed user info, application name, and log level if successful.
   """
-  @spec parse_startup_packet(binary()) :: startup_result()
+  @spec parse_startup_packet(binary()) ::
+          {:ok, startup_message_data(), String.t() | nil, Logger.level() | nil}
+          | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
-    case Client.decode_startup_packet(bin) do
-      {:ok, hello} ->
-        Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
-
-        case extract_and_validate_user_info(hello.payload) do
-          {:ok, {type, {user, tenant_or_alias, db_name, search_path}}} ->
-            app_name = normalize_app_name(hello.payload["application_name"])
-            log_level = extract_log_level(hello)
-            {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, log_level}
-
-          {:error, reason} ->
-            {:error, {:invalid_user_info, reason}}
-        end
-
-      {:error, error} ->
-        {:error, {:decode_error, error}}
+    with {:ok, hello} <- Client.decode_startup_packet(bin),
+         {:ok, {type, {user, tenant_or_alias, db_name, search_path}}} <-
+           extract_and_validate_user_info(hello.payload) do
+      Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
+      app_name = normalize_app_name(hello.payload["application_name"])
+      log_level = extract_log_level(hello)
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, log_level}
     end
   end
 
@@ -68,16 +64,16 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   Extracts and validates user information from startup payload.
   """
   @spec extract_and_validate_user_info(map()) ::
-          {:ok, {atom(), {String.t(), String.t(), String.t() | nil, String.t() | nil}}}
-          | {:error, term()}
+          {:ok, startup_message_data()}
+          | {:error, InvalidUserInfoError.t()}
   def extract_and_validate_user_info(payload) do
     {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(payload)
 
     if Helpers.validate_name(user) and Helpers.validate_name(db_name) do
-      search_path = payload["options"]["search_path"]
+      search_path = payload["search_path"] || payload["options"]["search_path"]
       {:ok, {type, {user, tenant_or_alias, db_name, search_path}}}
     else
-      {:error, {:invalid_format, {user, db_name}}}
+      {:error, %InvalidUserInfoError{user: user, db_name: db_name}}
     end
   end
 
