@@ -274,7 +274,8 @@ defmodule Supavisor.Manager do
     end
 
     new_state = %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
-    {:reply, :ok, new_state}
+
+    {:reply, :ok, maybe_complete_drain(new_state)}
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
@@ -390,14 +391,7 @@ defmodule Supavisor.Manager do
     :ets.delete(state.tid, ref)
     :ets.delete(state.pid_to_ref, pid)
 
-    state =
-      if state.drain_caller && :ets.info(state.tid, :size) == 0 do
-        if state.drain_timer, do: Process.cancel_timer(state.drain_timer)
-        GenServer.reply(state.drain_caller, :ok)
-        %{state | drain_caller: nil, drain_timer: nil}
-      else
-        state
-      end
+    state = maybe_complete_drain(state)
 
     {:noreply, %{state | check_ref: check_subscribers()}}
   end
@@ -490,6 +484,18 @@ defmodule Supavisor.Manager do
     Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
       Supavisor.stop(state.id)
     end)
+  end
+
+  defp maybe_complete_drain(%{drain_caller: nil} = state), do: state
+
+  defp maybe_complete_drain(state) do
+    if :ets.info(state.tid, :size) == 0 do
+      if state.drain_timer, do: Process.cancel_timer(state.drain_timer)
+      GenServer.reply(state.drain_caller, :ok)
+      %{state | drain_caller: nil, drain_timer: nil}
+    else
+      state
+    end
   end
 
   defp each_client(state, fun) do
