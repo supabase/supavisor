@@ -4,7 +4,7 @@ defmodule Supavisor.ClientHandler.ProxyTest do
   alias Supavisor.ClientHandler.Proxy
 
   alias Supavisor.Errors.{
-    MaxProxyConnectionsReachedError,
+    MaxConnectionsError,
     FailedToStartProxyConnectionError,
     ProxySupervisorUnavailableError
   }
@@ -97,7 +97,7 @@ defmodule Supavisor.ClientHandler.ProxyTest do
         assert is_pid(pid)
       end
 
-      assert {:error, %MaxProxyConnectionsReachedError{limit: 100}} =
+      assert {:error, %MaxConnectionsError{mode: :proxy, limit: 100, code: "EMAXCONN"}} =
                Proxy.do_start_proxy_connection(id, 100, agent_child_spec(), 3)
     end
   end
