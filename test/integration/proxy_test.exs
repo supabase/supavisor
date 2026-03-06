@@ -55,7 +55,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :invalid_password,
-                  message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
+                  message: "password authentication failed for user \"" <> _,
                   severity: "FATAL",
                   pg_code: "28P01"
                 }
@@ -200,7 +200,7 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "(EMAXCLIENTSESSION) max clients reached in session mode - max clients are limited to pool_size: 2",
+                  "(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 2",
                 severity: "FATAL",
                 pg_code: "XX000"
               }
@@ -254,7 +254,7 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "(EMAXCLIENTCONN) max client connections reached, limit: 0",
+                message: "(EMAXCONN) max client connections reached, limit: 0",
                 pg_code: "XX000",
                 severity: "FATAL"
               }
@@ -318,7 +318,7 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :invalid_password,
-                message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
+                message: "password authentication failed for user \"" <> _,
                 severity: "FATAL",
                 pg_code: "28P01"
               }
@@ -521,7 +521,7 @@ defmodule Supavisor.Integration.ProxyTest do
               %Postgrex.Error{
                 postgres: %{
                   code: :invalid_password,
-                  message: "(EWRONGPASSWORD) password authentication failed for user \"" <> _,
+                  message: "password authentication failed for user \"" <> _,
                   severity: "FATAL",
                   pg_code: "28P01"
                 }
@@ -910,7 +910,10 @@ defmodule Supavisor.Integration.ProxyTest do
       Enum.split_with(results, fn
         {:error,
          %Postgrex.Error{
-           postgres: %{code: :internal_error, message: "Max client connections reached"}
+           postgres: %{
+             code: :internal_error,
+             message: "(EMAXCONN) max client connections reached, limit: 2"
+           }
          }} ->
           true
 

@@ -82,7 +82,7 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
       end
 
-      assert {:error, :circuit_open, blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: blocked_until}} =
                CircuitBreaker.check("tenant1", :get_secrets)
 
       # Record more failures while blocked — should not update blocked_until
@@ -90,7 +90,7 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
       end
 
-      assert {:error, :circuit_open, ^blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: ^blocked_until}} =
                CircuitBreaker.check("tenant1", :get_secrets)
     end
 
