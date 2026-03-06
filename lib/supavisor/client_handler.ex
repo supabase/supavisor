@@ -152,7 +152,7 @@ defmodule Supavisor.ClientHandler do
         {:ok, ssl_sock} ->
           socket = {:ssl, ssl_sock}
           :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
-{:keep_state, %{data | sock: socket, ssl: true}}
+          {:keep_state, %{data | sock: socket, ssl: true}}
 
         error ->
           Logger.error("ClientHandler: SSL handshake error: #{inspect(error)}")
