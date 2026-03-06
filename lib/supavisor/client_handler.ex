@@ -11,12 +11,6 @@ defmodule Supavisor.ClientHandler do
 
   require Record
 
-  # Import the sslsocket record definition
-  Record.defrecord(
-    :sslsocket,
-    Record.extract(:sslsocket, from_lib: "ssl/src/ssl_api.hrl")
-  )
-
   @behaviour :ranch_protocol
   @behaviour :gen_statem
   @proto [:tcp, :ssl]
@@ -76,7 +70,7 @@ defmodule Supavisor.ClientHandler do
     Helpers.set_max_heap_size(90)
 
     {:ok, sock} = :ranch.handshake(ref)
-    sock_ref = {:port, Port.monitor(sock)}
+    sock_ref = Port.monitor(sock)
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
 
@@ -575,7 +569,7 @@ defmodule Supavisor.ClientHandler do
         :info,
         {:DOWN, ref, _, _, _reason},
         state,
-        %{sock_ref: {_, ref}} = data
+        %{sock_ref: ref} = data
       ) do
     handle_socket_close(state, data)
   end
@@ -876,28 +870,6 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def format_status(status) do
     Map.put(status, :queue, [])
-  end
-
-  @impl true
-  def code_change(_version, state, old_data, :monitor_socket) do
-    new_data =
-      case old_data do
-        %{sock: {:gen_tcp, port}} ->
-          ref = Port.monitor(port)
-          Map.put(old_data, :sock_ref, {:port, ref})
-
-        # This is reliant on the internal implementation of SSL, but
-        # a necessary evil since there's no API in Erlang to read the
-        # port, or to monitor the SSL connection
-        %{sock: {:ssl, sslsocket(pid: [connection_handler | _])}} ->
-          ref = Process.monitor(connection_handler)
-          Map.put(old_data, :sock_ref, {:process, ref})
-
-        _ ->
-          old_data
-      end
-
-    {:ok, state, new_data}
   end
 
   ## Internal functions
