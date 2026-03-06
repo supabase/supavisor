@@ -98,6 +98,28 @@ end
   end
 end)
 
+if !Tenants.get_tenant_by_external_id("proxy_pool_tenant") do
+  {:ok, _} =
+    %{
+      db_host: db_conf[:hostname],
+      db_port: db_conf[:port],
+      db_database: db_conf[:database],
+      default_parameter_status: %{},
+      external_id: "proxy_pool_tenant",
+      require_user: true,
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 2,
+          "max_clients" => 2,
+          "mode_type" => "transaction"
+        }
+      ]
+    }
+    |> Tenants.create_tenant()
+end
+
 # Create tenants with specific prepared statements feature flag settings for transaction mode
 [
   {"proxy_tenant_ps_enabled", %{"named_prepared_statements" => true}},

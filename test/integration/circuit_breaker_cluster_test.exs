@@ -9,7 +9,8 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
   alias Supavisor.Support.Cluster.PortConfig
 
   setup do
-    :ets.delete_all_objects(Supavisor.CircuitBreaker)
+    :ets.delete_all_objects(Supavisor.CircuitBreaker.Blocks)
+    :ets.delete_all_objects(Supavisor.CircuitBreaker.Windows)
     :ok
   end
 
