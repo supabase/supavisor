@@ -1,4 +1,4 @@
-defmodule Supavisor.DockerComposeCase do
+defmodule Supavisor.JITDockerComposeCase do
   @moduledoc """
   Sets up and manages lifecycle of various Docker containers
   required by an integration test.
@@ -11,7 +11,7 @@ defmodule Supavisor.DockerComposeCase do
 
   using do
     quote do
-      import Supavisor.DockerComposeCase
+      import Supavisor.JITDockerComposeCase
     end
   end
 

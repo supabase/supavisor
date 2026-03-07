@@ -1,5 +1,5 @@
 defmodule Supavisor.Integration.JustInTimeAccessTest do
-  use Supavisor.DockerComposeCase, async: false
+  use Supavisor.JITDockerComposeCase, async: false
   use SupavisorWeb.ConnCase
 
   require(Logger)
