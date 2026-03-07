@@ -151,8 +151,31 @@ end
   end
 end)
 
-# Create tenants for circuit breaker tests
-["circuit_breaker_secrets", "circuit_breaker_db_conn", "circuit_breaker_auth"]
+if !Tenants.get_tenant_by_external_id("circuit_breaker_secrets") do
+  {:ok, _} =
+    %{
+      db_host: db_conf[:hostname],
+      db_port: db_conf[:port],
+      db_database: db_conf[:database],
+      default_parameter_status: %{},
+      external_id: "circuit_breaker_secrets",
+      require_user: false,
+      auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 1,
+          "mode_type" => "transaction",
+          "is_manager" => true
+        }
+      ]
+    }
+    |> Tenants.create_tenant()
+end
+
+# Create tenants for other circuit breaker tests
+["circuit_breaker_db_conn", "circuit_breaker_auth"]
 |> Enum.each(fn tenant ->
   if !Tenants.get_tenant_by_external_id(tenant) do
     {:ok, _} =

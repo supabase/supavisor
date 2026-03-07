@@ -27,8 +27,8 @@ defmodule Supavisor.SecretCache do
   """
   def get_validation_secrets(tenant, user) do
     case Cachex.get(Supavisor.Cache, {:secrets_for_validation, tenant, user}) do
-      {:ok, {:cached, {method, secrets_fn}}} ->
-        {:ok, {method, secrets_fn}}
+      {:ok, {:cached, secrets}} ->
+        {:ok, secrets}
 
       _other ->
         {:error, :not_found}
@@ -49,8 +49,8 @@ defmodule Supavisor.SecretCache do
 
       cachex_fetch_fn = fn _key ->
         case fetch_fn.() do
-          {:ok, {method, secrets_fn} = secrets} ->
-            put_validation_secrets(tenant, user, method, secrets_fn)
+          {:ok, secrets} ->
+            put_validation_secrets(tenant, user, secrets)
             {:commit, {:cached, secrets}, ttl: @default_secrets_ttl}
 
           {:error, _} = resp ->
@@ -78,36 +78,39 @@ defmodule Supavisor.SecretCache do
 
   For users in the cache bypass list, this function does nothing (no caching occurs).
   """
-  def put_validation_secrets(tenant, user, method, secrets_fn) do
+  def put_validation_secrets(
+        tenant,
+        user,
+        %Supavisor.ClientHandler.Auth.ValidationSecrets{} = secrets
+      ) do
     if should_bypass_cache?(user) do
       :ok
     else
-      secrets_map = secrets_fn.()
-
-      validation_secrets_fn = fn ->
-        Map.delete(secrets_map, :client_key)
-      end
+      # Strip client_key from sasl_secrets before caching
+      cleaned =
+        if secrets.sasl_secrets do
+          %{secrets | sasl_secrets: %{secrets.sasl_secrets | client_key: nil}}
+        else
+          secrets
+        end
 
       validation_key = {:secrets_for_validation, tenant, user}
-      validation_value = {method, validation_secrets_fn}
 
-      Cachex.put(Supavisor.Cache, validation_key, {:cached, validation_value},
-        ttl: @default_secrets_ttl
-      )
+      Cachex.put(Supavisor.Cache, validation_key, {:cached, cleaned}, ttl: @default_secrets_ttl)
     end
   end
 
   @doc """
   Caches upstream auth secrets in the tenant-specific cache.
   """
-  def put_upstream_auth_secrets(id, method, secrets_with_client_key_fn) do
-    Supavisor.TenantCache.put_upstream_auth_secrets(id, {method, secrets_with_client_key_fn})
+  def put_upstream_auth_secrets(id, secrets) do
+    Supavisor.TenantCache.put_upstream_auth_secrets(id, secrets)
   end
 
   @doc """
   Caches validation secrets only if missing.
   """
-  def put_validation_secrets_if_missing(tenant, user, method, secrets_fn) do
+  def put_validation_secrets_if_missing(tenant, user, secrets) do
     validation_key = {:secrets_for_validation, tenant, user}
 
     case Cachex.get(Supavisor.Cache, validation_key) do
@@ -115,7 +118,7 @@ defmodule Supavisor.SecretCache do
         :ok
 
       _other ->
-        put_validation_secrets(tenant, user, method, secrets_fn)
+        put_validation_secrets(tenant, user, secrets)
     end
   end
 

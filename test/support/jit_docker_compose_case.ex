@@ -75,7 +75,9 @@ defmodule Supavisor.JITDockerComposeCase do
     IO.puts("Starting Docker Compose services...")
 
     {output, exit_code} =
-      System.cmd("docker-compose", ["-p", "supavisor-jit", "-f", "docker-compose.jit.yml", "up", "-d"],
+      System.cmd(
+        "docker-compose",
+        ["-p", "supavisor-jit", "-f", "docker-compose.jit.yml", "up", "-d"],
         stderr_to_stdout: true,
         cd: @project_root
       )
@@ -90,7 +92,9 @@ defmodule Supavisor.JITDockerComposeCase do
   def stop_docker_compose do
     IO.puts("Stopping Docker Compose services...")
 
-    System.cmd("docker-compose", ["-p", "supavisor-jit", "-f", "docker-compose.jit.yml", "down", "-v"],
+    System.cmd(
+      "docker-compose",
+      ["-p", "supavisor-jit", "-f", "docker-compose.jit.yml", "down", "-v"],
       stderr_to_stdout: true,
       cd: @project_root
     )

@@ -51,7 +51,6 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor.Errors.{
     AddressNotAllowedError,
     CheckoutTimeoutError,
-    CircuitBreakerError,
     ClientSocketClosedError,
     DbHandlerExitedError,
     PoolCheckoutError,
@@ -202,8 +201,8 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, log_level} ->
-        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path}}}
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit}}, app_name, log_level} ->
+        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path, jit}}}
         if log_level, do: Logger.put_process_level(self(), log_level)
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
@@ -215,7 +214,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_name, search_path}}},
+        {:hello, {type, {user, tenant_or_alias, db_name, search_path, client_jit}}},
         :handshake,
         %{sock: sock} = data
       ) do
@@ -244,37 +243,48 @@ defmodule Supavisor.ClientHandler do
          :ok <- check_ssl_enforcement(data, info, user),
          :ok <- check_address_allowed(sock, info),
          :ok <- Manager.check_client_limit(id, info, data.mode),
-         {:ok, auth_secrets} <- get_secrets(id, info, user, tenant_or_alias, data.ssl) do
-      Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
+         {:ok, auth_method} <-
+           Auth.fetch_authentication_method(info.tenant, client_jit, data.ssl, user) do
+      Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
       new_data = set_tenant_info(data, info, user, id, db_name)
-      {:keep_state, new_data, {:next_event, :internal, {:handle, auth_secrets, info}}}
+
+      {:keep_state, new_data,
+       {:next_event, :internal, {:start_authentication, auth_method, info}}}
     else
       {:error, exception} when is_exception(exception) ->
         Error.terminate_with_error(data, exception, :handshake)
     end
   end
 
+  # TODO: can we get rid of `info`?
   def handle_event(
         :internal,
-        {:handle, {method, secrets}, info},
+        {:start_authentication, auth_method, info},
         _state,
         %{sock: sock} = data
       ) do
-    Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(method)}")
+    Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(auth_method)}")
 
     case Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error) do
       :ok ->
-        case method do
-          :auth_query_jit ->
-            auth_context = Auth.create_auth_context(method, secrets, info)
+        case auth_method do
+          :jit ->
             :ok = HandlerHelpers.sock_send(sock, Server.password_request())
+            auth_context = Auth.Jit.new_context(info, data.id, data.peer_ip)
 
             {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
 
-          _scram_method ->
+          :password ->
+            :ok = HandlerHelpers.sock_send(sock, Server.password_request())
+            auth_context = Auth.Password.new_context(info, data.id)
+
+            {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
+             {:timeout, 15_000, :auth_timeout}}
+
+          :scram_sha_256 ->
+            auth_context = Auth.SCRAM.new_context(info, data.id)
             :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
-            auth_context = Auth.create_auth_context(method, secrets, info)
 
             {:next_state, :auth_scram_first_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
@@ -290,7 +300,7 @@ defmodule Supavisor.ClientHandler do
 
     with :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
          {:ok, sup} <-
-           Supavisor.start_dist(data.id, data.auth_secrets,
+           Supavisor.start_dist(data.id, data.auth.secrets,
              availability_zone: data.tenant_availability_zone,
              log_level: nil
            ),
@@ -517,28 +527,21 @@ defmodule Supavisor.ClientHandler do
 
   # Authentication state handlers
 
-  def handle_event(:info, {proto, socket, bin}, :auth_password_wait, data)
+  def handle_event(:info, {proto, _socket, bin}, :auth_password_wait, data)
       when proto in @proto do
-    auth_context = data.auth_context
-    rhost = Helpers.peer_ip(socket)
+    result =
+      case data.auth_context do
+        %Auth.Jit.Context{} ->
+          Auth.Jit.handle_password(data.auth_context, bin)
 
-    with {:ok, cls_password} <- Auth.parse_auth_message(bin, auth_context.method),
-         {:ok, key, method} <-
-           Auth.validate_credentials(
-             auth_context.method,
-             auth_context.info.tenant,
-             auth_context.secrets,
-             cls_password,
-             rhost
-           ) do
-      handle_auth_success(
-        data.sock,
-        {method, auth_context.secrets},
-        key,
-        cls_password,
-        data
-      )
-    else
+        %Auth.Password.Context{} ->
+          Auth.Password.handle_password(data.auth_context, bin)
+      end
+
+    case result do
+      {:ok, secrets} ->
+        handle_auth_success(data.sock, secrets, data)
+
       {:error, exception} ->
         handle_auth_failure(exception, data)
     end
@@ -547,23 +550,10 @@ defmodule Supavisor.ClientHandler do
   # SCRAM authentication - waiting for first message
   def handle_event(:info, {proto, _socket, bin}, :auth_scram_first_wait, data)
       when proto in @proto do
-    auth_context = data.auth_context
-
-    case Auth.parse_auth_message(bin, :auth_scram_first_wait) do
-      {:ok, {user, nonce, channel}} ->
-        {message, signatures} =
-          Auth.prepare_auth_challenge(
-            auth_context.method,
-            auth_context.secrets,
-            nonce,
-            user,
-            channel
-          )
-
+    case Auth.SCRAM.handle_scram_first(data.auth_context, bin) do
+      {:ok, message, auth_context} ->
         :ok = HandlerHelpers.sock_send(data.sock, Server.exchange_message(:first, message))
-
-        new_auth_context = Auth.update_auth_context_with_signatures(auth_context, signatures)
-        new_data = %{data | auth_context: new_auth_context}
+        new_data = %{data | auth_context: auth_context}
         {:next_state, :auth_scram_final_wait, new_data, {:timeout, 15_000, :auth_timeout}}
 
       {:error, exception} ->
@@ -574,20 +564,9 @@ defmodule Supavisor.ClientHandler do
   # SCRAM authentication - waiting for final response
   def handle_event(:info, {proto, _socket, bin}, :auth_scram_final_wait, data)
       when proto in @proto do
-    auth_context = data.auth_context
-
-    with {:ok, p} <- Auth.parse_auth_message(bin, :auth_scram_final_wait),
-         {:ok, key} <-
-           Auth.validate_credentials(
-             auth_context.method,
-             auth_context.secrets,
-             auth_context.signatures,
-             p,
-             data.user
-           ) do
-      message = Auth.build_scram_final_response(auth_context)
+    with {:ok, message, final_secrets} <- Auth.SCRAM.handle_scram_final(data.auth_context, bin) do
       :ok = HandlerHelpers.sock_send(data.sock, message)
-      handle_auth_success(data.sock, {auth_context.method, auth_context.secrets}, key, data)
+      handle_auth_success(data.sock, final_secrets, data)
     else
       {:error, exception} ->
         handle_auth_failure(exception, data)
@@ -771,19 +750,11 @@ defmodule Supavisor.ClientHandler do
   end
 
   ## Internal functions
-  defp handle_auth_success(sock, {method, secrets}, client_key, data) do
-    handle_auth_success(sock, {method, secrets}, client_key, nil, data)
-  end
+  defp handle_auth_success(sock, final_secrets, data) do
+    upstream_secrets = Auth.resolve_upstream_secrets(final_secrets, data.auth)
 
-  defp handle_auth_success(sock, {method, secrets}, client_key, password, data) do
-    final_secrets = Auth.prepare_final_secrets(secrets, client_key, password)
-
-    # Only store in TenantCache for pool modes (transaction/session)
-    # For proxy mode, secrets are passed directly to DbHandler via data.auth
     if data.mode != :proxy do
-      Supavisor.SecretCache.put_upstream_auth_secrets(data.id, method, final_secrets)
-
-      # Notify any waiting db handlers that secrets are now available
+      Supavisor.SecretCache.put_upstream_auth_secrets(data.id, upstream_secrets)
       Supavisor.Manager.notify_secrets_available(data.id)
     end
 
@@ -791,33 +762,32 @@ defmodule Supavisor.ClientHandler do
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
     Telem.client_join(:ok, data.id)
 
-    auth = Map.put(data.auth, :secrets, {method, final_secrets})
+    auth = Map.put(data.auth, :secrets, upstream_secrets)
 
     conn_type =
       if data.mode == :proxy,
         do: :connect_db,
         else: :subscribe
 
-    {:next_state, :connecting,
-     %{data | auth_context: nil, auth_secrets: {method, final_secrets}, auth: auth},
-     {:next_event, :internal, conn_type}}
+    {
+      :next_state,
+      :connecting,
+      %{data | auth_context: nil, auth: auth},
+      {:next_event, :internal, conn_type}
+    }
   end
 
+  # On auth failure, we check if the secrets have changed and update the cache accordingly.
+  #
+  # This operation is rate-limited at `ValidationSecrets` to avoid spamming the database with auth
+  # queries.
+  #
+  # If the validation secrets indeed changed,  we must invalidate upstream auth secrets too,
+  # as connections using them would fail
   defp handle_auth_failure(exception, data) do
-    auth_context = data.auth_context
-
-    # Check if secrets changed and update cache, but don't retry
-    # Most clients don't cope well with auto-retry on auth errors
-    Auth.check_and_update_secrets(
-      auth_context.method,
-      exception,
-      data.id,
-      auth_context.info,
-      data.tenant,
-      data.user,
-      auth_context.secrets,
-      data.ssl
-    )
+    with :changed <- Auth.ValidationSecrets.maybe_update_if_changed(data.auth_context, exception) do
+      Supavisor.SecretCache.delete_upstream_auth_secrets(data.id)
+    end
 
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
     Error.terminate_with_error(data, exception, :handshake)
@@ -989,20 +959,6 @@ defmodule Supavisor.ClientHandler do
       {:error, %AddressNotAllowedError{address: addr}}
     else
       :ok
-    end
-  end
-
-  defp get_secrets(id, info, user, tenant_or_alias, ssl) do
-    with :ok <- Supavisor.CircuitBreaker.check(tenant_or_alias, :get_secrets),
-         {:ok, auth_secrets} <- Auth.get_user_secrets(id, info, user, tenant_or_alias, ssl) do
-      {:ok, auth_secrets}
-    else
-      {:error, %CircuitBreakerError{}} = error ->
-        error
-
-      {:error, reason} ->
-        Supavisor.CircuitBreaker.record_failure(tenant_or_alias, :get_secrets)
-        {:error, %Supavisor.Errors.AuthSecretsError{reason: reason}}
     end
   end
 

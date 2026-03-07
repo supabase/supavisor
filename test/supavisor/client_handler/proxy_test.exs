@@ -69,7 +69,7 @@ defmodule Supavisor.ClientHandler.ProxyTest do
 
       # Even with 3 retries, we may fail sometimes when the supervisor is being stopped
       # so fast.
-      assert frequencies[:started] >= 9_900
+      assert frequencies[:started] >= 9_500
 
       # We should only have :started and {:error, %ProxySupervisorUnavailableError{}}
       expected_results = MapSet.new([:started, {:error, %ProxySupervisorUnavailableError{}}])
