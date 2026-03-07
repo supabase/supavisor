@@ -6,7 +6,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   alias Postgrex, as: P
 
   setup do
-    cert_dir = Path.expand("./jit-access/postgres/certs", __DIR__)
+    cert_dir = Path.expand("../../priv/jit/postgres/certs", __DIR__)
     cert_path = Path.join(cert_dir, "server.crt")
     key_path = Path.join(cert_dir, "server.key")
 
@@ -37,7 +37,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   defp setup_tenant(db_conf) do
     random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
     tenant_id = "update_creds_tenant_#{System.unique_integer([:positive])}_#{random_suffix}"
-    cert_dir = Path.expand("./jit-access/postgres/certs", __DIR__)
+    cert_dir = Path.expand("../../priv/jit/postgres/certs", __DIR__)
     ca_path = Path.join(cert_dir, "ca.crt")
 
     ca_der =

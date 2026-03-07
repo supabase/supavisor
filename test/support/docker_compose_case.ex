@@ -6,6 +6,9 @@ defmodule Supavisor.DockerComposeCase do
 
   use ExUnit.CaseTemplate
 
+  @project_root Path.expand("../..", __DIR__)
+  @cert_dir Path.join(@project_root, "priv/jit/postgres/certs")
+
   using do
     quote do
       import Supavisor.DockerComposeCase
@@ -32,14 +35,13 @@ defmodule Supavisor.DockerComposeCase do
   end
 
   defp ensure_certificates do
-    cert_dir = Path.expand("../integration/jit-access/postgres/certs", __DIR__)
-    ca_cert = Path.join(cert_dir, "ca.crt")
+    ca_cert = Path.join(@cert_dir, "ca.crt")
 
     unless File.exists?(ca_cert) do
       IO.puts("Generating test certificates...")
 
       {output, exit_code} =
-        System.cmd("#{cert_dir}/generate_test_certs.sh", [cert_dir])
+        System.cmd("#{@cert_dir}/generate_test_certs.sh", [@cert_dir])
 
       if exit_code != 0 do
         raise "Failed to generate certificates: #{output}"
@@ -50,23 +52,22 @@ defmodule Supavisor.DockerComposeCase do
   end
 
   defp cleanup_certificates do
-    cert_dir = Path.expand("../integration/jit-access/postgres/certs", __DIR__)
-    IO.puts("Removing test certificates from #{cert_dir}/...")
+    IO.puts("Removing test certificates from #{@cert_dir}/...")
 
-    if File.dir?(cert_dir) do
+    if File.dir?(@cert_dir) do
       [
-        cert_dir <> "/*.key",
-        cert_dir <> "/*.crt",
-        cert_dir <> "/*.csr",
-        cert_dir <> "/*.srl",
-        cert_dir <> "/*.ext"
+        @cert_dir <> "/*.key",
+        @cert_dir <> "/*.crt",
+        @cert_dir <> "/*.csr",
+        @cert_dir <> "/*.srl",
+        @cert_dir <> "/*.ext"
       ]
       |> Enum.flat_map(&Path.wildcard/1)
       |> Enum.each(&File.rm!/1)
 
       IO.puts("✓ Certificates removed successfully")
     else
-      IO.puts("No certificates directory found at #{cert_dir}")
+      IO.puts("No certificates directory found at #{@cert_dir}")
     end
   end
 
@@ -74,9 +75,9 @@ defmodule Supavisor.DockerComposeCase do
     IO.puts("Starting Docker Compose services...")
 
     {output, exit_code} =
-      System.cmd("docker-compose", ["up", "-d"],
+      System.cmd("docker-compose", ["-p", "supavisor-jit", "-f", "docker-compose.jit.yml", "up", "-d"],
         stderr_to_stdout: true,
-        cd: Path.expand("../integration/jit-access", __DIR__)
+        cd: @project_root
       )
 
     if exit_code != 0 do
@@ -89,9 +90,9 @@ defmodule Supavisor.DockerComposeCase do
   def stop_docker_compose do
     IO.puts("Stopping Docker Compose services...")
 
-    System.cmd("docker-compose", ["down", "-v"],
+    System.cmd("docker-compose", ["-p", "supavisor-jit", "-f", "docker-compose.jit.yml", "down", "-v"],
       stderr_to_stdout: true,
-      cd: Path.expand("../integration/jit-access", __DIR__)
+      cd: @project_root
     )
 
     IO.puts("Docker Compose services stopped")
@@ -122,9 +123,9 @@ defmodule Supavisor.DockerComposeCase do
     {_output, exit_code} =
       System.cmd(
         "docker-compose",
-        ["exec", "-T", "db", "pg_isready", "-U", "user"],
+        ["-f", "docker-compose.jit.yml", "exec", "-T", "db", "pg_isready", "-U", "user"],
         stderr_to_stdout: true,
-        cd: Path.expand("../integration/jit-access", __DIR__)
+        cd: @project_root
       )
 
     if exit_code == 0 do
@@ -135,8 +136,6 @@ defmodule Supavisor.DockerComposeCase do
   end
 
   defp check_service_health do
-    # Check if services are responding
-    # Adjust these URLs to match your docker-compose services
     services = [
       {"API Service", &check_api_health/0},
       {"PostgreSQL", &check_postgres_health/0}
