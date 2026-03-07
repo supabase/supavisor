@@ -13,7 +13,7 @@ defmodule Supavisor do
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
-  @type secrets :: {:password | :auth_query, fun()}
+  @type secrets :: map()
   @type mode :: :transaction | :session | :native | :proxy
   @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t(), String.t() | nil}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
@@ -136,21 +136,21 @@ defmodule Supavisor do
   Updates credentials for all SecretChecker processes for a tenant across the cluster.
   Used for auth_query mode (require_user: false) to hot-update credentials without restarting pools.
   """
-  @spec update_secret_checker_credentials_global(String.t(), String.t(), (-> String.t())) :: [
+  @spec update_secret_checker_credentials_global(String.t(), String.t(), String.t()) :: [
           {node(), term()}
         ]
-  def update_secret_checker_credentials_global(tenant, new_user, password_fn) do
+  def update_secret_checker_credentials_global(tenant, new_user, password) do
     :erpc.multicall(
       [node() | Node.list()],
       Supavisor,
       :update_secret_checker_credentials_local,
-      [tenant, new_user, password_fn],
+      [tenant, new_user, password],
       60_000
     )
   end
 
-  @spec update_secret_checker_credentials_local(String.t(), String.t(), (-> String.t())) :: map()
-  def update_secret_checker_credentials_local(tenant, new_user, password_fn) do
+  @spec update_secret_checker_credentials_local(String.t(), String.t(), String.t()) :: map()
+  def update_secret_checker_credentials_local(tenant, new_user, password) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant)
     |> Enum.reduce(%{}, fn {_pid,
                             %{
@@ -162,7 +162,7 @@ defmodule Supavisor do
                             }},
                            acc ->
       id = {{type, tenant}, user, mode, db_name, search_path}
-      result = Supavisor.SecretChecker.update_credentials(id, new_user, password_fn)
+      result = Supavisor.SecretChecker.update_credentials(id, new_user, password)
       Map.put(acc, {user, mode}, result)
     end)
   end
@@ -324,7 +324,7 @@ defmodule Supavisor do
       ) do
     Logger.info("Starting pool(s) for #{inspect(id)}")
 
-    secrets_map = elem(secrets, 1).()
+    secrets_map = secrets
     user = secrets_map.user
 
     case type do

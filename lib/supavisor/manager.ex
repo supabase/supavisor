@@ -159,7 +159,6 @@ defmodule Supavisor.Manager do
     pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
 
     {{type, tenant}, user, mode, db_name, _search_path} = args.id
-    {method, secrets} = args.secrets
 
     {tenant_record, replica_type} =
       case type do
@@ -215,20 +214,10 @@ defmodule Supavisor.Manager do
       upstream_verify: tenant_record.upstream_verify,
       upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
       require_user: tenant_record.require_user,
-      method: method,
       secrets: args.secrets
     }
 
-    secrets_struct = secrets.()
-
-    alias Supavisor.ClientHandler.Auth
-
-    if method == :password or match?(%Auth.SASLSecrets{}, secrets_struct) do
-      Supavisor.SecretCache.put_validation_secrets(tenant, user, method, secrets)
-      Supavisor.SecretCache.put_upstream_auth_secrets(args.id, method, secrets)
-    else
-      Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, method, secrets)
-    end
+    Supavisor.SecretCache.put_upstream_auth_secrets(args.id, args.secrets)
 
     persisted_ps = Supavisor.TenantCache.get_parameter_status(args.id)
 

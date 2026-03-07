@@ -2,8 +2,6 @@ defmodule Supavisor.HotUpgrade do
   @moduledoc false
   require Logger
 
-  import Cachex.Spec
-
   @type app :: atom
   @type version_str :: String.t()
   @type path_str :: String.t()
@@ -67,58 +65,4 @@ defmodule Supavisor.HotUpgrade do
       IO.write("No runtime.exs found in releases/#{vsn}")
     end
   end
-
-  def reint_funs do
-    reinit_auth_query()
-  end
-
-  def reinit_auth_query do
-    reinit_validation_secrets()
-    reinit_upstream_secrets()
-  end
-
-  defp reinit_validation_secrets do
-    Supavisor.Cache
-    |> Cachex.stream!()
-    |> Enum.each(fn entry(key: key, value: value) ->
-      case {key, value} do
-        {{:secrets_for_validation, tenant, user}, {:cached, {method, secrets_fn}}}
-        when is_function(secrets_fn) ->
-          Logger.debug("Reinitializing validation secrets: #{tenant}/#{user}")
-          new = {:cached, {method, enc(secrets_fn.())}}
-          Cachex.put(Supavisor.Cache, key, new)
-
-        {{:secrets_check, tenant, user}, {:cached, {method, secrets_fn}}}
-        when is_function(secrets_fn) ->
-          Logger.debug("Reinitializing secrets_check: #{tenant}/#{user}")
-          new = {:cached, {method, enc(secrets_fn.())}}
-          Cachex.put(Supavisor.Cache, key, new)
-
-        _other ->
-          :ok
-      end
-    end)
-  end
-
-  defp reinit_upstream_secrets do
-    for [_id, _pid, table] <-
-          Registry.select(Supavisor.Registry.Tenants, [
-            {{{:cache, :"$1"}, :"$2", :"$3"}, [], [[:"$1", :"$2", :"$3"]]}
-          ]) do
-      case :ets.lookup(table, :upstream_auth_secrets) do
-        [{:upstream_auth_secrets, {method, secrets_fn}}] when is_function(secrets_fn) ->
-          Logger.debug("Reinitializing upstream_auth_secrets in tenant cache")
-          :ets.insert(table, {:upstream_auth_secrets, {method, enc(secrets_fn.())}})
-
-        _ ->
-          :ok
-      end
-    end
-  end
-
-  @spec enc(term) :: fun
-  def enc(val), do: apply(__MODULE__, :do_enc, [val])
-
-  @spec do_enc(term) :: fun
-  def do_enc(val), do: fn -> val end
 end

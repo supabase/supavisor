@@ -41,7 +41,7 @@ defmodule SupavisorTest do
   describe "start_local_pool/3" do
     test "returns PoolConfigNotFoundError when tenant config not found" do
       fake_id = {{:single, "nonexistent_config_tenant"}, "user", :transaction, "db", ""}
-      secrets = {:password, fn -> %{user: "user"} end}
+      secrets = %{user: "user"}
 
       assert {:error, %PoolConfigNotFoundError{id: ^fake_id}} =
                result = Supavisor.start_local_pool(fake_id, secrets, nil)

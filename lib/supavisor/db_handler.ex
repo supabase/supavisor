@@ -30,6 +30,7 @@ defmodule Supavisor.DbHandler do
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
+  alias Supavisor.ClientHandler.Auth.PasswordSecrets
   alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
   alias Supavisor.Errors.DbHandlerExitedError
@@ -716,9 +717,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp get_user(auth) do
-    {_method, secrets_fn} = auth.secrets
-    secrets_map = secrets_fn.()
-    secrets_map.user
+    auth.secrets.user
   end
 
   @spec handle_auth_pkts(map(), map(), map()) :: any()
@@ -777,12 +776,10 @@ defmodule Supavisor.DbHandler do
     nonce = data.nonce
     server_first_parts = Helpers.parse_server_first(server_first, nonce)
 
-    {_method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    secrets = data.auth.secrets
 
     {client_final_message, server_proof} =
       Helpers.get_client_final(
-        data.auth.method,
         secrets,
         server_first_parts,
         nonce,
@@ -813,15 +810,9 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {_method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    %PasswordSecrets{password: password, user: user} = data.auth.secrets
 
-    digest =
-      if data.auth.method == :password do
-        Helpers.md5([secrets.password, secrets.user])
-      else
-        secrets.password
-      end
+    digest = Helpers.md5([password, user])
 
     payload = ["md5", Helpers.md5([digest, salt]), 0]
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
@@ -832,14 +823,12 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    secrets = data.auth.secrets
 
     password =
-      if method == :password do
-        secrets.password
-      else
-        secrets.cls_password
+      case secrets do
+        %{token: token} -> token
+        %{password: password} -> password
       end
 
     payload = <<password::binary, 0>>
