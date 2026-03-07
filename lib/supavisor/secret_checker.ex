@@ -3,6 +3,7 @@ defmodule Supavisor.SecretChecker do
 
   use GenServer
   require Logger
+  require Supavisor
 
   alias Supavisor.ClientHandler.Auth
   alias Supavisor.Helpers
@@ -44,7 +45,7 @@ defmodule Supavisor.SecretChecker do
 
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
-    {{_type, tenant_external_id}, pool_user, _mode, _db_name, _search_path} = args.id
+    Supavisor.id(tenant: tenant_external_id, user: pool_user) = args.id
 
     tenant = Supavisor.Tenants.get_tenant_cache(tenant_external_id, nil)
     manager_secrets = Supavisor.Tenants.get_manager_user_cache(tenant_external_id)

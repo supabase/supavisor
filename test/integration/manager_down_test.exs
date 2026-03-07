@@ -1,6 +1,7 @@
 defmodule Supavisor.Integration.ManagerDownTest do
   use Supavisor.DataCase, async: false
 
+  require Supavisor
   alias Postgrex, as: P
 
   @tenant "proxy_tenant1"
@@ -17,7 +18,14 @@ defmodule Supavisor.Integration.ManagerDownTest do
         username: db_conf[:username] <> "." <> @tenant
       )
 
-    id = {{:single, @tenant}, db_conf[:username], :transaction, db_conf[:database], nil}
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: @tenant,
+        user: db_conf[:username],
+        mode: :transaction,
+        db: db_conf[:database]
+      )
 
     %{proxy: proxy, id: id, db_conf: db_conf}
   end

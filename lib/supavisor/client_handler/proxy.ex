@@ -4,6 +4,7 @@ defmodule Supavisor.ClientHandler.Proxy do
   """
 
   require Logger
+  require Supavisor
 
   alias Supavisor.ClientHandler.Proxy.Supervisor, as: ProxySupervisor
 
@@ -72,9 +73,12 @@ defmodule Supavisor.ClientHandler.Proxy do
   end
 
   @spec build_db_handler_args(Supavisor.id(), map(), map(), map()) :: map()
-  defp build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch) do
-    {tenant, user, _mode, _db_name, _search_path} = id
-
+  defp build_db_handler_args(
+         Supavisor.id(tenant: tenant, user: user) = id,
+         auth,
+         tenant_feature_flags,
+         pool_ranch
+       ) do
     proxy_auth =
       Map.merge(auth, %{
         port: pool_ranch.port,

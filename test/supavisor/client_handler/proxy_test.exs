@@ -1,6 +1,7 @@
 defmodule Supavisor.ClientHandler.ProxyTest do
   use ExUnit.Case, async: true
 
+  require Supavisor
   alias Supavisor.ClientHandler.Proxy
 
   @registry Supavisor.Registry.Tenants
@@ -97,7 +98,14 @@ defmodule Supavisor.ClientHandler.ProxyTest do
   end
 
   defp unique_id,
-    do: {{:single, "test_#{System.unique_integer([:positive])}"}, "user", :transaction, "db", nil}
+    do:
+      Supavisor.id(
+        type: :single,
+        tenant: "test_#{System.unique_integer([:positive])}",
+        user: "user",
+        mode: :transaction,
+        db: "db"
+      )
 
   defp agent_child_spec do
     %{

@@ -5,6 +5,8 @@ defmodule Supavisor.E2ECase do
 
   use ExUnit.CaseTemplate
 
+  require Supavisor
+
   @repo Supavisor.Repo
 
   using do
@@ -60,8 +62,27 @@ defmodule Supavisor.E2ECase do
              })
 
     on_exit(fn ->
-      _ = Supavisor.stop({{:single, external_id}, "postgres", :session, external_id, nil})
-      _ = Supavisor.stop({{:single, external_id}, "postgres", :transaction, external_id, nil})
+      _ =
+        Supavisor.stop(
+          Supavisor.id(
+            type: :single,
+            tenant: external_id,
+            user: "postgres",
+            mode: :session,
+            db: external_id
+          )
+        )
+
+      _ =
+        Supavisor.stop(
+          Supavisor.id(
+            type: :single,
+            tenant: external_id,
+            user: "postgres",
+            mode: :transaction,
+            db: external_id
+          )
+        )
 
       unboxed(fn ->
         assert {:ok, _} = @repo.query("DROP DATABASE #{external_id}")
