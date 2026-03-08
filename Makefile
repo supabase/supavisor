@@ -93,7 +93,7 @@ pgbench:
 
 .PHONY: cover
 cover:
-	MIX_ENV=test mix coveralls.html; open cover/excoveralls.html
+	MIX_ENV=test mix coveralls.html $(OPTIONS); open cover/excoveralls.html
 
 clean:
 	rm -rf _build && rm -rf deps
