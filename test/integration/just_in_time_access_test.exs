@@ -85,14 +85,21 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     assert response.body == %{"status" => "healthy"}
   end
 
-  test "valid credentials work directly (scram-sha256)", %{db_conf: db_conf} do
+  test "valid credentials work directly (scram-sha256, no tls)", %{db_conf: db_conf} do
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
+
+    assert {:ok, pid} = single_connection(db_conf, tenant_id, ca_cert, ssl: false)
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
+  end
+
+  test "valid credentials work directly (password, tls)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     assert {:ok, pid} = single_connection(db_conf, tenant_id, ca_cert, [])
     assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
-  test "invalid credentials rejected (scram-sha256)", %{db_conf: db_conf} do
+  test "invalid credentials rejected (scram-sha256, no tls)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     assert {:error,
@@ -105,7 +112,8 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
               }
             }} =
              single_connection(db_conf, tenant_id, ca_cert,
-               password: "something_something_secret"
+               password: "something_something_secret",
+               ssl: false
              )
   end
 
@@ -203,7 +211,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
              )
   end
 
-  test "password auth fails for bad password", %{db_conf: db_conf} do
+  test "invalid credentials rejected (password, tls)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} = setup_tenant(db_conf)
 
     assert {:error,
@@ -594,6 +602,51 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
                jit: true,
+               port: Application.get_env(:supavisor, :secondary_proxy_port)
+             )
+
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+  end
+
+  test "valid credentials work via proxy node (scram-sha256, no tls)", %{db_conf: db_conf} do
+    {tenant_id, ca_cert} =
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        setup_tenant(db_conf)
+      end)
+
+    assert {:ok, _peer, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    # Create pool on main node
+    assert {:ok, pid1} = single_connection(db_conf, tenant_id, ca_cert, ssl: false)
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
+
+    # Connect via proxy node
+    assert {:ok, pid2} =
+             single_connection(db_conf, tenant_id, ca_cert,
+               ssl: false,
+               port: Application.get_env(:supavisor, :secondary_proxy_port)
+             )
+
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+  end
+
+  test "valid credentials work via proxy node (password, tls)", %{db_conf: db_conf} do
+    {tenant_id, ca_cert} =
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        setup_tenant(db_conf)
+      end)
+
+    assert {:ok, _peer, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    # Create pool on main node
+    assert {:ok, pid1} = single_connection(db_conf, tenant_id, ca_cert, [])
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
+
+    # Connect via proxy node
+    assert {:ok, pid2} =
+             single_connection(db_conf, tenant_id, ca_cert,
                port: Application.get_env(:supavisor, :secondary_proxy_port)
              )
 
