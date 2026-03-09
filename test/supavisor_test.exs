@@ -11,7 +11,14 @@ defmodule SupavisorTest do
     PoolConfigNotFoundError
   }
 
-  @fake_id {{:single, "nonexistent_tenant"}, "user", :transaction, "db", ""}
+  @fake_id Supavisor.id(
+             type: :single,
+             tenant: "nonexistent_tenant",
+             user: "user",
+             mode: :transaction,
+             db: "db",
+             search_path: nil
+           )
 
   describe "inspect_id/1" do
     test "key and value are never split across lines" do
@@ -103,11 +110,10 @@ defmodule SupavisorTest do
 
   describe "start_local_pool/3" do
     test "returns PoolConfigNotFoundError when tenant config not found" do
-      fake_id = {{:single, "nonexistent_config_tenant"}, "user", :transaction, "db", ""}
       secrets = %{user: "user"}
 
-      assert {:error, %PoolConfigNotFoundError{id: ^fake_id}} =
-               result = Supavisor.start_local_pool(fake_id, secrets, nil)
+      assert {:error, %PoolConfigNotFoundError{id: @fake_id}} =
+               result = Supavisor.start_local_pool(@fake_id, secrets, nil)
 
       assert_valid_error(result)
     end

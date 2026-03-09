@@ -41,12 +41,14 @@ defmodule Supavisor.ClientHandler.Auth.Password do
   alias Supavisor.ClientHandler.Auth.{PasswordSecrets, ValidationSecrets}
   alias Supavisor.Protocol.Server
 
+  require Supavisor
+
   @doc """
   Creates a new auth context from tenant info and pool id.
   """
   @spec new_context(map(), Supavisor.id()) :: Context.t()
   def new_context(info, id) do
-    {{_, _}, db_user, _mode, _database, _search_path} = id
+    Supavisor.id(user: db_user) = id
 
     %Context{id: id, tenant: info.tenant, user: info.user, db_user: db_user}
   end

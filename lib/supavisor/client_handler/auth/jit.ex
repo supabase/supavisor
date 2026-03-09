@@ -30,9 +30,11 @@ defmodule Supavisor.ClientHandler.Auth.Jit do
   alias Supavisor.ClientHandler.Auth.PasswordSecrets
   alias Supavisor.{Helpers, Protocol.Server}
 
+  require Supavisor
+
   @spec new_context(map(), Supavisor.id(), term()) :: Context.t()
   def new_context(info, id, peer_ip) do
-    {{_, _}, db_user, _mode, _database, _search_path} = id
+    Supavisor.id(user: db_user) = id
 
     %Context{id: id, tenant: info.tenant, db_user: db_user, peer_ip: peer_ip}
   end

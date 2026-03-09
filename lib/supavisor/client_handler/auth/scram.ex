@@ -47,12 +47,14 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
   alias Supavisor.Protocol.Server
   alias Supavisor.Helpers
 
+  require Supavisor
+
   @doc """
   Creates a new SCRAM auth context from tenant info and pool id.
   """
   @spec new_context(map(), Supavisor.id()) :: Context.t()
   def new_context(info, id) do
-    {{_, _}, user, _mode, _database, _search_path} = id
+    Supavisor.id(user: user) = id
 
     %Context{id: id, tenant: info.tenant, manager_user: info.user, user: user}
   end
