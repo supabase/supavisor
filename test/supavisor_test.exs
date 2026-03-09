@@ -2,7 +2,7 @@ defmodule SupavisorTest do
   use ExUnit.Case, async: true
 
   require Supavisor
-  
+
   import Supavisor.Asserts
 
   alias Supavisor.Errors.{
@@ -12,7 +12,6 @@ defmodule SupavisorTest do
   }
 
   @fake_id {{:single, "nonexistent_tenant"}, "user", :transaction, "db", ""}
-
 
   describe "inspect_id/1" do
     test "key and value are never split across lines" do
@@ -73,6 +72,7 @@ defmodule SupavisorTest do
     test "falls back to inspect for invalid ids" do
       assert Supavisor.inspect_id(:not_an_id) == ":not_an_id"
     end
+  end
 
   describe "stop/1" do
     test "returns WorkerNotFoundError for nonexistent id" do

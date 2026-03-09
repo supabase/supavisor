@@ -224,7 +224,7 @@ defmodule Supavisor.ClientHandler do
         db: db_name,
         search_path: search_path
       )
-      
+
     Logger.metadata(
       project: tenant_or_alias,
       user: user,

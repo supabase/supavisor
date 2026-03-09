@@ -23,11 +23,12 @@ defmodule Supavisor.SecretCacheTest do
 
     id =
       Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
-      
+
     secrets = %{password: "secret123", client_key: "key123"}
 
     validation_secrets =
       ValidationSecrets.from_password_secrets(%PasswordSecrets{user: user, password: "secret123"})
+
     setup_tenant_cache(id)
 
     SecretCache.put_validation_secrets(tenant, user, validation_secrets)
@@ -46,6 +47,7 @@ defmodule Supavisor.SecretCacheTest do
 
     id =
       Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
+
     secrets = %{password: "secret123", client_key: "key123"}
 
     validation_secrets =
@@ -119,7 +121,10 @@ defmodule Supavisor.SecretCacheTest do
   test "upstream secrets stored in tenant cache are accessible" do
     tenant = "test_tenant"
     user = "normal_user"
-    id = Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
+
+    id =
+      Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
+
     secrets = %{password: "secret123", client_key: "key123"}
 
     setup_tenant_cache(id)
@@ -148,7 +153,9 @@ defmodule Supavisor.SecretCacheTest do
     tenant = "test_tenant"
     user = "normal_user"
 
-    id = Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
+    id =
+      Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
+
     secrets = %{password: "secret123", client_key: "key123"}
 
     setup_tenant_cache(id)
