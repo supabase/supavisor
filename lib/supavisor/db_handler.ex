@@ -27,6 +27,7 @@ defmodule Supavisor.DbHandler do
   @behaviour :gen_statem
 
   require Logger
+  require Supavisor
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
@@ -158,8 +159,7 @@ defmodule Supavisor.DbHandler do
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
 
-    {_, tenant} = config.tenant
-    Logger.metadata(project: tenant, user: config.user, mode: config.mode)
+    Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
 
     {auth_value, manager_ref} =
       if config[:proxy] do
@@ -239,8 +239,8 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            tenant = if data.mode == :proxy, do: Supavisor.tenant(data.id)
-            search_path = Supavisor.search_path(data.id)
+            tenant = if data.mode == :proxy, do: Supavisor.id(data.id, :tenant)
+            search_path = Supavisor.id(data.id, :search_path)
 
             case send_startup(sock, auth, tenant, search_path) do
               :ok ->
@@ -846,7 +846,7 @@ defmodule Supavisor.DbHandler do
   defp handle_authentication_error(%{mode: :proxy}, _reason), do: :ok
 
   defp handle_authentication_error(%{mode: _other} = data, _reason) do
-    tenant = Supavisor.tenant(data.id)
+    tenant = Supavisor.id(data.id, :tenant)
     Supavisor.SecretCache.invalidate(tenant, data.user)
     Supavisor.SecretCache.delete_upstream_auth_secrets(data.id)
   end
@@ -990,8 +990,7 @@ defmodule Supavisor.DbHandler do
 
   defp handle_connection_failure(reason, data) do
     if not data.proxy do
-      {_, tenant} = data.tenant
-      Supavisor.CircuitBreaker.record_failure(tenant, :db_connection)
+      Supavisor.CircuitBreaker.record_failure(data.tenant, :db_connection)
     end
 
     maybe_reconnect(reason, data)

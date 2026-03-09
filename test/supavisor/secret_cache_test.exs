@@ -1,6 +1,7 @@
 defmodule Supavisor.SecretCacheTest do
   use ExUnit.Case, async: false
 
+  require Supavisor
   alias Supavisor.SecretCache
   alias Supavisor.TenantCache
   alias Supavisor.ClientHandler.Auth.{ValidationSecrets, PasswordSecrets}
@@ -19,12 +20,14 @@ defmodule Supavisor.SecretCacheTest do
   test "bypass users skip validation cache but keep upstream cache" do
     tenant = "test_tenant"
     user = "bypass_user"
-    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+
+    id =
+      Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
+      
     secrets = %{password: "secret123", client_key: "key123"}
 
     validation_secrets =
       ValidationSecrets.from_password_secrets(%PasswordSecrets{user: user, password: "secret123"})
-
     setup_tenant_cache(id)
 
     SecretCache.put_validation_secrets(tenant, user, validation_secrets)
@@ -40,7 +43,9 @@ defmodule Supavisor.SecretCacheTest do
   test "normal users cache both types of secrets" do
     tenant = "test_tenant"
     user = "normal_user"
-    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+
+    id =
+      Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
     secrets = %{password: "secret123", client_key: "key123"}
 
     validation_secrets =
@@ -114,7 +119,7 @@ defmodule Supavisor.SecretCacheTest do
   test "upstream secrets stored in tenant cache are accessible" do
     tenant = "test_tenant"
     user = "normal_user"
-    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+    id = Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
     secrets = %{password: "secret123", client_key: "key123"}
 
     setup_tenant_cache(id)
@@ -131,7 +136,9 @@ defmodule Supavisor.SecretCacheTest do
   test "upstream secrets not found returns error" do
     tenant = "test_tenant"
     user = "normal_user"
-    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+
+    id =
+      Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
 
     # No tenant cache registered
     assert {:error, :not_found} = SecretCache.get_upstream_auth_secrets(id)
@@ -140,7 +147,8 @@ defmodule Supavisor.SecretCacheTest do
   test "delete_upstream_auth_secrets removes secrets from tenant cache" do
     tenant = "test_tenant"
     user = "normal_user"
-    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+
+    id = Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
     secrets = %{password: "secret123", client_key: "key123"}
 
     setup_tenant_cache(id)
@@ -160,7 +168,9 @@ defmodule Supavisor.SecretCacheTest do
   test "delete_upstream_auth_secrets is idempotent" do
     tenant = "test_tenant"
     user = "normal_user"
-    id = {{:single, tenant}, user, :transaction, "postgres", nil}
+
+    id =
+      Supavisor.id(type: :single, tenant: tenant, user: user, mode: :transaction, db: "postgres")
 
     setup_tenant_cache(id)
 
