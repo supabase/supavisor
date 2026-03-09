@@ -25,7 +25,8 @@ defmodule Supavisor do
     :user,
     :mode,
     :db,
-    :search_path
+    :search_path,
+    upstream_tls: false
   ])
 
   @type id() ::
@@ -35,7 +36,8 @@ defmodule Supavisor do
             user: String.t(),
             mode: mode(),
             db: String.t(),
-            search_path: String.t() | nil
+            search_path: String.t() | nil,
+            upstream_tls: boolean()
           )
 
   @registry Supavisor.Registry.Tenants
@@ -131,7 +133,7 @@ defmodule Supavisor do
   @spec dirty_terminate(String.t(), pos_integer()) :: map()
   def dirty_terminate(tenant, timeout \\ 15_000) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant)
-    |> Enum.reduce(%{}, fn {pid, %{user: user, mode: _mode}}, acc ->
+    |> Enum.reduce(%{}, fn {pid, id(user: user)}, acc ->
       stop =
         try do
           Supervisor.stop(pid, :shutdown, timeout)
@@ -172,20 +174,8 @@ defmodule Supavisor do
   @spec update_secret_checker_credentials_local(String.t(), String.t(), String.t()) :: map()
   def update_secret_checker_credentials_local(tenant, new_user, password) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant)
-    |> Enum.reduce(%{}, fn {_pid,
-                            %{
-                              user: user,
-                              mode: mode,
-                              type: type,
-                              db: db,
-                              search_path: search_path
-                            }},
-                           acc ->
-      # FIXME(felipe): don't build the id here
-      id =
-        id(type: type, tenant: tenant, user: user, mode: mode, db: db, search_path: search_path)
-
-      result = Supavisor.SecretChecker.update_credentials(id, new_user, password)
+    |> Enum.reduce(%{}, fn {_pid, id(user: user, mode: mode) = pool_id}, acc ->
+      result = Supavisor.SecretChecker.update_credentials(pool_id, new_user, password)
       Map.put(acc, {user, mode}, result)
     end)
   end
@@ -413,7 +403,8 @@ defmodule Supavisor do
           mode: mode,
           user: user,
           db: db,
-          search_path: search_path
+          search_path: search_path,
+          upstream_tls: upstream_tls
         ),
         opts
       ) do
@@ -425,7 +416,8 @@ defmodule Supavisor do
       {"mode: ", mode},
       {"user: ", user},
       {"db: ", db},
-      {"search_path: ", search_path}
+      {"search_path: ", search_path},
+      {"upstream_tls: ", upstream_tls}
     ]
 
     fun = fn {key, value}, doc_opts ->

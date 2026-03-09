@@ -22,24 +22,14 @@ defmodule Supavisor.ClientHandler.Auth do
           String.t()
         ) ::
           {:ok, :jit | :password | :scram_sha_256} | {:error, SslRequiredError.t()}
-  def fetch_authentication_method(%{use_jit: true}, _client_jit = true, ssl?, user) do
-    if ssl? do
-      {:ok, :jit}
-    else
-      {:error, %SslRequiredError{user: user}}
+  def fetch_authentication_method(tenant, client_jit, ssl?, user) do
+    case {tenant.use_jit, client_jit, ssl?} do
+      {false, _, _} -> {:ok, :scram_sha_256}
+      {true, false, false} -> {:ok, :scram_sha_256}
+      {true, false, true} -> {:ok, :password}
+      {true, true, false} -> {:error, %SslRequiredError{user: user}}
+      {true, true, true} -> {:ok, :jit}
     end
-  end
-
-  def fetch_authentication_method(%{use_jit: true}, _client_jit = false, ssl?, user) do
-    if ssl? do
-      {:ok, :password}
-    else
-      {:error, %SslRequiredError{user: user}}
-    end
-  end
-
-  def fetch_authentication_method(%{use_jit: false}, _client_jit, _ssl?, _user) do
-    {:ok, :scram_sha_256}
   end
 
   @doc """

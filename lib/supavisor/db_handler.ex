@@ -192,6 +192,8 @@ defmodule Supavisor.DbHandler do
       stats: %{},
       prepared_statements: MapSet.new(),
       proxy: Map.get(config, :proxy, false),
+      client_tls: Map.get(config, :client_tls),
+      client_jit: Map.get(config, :client_jit),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
       mode: config.mode,
       replica_type: config.replica_type,
@@ -239,10 +241,15 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, auth) do
           {:ok, sock} ->
-            tenant = if data.mode == :proxy, do: Supavisor.id(data.id, :tenant)
-            search_path = Supavisor.id(data.id, :search_path)
+            tenant = if data.proxy, do: Supavisor.id(data.id, :tenant)
 
-            case send_startup(sock, auth, tenant, search_path) do
+            options = %{
+              "search_path" => Supavisor.id(data.id, :search_path),
+              "client_tls" => if(data.proxy, do: to_string(data.client_tls)),
+              "jit" => if(data.proxy, do: to_string(data.client_jit))
+            }
+
+            case send_startup(sock, auth, tenant, options) do
               :ok ->
                 :ok = activate(sock)
                 {:next_state, :authentication, %{data | sock: sock}}
@@ -685,11 +692,13 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  @spec send_startup(Supavisor.sock(), map(), String.t() | nil, String.t() | nil) ::
+  @spec send_startup(Supavisor.sock(), map(), String.t() | nil, map()) ::
           :ok | {:error, term}
-  def send_startup(sock, auth, tenant, search_path) do
+  def send_startup(sock, auth, tenant, options) do
     user =
       if is_nil(tenant), do: get_user(auth), else: "#{get_user(auth)}.#{tenant}"
+
+    options = Map.reject(options, fn {_k, v} -> is_nil(v) end)
 
     msg =
       :pgo_protocol.encode_startup_message(
@@ -698,8 +707,8 @@ defmodule Supavisor.DbHandler do
           {"database", auth.database},
           {"application_name", auth.application_name}
         ] ++
-          if(search_path,
-            do: [{"options", StartupOptions.encode(%{"search_path" => search_path})}],
+          if(options != %{},
+            do: [{"options", StartupOptions.encode(options)}],
             else: []
           )
       )

@@ -83,7 +83,7 @@ defmodule Supavisor.ClientHandlerTest do
 
       assert {:keep_state, %{app_name: "Supavisor"},
               {:next_event, :internal,
-               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil, false}}}}} =
+               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil, false, nil}}}}} =
                @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
 
       assert Logger.get_process_level(self()) == :debug

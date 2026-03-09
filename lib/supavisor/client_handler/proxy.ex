@@ -31,12 +31,12 @@ defmodule Supavisor.ClientHandler.Proxy do
 
   Returns `{:ok, db_pid}` on success, or one of the errors defined in `start_error()`.
   """
-  @spec start_proxy_connection(Supavisor.id(), pos_integer(), map(), map(), map()) ::
+  @spec start_proxy_connection(Supavisor.id(), pos_integer(), map(), map(), map(), keyword()) ::
           {:ok, pid()} | {:error, start_error()}
-  def start_proxy_connection(id, max_clients, auth, tenant_feature_flags, pool_ranch) do
+  def start_proxy_connection(id, max_clients, auth, tenant_feature_flags, pool_ranch, client_opts) do
     child_spec =
       Supavisor.DbHandler.child_spec(
-        build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch)
+        build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch, client_opts)
       )
 
     do_start_proxy_connection(id, max_clients, child_spec, @max_sup_retries)
@@ -75,12 +75,13 @@ defmodule Supavisor.ClientHandler.Proxy do
       do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
   end
 
-  @spec build_db_handler_args(Supavisor.id(), map(), map(), map()) :: map()
+  @spec build_db_handler_args(Supavisor.id(), map(), map(), map(), keyword()) :: map()
   defp build_db_handler_args(
          Supavisor.id(tenant: tenant, user: user) = id,
          auth,
          tenant_feature_flags,
-         pool_ranch
+         pool_ranch,
+         client_opts
        ) do
     proxy_auth =
       Map.merge(auth, %{
@@ -101,7 +102,9 @@ defmodule Supavisor.ClientHandler.Proxy do
       replica_type: :write,
       mode: :proxy,
       proxy: true,
-      log_level: nil
+      log_level: nil,
+      client_tls: Keyword.fetch!(client_opts, :client_ssl),
+      client_jit: Keyword.fetch!(client_opts, :client_jit)
     }
   end
 end

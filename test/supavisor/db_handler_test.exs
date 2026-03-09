@@ -251,7 +251,8 @@ defmodule Supavisor.DbHandlerTest do
           auth: auth,
           sock: {:gen_tcp, nil},
           id: @id,
-          mode: :session
+          mode: :session,
+          proxy: false
         })
 
       assert {:next_state, :authentication,

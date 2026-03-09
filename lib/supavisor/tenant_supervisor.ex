@@ -16,14 +16,7 @@ defmodule Supavisor.TenantSupervisor do
 
   @impl true
   def init(%{replicas: replicas} = args) do
-    Supavisor.id(
-      type: type,
-      tenant: tenant,
-      user: user,
-      mode: mode,
-      db: db_name,
-      search_path: search_path
-    ) = args.id
+    Supavisor.id(tenant: tenant, user: user) = args.id
 
     min_size = if Supavisor.Helpers.no_warm_pool_user?(user), do: 0, else: 1
 
@@ -56,8 +49,7 @@ defmodule Supavisor.TenantSupervisor do
         | pools
       ] ++ [{Terminator, terminator_args}]
 
-    map_id = %{user: user, mode: mode, type: type, db: db_name, search_path: search_path}
-    Registry.register(Supavisor.Registry.TenantSups, tenant, map_id)
+    Registry.register(Supavisor.Registry.TenantSups, tenant, args.id)
 
     Supervisor.init(children,
       strategy: :one_for_one,

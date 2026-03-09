@@ -196,8 +196,9 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit}}, app_name, log_level} ->
-        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path, jit}}}
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}, app_name,
+       log_level} ->
+        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}}
         if log_level, do: Logger.put_process_level(self(), log_level)
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
@@ -209,21 +210,11 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_name, search_path, client_jit}}},
+        {:hello, {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls}}},
         :handshake,
         %{sock: sock} = data
       ) do
     sni_hostname = HandlerHelpers.try_get_sni(sock)
-
-    id =
-      Supavisor.id(
-        type: type,
-        tenant: tenant_or_alias,
-        user: user,
-        mode: data.mode,
-        db: db_name,
-        search_path: search_path
-      )
 
     Logger.metadata(
       project: tenant_or_alias,
@@ -233,15 +224,30 @@ defmodule Supavisor.ClientHandler do
       app_name: data.app_name
     )
 
+    # When receiving a proxied connection on a local listener, client_tls
+    # carries the original client's TLS status. Otherwise, use data.ssl.
+    effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
+
     with {:ok, info} <- Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname),
          _ = Logger.metadata(db_name: db_name),
+         upstream_tls = upstream_tls(info.tenant, effective_ssl),
+         id =
+           Supavisor.id(
+             type: type,
+             tenant: tenant_or_alias,
+             user: user,
+             mode: data.mode,
+             db: db_name,
+             search_path: search_path,
+             upstream_tls: upstream_tls
+           ),
          :ok <- check_ssl_enforcement(data, info, user),
          :ok <- check_address_allowed(sock, info),
          :ok <- Manager.check_client_limit(id, info, data.mode),
          {:ok, auth_method} <-
-           Auth.fetch_authentication_method(info.tenant, client_jit, data.ssl, user) do
+           Auth.fetch_authentication_method(info.tenant, client_jit, effective_ssl, user) do
       Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
-      new_data = set_tenant_info(data, info, user, id, db_name)
+      new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
 
       {:keep_state, new_data,
        {:next_event, :internal, {:start_authentication, auth_method, info}}}
@@ -357,7 +363,9 @@ defmodule Supavisor.ClientHandler do
              data.max_clients,
              data.auth,
              data.tenant_feature_flags,
-             data.pool_ranch
+             data.pool_ranch,
+             client_ssl: data.ssl,
+             client_jit: data.use_jit_flow
            ),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
@@ -876,7 +884,7 @@ defmodule Supavisor.ClientHandler do
       {:error, %PoolCheckoutError{reason: reason}}
   end
 
-  defp set_tenant_info(data, info, user, id, db_name) do
+  defp set_tenant_info(data, info, user, id, db_name, client_jit) do
     proxy_type =
       if info.tenant.require_user,
         do: :password,
@@ -893,7 +901,7 @@ defmodule Supavisor.ClientHandler do
       password: info.user.db_password,
       require_user: info.tenant.require_user,
       method: proxy_type,
-      upstream_ssl: info.tenant.upstream_ssl,
+      upstream_ssl: Supavisor.id(id, :upstream_tls),
       upstream_tls_ca: info.tenant.upstream_tls_ca,
       upstream_verify: info.tenant.upstream_verify,
       use_jit: info.tenant.use_jit,
@@ -913,7 +921,8 @@ defmodule Supavisor.ClientHandler do
         proxy_type: proxy_type,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
         auth: auth,
-        max_clients: info.user.max_clients || info.tenant.default_max_clients
+        max_clients: info.user.max_clients || info.tenant.default_max_clients,
+        use_jit_flow: client_jit
     }
   end
 
@@ -934,6 +943,9 @@ defmodule Supavisor.ClientHandler do
       :ok
     end
   end
+
+  defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?
+  defp upstream_tls(%{upstream_ssl: upstream_ssl}, _ssl?), do: upstream_ssl
 
   defp handle_socket_close(state, data) do
     maybe_cleanup_db_handler(state, data)
