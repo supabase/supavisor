@@ -8,6 +8,7 @@ defmodule Supavisor.Tenants do
 
   alias Supavisor.CircuitBreaker
   alias Supavisor.ClientHandler.Auth.ManagerSecrets
+  alias Supavisor.Errors.TenantOrUserNotFoundError
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
   alias Supavisor.Tenants.Tenant
@@ -89,16 +90,30 @@ defmodule Supavisor.Tenants do
   def get_tenant(_, _), do: nil
 
   @spec get_user_cache(:single | :cluster, String.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, map()} | {:error, any()}
+          {:ok, map()} | {:error, TenantOrUserNotFoundError.t()}
   def get_user_cache(type, user, external_id, sni_hostname) do
     cache_key = {:user_cache, type, user, external_id, sni_hostname}
 
-    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
-            ttl: :timer.hours(24)}
-         end) do
-      {_, {:cached, value}} -> value
-      {_, {:cached, value}, _} -> value
+    result =
+      case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+             {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
+              ttl: :timer.hours(24)}
+           end) do
+        {_, {:cached, value}} -> value
+        {_, {:cached, value}, _} -> value
+      end
+
+    case result do
+      {:error, :not_found} ->
+        {:error,
+         %TenantOrUserNotFoundError{
+           type: type,
+           user: user,
+           tenant_or_alias: external_id || sni_hostname
+         }}
+
+      other ->
+        other
     end
   end
 
@@ -440,13 +455,11 @@ defmodule Supavisor.Tenants do
               "Updating auth credentials for tenant #{tenant.external_id}, user #{updated_user.db_user}"
             )
 
-            password_fn = fn -> updated_user.db_password end
-
             checker_result =
               Supavisor.update_secret_checker_credentials_global(
                 tenant.external_id,
                 updated_user.db_user,
-                password_fn
+                updated_user.db_password
               )
 
             Logger.info(

@@ -1,6 +1,12 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.Errors.CheckoutError
+  alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.DbHandlerExitedError
+
+  import Supavisor.Asserts
+
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.Server
 
@@ -35,11 +41,24 @@ defmodule Supavisor.DbHandlerTest do
           raise "simulated crash"
 
         :normal_exit ->
-          exit(:normal)
+          {:stop, :normal, state}
+
+        :db_termination ->
+          {:stop, {:shutdown, :db_termination}, state}
 
         :timeout ->
           # Don't reply to simulate timeout
           {:noreply, state}
+
+        :terminating_with_error ->
+          pg_error = %{"S" => "FATAL", "C" => "28P01", "M" => "password authentication failed"}
+
+          {:reply,
+           {:error,
+            %Supavisor.Errors.CheckoutError{
+              pid: self(),
+              postgres_error: pg_error
+            }}, state}
       end
     end
   end
@@ -103,9 +122,8 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "init/1" do
     test "starts with correct state" do
-      method = :password
-      secrets = fn -> %{user: "user", db_user: "user"} end
-      auth = %{secrets: {method, secrets}}
+      secrets = %{user: "user", db_user: "user"}
+      auth = %{secrets: secrets}
       tenant = "test_tenant"
       user = "user"
 
@@ -113,7 +131,7 @@ defmodule Supavisor.DbHandlerTest do
       table = :ets.new(:tenant_cache, [:set, :public])
       Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
 
-      Supavisor.SecretCache.put_upstream_auth_secrets(@id, method, secrets)
+      Supavisor.SecretCache.put_upstream_auth_secrets(@id, secrets)
 
       manager_config = %{
         id: @id,
@@ -175,8 +193,7 @@ defmodule Supavisor.DbHandlerTest do
       auth = %{host: ~c"localhost", port: 5432}
       tenant = "test_tenant"
       user = "user"
-      method = :password
-      secrets_fn = fn -> %{user: "some user", password: "secret", client_key: "key"} end
+      secrets = %{user: "some user", password: "secret", client_key: "key"}
 
       # Set up tenant cache
       table = :ets.new(:tenant_cache, [:set, :public])
@@ -200,13 +217,13 @@ defmodule Supavisor.DbHandlerTest do
       assert {:ok, :waiting_for_secrets, data} = Db.init(args)
 
       # Now put secrets in cache
-      Supavisor.SecretCache.put_upstream_auth_secrets(@id, method, secrets_fn)
+      Supavisor.SecretCache.put_upstream_auth_secrets(@id, secrets)
 
       # Notify that secrets are available
       assert {:next_state, :connect, updated_data, {:next_event, :internal, :connect}} =
                Db.handle_event(:cast, :secrets_available, :waiting_for_secrets, data)
 
-      assert updated_data.auth.secrets == {method, secrets_fn}
+      assert updated_data.auth.secrets == secrets
       assert updated_data.manager_ref == nil
     end
   end
@@ -216,7 +233,7 @@ defmodule Supavisor.DbHandlerTest do
       {:ok, sock} = :gen_tcp.listen(0, mode: :binary, active: false)
       {:ok, {host, port}} = :inet.sockname(sock)
 
-      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
+      secrets = %{user: "some user", db_user: "some user"}
 
       auth = %{
         host: host,
@@ -260,7 +277,7 @@ defmodule Supavisor.DbHandlerTest do
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
       {host, port} = {{127, 0, 0, 1}, 12345}
 
-      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
+      secrets = %{user: "some user", db_user: "some user"}
 
       auth = %{
         id: @id,
@@ -331,7 +348,7 @@ defmodule Supavisor.DbHandlerTest do
         :gen_tcp.send(recv, <<?N>>)
       end)
 
-      secrets = {:password, fn -> %{user: "some user", db_user: "some user"} end}
+      secrets = %{user: "some user", db_user: "some user"}
 
       auth = %{
         host: host,
@@ -375,14 +392,10 @@ defmodule Supavisor.DbHandlerTest do
           password: fn -> "some_password" end,
           user: "some_user",
           method: :password,
-          secrets:
-            {:password,
-             fn ->
-               %Supavisor.ClientHandler.Auth.PasswordSecrets{
-                 user: "some_user",
-                 password: "some_password"
-               }
-             end}
+          secrets: %Supavisor.ClientHandler.Auth.PasswordSecrets{
+            user: "some_user",
+            password: "some_password"
+          }
         },
         sock: {:gen_tcp, a}
       }
@@ -410,7 +423,7 @@ defmodule Supavisor.DbHandlerTest do
         auth: %{
           user: "user",
           require_user: false,
-          secrets: {:auth_query, fn -> %{user: "user", password: "pass"} end}
+          secrets: %{user: "user", password: "pass"}
         },
         sock: {:gen_tcp, send},
         nonce: "some nonce"
@@ -465,7 +478,7 @@ defmodule Supavisor.DbHandlerTest do
       data = %{
         auth: %{
           user: "user",
-          secrets: {:auth_query, fn -> secrets end},
+          secrets: secrets,
           require_user: false,
           method: :auth_query,
           nonce: "nonce12345"
@@ -595,14 +608,10 @@ defmodule Supavisor.DbHandlerTest do
         password: fn -> "some_password" end,
         user: "some_user",
         method: :password,
-        secrets:
-          {:password,
-           fn ->
-             %Supavisor.ClientHandler.Auth.PasswordSecrets{
-               user: "some_user",
-               password: "some_password"
-             }
-           end}
+        secrets: %Supavisor.ClientHandler.Auth.PasswordSecrets{
+          user: "some_user",
+          password: "some_password"
+        }
       }
 
       data = Map.put(data, :auth, auth)
@@ -620,14 +629,10 @@ defmodule Supavisor.DbHandlerTest do
       content: content
     } do
       auth = %{
-        secrets:
-          {:auth_query_md5,
-           fn ->
-             %Supavisor.ClientHandler.Auth.MD5Secrets{
-               user: "some_user",
-               password: "9e2e8a8fce0afe2d60bd8207455192cd"
-             }
-           end},
+        secrets: %Supavisor.ClientHandler.Auth.PasswordSecrets{
+          user: "some_user",
+          password: "some_password"
+        },
         method: :auth_query_md5
       }
 
@@ -658,7 +663,8 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:ok, {:fake_db_sock, ^mock_pid}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:ok, {:fake_db_sock, ^mock_pid}} =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
     end
 
     test "handles process crash during checkout" do
@@ -666,8 +672,10 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {{%RuntimeError{}, _}, _}}} =
-               Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
     end
 
     test "handles process normal exit during checkout" do
@@ -675,7 +683,22 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {:normal, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: :normal}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
+    end
+
+    test "handles db_termination exit during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :db_termination})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: {:shutdown, :db_termination}}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      {:error, error} = assert_valid_error(result)
+      assert Exception.message(error) =~ "connection to database closed"
     end
 
     test "handles checkout timeout" do
@@ -683,7 +706,22 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {:timeout, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 100)
+      assert {:error, %CheckoutTimeoutError{timeout_ms: 100, mode: :transaction}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 100)
+
+      assert_valid_error(result)
+    end
+
+    test "handles checkout during terminating_with_error state" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :terminating_with_error})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, %CheckoutError{pid: _, postgres_error: %{"S" => "FATAL"}}} =
+               result =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
     end
   end
 

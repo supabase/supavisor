@@ -43,18 +43,6 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
     client_pid
   end
 
-  defp wait_until(fun, remaining \\ 1000)
-  defp wait_until(_fun, remaining) when remaining <= 0, do: :timeout
-
-  defp wait_until(fun, remaining) do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(50)
-      wait_until(fun, remaining - 50)
-    end
-  end
-
   setup do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
 

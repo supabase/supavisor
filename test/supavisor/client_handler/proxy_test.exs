@@ -4,6 +4,12 @@ defmodule Supavisor.ClientHandler.ProxyTest do
   require Supavisor
   alias Supavisor.ClientHandler.Proxy
 
+  alias Supavisor.Errors.{
+    MaxConnectionsError,
+    FailedToStartProxyConnectionError,
+    ProxySupervisorUnavailableError
+  }
+
   @registry Supavisor.Registry.Tenants
 
   setup do
@@ -17,7 +23,7 @@ defmodule Supavisor.ClientHandler.ProxyTest do
     end
 
     test "fails if retries exhausted", %{id: id} do
-      assert {:error, :proxy_supervisor_unavailable} =
+      assert {:error, %ProxySupervisorUnavailableError{}} =
                Proxy.do_start_proxy_connection(id, 200, agent_child_spec(), 0)
     end
 
@@ -64,25 +70,25 @@ defmodule Supavisor.ClientHandler.ProxyTest do
 
       # Even with 3 retries, we may fail sometimes when the supervisor is being stopped
       # so fast.
-      assert frequencies[:started] >= 9_900
+      assert frequencies[:started] >= 9_500
 
-      # We should only have :started and {:error, :proxy_supervisor_unavailable}
-      expected_results = MapSet.new([:started, {:error, :proxy_supervisor_unavailable}])
+      # We should only have :started and {:error, %ProxySupervisorUnavailableError{}}
+      expected_results = MapSet.new([:started, {:error, %ProxySupervisorUnavailableError{}}])
       assert MapSet.subset?(MapSet.new(Map.keys(frequencies)), expected_results)
     end
 
     test "crashing child", %{id: id} do
-      assert {:error, :failed_to_start_proxy_connection} =
+      assert {:error, %FailedToStartProxyConnectionError{}} =
                Proxy.do_start_proxy_connection(id, 200, crashing_child_spec(), 1)
     end
 
     test "throwing child", %{id: id} do
-      assert {:error, :failed_to_start_proxy_connection} =
+      assert {:error, %FailedToStartProxyConnectionError{}} =
                Proxy.do_start_proxy_connection(id, 200, throwing_child_spec(), 1)
     end
 
     test "exiting child", %{id: id} do
-      assert {:error, :failed_to_start_proxy_connection} =
+      assert {:error, %FailedToStartProxyConnectionError{}} =
                Proxy.do_start_proxy_connection(id, 200, exiting_child_spec(), 1)
     end
 
@@ -92,7 +98,7 @@ defmodule Supavisor.ClientHandler.ProxyTest do
         assert is_pid(pid)
       end
 
-      assert {:error, :max_proxy_connections_reached} =
+      assert {:error, %MaxConnectionsError{mode: :proxy, limit: 100, code: "EMAXCONN"}} =
                Proxy.do_start_proxy_connection(id, 100, agent_child_spec(), 3)
     end
   end

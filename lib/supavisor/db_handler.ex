@@ -31,6 +31,10 @@ defmodule Supavisor.DbHandler do
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
+  alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.Errors.CheckoutError
+  alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.DbHandlerExitedError
   alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
 
   alias Supavisor.{
@@ -82,13 +86,19 @@ defmodule Supavisor.DbHandler do
 
   Returns the server socket, which the client may write messages directly to.
   """
-  @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
-          {:ok, Supavisor.sock()} | {:error, {:exit, term()}} | {:error, map()}
-  def checkout(pid, sock, caller, timeout \\ 15_000) do
+  @spec checkout(pid(), Supavisor.sock(), pid(), Supavisor.mode(), timeout()) ::
+          {:ok, Supavisor.sock()}
+          | {:error, DbHandlerExitedError.t()}
+          | {:error, CheckoutError.t()}
+          | {:error, CheckoutTimeoutError.t()}
+  def checkout(pid, sock, caller, mode, timeout \\ 15_000) do
     :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
   catch
-    :exit, reason ->
-      {:error, {:exit, reason}}
+    :exit, {:timeout, _} ->
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+
+    :exit, {reason, _} ->
+      {:error, %DbHandlerExitedError{pid: pid, reason: reason}}
   end
 
   @doc """
@@ -117,16 +127,6 @@ defmodule Supavisor.DbHandler do
   @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
   def handle_prepared_statement_pkts(pid, pkts) do
     :gen_statem.call(pid, {:handle_ps_pkts, pkts}, 15_000)
-  end
-
-  @doc """
-  Returns the state and the mode of the DbHandler
-  """
-  @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
-  def get_state_and_mode(pid) do
-    {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
-  catch
-    error, reason -> {:error, {error, reason}}
   end
 
   @doc """
@@ -460,7 +460,8 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
-    {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
+    error = %Supavisor.Errors.CheckoutError{pid: self(), postgres_error: data.terminating_error}
+    {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :waiting_for_secrets, _data) do
@@ -716,9 +717,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp get_user(auth) do
-    {_method, secrets_fn} = auth.secrets
-    secrets_map = secrets_fn.()
-    secrets_map.user
+    auth.secrets.user
   end
 
   @spec handle_auth_pkts(map(), map(), map()) :: any()
@@ -777,12 +776,10 @@ defmodule Supavisor.DbHandler do
     nonce = data.nonce
     server_first_parts = Helpers.parse_server_first(server_first, nonce)
 
-    {_method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    secrets = data.auth.secrets
 
     {client_final_message, server_proof} =
       Helpers.get_client_final(
-        data.auth.method,
         secrets,
         server_first_parts,
         nonce,
@@ -813,15 +810,9 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: {:authentication_md5_password, salt}} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {_method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    %PasswordSecrets{password: password, user: user} = data.auth.secrets
 
-    digest =
-      if data.auth.method == :password do
-        Helpers.md5([secrets.password, secrets.user])
-      else
-        secrets.password
-      end
+    digest = Helpers.md5([password, user])
 
     payload = ["md5", Helpers.md5([digest, salt]), 0]
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
@@ -832,14 +823,12 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {method, secrets_fn} = data.auth.secrets
-    secrets = secrets_fn.()
+    secrets = data.auth.secrets
 
     password =
-      if method == :password do
-        secrets.password
-      else
-        secrets.cls_password
+      case secrets do
+        %{token: token} -> token
+        %{password: password} -> password
       end
 
     payload = <<password::binary, 0>>

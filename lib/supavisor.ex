@@ -15,7 +15,7 @@ defmodule Supavisor do
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
-  @type secrets :: {:password | :auth_query, fun()}
+  @type secrets :: map()
   @type mode :: :transaction | :session | :native | :proxy
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
 
@@ -78,18 +78,19 @@ defmodule Supavisor do
     end
   end
 
-  @spec stop(id) :: :ok | {:error, :tenant_not_found}
+  @spec stop(id) :: :ok | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def stop(id) do
     case get_global_sup(id) do
       nil ->
-        {:error, :tenant_not_found}
+        {:error, %Supavisor.Errors.WorkerNotFoundError{id: id}}
 
       pid ->
         Supervisor.stop(pid)
     end
   end
 
-  @spec get_local_workers(id) :: {:ok, workers} | {:error, :worker_not_found}
+  @spec get_local_workers(id) ::
+          {:ok, workers} | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def get_local_workers(id) do
     workers = %{
       manager: get_local_manager(id),
@@ -97,35 +98,21 @@ defmodule Supavisor do
     }
 
     if nil in Map.values(workers) do
-      Logger.error("Could not get workers for tenant #{inspect_id(id)}")
-      {:error, :worker_not_found}
+      {:error, %Supavisor.Errors.WorkerNotFoundError{id: id}}
     else
       {:ok, workers}
     end
   end
 
-  @spec subscribe_local(pid, id) ::
+  @spec subscribe(id, pid) ::
           {:ok, subscribe_opts}
-          | {:error, :max_clients_reached}
-          | {:error, :terminating, term()}
-  def subscribe_local(pid, id) do
+          | {:error, Supavisor.Errors.MaxConnectionsError.t()}
+          | {:error, Supavisor.Errors.PoolTerminatingError.t()}
+          | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
+  def subscribe(id, pid \\ self()) do
     with {:ok, workers} <- get_local_workers(id),
          {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
       {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
-    end
-  end
-
-  @spec subscribe(pid, id, pid) ::
-          {:ok, subscribe_opts}
-          | {:error, :max_clients_reached}
-          | {:error, :terminating, term()}
-  def subscribe(sup, id, pid \\ self()) do
-    dest_node = node(sup)
-
-    if node() == dest_node do
-      subscribe_local(pid, id)
-    else
-      Helpers.rpc(dest_node, __MODULE__, :subscribe_local, [pid, id], 15_000)
     end
   end
 
@@ -169,21 +156,21 @@ defmodule Supavisor do
   Updates credentials for all SecretChecker processes for a tenant across the cluster.
   Used for auth_query mode (require_user: false) to hot-update credentials without restarting pools.
   """
-  @spec update_secret_checker_credentials_global(String.t(), String.t(), (-> String.t())) :: [
+  @spec update_secret_checker_credentials_global(String.t(), String.t(), String.t()) :: [
           {node(), term()}
         ]
-  def update_secret_checker_credentials_global(tenant, new_user, password_fn) do
+  def update_secret_checker_credentials_global(tenant, new_user, password) do
     :erpc.multicall(
       [node() | Node.list()],
       Supavisor,
       :update_secret_checker_credentials_local,
-      [tenant, new_user, password_fn],
+      [tenant, new_user, password],
       60_000
     )
   end
 
-  @spec update_secret_checker_credentials_local(String.t(), String.t(), (-> String.t())) :: map()
-  def update_secret_checker_credentials_local(tenant, new_user, password_fn) do
+  @spec update_secret_checker_credentials_local(String.t(), String.t(), String.t()) :: map()
+  def update_secret_checker_credentials_local(tenant, new_user, password) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant)
     |> Enum.reduce(%{}, fn {_pid,
                             %{
@@ -194,10 +181,11 @@ defmodule Supavisor do
                               search_path: search_path
                             }},
                            acc ->
+      # FIXME(felipe): don't build the id here
       id =
         id(type: type, tenant: tenant, user: user, mode: mode, db: db, search_path: search_path)
 
-      result = Supavisor.SecretChecker.update_credentials(id, new_user, password_fn)
+      result = Supavisor.SecretChecker.update_credentials(id, new_user, password)
       Map.put(acc, {user, mode}, result)
     end)
   end
@@ -323,7 +311,7 @@ defmodule Supavisor do
   def try_start_local_pool(id, secrets, log_level) do
     if count_pools(id(id, :tenant)) < @max_pools,
       do: start_local_pool(id, secrets, log_level),
-      else: {:error, :max_pools_reached}
+      else: {:error, %Supavisor.Errors.MaxPoolsReachedError{}}
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
@@ -334,7 +322,7 @@ defmodule Supavisor do
       ) do
     Logger.info("Starting pool(s) for #{inspect_id(id)}")
 
-    secrets_map = elem(secrets, 1).()
+    secrets_map = secrets
     user = secrets_map.user
 
     case type do
@@ -378,9 +366,8 @@ defmodule Supavisor do
         end
 
       error ->
-        Logger.error("Can't find tenant with external_id #{inspect(tenant)} #{inspect(error)}")
-
-        {:error, :tenant_not_found}
+        Logger.error("Can't find pool config for #{inspect(id)} #{inspect(error)}")
+        {:error, %Supavisor.Errors.PoolConfigNotFoundError{id: id}}
     end
   end
 
@@ -395,11 +382,11 @@ defmodule Supavisor do
     end
   end
 
-  @spec get_pool_ranch(id) :: {:ok, map()} | {:error, :not_found}
+  @spec get_pool_ranch(id) :: {:ok, map()} | {:error, Supavisor.Errors.PoolRanchNotFoundError.t()}
   def get_pool_ranch(id) do
     case :syn.lookup(:tenants, id) do
       {_sup_pid, %{port: _port, host: _host} = meta} -> {:ok, meta}
-      _ -> {:error, :not_found}
+      _ -> {:error, %Supavisor.Errors.PoolRanchNotFoundError{id: id}}
     end
   end
 

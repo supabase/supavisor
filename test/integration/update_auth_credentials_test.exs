@@ -113,7 +113,7 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
         Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id})
 
       old_state = :sys.get_state(secret_checker_pid)
-      assert old_state.auth.user == to_string(db_conf[:username])
+      assert old_state.manager_secrets.db_user == to_string(db_conf[:username])
 
       P.query!(
         origin,
@@ -138,8 +138,8 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
       Process.sleep(200)
 
       new_state = :sys.get_state(secret_checker_pid)
-      assert new_state.auth.user == new_manager_user
-      assert new_state.auth.password.() == new_manager_password
+      assert new_state.manager_secrets.db_user == new_manager_user
+      assert new_state.manager_secrets.db_password == new_manager_password
       assert Process.alive?(new_state.conn)
 
       GenServer.stop(proxy)
