@@ -118,16 +118,10 @@ defmodule Supavisor.SecretChecker do
     do: Process.send_after(self(), :check, interval + jitter())
 
   def check_secrets(user, %{auth: auth, conn: conn} = state) do
-    alias Supavisor.ClientHandler.Auth
-
-    # get tenant information so that we can check configuration information
-    # that affects secrets, like :use_jit
-    t = Supavisor.Tenants.get_tenant_cache(state.tenant, state.auth.sni_hostname)
-
     case Helpers.get_user_secret(conn, auth.auth_query, user) do
       {:ok, secret} ->
         method =
-          case {t.use_jit, secret} do
+          case {auth.use_jit, secret} do
             {true, %Auth.SASLSecrets{}} -> :auth_query_jit
             {_, %Auth.MD5Secrets{}} -> :auth_query_md5
             {_, %Auth.SASLSecrets{}} -> :auth_query

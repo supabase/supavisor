@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
   require Logger
 
   alias Supavisor.CircuitBreaker
+  alias Supavisor.Errors.CircuitBreakerError
   alias Supavisor.Support.Cluster
   alias Supavisor.Support.Cluster.PortConfig
 
@@ -60,10 +61,11 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
 
     :timer.sleep(500)
 
-    assert {:error, :circuit_open, blocked_until} = CircuitBreaker.check(key, :auth_error)
+    assert {:error, %CircuitBreakerError{blocked_until: blocked_until}} =
+             CircuitBreaker.check(key, :auth_error)
 
     for peer <- [peer1, peer2] do
-      assert {:error, :circuit_open, ^blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: ^blocked_until}} =
                :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
     end
   end
@@ -100,10 +102,10 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
       CircuitBreaker.record_failure(key, :auth_error)
     end
 
-    assert {:error, :circuit_open, _} = CircuitBreaker.check(key, :auth_error)
+    assert {:error, %CircuitBreakerError{}} = CircuitBreaker.check(key, :auth_error)
 
     for peer <- [peer1, peer2] do
-      assert {:error, :circuit_open, _} =
+      assert {:error, %CircuitBreakerError{}} =
                :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
     end
 
@@ -128,10 +130,11 @@ defmodule Supavisor.Integration.CircuitBreakerClusterTest do
       CircuitBreaker.record_failure(key, :auth_error)
     end
 
-    assert {:error, :circuit_open, blocked_until} = CircuitBreaker.check(key, :auth_error)
+    assert {:error, %CircuitBreakerError{blocked_until: blocked_until}} =
+             CircuitBreaker.check(key, :auth_error)
 
     for peer <- [peer1, peer2] do
-      assert {:error, :circuit_open, ^blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: ^blocked_until}} =
                :peer.call(peer, CircuitBreaker, :check, [key, :auth_error])
     end
   end

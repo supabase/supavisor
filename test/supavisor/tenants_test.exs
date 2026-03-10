@@ -3,6 +3,7 @@ defmodule Supavisor.TenantsTest do
 
   alias Supavisor.Tenants
   alias Supavisor.Tenants.{Cluster, Tenant, User}
+  alias Supavisor.Errors.TenantOrUserNotFoundError
   import Supavisor.TenantsFixtures
 
   describe "tenants" do
@@ -145,11 +146,36 @@ defmodule Supavisor.TenantsTest do
                Tenants.get_user(:single, "postgres", "dev_tenant", "")
     end
 
+    test "get_user_cache/4 returns TenantOrUserNotFoundError when tenant is not found" do
+      assert {:error, %TenantOrUserNotFoundError{} = error} =
+               Tenants.get_user_cache(:single, "no_user", "no_tenant", nil)
+
+      assert error.type == :single
+      assert error.user == "no_user"
+      assert error.tenant_or_alias == "no_tenant"
+      assert error.code == "ENOTFOUND"
+    end
+
+    test "get_user_cache/4 returns TenantOrUserNotFoundError with sni_hostname as tenant_or_alias" do
+      assert {:error, %TenantOrUserNotFoundError{} = error} =
+               Tenants.get_user_cache(:single, "no_user", nil, "no_host.example.com")
+
+      assert error.tenant_or_alias == "no_host.example.com"
+    end
+
+    test "get_user_cache/4 returns user info when tenant exists" do
+      _tenant = tenant_fixture()
+
+      assert {:ok, %{tenant: _, user: _}} =
+               Tenants.get_user_cache(:single, "postgres", "dev_tenant", nil)
+    end
+
     test "get_user_cache/4 returns error when tenant doesn't exist, then returns tenant after creation" do
       external_id = "cache_test_tenant_#{System.unique_integer([:positive])}"
       user = "cache_test_user"
 
-      assert {:error, :not_found} = Tenants.get_user_cache(:single, user, external_id, nil)
+      assert {:error, %Supavisor.Errors.TenantOrUserNotFoundError{}} =
+               Tenants.get_user_cache(:single, user, external_id, nil)
 
       {:ok, tenant} =
         Tenants.create_tenant(%{

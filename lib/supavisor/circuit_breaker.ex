@@ -11,6 +11,7 @@ defmodule Supavisor.CircuitBreaker do
   require Logger
 
   alias Supavisor.CircuitBreaker.SlidingWindow
+  alias Supavisor.Errors.CircuitBreakerError
 
   @windows_table Supavisor.CircuitBreaker.Windows
   @blocks_table Supavisor.CircuitBreaker.Blocks
@@ -20,22 +21,24 @@ defmodule Supavisor.CircuitBreaker do
       max_failures: 5,
       sliding_window_seconds: 300,
       block_seconds: 600,
-      propagate?: false,
-      explanation: "Failed to retrieve database credentials"
+      explanation:
+        "failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked",
+      propagate?: false
     },
     db_connection: %{
       max_failures: 100,
       sliding_window_seconds: 150,
       block_seconds: 600,
-      propagate?: false,
-      explanation: "Unable to establish connection to upstream database"
+      explanation:
+        "too many failed attempts to connect to the database, new connections are temporarily blocked",
+      propagate?: false
     },
     auth_error: %{
       max_failures: 10,
       sliding_window_seconds: 150,
       block_seconds: 600,
-      propagate?: true,
-      explanation: "Too many authentication errors"
+      explanation: "too many authentication failures, new connections are temporarily blocked",
+      propagate?: true
     },
     test: %{
       max_failures: 10,
@@ -107,9 +110,9 @@ defmodule Supavisor.CircuitBreaker do
 
   @doc """
   Checks if a circuit breaker is open for a given key and operation.
-  Returns :ok if operation is allowed, {:error, :circuit_open, blocked_until} otherwise.
+  Returns :ok if operation is allowed, {:error, CircuitBreakerError.t()} otherwise.
   """
-  @spec check(term(), atom()) :: :ok | {:error, :circuit_open, integer()}
+  @spec check(term(), atom()) :: :ok | {:error, CircuitBreakerError.t()}
   def check(key, operation) when is_atom(operation) do
     ets_key = {key, operation}
 
@@ -119,7 +122,7 @@ defmodule Supavisor.CircuitBreaker do
 
       [{^ets_key, blocked}] ->
         if blocked > System.system_time(:second) do
-          {:error, :circuit_open, blocked}
+          {:error, %CircuitBreakerError{operation: operation, blocked_until: blocked}}
         else
           :ets.delete_object(@blocks_table, {ets_key, blocked})
           :ok
