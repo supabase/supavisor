@@ -3,6 +3,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
   alias Supavisor.CircuitBreaker
   alias Supavisor.CircuitBreaker.SlidingWindow
+  alias Supavisor.Errors.CircuitBreakerError
 
   setup do
     :ets.delete_all_objects(Supavisor.CircuitBreaker.Blocks)
@@ -25,7 +26,7 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
       end
 
-      assert {:error, :circuit_open, blocked_until} =
+      assert {:error, %CircuitBreakerError{operation: :get_secrets, blocked_until: blocked_until}} =
                CircuitBreaker.check("tenant1", :get_secrets)
 
       assert is_integer(blocked_until)
@@ -50,7 +51,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
       CircuitBreaker.record_failure("tenant1", :get_secrets)
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :get_secrets)
+      assert {:error, %CircuitBreakerError{}} = CircuitBreaker.check("tenant1", :get_secrets)
     end
 
     test "maintains separate state per tenant" do
@@ -60,7 +61,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
       CircuitBreaker.record_failure("tenant2", :get_secrets)
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :get_secrets)
+      assert {:error, %CircuitBreakerError{}} = CircuitBreaker.check("tenant1", :get_secrets)
       assert :ok = CircuitBreaker.check("tenant2", :get_secrets)
     end
 
@@ -71,7 +72,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
       CircuitBreaker.record_failure("tenant1", :db_connection)
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :get_secrets)
+      assert {:error, %CircuitBreakerError{}} = CircuitBreaker.check("tenant1", :get_secrets)
       assert :ok = CircuitBreaker.check("tenant1", :db_connection)
     end
 
@@ -81,7 +82,7 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
       end
 
-      assert {:error, :circuit_open, blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: blocked_until}} =
                CircuitBreaker.check("tenant1", :get_secrets)
 
       # Record more failures while blocked — should not update blocked_until
@@ -89,7 +90,7 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure("tenant1", :get_secrets)
       end
 
-      assert {:error, :circuit_open, ^blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: ^blocked_until}} =
                CircuitBreaker.check("tenant1", :get_secrets)
     end
 
@@ -102,7 +103,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
       CircuitBreaker.record_failure("tenant1", :db_connection)
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :db_connection)
+      assert {:error, %CircuitBreakerError{}} = CircuitBreaker.check("tenant1", :db_connection)
     end
   end
 
@@ -128,7 +129,7 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure(key, :auth_error)
       end
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check(key, :auth_error)
+      assert {:error, %CircuitBreakerError{}} = CircuitBreaker.check(key, :auth_error)
 
       CircuitBreaker.clear_local(key, :auth_error)
 
@@ -205,7 +206,7 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure("tenant1", :auth_error)
       end
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check("tenant1", :auth_error)
+      assert {:error, %CircuitBreakerError{}} = CircuitBreaker.check("tenant1", :auth_error)
 
       assert [{"tenant1", blocked_until}] = CircuitBreaker.opened("tenant1", :auth_error)
       assert is_integer(blocked_until)
@@ -230,8 +231,11 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure({"tenant1", ip2}, :auth_error)
       end
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip1}, :auth_error)
-      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip2}, :auth_error)
+      assert {:error, %CircuitBreakerError{}} =
+               CircuitBreaker.check({"tenant1", ip1}, :auth_error)
+
+      assert {:error, %CircuitBreakerError{}} =
+               CircuitBreaker.check({"tenant1", ip2}, :auth_error)
 
       bans = CircuitBreaker.opened({"tenant1", :_}, :auth_error)
       assert length(bans) == 2
@@ -256,10 +260,14 @@ defmodule Supavisor.CircuitBreakerTest do
         CircuitBreaker.record_failure({"tenant2", ip2}, :auth_error)
       end
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip1}, :auth_error)
-      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant1", ip1}, :get_secrets)
+      assert {:error, %CircuitBreakerError{}} =
+               CircuitBreaker.check({"tenant1", ip1}, :auth_error)
 
-      assert {:error, :circuit_open, _} = CircuitBreaker.check({"tenant2", ip2}, :auth_error)
+      assert {:error, %CircuitBreakerError{}} =
+               CircuitBreaker.check({"tenant1", ip1}, :get_secrets)
+
+      assert {:error, %CircuitBreakerError{}} =
+               CircuitBreaker.check({"tenant2", ip2}, :auth_error)
 
       assert [{{"tenant1", ^ip1}, blocked_until}] =
                CircuitBreaker.opened({"tenant1", :_}, :auth_error)
@@ -328,7 +336,7 @@ defmodule Supavisor.CircuitBreakerTest do
 
       CircuitBreaker.open_local(key, :auth_error, blocked_until)
 
-      assert {:error, :circuit_open, ^blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: ^blocked_until}} =
                CircuitBreaker.check(key, :auth_error)
     end
 
@@ -339,7 +347,7 @@ defmodule Supavisor.CircuitBreakerTest do
       blocked_until = System.system_time(:second) + 300
       CircuitBreaker.open_local(key, :auth_error, blocked_until)
 
-      assert {:error, :circuit_open, ^blocked_until} =
+      assert {:error, %CircuitBreakerError{blocked_until: ^blocked_until}} =
                CircuitBreaker.check(key, :auth_error)
     end
   end

@@ -120,16 +120,6 @@ defmodule Supavisor.SecretCache do
   end
 
   @doc """
-  Short-term cache indicating that cached validation secrets were checked against
-  the upstream database recently.
-  """
-  def put_check(tenant, user, method, secrets_fn) do
-    key = {:secrets_check, tenant, user}
-    value = {method, secrets_fn}
-    Cachex.put(Supavisor.Cache, key, {:cached, value}, ttl: 5_000)
-  end
-
-  @doc """
   Invalidates all cached secrets for a tenant/user across the cluster.
   """
   def invalidate(tenant, user) do
