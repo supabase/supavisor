@@ -98,17 +98,20 @@ defmodule Supavisor.MetricsCleaner do
          db_name: db,
          search_path: search_path
        }) do
-    id =
-      Supavisor.id(
-        type: type,
-        tenant: tenant,
-        user: user,
-        mode: mode,
-        db: db,
-        search_path: search_path
-      )
+    ids =
+      for tls <- [false, true] do
+        Supavisor.id(
+          type: type,
+          tenant: tenant,
+          user: user,
+          mode: mode,
+          db: db,
+          search_path: search_path,
+          upstream_tls: tls
+        )
+      end
 
-    :ets.lookup(@tenant_registry_table, id) == []
+    Enum.all?(ids, fn id -> :ets.lookup(@tenant_registry_table, id) == [] end)
   end
 
   defp tenant_down?(%{tenant: tenant}) do
