@@ -317,14 +317,16 @@ defmodule Supavisor.DbHandlerTest do
       data = %{id: @id}
       from = {self(), make_ref()}
 
-      expected_error = %{
+      expected_postgres_error = %{
         "S" => "FATAL",
         "C" => "28P01",
         "M" =>
           "Authentication credentials are invalid. Please reconnect with fresh credentials to restore pool functionality."
       }
 
-      assert {:keep_state_and_data, {:reply, ^from, {:error, ^expected_error}}} =
+      assert {:keep_state_and_data,
+              {:reply, ^from,
+               {:error, %Supavisor.Errors.CheckoutError{postgres_error: ^expected_postgres_error}}}} =
                Db.handle_event(
                  {:call, from},
                  {:checkout, nil, self()},
