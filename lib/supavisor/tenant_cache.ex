@@ -13,8 +13,9 @@ defmodule Supavisor.TenantCache do
     GenServer.start_link(__MODULE__, args)
   end
 
-  def init(%{id: id}) do
+  def init(%{id: id, upstream_auth_secrets: upstream_auth_secrets}) do
     table = :ets.new(:tenant_cache, [:set, :public])
+    :ets.insert(table, {:upstream_auth_secrets, upstream_auth_secrets})
     Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
     {:ok, %{table: table, id: id}}
   end

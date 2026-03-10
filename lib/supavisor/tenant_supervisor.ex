@@ -36,9 +36,9 @@ defmodule Supavisor.TenantSupervisor do
         }
       end)
 
-    manager_args = %{id: args.id, secrets: args.secrets, log_level: args.log_level}
+    manager_args = %{id: args.id, log_level: args.log_level}
     secret_checker_args = %{id: args.id}
-    cache_args = %{id: args.id}
+    cache_args = %{id: args.id, upstream_auth_secrets: args.secrets}
     terminator_args = %{id: args.id}
 
     children =

@@ -214,11 +214,8 @@ defmodule Supavisor.Manager do
       upstream_ssl: Supavisor.id(args.id, :upstream_tls),
       upstream_verify: tenant_record.upstream_verify,
       upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
-      require_user: tenant_record.require_user,
-      secrets: args.secrets
+      require_user: tenant_record.require_user
     }
-
-    Supavisor.SecretCache.put_upstream_auth_secrets(args.id, args.secrets)
 
     persisted_ps = Supavisor.TenantCache.get_parameter_status(args.id)
 
