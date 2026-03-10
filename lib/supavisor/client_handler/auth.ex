@@ -88,7 +88,11 @@ defmodule Supavisor.ClientHandler.Auth do
   Returns {:ok, client_key} on success or {:error, exception} on failure.
   """
   @spec validate_credentials(auth_method(), term(), term(), term(), binary()) ::
-          {:ok, binary() | nil} | {:error, Supavisor.Errors.WrongPasswordError.t()}
+          {:ok, binary() | nil}
+          | {:ok, binary(), auth_method()}
+          | {:error, WrongPasswordError.t()}
+          | {:error, JitUnauthorizedError.t()}
+          | {:error, JitRequestFailedError.t()}
   def validate_credentials(:password, _secrets, signatures, client_proof, user) do
     if client_proof == signatures.client,
       do: {:ok, nil},
