@@ -8,25 +8,25 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   @user_valid_attrs %{
     "db_user_alias" => "some_db_user",
-    "db_user" => "some db_user",
-    "db_password" => "some db_password",
+    "db_user" => "postgres",
+    "db_password" => "postgres",
     "pool_size" => 3,
     "mode_type" => "transaction"
   }
 
   @create_attrs %{
-    db_database: "some db_database",
-    db_host: "some db_host",
-    db_port: 42,
+    db_database: "supavisor_test",
+    db_host: "localhost",
+    db_port: 6432,
     external_id: "dev_tenant",
     require_user: true,
     default_parameter_status: %{"server_version" => "15.0"},
     users: [@user_valid_attrs]
   }
   @update_attrs %{
-    db_database: "some updated db_database",
-    db_host: "some updated db_host",
-    db_port: 43,
+    db_database: "supavisor_test",
+    db_host: "localhost",
+    db_port: 6432,
     external_id: "dev_tenant",
     require_user: true,
     allow_list: ["71.209.249.38/32"],
@@ -49,9 +49,9 @@ defmodule SupavisorWeb.TenantControllerTest do
     external_id: nil
   }
   @auth_query_tenant_attrs %{
-    db_database: "auth_query_db",
-    db_host: "auth_query_host",
-    db_port: 5432,
+    db_database: "supavisor_test",
+    db_host: "localhost",
+    db_port: 6432,
     external_id: "auth_query_tenant",
     require_user: false,
     auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
@@ -72,8 +72,6 @@ defmodule SupavisorWeb.TenantControllerTest do
   }
 
   setup %{conn: conn} do
-    :meck.expect(Supavisor.Helpers, :check_creds_get_ver, fn _ -> {:ok, "0.0"} end)
-
     jwt = gen_token()
 
     new_conn =
@@ -93,10 +91,6 @@ defmodule SupavisorWeb.TenantControllerTest do
         "authorization",
         "Bearer " <> blocked_jwt
       )
-
-    on_exit(fn ->
-      :meck.unload(Supavisor.Helpers)
-    end)
 
     {:ok, conn: new_conn, blocked_conn: blocked_conn}
   end
@@ -146,9 +140,9 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert %{
                data: %{
                  external_id: ^external_id,
-                 db_database: "some updated db_database",
-                 db_host: "some updated db_host",
-                 db_port: 43,
+                 db_database: "supavisor_test",
+                 db_host: "localhost",
+                 db_port: 6432,
                  allow_list: ["71.209.249.38/32"]
                }
              } =

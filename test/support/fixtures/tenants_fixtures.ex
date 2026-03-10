@@ -11,9 +11,9 @@ defmodule Supavisor.TenantsFixtures do
     {:ok, tenant} =
       attrs
       |> Enum.into(%{
-        db_database: "some db_database",
-        db_host: "some db_host",
-        db_port: 42,
+        db_database: "supavisor_test",
+        db_host: "localhost",
+        db_port: 6432,
         external_id: "dev_tenant",
         default_parameter_status: %{"server_version" => "15.0"},
         require_user: true,
