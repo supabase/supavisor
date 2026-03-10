@@ -1,6 +1,7 @@
 import json
 import logging
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Configure logging for Docker (outputs to stdout/stderr)
@@ -51,7 +52,62 @@ testCases = [
             },
         },
     },
+    {
+        "auth": "sbp_aaaa00d26b63d9a3557c72a1b9902cbb8412c836",
+        "expected_role": "postgres",
+        "max_uses": 2,
+        "window_seconds": 5,
+        "response": {
+            "code": 200,
+            "data": {
+                "user_id": "087f4b1c-da1c-4172-92c5-1ace925079ea",
+                "user_role": {"role": "postgres"},
+            },
+        },
+    },
+    {
+        "auth": "sbp_bbbb00d26b63d9a3557c72a1b9902cbb8412c836",
+        "expected_role": "postgres",
+        "max_uses": 3,
+        "window_seconds": 5,
+        "response": {
+            "code": 200,
+            "data": {
+                "user_id": "087f4b1c-da1c-4172-92c5-1ace925079ea",
+                "user_role": {"role": "postgres"},
+            },
+        },
+    },
+    {
+        "auth": "sbp_cccc00d26b63d9a3557c72a1b9902cbb8412c836",
+        "expected_role": "postgres",
+        "max_uses": 1,
+        "window_seconds": 5,
+        "response": {
+            "code": 200,
+            "data": {
+                "user_id": "087f4b1c-da1c-4172-92c5-1ace925079ea",
+                "user_role": {"role": "postgres"},
+            },
+        },
+    },
+    {
+        "auth": "sbp_dddd00d26b63d9a3557c72a1b9902cbb8412c836",
+        "expected_role": "postgres",
+        "max_uses": 2,
+        "window_seconds": 5,
+        "response": {
+            "code": 200,
+            "data": {
+                "user_id": "087f4b1c-da1c-4172-92c5-1ace925079ea",
+                "user_role": {"role": "postgres"},
+            },
+        },
+    },
 ]
+
+# Track usage for rate-limited tokens: {token: {"count": N, "first_used": timestamp}}
+token_usage = {}
 
 
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -80,6 +136,30 @@ class SimpleHandler(BaseHTTPRequestHandler):
         # Build response
         for case in testCases:
             if auth == case.get("auth"):
+                # Check rate limits if configured
+                max_uses = case.get("max_uses")
+                window_seconds = case.get("window_seconds")
+                if max_uses is not None and window_seconds is not None:
+                    now = time.time()
+                    usage = token_usage.get(auth)
+                    if usage is not None:
+                        elapsed = now - usage["first_used"]
+                        if elapsed > window_seconds:
+                            # Window expired, reset
+                            token_usage[auth] = {"count": 1, "first_used": now}
+                        elif usage["count"] >= max_uses:
+                            # Exhausted within window
+                            logger.info(
+                                f"Rate-limited token {auth[:10]}... - {usage['count']} uses in {elapsed:.1f}s"
+                            )
+                            resp_code = 401
+                            response_bytes = json.dumps({"message": "token expired"}).encode()
+                            break
+                        else:
+                            usage["count"] += 1
+                    else:
+                        token_usage[auth] = {"count": 1, "first_used": now}
+
                 resp_code = case.get("response").get("code")
                 response_bytes = json.dumps(case.get("response").get("data")).encode(
                     "utf-8"

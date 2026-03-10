@@ -325,7 +325,7 @@ defmodule Supavisor.ClientHandler do
           {:next_state, :idle, data, handle_actions(data)}
 
         opts.ps == [] ->
-          {:keep_state, data, {:timeout, 10_000, :wait_ps}}
+          {:keep_state, data, {:timeout, 1_000, :wait_ps}}
 
         true ->
           {:keep_state, data, {:next_event, :internal, {:greetings, opts.ps}}}

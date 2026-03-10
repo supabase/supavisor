@@ -474,13 +474,14 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :waiting_for_secrets, _data) do
     Logger.debug("DbHandler: checkout call during waiting_for_secrets, replying with error")
 
-    error = %{
+    postgres_error = %{
       "S" => "FATAL",
       "C" => "28P01",
       "M" =>
         "Authentication credentials are invalid. Please reconnect with fresh credentials to restore pool functionality."
     }
 
+    error = %Supavisor.Errors.CheckoutError{pid: self(), postgres_error: postgres_error}
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 

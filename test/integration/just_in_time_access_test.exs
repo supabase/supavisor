@@ -587,6 +587,104 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
              )
   end
 
+  test "supavisor does not reuse jit token for new connections", %{db_conf: db_conf} do
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
+
+    # Connect with a short-lived token (valid for only 2 uses within a 5s window).
+    # The first connection consumes both uses (supavisor validation + PAM validation).
+    assert {:ok, pid1} =
+             single_connection(db_conf, tenant_id, ca_cert,
+               password: "sbp_aaaa00d26b63d9a3557c72a1b9902cbb8412c836",
+               jit: true
+             )
+
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
+
+    # Connect with a different valid token. If supavisor were reusing the
+    # first (now exhausted) token for the upstream connection, the mock
+    # server would reject it as a 3rd use.
+    assert {:ok, pid2} =
+             single_connection(db_conf, tenant_id, ca_cert,
+               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
+               jit: true
+             )
+
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+  end
+
+  test "supavisor does not reuse jit token for new connections via proxy node",
+       %{db_conf: db_conf} do
+    {tenant_id, ca_cert} =
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
+      end)
+
+    assert {:ok, _peer, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    # Connect with a short-lived token (valid for only 2 uses within a 5s window).
+    # The first connection consumes both uses (supavisor validation + PAM validation).
+    assert {:ok, pid1} =
+             single_connection(db_conf, tenant_id, ca_cert,
+               password: "sbp_bbbb00d26b63d9a3557c72a1b9902cbb8412c836",
+               jit: true
+             )
+
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
+
+    # Connect with a different valid token. If supavisor were reusing the
+    # first (now exhausted) token for the upstream connection, the mock
+    # server would reject it as a 3rd use.
+    assert {:ok, pid2} =
+             single_connection(db_conf, tenant_id, ca_cert,
+               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
+               jit: true
+             )
+
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+  end
+
+  test "stale jit token rejected by database returns clear error", %{db_conf: db_conf} do
+    {tenant_id, ca_cert} = setup_tenant(db_conf)
+
+    # Token allows 1 use: passes Supavisor JIT validation, but PAM rejects it.
+    # Connection is async so the error may surface on connect or on query.
+    result =
+      with {:ok, pid} <-
+             single_connection(db_conf, tenant_id, ca_cert,
+               password: "sbp_cccc00d26b63d9a3557c72a1b9902cbb8412c836",
+               jit: true
+             ) do
+        SingleConnection.query(pid, "SELECT 1")
+      end
+
+    assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} = result
+  end
+
+  test "stale jit token rejected by database returns clear error via proxy node",
+       %{db_conf: db_conf} do
+    {tenant_id, ca_cert} =
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
+      end)
+
+    assert {:ok, _peer, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    # Token allows 2 uses: passes Supavisor JIT validation + proxy forwarding,
+    # but PAM on the local DbHandler rejects it.
+    result =
+      with {:ok, pid} <-
+             single_connection(db_conf, tenant_id, ca_cert,
+               password: "sbp_dddd00d26b63d9a3557c72a1b9902cbb8412c836",
+               jit: true
+             ) do
+        SingleConnection.query(pid, "SELECT 1")
+      end
+
+    assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} = result
+  end
+
   defp single_connection(db_conf, tenant_id, ca_cert, overrides) do
     username = overrides[:username] || db_conf[:username]
 
@@ -596,7 +694,8 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
       database: db_conf[:database],
       password: overrides[:password] || db_conf[:password],
       username: "#{username}.#{tenant_id}",
-      pool_size: 1
+      pool_size: 1,
+      sync_connect: true
     ]
 
     opts =
