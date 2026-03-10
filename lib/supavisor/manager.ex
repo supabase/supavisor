@@ -317,8 +317,8 @@ defmodule Supavisor.Manager do
     config = %{
       id: state.id,
       auth: state.auth,
-      user: elem(state.id, 1),
-      tenant: {:single, state.tenant},
+      user: Supavisor.id(state.id, :user),
+      tenant: state.tenant,
       mode: state.mode,
       replica_type: state.replica_type,
       log_level: state.log_level,
