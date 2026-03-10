@@ -7,12 +7,18 @@ defmodule Supavisor.ClientHandler.Proxy do
 
   alias Supavisor.ClientHandler.Proxy.Supervisor, as: ProxySupervisor
 
+  alias Supavisor.Errors.{
+    MaxConnectionsError,
+    FailedToStartProxyConnectionError,
+    ProxySupervisorUnavailableError
+  }
+
   @max_sup_retries 3
 
   @type start_error ::
-          :max_proxy_connections_reached
-          | :failed_to_start_proxy_connection
-          | :proxy_supervisor_unavailable
+          MaxConnectionsError.t()
+          | FailedToStartProxyConnectionError.t()
+          | ProxySupervisorUnavailableError.t()
 
   @doc """
   Starts a proxy DbHandler for the given tenant.
@@ -22,10 +28,7 @@ defmodule Supavisor.ClientHandler.Proxy do
   Retries up to #{@max_sup_retries} times when the supervisor disappears between
   lookup and use (race with watchdog shutdown).
 
-  Returns `{:ok, db_pid}` on success, or one of:
-  - `{:error, :max_proxy_connections_reached}` if the connection limit has been reached
-  - `{:error, :failed_to_start_proxy_connection}` if the child process failed to start
-  - `{:error, :proxy_supervisor_unavailable}` if the supervisor could not be started after retries
+  Returns `{:ok, db_pid}` on success, or one of the errors defined in `start_error()`.
   """
   @spec start_proxy_connection(Supavisor.id(), pos_integer(), map(), map(), map()) ::
           {:ok, pid()} | {:error, start_error()}
@@ -49,7 +52,7 @@ defmodule Supavisor.ClientHandler.Proxy do
         ) ::
           {:ok, pid()} | {:error, start_error()}
   def do_start_proxy_connection(_id, _max_clients, _child_spec, 0) do
-    {:error, :proxy_supervisor_unavailable}
+    {:error, %ProxySupervisorUnavailableError{}}
   end
 
   def do_start_proxy_connection(id, max_clients, child_spec, retries) do
@@ -58,13 +61,13 @@ defmodule Supavisor.ClientHandler.Proxy do
       {:ok, pid}
     else
       {:error, :max_children} ->
-        {:error, :max_proxy_connections_reached}
+        {:error, MaxConnectionsError.new(:proxy, max_clients)}
 
       {:error, :proxy_sup_not_found} ->
         do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
 
       {:error, :failed_to_start} ->
-        {:error, :failed_to_start_proxy_connection}
+        {:error, %FailedToStartProxyConnectionError{}}
     end
   catch
     :exit, _reason ->

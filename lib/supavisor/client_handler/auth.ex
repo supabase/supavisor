@@ -13,6 +13,7 @@ defmodule Supavisor.ClientHandler.Auth do
 
   alias Supavisor.{Helpers, Protocol.Server}
   alias Supavisor.ClientHandler.Auth.{MD5Secrets, PasswordSecrets, SASLSecrets}
+  alias Supavisor.Errors.{JitRequestFailedError, JitUnauthorizedError, WrongPasswordError}
 
   @type auth_method :: :password | :auth_query | :auth_query_md5 | :auth_query_jit
   @type auth_secrets :: {auth_method(), function()}
@@ -84,32 +85,36 @@ defmodule Supavisor.ClientHandler.Auth do
   Validates authentication credentials based on the method.
 
   Supports password, auth_query, and auth_query_md5 methods.
-  Returns {:ok, client_key} on success or {:error, reason} on failure.
+  Returns {:ok, client_key} on success or {:error, exception} on failure.
   """
-  @spec validate_credentials(auth_method(), term(), term(), term()) ::
-          {:ok, binary() | nil} | {:error, :wrong_password}
-  def validate_credentials(:password, _secrets, signatures, client_proof) do
+  @spec validate_credentials(auth_method(), term(), term(), term(), binary()) ::
+          {:ok, binary() | nil}
+          | {:ok, binary(), auth_method()}
+          | {:error, WrongPasswordError.t()}
+          | {:error, JitUnauthorizedError.t()}
+          | {:error, JitRequestFailedError.t()}
+  def validate_credentials(:password, _secrets, signatures, client_proof, user) do
     if client_proof == signatures.client,
       do: {:ok, nil},
-      else: {:error, :wrong_password}
+      else: {:error, %Supavisor.Errors.WrongPasswordError{user: user}}
   end
 
-  def validate_credentials(:auth_query, secrets, signatures, client_proof) do
+  def validate_credentials(:auth_query, secrets, signatures, client_proof, user) do
     client_key = :crypto.exor(Base.decode64!(client_proof), signatures.client)
 
     if Helpers.hash(client_key) == secrets.().stored_key do
       {:ok, client_key}
     else
-      {:error, :wrong_password}
+      {:error, %Supavisor.Errors.WrongPasswordError{user: user}}
     end
   end
 
-  def validate_credentials(:auth_query_md5, server_hash, salt, client_hash) do
+  def validate_credentials(:auth_query_md5, server_hash, salt, client_hash, user) do
     expected_hash = "md5" <> Helpers.md5([server_hash, salt])
 
     if expected_hash == client_hash,
       do: {:ok, nil},
-      else: {:error, :wrong_password}
+      else: {:error, %Supavisor.Errors.WrongPasswordError{user: user}}
   end
 
   def validate_credentials(:auth_query_jit, tenant, secrets, password, rhost) do
@@ -122,7 +127,7 @@ defmodule Supavisor.ClientHandler.Auth do
         try do
           Helpers.check_user_has_jit_role(tenant.jit_api_url, password, secret.user, rhost)
         rescue
-          _ -> {:error, :request_failed}
+          _ -> {:error, %JitRequestFailedError{user: secret.user, reason: :request_crashed}}
         end
 
       case result do
@@ -131,15 +136,13 @@ defmodule Supavisor.ClientHandler.Auth do
           {:ok, :crypto.hash(:sha256, password), :auth_query_jit}
 
         {:ok, false} ->
-          Logger.debug("User token is valid but can't assume this role")
-          {:error, :wrong_password, :auth_query_jit}
+          {:error, %JitUnauthorizedError{user: secret.user, reason: :role_not_granted}}
 
         {:error, :unauthorized_or_forbidden} ->
-          {:error, :wrong_password, :auth_query_jit}
+          {:error, %JitUnauthorizedError{user: secret.user, reason: :unauthorized_or_forbidden}}
 
         {:error, _} ->
-          Logger.debug("Unexpected error while calling API")
-          {:error, :wrong_password, :auth_query_jit}
+          {:error, %JitRequestFailedError{user: secret.user, reason: :unexpected_api_error}}
       end
     else
       # match against the scram-sha-256 / md5 we have from auth_query
@@ -155,12 +158,12 @@ defmodule Supavisor.ClientHandler.Auth do
 
           if :crypto.hash_equals(stored_key, secret.stored_key),
             do: {:ok, client_key, :auth_query},
-            else: {:error, :wrong_password, :auth_query}
+            else: {:error, %WrongPasswordError{user: secret.user}}
 
         _ ->
           # reject md5 auth as it isn't supported and doesn't work in
           # non-jit access mode either
-          {:error, :wrong_password, :auth_query_md5}
+          {:error, %WrongPasswordError{user: secret.user}}
       end
     end
   end
@@ -224,7 +227,7 @@ defmodule Supavisor.ClientHandler.Auth do
   """
   @spec check_and_update_secrets(
           auth_method(),
-          term(),
+          Exception.t(),
           Supavisor.id(),
           map(),
           String.t(),
@@ -234,7 +237,7 @@ defmodule Supavisor.ClientHandler.Auth do
         ) :: :ok
   def check_and_update_secrets(
         method,
-        reason,
+        %Supavisor.Errors.WrongPasswordError{} = _exception,
         client_id,
         info,
         tenant,
@@ -242,7 +245,7 @@ defmodule Supavisor.ClientHandler.Auth do
         current_secrets_fn,
         ssl
       ) do
-    if method != :password and reason == :wrong_password and
+    if method != :password and
          not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
       case fetch_secrets_from_database(client_id, info, user, ssl) do
         {:ok, {method2, secrets2}} ->
@@ -265,29 +268,27 @@ defmodule Supavisor.ClientHandler.Auth do
     :ok
   end
 
+  def check_and_update_secrets(
+        _method,
+        _exception,
+        _client_id,
+        _info,
+        _tenant,
+        _user,
+        _current_secrets_fn,
+        _ssl
+      ) do
+    # For other exceptions (protocol errors, timeouts), no cache update is needed
+    Logger.debug("ClientHandler: No cache check needed for non-password error")
+    :ok
+  end
+
   ## Message Parsing
 
   @doc """
   Parses authentication response packets for different auth methods.
-
-  Returns parsed credentials or error information.
   """
-  @spec parse_auth_message(binary(), auth_method()) ::
-          {:ok, term()} | {:error, term()}
-  def parse_auth_message(bin, :auth_query_md5) do
-    case Server.decode_pkt(bin) do
-      {:ok, %{tag: :password_message, payload: {:md5, client_md5}}, _} ->
-        {:ok, client_md5}
-
-      {:error, error} ->
-        {:error, {:decode_error, error}}
-
-      other ->
-        {:error, {:unexpected_message, other}}
-    end
-  end
-
-  def parse_auth_message(bin, _scram_method) do
+  def parse_auth_message(bin, context) do
     case Server.decode_pkt(bin) do
       {:ok, %{tag: :password_message, payload: {:cleartext_password, cls_password}}, _} ->
         {:ok, cls_password}
@@ -303,10 +304,18 @@ defmodule Supavisor.ClientHandler.Auth do
         {:ok, p}
 
       {:error, error} ->
-        {:error, {:decode_error, error}}
+        {:error,
+         %Supavisor.Errors.AuthProtocolError{
+           details: {:decode_error, error},
+           context: context
+         }}
 
       other ->
-        {:error, {:unexpected_message, other}}
+        {:error,
+         %Supavisor.Errors.AuthProtocolError{
+           details: {:unexpected_message, other},
+           context: context
+         }}
     end
   end
 
