@@ -12,6 +12,7 @@ defmodule Supavisor.Errors.AuthQueryError do
           | :wrong_format
           | :unsupported_secret_format
           | :parse_error
+          | :md5_not_supported
 
   @type t() :: %__MODULE__{
           reason: reason(),
@@ -33,6 +34,9 @@ defmodule Supavisor.Errors.AuthQueryError do
     do: "unsupported or invalid secret format"
 
   def error_message(%{reason: :parse_error}), do: "failed to parse SCRAM secret"
+
+  def error_message(%{reason: :md5_not_supported}),
+    do: "MD5 secrets are not supported for auth_query, use require_user instead"
 
   defp humanize(%DBConnection.ConnectionError{reason: :queue_timeout}),
     do: "connection to database not available"

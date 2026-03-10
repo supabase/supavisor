@@ -16,7 +16,10 @@ defmodule Supavisor.SecretChecker do
   end
 
   @spec get_secrets(Supavisor.id()) ::
-          {:ok, Supavisor.secrets()} | {:error, :not_started}
+          {:ok, ValidationSecrets.t()}
+          | {:error, :not_started}
+          | {:error, :no_auth_config}
+          | {:error, Supavisor.Errors.AuthQueryError.t()}
   def get_secrets(id) do
     erpc_call_node(id, __MODULE__, :do_get_secrets, [id])
   end

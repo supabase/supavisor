@@ -4,7 +4,7 @@ defmodule Supavisor.AuthQuery do
   to fetch user secrets (SCRAM-SHA-256 or MD5).
   """
 
-  alias Supavisor.ClientHandler.Auth.{ManagerSecrets, MD5Secrets, SASLSecrets}
+  alias Supavisor.ClientHandler.Auth.{ManagerSecrets, SASLSecrets}
   alias Supavisor.Errors.AuthQueryError
   alias Supavisor.Helpers
   alias Supavisor.Tenants.Tenant
@@ -53,10 +53,10 @@ defmodule Supavisor.AuthQuery do
 
   @doc """
   Runs the auth query against a connection and parses the result into
-  a `SASLSecrets` or `MD5Secrets` struct.
+  a `SASLSecrets` struct. MD5 secrets are rejected with an error.
   """
   @spec fetch_user_secret(pid(), String.t() | nil, String.t()) ::
-          {:ok, SASLSecrets.t() | MD5Secrets.t()} | {:error, AuthQueryError.t()}
+          {:ok, SASLSecrets.t()} | {:error, AuthQueryError.t()}
   def fetch_user_secret(_conn, nil, _user) do
     {:error, %AuthQueryError{reason: :no_auth_query}}
   end
@@ -79,10 +79,10 @@ defmodule Supavisor.AuthQuery do
 
   @doc """
   Parses a PostgreSQL secret string (from `pg_authid.rolpassword`) into
-  a `SASLSecrets` or `MD5Secrets` struct.
+  a `SASLSecrets` struct. MD5 secrets are rejected with an error.
   """
   @spec parse_secret(String.t(), String.t()) ::
-          {:ok, SASLSecrets.t() | MD5Secrets.t()} | {:error, AuthQueryError.t()}
+          {:ok, SASLSecrets.t()} | {:error, AuthQueryError.t()}
   def parse_secret("SCRAM-SHA-256" <> _ = secret, user) do
     # <digest>$<iteration>:<salt>$<stored_key>:<server_key>
     case Regex.run(~r/^(.+)\$(\d+):(.+)\$(.+):(.+)$/, secret) do
@@ -106,8 +106,8 @@ defmodule Supavisor.AuthQuery do
     end
   end
 
-  def parse_secret("md5" <> secret, user) do
-    {:ok, %MD5Secrets{user: user, password: secret}}
+  def parse_secret("md5" <> _secret, _user) do
+    {:error, %AuthQueryError{reason: :md5_not_supported}}
   end
 
   def parse_secret(_secret, _user) do
