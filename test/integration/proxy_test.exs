@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
 
   alias Postgrex, as: P
+  alias Supavisor.Protocol.Server
   alias Supavisor.Support.{Cluster, SSLHelper}
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
@@ -60,6 +61,23 @@ defmodule Supavisor.Integration.ProxyTest do
                 }
               }} = parse_uri(url) |> single_connection()
     end
+  end
+
+  test "tenant or user not found" do
+    db_conf = Application.get_env(:supavisor, Repo)
+
+    url =
+      "postgresql://postgres.nonexistent_tenant:any_password@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "(ENOTFOUND) tenant/user postgres.nonexistent_tenant not found",
+                severity: "FATAL",
+                pg_code: "XX000"
+              }
+            }} = parse_uri(url) |> single_connection()
   end
 
   for tenant <- @tenants do
@@ -228,8 +246,7 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size",
-                unknown: "FATAL",
+                  "(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 2",
                 severity: "FATAL",
                 pg_code: "XX000"
               }
@@ -283,12 +300,46 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Max client connections reached",
+                message: "(EMAXCONN) max client connections reached, limit: 0",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = single_connection(connection_opts)
+  end
+
+  test "checkout timeout in transaction mode" do
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_transaction),
+      username: "checkout_timeout_test.proxy_tenant1",
+      database: "postgres",
+      password: "postgres"
+    ]
+
+    # Start 2 connections and keep them busy with transactions (pool_size is 2)
+    {:ok, conn1} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn1, {:query, "BEGIN;"})
+
+    {:ok, conn2} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn2, {:query, "BEGIN;"})
+
+    {:ok, conn3} = single_connection(connection_opts)
+    assert [%P.Result{}] = P.SimpleConnection.call(conn3, {:query, "BEGIN;"})
+
+    {:ok, conn4} = single_connection(connection_opts)
+
+    # Try to execute query on 4th connection - should timeout after 500ms
+    assert %Postgrex.Error{
+             postgres: %{
+               code: :internal_error,
+               message:
+                 "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 500ms in Transaction mode",
+               pg_code: "XX000",
+               severity: "FATAL"
+             }
+           } = P.SimpleConnection.call(conn4, {:query, "BEGIN;"})
   end
 
   test "change role password" do
@@ -375,10 +426,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Authentication error, reason: \"Invalid format for user or db_name\"",
+                message:
+                  "(EINVALIDUSERINFO) Authentication error, reason: \"Invalid format for user or db_name\"",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
   end
@@ -468,10 +519,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Circuit breaker open: Failed to retrieve database credentials",
+                message:
+                  "(ECIRCUITBREAKER) failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -494,10 +545,9 @@ defmodule Supavisor.Integration.ProxyTest do
               postgres: %{
                 code: :internal_error,
                 message:
-                  "Circuit breaker open: Unable to establish connection to upstream database",
+                  "(ECIRCUITBREAKER) too many failed attempts to connect to the database, new connections are temporarily blocked",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -529,10 +579,10 @@ defmodule Supavisor.Integration.ProxyTest do
             %Postgrex.Error{
               postgres: %{
                 code: :internal_error,
-                message: "Circuit breaker open: Too many authentication errors",
+                message:
+                  "(ECIRCUITBREAKER) too many authentication failures, new connections are temporarily blocked",
                 pg_code: "XX000",
-                severity: "FATAL",
-                unknown: "FATAL"
+                severity: "FATAL"
               }
             }} = parse_uri(url) |> single_connection()
 
@@ -673,6 +723,255 @@ defmodule Supavisor.Integration.ProxyTest do
       {:supervisor, :poolboy_sup, _} -> true
       _ -> false
     end
+  end
+
+  test "cleanup resets session state in session mode" do
+    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+
+    connection_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_session),
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> List.first(@tenants)
+    ]
+
+    test_timeout = "12345ms"
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+
+    assert [%P.Result{rows: [[backend_pid_1]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    assert [%P.Result{}] =
+             P.SimpleConnection.call(
+               conn1,
+               {:query, "SET statement_timeout = '#{test_timeout}';"}
+             )
+
+    assert [%P.Result{rows: [[^test_timeout]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SHOW statement_timeout;"})
+
+    stop_supervised(:conn1)
+    Process.sleep(100)
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+
+    assert [%P.Result{rows: [[backend_pid_2]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
+
+    assert backend_pid_1 == backend_pid_2
+
+    assert [%P.Result{rows: [[timeout]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})
+
+    assert timeout != test_timeout
+  end
+
+  describe "startup packet edge cases" do
+    setup do
+      %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
+    end
+
+    test "closes connection when startup packet is too large", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      padding = :binary.copy(<<0>>, 1100)
+      bin = <<1108::32, 3::16, 0::16, padding::binary>>
+
+      :ok = :gen_tcp.send(sock, bin)
+      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+               Server.decode_pkt(data)
+
+      assert %{
+               "C" => "08P01",
+               "M" =>
+                 "(ESTARTUPPACKETTOOLARGE) Startup packet too large: 1108 bytes (max 1024 bytes)"
+             } = payload
+
+      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
+    end
+
+    test "closes connection when startup packet is malformed", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      bin = <<13::32, 3::16, 0::16, "nope", 0>>
+
+      :ok = :gen_tcp.send(sock, bin)
+      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+               Server.decode_pkt(data)
+
+      assert %{
+               "C" => "08P01",
+               "M" => "(ESTARTUPMESSAGE) Invalid startup message: :bad_startup_payload"
+             } = payload
+
+      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
+    end
+
+    # Regression: issue #854
+    test "handles startup packet where options has an empty value", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      bin =
+        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+          "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
+
+      :ok = :gen_tcp.send(sock, bin)
+      {:ok, response} = :gen_tcp.recv(sock, 0, 5000)
+
+      # Authentication response
+      assert <<?R, _::binary>> = response
+
+      :gen_tcp.close(sock)
+    end
+  end
+
+  test "max pools reached returns proper error" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "max_pool_tenant"
+    port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+    base_opts = [
+      hostname: db_conf[:hostname],
+      port: port,
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> tenant
+    ]
+
+    # Open 10 connections with different search_paths to create 10 distinct pools
+    # (max_pools is 10 in test config)
+    for i <- 1..10 do
+      opts = Keyword.put(base_opts, :parameters, search_path: "schema_#{i}")
+      {:ok, conn} = start_supervised({Postgrex, opts}, id: :"conn_#{i}")
+      assert %Postgrex.Result{} = Postgrex.query!(conn, "SELECT 1", [])
+    end
+
+    # Eleventh connection should fail at startup with MaxPoolsReachedError
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message: "(EMAXPOOLSREACHED) max pools count reached",
+                pg_code: "XX000",
+                severity: "FATAL"
+              }
+            }} = single_connection(base_opts)
+  end
+
+  @tag cluster: true
+  test "local node enforces proxy pool limit when remote manager is unresponsive" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "proxy_pool_tenant"
+    username = db_conf[:username] <> "." <> tenant
+    id = {{:single, tenant}, db_conf[:username], :transaction, db_conf[:database], nil}
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    node2_port = Application.get_env(:supavisor, :secondary_proxy_port)
+
+    # Start the pool on node2 by connecting through it
+    {:ok, node2_conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: node2_port,
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: username,
+        connect_timeout: 5000
+      )
+
+    assert %P.Result{rows: [[1]]} = P.query!(node2_conn, "SELECT 1", [])
+
+    # Verify the pool supervisor lives on node2
+    assert :ok =
+             Enum.reduce_while(1..30, nil, fn _, _ ->
+               case Supavisor.get_global_sup(id) do
+                 pid when is_pid(pid) and node(pid) == node2 ->
+                   {:halt, :ok}
+
+                 _ ->
+                   Process.sleep(100)
+                   {:cont, nil}
+               end
+             end)
+
+    local_port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+    conn_opts = [
+      hostname: db_conf[:hostname],
+      port: local_port,
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: username
+    ]
+
+    # Suspend the manager on node2 to simulate it being overloaded/unresponsive
+    manager_pid = :erpc.call(node2, Supavisor, :get_local_manager, [id])
+    assert is_pid(manager_pid)
+    :erpc.call(node2, :sys, :suspend, [manager_pid])
+
+    # proxy_pool_tenant has max_clients: 2. Fire 5 connections concurrently —
+    # at least one must be rejected by the local proxy pool even though the
+    # remote manager is unresponsive and can't enforce limits itself.
+    monitored_tasks =
+      Enum.map(1..5, fn i ->
+        {:ok, pid} =
+          start_supervised(%{
+            id: {:conn_task, i},
+            start:
+              {Task, :start_link,
+               [
+                 fn ->
+                   receive do
+                     :go -> SingleConnection.connect(conn_opts)
+                   end
+                 end
+               ]},
+            restart: :temporary
+          })
+
+        {pid, Process.monitor(pid)}
+      end)
+
+    Enum.each(monitored_tasks, fn {pid, _} -> send(pid, :go) end)
+
+    results =
+      Enum.map(monitored_tasks, fn {pid, ref} ->
+        receive do
+          {:DOWN, ^ref, :process, ^pid, :normal} -> :ok
+          {:DOWN, ^ref, :process, ^pid, reason} -> {:error, reason}
+        after
+          15_000 -> {:error, :timeout}
+        end
+      end)
+
+    {max_conn_errors, other_errors} =
+      Enum.split_with(results, fn
+        {:error,
+         %Postgrex.Error{
+           postgres: %{
+             code: :internal_error,
+             message: "(EMAXCONN) max client connections reached, limit: 2"
+           }
+         }} ->
+          true
+
+        _ ->
+          false
+      end)
+
+    assert length(max_conn_errors) == 3
+    assert length(other_errors) == 2
+
+    :erpc.call(node2, :sys, :resume, [manager_pid])
+    GenServer.stop(node2_conn)
   end
 
   defp parse_uri(uri) do

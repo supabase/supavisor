@@ -288,4 +288,86 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     def params, do: {"User Credentials Update Params", "application/json", __MODULE__}
   end
+
+  defmodule NetworkBan do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        banned_address: %Schema{
+          type: :string,
+          description: "Banned IP address",
+          example: "192.168.1.100"
+        },
+        banned_until: %Schema{
+          type: :integer,
+          minimum: 0,
+          description: "Unix timestamp (seconds) when the ban expires"
+        }
+      },
+      required: [:banned_address, :banned_until],
+      example: %{
+        banned_address: "192.168.1.100",
+        banned_until: 1_706_549_400
+      }
+    })
+
+    def response, do: {"Network Ban Response", "application/json", __MODULE__}
+  end
+
+  defmodule NetworkBanList do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        banned_ipv4_addresses: %Schema{
+          type: :array,
+          items: NetworkBan,
+          description: "List of IP addresses banned due to authentication errors"
+        }
+      },
+      required: [:banned_ipv4_addresses],
+      example: %{
+        banned_ipv4_addresses: [
+          %{
+            banned_address: "192.168.1.100",
+            banned_until: 1_706_549_400
+          },
+          %{
+            banned_address: "10.0.0.50",
+            banned_until: 1_706_549_500
+          }
+        ]
+      }
+    })
+
+    def response, do: {"Network Ban List Response", "application/json", __MODULE__}
+  end
+
+  defmodule ClearNetworkBans do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        ipv4_addresses: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description: "List of IPv4 addresses to unban",
+          example: ["192.168.1.100", "10.0.0.50"]
+        }
+      },
+      required: [:ipv4_addresses],
+      example: %{
+        ipv4_addresses: ["192.168.1.100", "10.0.0.50"]
+      }
+    })
+
+    def params, do: {"Clear Network Ban Params", "application/json", __MODULE__}
+  end
 end

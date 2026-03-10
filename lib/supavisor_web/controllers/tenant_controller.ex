@@ -16,6 +16,7 @@ defmodule SupavisorWeb.TenantController do
     BadRequest,
     Created,
     Empty,
+    NetworkBanList,
     NotFound,
     ServiceUnavailable,
     Tenant,
@@ -290,6 +291,71 @@ defmodule SupavisorWeb.TenantController do
             |> put_view(SupavisorWeb.ChangesetView)
             |> render("error.json", changeset: changeset)
         end
+    end
+  end
+
+  operation(:list_network_bans,
+    summary: "List network bans for tenant",
+    description: """
+    Returns IP addresses banned due to authentication errors.
+
+    When too many authentication failures occur from an IP, the circuit breaker
+    blocks that IP for a configured period. This endpoint returns all currently
+    banned IPs with their unblock unix timestamps.
+    """,
+    parameters: [
+      external_id: [in: :path, description: "External ID", type: :string],
+      authorization: @authorization
+    ],
+    responses: %{
+      200 => NetworkBanList.response(),
+      404 => NotFound.response()
+    }
+  )
+
+  def list_network_bans(conn, %{"external_id" => external_id}) do
+    case Tenants.list_network_bans(external_id) do
+      {:ok, bans} ->
+        render(conn, "list_network_bans.json", bans: bans)
+
+      {:error, :tenant_not_found} ->
+        conn
+        |> put_status(404)
+        |> render("not_found.json", tenant: nil)
+    end
+  end
+
+  operation(:clear_network_bans,
+    summary: "Clear network bans for specific IPs",
+    description: """
+    Manually clears authentication error bans for specific IP addresses.
+
+    This removes the circuit breaker block globally across all cluster nodes
+    for the provided IP addresses. Returns remaining bans after the clear operation
+    in the same format as the list endpoint.
+    """,
+    parameters: [
+      external_id: [in: :path, description: "External tenant ID", type: :string],
+      authorization: @authorization
+    ],
+    request_body:
+      {"IP addresses to clear", "application/json", SupavisorWeb.OpenApiSchemas.ClearNetworkBans,
+       required: true},
+    responses: %{
+      200 => NetworkBanList.response(),
+      404 => NotFound.response()
+    }
+  )
+
+  def clear_network_bans(conn, %{"external_id" => external_id, "ipv4_addresses" => ip_addresses}) do
+    case Tenants.clear_network_bans(external_id, ip_addresses) do
+      {:ok, remaining_bans} ->
+        render(conn, "list_network_bans.json", bans: remaining_bans)
+
+      {:error, :tenant_not_found} ->
+        conn
+        |> put_status(404)
+        |> render("error.json", error: "Tenant not found")
     end
   end
 end

@@ -13,8 +13,9 @@ defmodule Supavisor.ClientHandler.Auth do
 
   alias Supavisor.{Helpers, Protocol.Server}
   alias Supavisor.ClientHandler.Auth.{MD5Secrets, PasswordSecrets, SASLSecrets}
+  alias Supavisor.Errors.{JitRequestFailedError, JitUnauthorizedError, WrongPasswordError}
 
-  @type auth_method :: :password | :auth_query | :auth_query_md5
+  @type auth_method :: :password | :auth_query | :auth_query_md5 | :auth_query_jit
   @type auth_secrets :: {auth_method(), function()}
 
   ## Secret Management
@@ -25,13 +26,14 @@ defmodule Supavisor.ClientHandler.Auth do
   For password auth (require_user: true), returns password-based secrets.
   For auth_query, uses cache with TTL or fetches from database.
   """
-  @spec get_user_secrets(Supavisor.id(), map(), String.t(), String.t()) ::
+  @spec get_user_secrets(Supavisor.id(), map(), String.t(), String.t(), boolean()) ::
           {:ok, auth_secrets()} | {:error, term()}
   def get_user_secrets(
         _id,
         %{user: user, tenant: %{require_user: true}},
         _db_user,
-        _tenant_or_alias
+        _tenant_or_alias,
+        _ssl
       ) do
     secrets = %PasswordSecrets{
       user: user.db_user,
@@ -41,12 +43,40 @@ defmodule Supavisor.ClientHandler.Auth do
     {:ok, {:password, fn -> secrets end}}
   end
 
-  def get_user_secrets(id, info, db_user, tenant_or_alias) do
+  def get_user_secrets(id, info, db_user, tenant_or_alias, ssl) do
     fetch_fn = fn ->
-      fetch_secrets_from_database(id, info, db_user)
+      fetch_secrets_from_database(id, info, db_user, ssl)
     end
 
-    Supavisor.SecretCache.fetch_validation_secrets(tenant_or_alias, db_user, fetch_fn)
+    case Supavisor.SecretCache.fetch_validation_secrets(tenant_or_alias, db_user, fetch_fn) do
+      {:ok, {cached_method, secrets_fn}} ->
+        # Adjust the method based on SSL status, even when using cached secrets
+        adjusted_method = adjust_auth_method_for_ssl(cached_method, info.tenant.use_jit, ssl)
+        {:ok, {adjusted_method, secrets_fn}}
+
+      error ->
+        error
+    end
+  end
+
+  # Helper function to adjust auth method based on SSL status
+  defp adjust_auth_method_for_ssl(:auth_query_jit, false, _ssl) do
+    :auth_query
+  end
+
+  defp adjust_auth_method_for_ssl(:auth_query_jit, true, false) do
+    # If cached method is :auth_query_jit but SSL is not used, downgrade to :auth_query
+    :auth_query
+  end
+
+  defp adjust_auth_method_for_ssl(:auth_query, true, true) do
+    # If cached method is :auth_query but JIT is enabled and SSL is used, upgrade to :auth_query_jit
+    :auth_query_jit
+  end
+
+  defp adjust_auth_method_for_ssl(method, _use_jit, _ssl) do
+    # For all other cases (md5, password, or matching conditions), keep the method as is
+    method
   end
 
   ## Authentication Validation
@@ -55,32 +85,83 @@ defmodule Supavisor.ClientHandler.Auth do
   Validates authentication credentials based on the method.
 
   Supports password, auth_query, and auth_query_md5 methods.
-  Returns {:ok, client_key} on success or {:error, reason} on failure.
+  Returns {:ok, client_key} on success or {:error, exception} on failure.
   """
-  @spec validate_credentials(auth_method(), term(), term(), term()) ::
-          {:ok, binary() | nil} | {:error, :wrong_password}
-  def validate_credentials(:password, _secrets, signatures, client_proof) do
+  @spec validate_credentials(auth_method(), term(), term(), term(), binary()) ::
+          {:ok, binary() | nil} | {:error, Supavisor.Errors.WrongPasswordError.t()}
+  def validate_credentials(:password, _secrets, signatures, client_proof, user) do
     if client_proof == signatures.client,
       do: {:ok, nil},
-      else: {:error, :wrong_password}
+      else: {:error, %Supavisor.Errors.WrongPasswordError{user: user}}
   end
 
-  def validate_credentials(:auth_query, secrets, signatures, client_proof) do
+  def validate_credentials(:auth_query, secrets, signatures, client_proof, user) do
     client_key = :crypto.exor(Base.decode64!(client_proof), signatures.client)
 
     if Helpers.hash(client_key) == secrets.().stored_key do
       {:ok, client_key}
     else
-      {:error, :wrong_password}
+      {:error, %Supavisor.Errors.WrongPasswordError{user: user}}
     end
   end
 
-  def validate_credentials(:auth_query_md5, server_hash, salt, client_hash) do
+  def validate_credentials(:auth_query_md5, server_hash, salt, client_hash, user) do
     expected_hash = "md5" <> Helpers.md5([server_hash, salt])
 
     if expected_hash == client_hash,
       do: {:ok, nil},
-      else: {:error, :wrong_password}
+      else: {:error, %Supavisor.Errors.WrongPasswordError{user: user}}
+  end
+
+  def validate_credentials(:auth_query_jit, tenant, secrets, password, rhost) do
+    # check if incomming password looks like PAT or a JWT
+    # otherwise handle as password,
+    secret = secrets.()
+
+    if Helpers.token_matches?(password) do
+      result =
+        try do
+          Helpers.check_user_has_jit_role(tenant.jit_api_url, password, secret.user, rhost)
+        rescue
+          _ -> {:error, %JitRequestFailedError{user: secret.user, reason: :request_crashed}}
+        end
+
+      case result do
+        {:ok, true} ->
+          # set a fake client_key incase upstream switches away from pam mid auth
+          {:ok, :crypto.hash(:sha256, password), :auth_query_jit}
+
+        {:ok, false} ->
+          {:error, %JitUnauthorizedError{user: secret.user, reason: :role_not_granted}}
+
+        {:error, :unauthorized_or_forbidden} ->
+          {:error, %JitUnauthorizedError{user: secret.user, reason: :unauthorized_or_forbidden}}
+
+        {:error, _} ->
+          {:error, %JitRequestFailedError{user: secret.user, reason: :unexpected_api_error}}
+      end
+    else
+      # match against the scram-sha-256 / md5 we have from auth_query
+      case secret.digest do
+        "SCRAM-SHA-256" ->
+          salt = Base.decode64!(secret.salt)
+
+          salted_password =
+            :crypto.pbkdf2_hmac(:sha256, password, salt, secret.iterations, 32)
+
+          client_key = :crypto.mac(:hmac, :sha256, salted_password, "Client Key")
+          stored_key = :crypto.hash(:sha256, client_key)
+
+          if :crypto.hash_equals(stored_key, secret.stored_key),
+            do: {:ok, client_key, :auth_query},
+            else: {:error, %WrongPasswordError{user: secret.user}}
+
+        _ ->
+          # reject md5 auth as it isn't supported and doesn't work in
+          # non-jit access mode either
+          {:error, %WrongPasswordError{user: secret.user}}
+      end
+    end
   end
 
   ## Challenge Preparation
@@ -142,17 +223,27 @@ defmodule Supavisor.ClientHandler.Auth do
   """
   @spec check_and_update_secrets(
           auth_method(),
-          term(),
+          Exception.t(),
           Supavisor.id(),
           map(),
           String.t(),
           String.t(),
-          function()
+          function(),
+          boolean()
         ) :: :ok
-  def check_and_update_secrets(method, reason, client_id, info, tenant, user, current_secrets_fn) do
-    if method != :password and reason == :wrong_password and
+  def check_and_update_secrets(
+        method,
+        %Supavisor.Errors.WrongPasswordError{} = _exception,
+        client_id,
+        info,
+        tenant,
+        user,
+        current_secrets_fn,
+        ssl
+      ) do
+    if method != :password and
          not Supavisor.CacheRefreshLimiter.cache_refresh_limited?(client_id) do
-      case fetch_secrets_from_database(client_id, info, user) do
+      case fetch_secrets_from_database(client_id, info, user, ssl) do
         {:ok, {method2, secrets2}} ->
           current_secrets = current_secrets_fn.()
           new_secrets = secrets2.()
@@ -173,30 +264,31 @@ defmodule Supavisor.ClientHandler.Auth do
     :ok
   end
 
+  def check_and_update_secrets(
+        _method,
+        _exception,
+        _client_id,
+        _info,
+        _tenant,
+        _user,
+        _current_secrets_fn,
+        _ssl
+      ) do
+    # For other exceptions (protocol errors, timeouts), no cache update is needed
+    Logger.debug("ClientHandler: No cache check needed for non-password error")
+    :ok
+  end
+
   ## Message Parsing
 
   @doc """
   Parses authentication response packets for different auth methods.
-
-  Returns parsed credentials or error information.
   """
-  @spec parse_auth_message(binary(), auth_method()) ::
-          {:ok, term()} | {:error, term()}
-  def parse_auth_message(bin, :auth_query_md5) do
+  def parse_auth_message(bin, context) do
     case Server.decode_pkt(bin) do
-      {:ok, %{tag: :password_message, payload: {:md5, client_md5}}, _} ->
-        {:ok, client_md5}
+      {:ok, %{tag: :password_message, payload: {:cleartext_password, cls_password}}, _} ->
+        {:ok, cls_password}
 
-      {:error, error} ->
-        {:error, {:decode_error, error}}
-
-      other ->
-        {:error, {:unexpected_message, other}}
-    end
-  end
-
-  def parse_auth_message(bin, _scram_method) do
-    case Server.decode_pkt(bin) do
       {:ok,
        %{
          tag: :password_message,
@@ -208,10 +300,18 @@ defmodule Supavisor.ClientHandler.Auth do
         {:ok, p}
 
       {:error, error} ->
-        {:error, {:decode_error, error}}
+        {:error,
+         %Supavisor.Errors.AuthProtocolError{
+           details: {:decode_error, error},
+           context: context
+         }}
 
       other ->
-        {:error, {:unexpected_message, other}}
+        {:error,
+         %Supavisor.Errors.AuthProtocolError{
+           details: {:unexpected_message, other},
+           context: context
+         }}
     end
   end
 
@@ -233,7 +333,19 @@ defmodule Supavisor.ClientHandler.Auth do
     }
   end
 
-  def create_auth_context(method, secrets, info) when method in [:password, :auth_query] do
+  @spec create_auth_context(auth_method(), function(), map()) :: map()
+  def create_auth_context(:auth_query_jit, secrets, info) do
+    %{
+      method: :auth_query_jit,
+      secrets: secrets,
+      info: info,
+      cls_password: nil,
+      signatures: nil
+    }
+  end
+
+  def create_auth_context(method, secrets, info)
+      when method in [:password, :auth_query] do
     %{
       method: method,
       secrets: secrets,
@@ -248,6 +360,14 @@ defmodule Supavisor.ClientHandler.Auth do
   @spec update_auth_context_with_signatures(map(), map()) :: map()
   def update_auth_context_with_signatures(auth_context, signatures) do
     %{auth_context | signatures: signatures}
+  end
+
+  @doc """
+  Updates authentication context with new jit information after first exchange.
+  """
+  @spec update_auth_context_with_jit(map(), map()) :: map()
+  def update_auth_context_with_jit(auth_context, cls_password) do
+    %{auth_context | cls_password: cls_password}
   end
 
   ## Success Response Preparation
@@ -275,11 +395,20 @@ defmodule Supavisor.ClientHandler.Auth do
     fn -> Map.put(secrets_fn.(), :client_key, client_key) end
   end
 
+  def prepare_final_secrets(secrets_fn, client_key, password) do
+    fn ->
+      Map.merge(secrets_fn.(), %{
+        client_key: client_key,
+        cls_password: password
+      })
+    end
+  end
+
   ## Private Helpers
 
-  @spec fetch_secrets_from_database(Supavisor.id(), map(), String.t()) ::
+  @spec fetch_secrets_from_database(Supavisor.id(), map(), String.t(), boolean()) ::
           {:ok, auth_secrets()} | {:error, term()}
-  defp fetch_secrets_from_database(id, %{user: user, tenant: tenant}, db_user) do
+  defp fetch_secrets_from_database(id, %{user: user, tenant: tenant}, db_user, ssl) do
     case Supavisor.SecretChecker.get_secrets(id) do
       {:error, :not_started} ->
         Logger.info(
@@ -312,9 +441,10 @@ defmodule Supavisor.ClientHandler.Auth do
 
           with {:ok, secret} <- Helpers.get_user_secret(conn, tenant.auth_query, db_user) do
             auth_type =
-              case secret do
-                %MD5Secrets{} -> :auth_query_md5
-                %SASLSecrets{} -> :auth_query
+              case {tenant.use_jit, ssl, secret} do
+                {true, true, _} -> :auth_query_jit
+                {_, _, %MD5Secrets{}} -> :auth_query_md5
+                {_, _, %SASLSecrets{}} -> :auth_query
               end
 
             {:ok, {auth_type, fn -> secret end}}

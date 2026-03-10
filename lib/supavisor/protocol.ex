@@ -3,6 +3,9 @@ defmodule Supavisor.Protocol do
   Protocol helpers, useful for both backend and frontend messages
   """
 
+  @doc "Maximum allowed size in bytes for a startup packet."
+  def max_startup_packet_size, do: 1024
+
   @doc """
   Alternative to decode/1 that returns the binaries without decoding them
   """

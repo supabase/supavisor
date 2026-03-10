@@ -5,6 +5,23 @@ defmodule Supavisor.DbHandler do
 
   The state machine uses the Supavisor.Protocol.Server module to decode messages
   from the database and sends messages to the client socket it received on checkout.
+
+  ## Startup modes
+
+  DbHandler has two startup paths depending on the mode:
+
+  ### Pool mode (transaction/session)
+
+  Started via `start_link/1` by poolboy with a Manager config. Fetches auth
+  secrets (or enters `:waiting_for_secrets` if unavailable), then connects to
+  the database immediately. Workers are long-lived and shared across clients
+  via checkout/checkin.
+
+  ### Proxy mode
+
+  Started via `start_link/1` under a DynamicSupervisor with full connection
+  args. Connects to the proxy node immediately. One worker per client, with the
+  DynamicSupervisor's `:max_children` enforcing the connection limit.
   """
 
   @behaviour :gen_statem
@@ -13,7 +30,10 @@ defmodule Supavisor.DbHandler do
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
-  alias Supavisor.Protocol.PreparedStatements
+  alias Supavisor.Errors.CheckoutError
+  alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.DbHandlerExitedError
+  alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
 
   alias Supavisor.{
     ClientHandler,
@@ -40,18 +60,21 @@ defmodule Supavisor.DbHandler do
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
+  @cleanup_buffer_limit 65_536
 
   @doc """
-  Starts a DbHandler state machine
-
-  Accepts two different types of args:
-
-  TODO: details about required arguments in each
-  - proxied
-  - not proxied
+  Starts a DbHandler state machine.
   """
   def start_link(config),
     do: :gen_statem.start_link(__MODULE__, config, hibernate_after: 5_000)
+
+  def child_spec(config) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [config]},
+      restart: :temporary
+    }
+  end
 
   @doc """
   Checks out a DbHandler process
@@ -61,20 +84,36 @@ defmodule Supavisor.DbHandler do
 
   Returns the server socket, which the client may write messages directly to.
   """
-  @spec checkout(pid(), Supavisor.sock(), pid(), timeout()) ::
-          {:ok, Supavisor.sock()} | {:error, {:exit, term()}} | {:error, map()}
-  def checkout(pid, sock, caller, timeout \\ 15_000) do
+  @spec checkout(pid(), Supavisor.sock(), pid(), Supavisor.mode(), timeout()) ::
+          {:ok, Supavisor.sock()}
+          | {:error, DbHandlerExitedError.t()}
+          | {:error, CheckoutError.t()}
+          | {:error, CheckoutTimeoutError.t()}
+  def checkout(pid, sock, caller, mode, timeout \\ 15_000) do
     :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  catch
+    :exit, {:timeout, _} ->
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+
+    :exit, {reason, _} ->
+      {:error, %DbHandlerExitedError{pid: pid, reason: reason}}
+  end
+
+  @doc """
+  Attempts to clean up session state by sending DISCARD ALL to the database.
+
+  The caller is responsible for ensuring that:
+  - The DbHandler is NOT actively processing a query
+  - The DbHandler is NOT in a transaction (no uncommitted changes)
+  - The DbHandler is in session mode (not transaction mode)
+  """
+  @spec attempt_cleanup(pid()) :: :ok | {:error, term()}
+  def attempt_cleanup(db_handler_pid) do
+    :gen_statem.call(db_handler_pid, :cleanup, 5_000)
   catch
     :exit, reason ->
       {:error, {:exit, reason}}
   end
-
-  @doc """
-  Checks in a DbHandler process
-  """
-  @spec checkin(pid()) :: :ok
-  def checkin(pid), do: :gen_statem.cast(pid, :checkin)
 
   @doc """
   Sends prepared statement packets to a DbHandler
@@ -86,16 +125,6 @@ defmodule Supavisor.DbHandler do
   @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
   def handle_prepared_statement_pkts(pid, pkts) do
     :gen_statem.call(pid, {:handle_ps_pkts, pkts}, 15_000)
-  end
-
-  @doc """
-  Returns the state and the mode of the DbHandler
-  """
-  @spec get_state_and_mode(pid()) :: {:ok, {state, Supavisor.mode()}} | {:error, term()}
-  def get_state_and_mode(pid) do
-    {:ok, :gen_statem.call(pid, :get_state_and_mode, 5_000)}
-  catch
-    error, reason -> {:error, {error, reason}}
   end
 
   @doc """
@@ -121,12 +150,8 @@ defmodule Supavisor.DbHandler do
 
     {id, config} =
       case args do
-        %{proxy: true} ->
-          {args.id, args}
-
-        %{} ->
-          config = Supavisor.Manager.get_config(args.id)
-          {args.id, config}
+        %{proxy: true} -> {args.id, args}
+        %{} -> {args.id, Supavisor.Manager.get_config(args.id)}
       end
 
     Helpers.set_log_level(config.log_level)
@@ -135,26 +160,21 @@ defmodule Supavisor.DbHandler do
     {_, tenant} = config.tenant
     Logger.metadata(project: tenant, user: config.user, mode: config.mode)
 
-    auth =
-      if config[:proxy] do
-        # Proxy mode: secrets already in config.auth from ClientHandler
-        {:ok, config.auth}
-      else
-        # Pool mode: fetch secrets from TenantCache
-        get_auth_with_secrets(config.auth, id)
-      end
-
     {auth_value, manager_ref} =
-      case auth do
-        {:ok, auth_with_secrets} ->
-          {auth_with_secrets, nil}
+      if config[:proxy] do
+        {config.auth, nil}
+      else
+        case get_auth_with_secrets(config.auth, id) do
+          {:ok, auth_with_secrets} ->
+            {auth_with_secrets, nil}
 
-        {:error, :no_secrets} ->
-          Logger.warning("DbHandler: Secrets not available, entering waiting state")
-          manager_pid = Supavisor.get_local_manager(id)
-          ref = Process.monitor(manager_pid)
-          Supavisor.Manager.register_waiting_for_secrets(id, self())
-          {config.auth, ref}
+          {:error, :no_secrets} ->
+            Logger.warning("DbHandler: Secrets not available, entering waiting state")
+            manager_pid = Supavisor.get_local_manager(id)
+            ref = Process.monitor(manager_pid)
+            Supavisor.Manager.register_waiting_for_secrets(id, self())
+            {config.auth, ref}
+        end
       end
 
     data = %{
@@ -174,8 +194,8 @@ defmodule Supavisor.DbHandler do
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
       mode: config.mode,
       replica_type: config.replica_type,
-      caller: Map.get(config, :caller) || nil,
-      client_sock: Map.get(config, :client_sock) || nil,
+      caller: nil,
+      client_sock: nil,
       reconnect_retries: 0,
       terminating_error: nil,
       manager_ref: manager_ref
@@ -276,6 +296,11 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | reconnect_retries: retry + 1}, {:next_event, :internal, :connect}}
   end
 
+  def handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, _data) do
+    Logger.error("DbHandler: Cleanup timeout, shutting down")
+    {:stop, :normal}
+  end
+
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
     {:ok, dec_pkt, _} = Server.decode(bin)
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
@@ -309,6 +334,14 @@ defmodule Supavisor.DbHandler do
         {:keep_state_and_data,
          {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
 
+      {:error_response, %{"S" => "FATAL", "C" => "28000"} = error} ->
+        reason = error["M"] || "Authentication failed"
+        handle_authentication_error(data, reason)
+        Logger.error("DbHandler: Auth error #{inspect(error)}")
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
+
       {:error_response, %{"S" => "FATAL", "C" => "3D000"} = error} ->
         Logger.error("DbHandler: Database does not exist: #{inspect(error)}")
 
@@ -317,6 +350,12 @@ defmodule Supavisor.DbHandler do
 
       {:error_response, %{"S" => "FATAL", "C" => "42501"} = error} ->
         Logger.error("DbHandler: Insufficient privilege: #{inspect(error)}")
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
+
+      {:error_response, %{"S" => "FATAL", "C" => "22023"} = error} ->
+        Logger.error("DbHandler: Invalid parameter value: #{inspect(error)}")
 
         {:keep_state_and_data,
          {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
@@ -379,6 +418,24 @@ defmodule Supavisor.DbHandler do
     end
   end
 
+  def handle_event(:info, {proto, _, bin}, :waiting_cleanup, %{caller: caller} = data)
+      when is_pid(caller) and proto in @proto do
+    buffered_bin = data.pending_bin <> bin
+
+    cond do
+      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
+        new_data = %{data | caller: nil, waiting_cleanup: nil, pending_bin: nil}
+        {:next_state, :idle, new_data, {:reply, data.waiting_cleanup, :ok}}
+
+      byte_size(buffered_bin) > @cleanup_buffer_limit ->
+        Logger.error("DbHandler: Cleanup buffer limit exceeded, shutting down")
+        {:stop, :normal}
+
+      true ->
+        {:keep_state, %{data | pending_bin: buffered_bin}}
+    end
+  end
+
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
     {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
 
@@ -402,7 +459,8 @@ defmodule Supavisor.DbHandler do
 
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
-    {:keep_state_and_data, {:reply, from, {:error, data.terminating_error}}}
+    error = %Supavisor.Errors.CheckoutError{pid: self(), postgres_error: data.terminating_error}
+    {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :waiting_for_secrets, _data) do
@@ -439,6 +497,33 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, :ps, :busy, data) do
     Logger.debug("DbHandler: get parameter status")
     {:keep_state_and_data, {:reply, from, data.parameter_status}}
+  end
+
+  def handle_event({:call, from}, :cleanup, state, data) do
+    Logger.debug("DbHandler: Cleanup requested, current state: #{inspect(state)}")
+
+    cond do
+      data.mode == :transaction ->
+        Logger.error(
+          "DbHandler: Cleanup called on transaction mode - only supported in session mode"
+        )
+
+        {:keep_state_and_data,
+         {:reply, from, {:error, :cleanup_not_supported_in_transaction_mode}}}
+
+      state in [:idle, :busy] ->
+        Logger.debug("DbHandler: Starting cleanup, sending DISCARD ALL")
+        msg = :pgo_protocol.encode_query_message("DISCARD ALL")
+        :ok = HandlerHelpers.sock_send(data.sock, msg)
+
+        {:next_state, :waiting_cleanup,
+         Map.merge(data, %{waiting_cleanup: from, pending_bin: <<>>}),
+         {:state_timeout, 5_000, :cleanup_timeout}}
+
+      true ->
+        Logger.warning("DbHandler: Cannot cleanup in state #{inspect(state)}")
+        {:keep_state_and_data, {:reply, from, {:error, :cant_cleanup_now}}}
+    end
   end
 
   def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
@@ -535,12 +620,6 @@ defmodule Supavisor.DbHandler do
   end
 
   @impl true
-  def code_change(_version, state, old_data, _extra) do
-    new_data = Map.put_new(old_data, :manager_ref, nil)
-    {:ok, state, new_data}
-  end
-
-  @impl true
   def format_status(status) do
     Map.put(status, :queue, [])
   end
@@ -617,7 +696,11 @@ defmodule Supavisor.DbHandler do
           {"user", user},
           {"database", auth.database},
           {"application_name", auth.application_name}
-        ] ++ if(search_path, do: [{"options", "--search_path=#{search_path}"}], else: [])
+        ] ++
+          if(search_path,
+            do: [{"options", StartupOptions.encode(%{"search_path" => search_path})}],
+            else: []
+          )
       )
 
     HandlerHelpers.sock_send(sock, msg)
@@ -749,10 +832,17 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{payload: :authentication_cleartext_password} = dec_pkt, _, data) do
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {_method, secrets_fn} = data.auth.secrets
+    {method, secrets_fn} = data.auth.secrets
     secrets = secrets_fn.()
 
-    payload = <<secrets.password::binary, 0>>
+    password =
+      if method == :password do
+        secrets.password
+      else
+        secrets.cls_password
+      end
+
+    payload = <<password::binary, 0>>
     bin = [?p, <<IO.iodata_length(payload) + 4::signed-32>>, payload]
     :ok = HandlerHelpers.sock_send(data.sock, bin)
     :authentication_cleartext

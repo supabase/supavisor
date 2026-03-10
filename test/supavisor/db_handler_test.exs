@@ -1,6 +1,12 @@
 defmodule Supavisor.DbHandlerTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.Errors.CheckoutError
+  alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.DbHandlerExitedError
+
+  import Supavisor.Asserts
+
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.Server
 
@@ -27,11 +33,24 @@ defmodule Supavisor.DbHandlerTest do
           raise "simulated crash"
 
         :normal_exit ->
-          exit(:normal)
+          {:stop, :normal, state}
+
+        :db_termination ->
+          {:stop, {:shutdown, :db_termination}, state}
 
         :timeout ->
           # Don't reply to simulate timeout
           {:noreply, state}
+
+        :terminating_with_error ->
+          pg_error = %{"S" => "FATAL", "C" => "28P01", "M" => "password authentication failed"}
+
+          {:reply,
+           {:error,
+            %Supavisor.Errors.CheckoutError{
+              pid: self(),
+              postgres_error: pg_error
+            }}, state}
       end
     end
   end
@@ -650,7 +669,8 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:ok, {:fake_db_sock, ^mock_pid}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:ok, {:fake_db_sock, ^mock_pid}} =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
     end
 
     test "handles process crash during checkout" do
@@ -658,8 +678,10 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {{%RuntimeError{}, _}, _}}} =
-               Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
     end
 
     test "handles process normal exit during checkout" do
@@ -667,7 +689,22 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {:normal, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 1000)
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: :normal}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
+    end
+
+    test "handles db_termination exit during checkout" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :db_termination})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: {:shutdown, :db_termination}}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      {:error, error} = assert_valid_error(result)
+      assert Exception.message(error) =~ "connection to database closed"
     end
 
     test "handles checkout timeout" do
@@ -675,7 +712,187 @@ defmodule Supavisor.DbHandlerTest do
       dummy_sock = {:gen_tcp, self()}
       caller = self()
 
-      assert {:error, {:exit, {:timeout, _}}} = Db.checkout(mock_pid, dummy_sock, caller, 100)
+      assert {:error, %CheckoutTimeoutError{timeout_ms: 100, mode: :transaction}} =
+               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 100)
+
+      assert_valid_error(result)
+    end
+
+    test "handles checkout during terminating_with_error state" do
+      {:ok, mock_pid} = start_supervised({MockDbHandler, :terminating_with_error})
+      dummy_sock = {:gen_tcp, self()}
+      caller = self()
+
+      assert {:error, %CheckoutError{pid: _, postgres_error: %{"S" => "FATAL"}}} =
+               result =
+               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+
+      assert_valid_error(result)
+    end
+  end
+
+  describe "attempt_cleanup/1" do
+    test "returns error when called on transaction mode" do
+      {send, recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :transaction,
+        caller: self()
+      }
+
+      assert {:keep_state_and_data,
+              {:reply, _from, {:error, :cleanup_not_supported_in_transaction_mode}}} =
+               Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :idle, data)
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "returns error when called in invalid state" do
+      {send, recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self()
+      }
+
+      assert {:keep_state_and_data, {:reply, _from, {:error, :cant_cleanup_now}}} =
+               Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :connect, data)
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "sends DISCARD ALL when called in idle state" do
+      {send, recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self()
+      }
+
+      from = {self(), make_ref()}
+
+      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
+               Db.handle_event({:call, from}, :cleanup, :idle, data)
+
+      assert new_data.waiting_cleanup == from
+      assert new_data.pending_bin == <<>>
+
+      assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
+      assert message =~ "DISCARD ALL"
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "sends DISCARD ALL when called in busy state" do
+      {send, recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self()
+      }
+
+      from = {self(), make_ref()}
+
+      assert {:next_state, :waiting_cleanup, new_data, {:state_timeout, 5_000, :cleanup_timeout}} =
+               Db.handle_event({:call, from}, :cleanup, :busy, data)
+
+      assert new_data.waiting_cleanup == from
+      assert new_data.pending_bin == <<>>
+
+      assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
+      assert message =~ "DISCARD ALL"
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "transitions to idle when receiving ReadyForQuery" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self(),
+        waiting_cleanup: from,
+        pending_bin: <<>>
+      }
+
+      ready_for_query = Server.ready_for_query()
+      content = {:tcp, recv, ready_for_query}
+
+      assert {:next_state, :idle, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event(:info, content, :waiting_cleanup, data)
+
+      assert new_data.caller == nil
+      assert new_data.waiting_cleanup == nil
+      assert new_data.pending_bin == nil
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "buffers incomplete messages while waiting for ReadyForQuery" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self(),
+        waiting_cleanup: from,
+        pending_bin: <<>>
+      }
+
+      partial_message = <<"partial">>
+      content = {:tcp, recv, partial_message}
+
+      assert {:keep_state, new_data} =
+               Db.handle_event(:info, content, :waiting_cleanup, data)
+
+      assert new_data.pending_bin == partial_message
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "stops when buffer limit exceeded" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self(),
+        waiting_cleanup: from,
+        pending_bin: <<>>
+      }
+
+      large_message = :binary.copy(<<1>>, 70_000)
+      content = {:tcp, recv, large_message}
+
+      assert {:stop, :normal} =
+               Db.handle_event(:info, content, :waiting_cleanup, data)
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "stops on cleanup timeout" do
+      data = %{
+        mode: :session,
+        caller: self()
+      }
+
+      assert {:stop, :normal} =
+               Db.handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, data)
     end
   end
 end

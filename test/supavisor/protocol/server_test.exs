@@ -202,40 +202,6 @@ defmodule Supavisor.Protocol.ServerTest do
                "FATAL", 0, ?V, "FATAL", 0, 0>>
   end
 
-  test "decode_startup_packet/1" do
-    input =
-      <<0, 0, 0, 191, 0, 3, 0, 0, 117, 115, 101, 114, 0, 112, 111, 115, 116, 103, 114, 101, 115,
-        0, 100, 97, 116, 97, 98, 97, 115, 101, 0, 112, 111, 115, 116, 103, 114, 101, 115, 0, 114,
-        101, 112, 108, 105, 99, 97, 116, 105, 111, 110, 0, 100, 97, 116, 97, 98, 97, 115, 101, 0,
-        111, 112, 116, 105, 111, 110, 115, 0, 45, 99, 32, 100, 97, 116, 101, 115, 116, 121, 108,
-        101, 61, 73, 83, 79, 32, 45, 99, 32, 105, 110, 116, 101, 114, 118, 97, 108, 115, 116, 121,
-        108, 101, 61, 112, 111, 115, 116, 103, 114, 101, 115, 32, 45, 99, 32, 101, 120, 116, 114,
-        97, 95, 102, 108, 111, 97, 116, 95, 100, 105, 103, 105, 116, 115, 61, 51, 0, 97, 112, 112,
-        108, 105, 99, 97, 116, 105, 111, 110, 95, 110, 97, 109, 101, 0, 109, 121, 95, 115, 117,
-        98, 115, 99, 114, 105, 112, 116, 105, 111, 110, 0, 99, 108, 105, 101, 110, 116, 95, 101,
-        110, 99, 111, 100, 105, 110, 103, 0, 85, 84, 70, 56, 0, 0>>
-
-    assert {:ok, packet} = Server.decode_startup_packet(input)
-    assert packet.len == 191
-    assert packet.tag == :startup
-
-    assert packet.payload == %{
-             "user" => "postgres",
-             "database" => "postgres",
-             "replication" => "database",
-             "options" => %{
-               "-c datestyle" => "ISO -c intervalstyle=postgres -c extra_float_digits=3"
-             },
-             "application_name" => "my_subscription",
-             "client_encoding" => "UTF8"
-           }
-
-    assert Server.decode_startup_packet(<<1, 2, 3>>) == {:error, :bad_startup_payload}
-
-    assert Server.decode_startup_packet(<<0, 0, 0, 8, 0, 3, 0, 0>>) ==
-             {:error, :bad_startup_payload}
-  end
-
   test "scram_request/0" do
     assert Server.scram_request() ==
              <<82, 0, 0, 0, 23, 0, 0, 0, 10, 83, 67, 82, 65, 77, 45, 83, 72, 65, 45, 50, 53, 54,
@@ -426,8 +392,7 @@ defmodule Supavisor.Protocol.ServerTest do
                data_type_oid: 23,
                data_type_size: 4,
                type_modifier: 4_294_967_295,
-               format: :text,
-               type_info: :int4oid
+               format: :text
              }
            ] = packet1.payload
 
@@ -459,8 +424,7 @@ defmodule Supavisor.Protocol.ServerTest do
                data_type_oid: 23,
                data_type_size: 4,
                type_modifier: 4_294_967_295,
-               format: :text,
-               type_info: :int4oid
+               format: :text
              }
            ] = packet1.payload
 

@@ -1,6 +1,8 @@
 defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
   use ExUnit.Case, async: true
 
+  import Supavisor.Asserts
+
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
   alias Supavisor.Protocol.PreparedStatements.Storage
@@ -125,16 +127,20 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 21
       payload = <<0, "test_stmt", 0, 0, 0, 0, 0, 0, 0, 0>>
 
-      assert {:error, :prepared_statement_not_found, "test_stmt"} =
-               PreparedStatements.handle_bind_message(client_statements, len, payload)
+      assert {:error, %Supavisor.Errors.PreparedStatementNotFoundError{name: "test_stmt"}} =
+               error = PreparedStatements.handle_bind_message(client_statements, len, payload)
+
+      assert_valid_error(error)
     end
 
     test "describe message with unknown statement name", %{client_statements: client_statements} do
       len = 15
       payload = <<?S, "test_stmt", 0>>
 
-      assert {:error, :prepared_statement_not_found, "test_stmt"} =
-               PreparedStatements.handle_describe_message(client_statements, len, payload)
+      assert {:error, %Supavisor.Errors.PreparedStatementNotFoundError{name: "test_stmt"}} =
+               error = PreparedStatements.handle_describe_message(client_statements, len, payload)
+
+      assert_valid_error(error)
     end
 
     test "describe message for unnamed statement is passed through unchanged", %{
@@ -166,8 +172,10 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 25
       payload = <<"test_stmt", 0, "select 1", 0, 0, 0>>
 
-      assert {:error, :max_prepared_statements} =
-               PreparedStatements.handle_parse_message(client_statements, len, payload)
+      assert {:error, %Supavisor.Errors.MaxPreparedStatementsError{}} =
+               error = PreparedStatements.handle_parse_message(client_statements, len, payload)
+
+      assert_valid_error(error)
     end
 
     test "parse message returns error for duplicate PS" do
@@ -180,8 +188,10 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 20
       payload = <<"stmt", 0, "select 1", 0, 0, 0>>
 
-      assert {:error, :duplicate_prepared_statement, "stmt"} =
-               PreparedStatements.handle_parse_message(client_statements, len, payload)
+      assert {:error, %Supavisor.Errors.DuplicatePreparedStatementError{name: "stmt"}} =
+               error = PreparedStatements.handle_parse_message(client_statements, len, payload)
+
+      assert_valid_error(error)
     end
 
     test "parse message returns error when memory limit is reached" do
@@ -199,8 +209,10 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       len = 25
       payload = <<"test_stmt", 0, "select 1", 0, 0, 0>>
 
-      assert {:error, :max_prepared_statements_memory} =
-               PreparedStatements.handle_parse_message(client_statements, len, payload)
+      assert {:error, %Supavisor.Errors.MaxPreparedStatementsMemoryError{}} =
+               error = PreparedStatements.handle_parse_message(client_statements, len, payload)
+
+      assert_valid_error(error)
     end
   end
 end

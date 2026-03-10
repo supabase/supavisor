@@ -41,4 +41,25 @@ defmodule Supavisor.ErlSysMonTest do
 
     assert {:error, {:already_started, ^pid}} = ErlSysMon.start_link([])
   end
+
+  test "enriches log with registered_name, label, message_queue_len and total_heap_size" do
+    pid = Process.whereis(ErlSysMon)
+    assert is_pid(pid)
+
+    :proc_lib.set_label({:test_label, self()})
+    test_msg = {:monitor, self(), :test_pid, :busy_port}
+
+    log =
+      capture_log(fn ->
+        send(pid, test_msg)
+        Process.sleep(100)
+      end)
+
+    assert log =~ "Supavisor.ErlSysMon message:"
+    assert log =~ inspect(test_msg)
+    assert log =~ "registered_name: []"
+    assert log =~ "label: {:test_label, #{inspect(self())}}"
+    assert log =~ "message_queue_len: "
+    assert log =~ "total_heap_size: "
+  end
 end

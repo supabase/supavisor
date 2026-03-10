@@ -6,7 +6,9 @@ defmodule Supavisor.Tenants do
   import Ecto.Query, warn: false
   alias Supavisor.Repo
 
+  alias Supavisor.CircuitBreaker
   alias Supavisor.ClientHandler.Auth.ManagerSecrets
+  alias Supavisor.Errors.TenantOrUserNotFoundError
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
   alias Supavisor.Tenants.Tenant
@@ -88,16 +90,30 @@ defmodule Supavisor.Tenants do
   def get_tenant(_, _), do: nil
 
   @spec get_user_cache(:single | :cluster, String.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, map()} | {:error, any()}
+          {:ok, map()} | {:error, TenantOrUserNotFoundError.t()}
   def get_user_cache(type, user, external_id, sni_hostname) do
     cache_key = {:user_cache, type, user, external_id, sni_hostname}
 
-    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
-            ttl: :timer.hours(24)}
-         end) do
-      {_, {:cached, value}} -> value
-      {_, {:cached, value}, _} -> value
+    result =
+      case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+             {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
+              ttl: :timer.hours(24)}
+           end) do
+        {_, {:cached, value}} -> value
+        {_, {:cached, value}, _} -> value
+      end
+
+    case result do
+      {:error, :not_found} ->
+        {:error,
+         %TenantOrUserNotFoundError{
+           type: type,
+           user: user,
+           tenant_or_alias: external_id || sni_hostname
+         }}
+
+      other ->
+        other
     end
   end
 
@@ -716,5 +732,54 @@ defmodule Supavisor.Tenants do
   """
   def change_cluster_tenants(%ClusterTenants{} = cluster_tenants, attrs \\ %{}) do
     ClusterTenants.changeset(cluster_tenants, attrs)
+  end
+
+  @doc """
+  Returns a list of network bans for a given tenant.
+
+  ## Examples
+
+      iex> list_network_bans("tenant_external_id")
+      {:ok, [%{banned_address: "192.168.1.100", banned_until: 1620000000}, ...]}
+  """
+  @spec list_network_bans(String.t()) ::
+          {:ok,
+           [%{required(:banned_address) => String.t(), required(:banned_until) => integer()}]}
+          | {:error, :tenant_not_found}
+  def list_network_bans(external_id) when is_binary(external_id) do
+    if get_tenant_by_external_id(external_id) do
+      {external_id, :_}
+      |> CircuitBreaker.opened(:auth_error)
+      |> Enum.map(fn {{_tenant, ip}, blocked_until} ->
+        %{banned_address: ip, banned_until: blocked_until}
+      end)
+      |> then(&{:ok, &1})
+    else
+      {:error, :tenant_not_found}
+    end
+  end
+
+  @doc """
+  Clears tenant's network bans for specific IP addresses.
+
+  Returns the remaining active bans after clearing.
+
+  ## Examples
+
+      iex> clear_network_bans("tenant_external_id", ["192.168.1.100", "10.0.0.1"])
+      {:ok, [%{banned_address: "10.0.0.1", banned_until: 1620000000}]}
+  """
+  @spec clear_network_bans(String.t(), [String.t()]) ::
+          {:ok,
+           [%{required(:banned_address) => String.t(), required(:banned_until) => integer()}]}
+          | {:error, :tenant_not_found}
+  def clear_network_bans(external_id, ip_addresses)
+      when is_binary(external_id) and is_list(ip_addresses) do
+    if get_tenant_by_external_id(external_id) do
+      Enum.each(ip_addresses, &CircuitBreaker.clear({external_id, &1}, :auth_error))
+      list_network_bans(external_id)
+    else
+      {:error, :tenant_not_found}
+    end
   end
 end
