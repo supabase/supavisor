@@ -345,10 +345,6 @@ defmodule Supavisor.Helpers do
     end
   end
 
-  @spec controlling_process(Supavisor.sock(), pid) :: :ok | {:error, any()}
-  def controlling_process({mod, socket}, pid),
-    do: mod.controlling_process(socket, pid)
-
   # This is the value of `NAMEDATALEN` set when compiling PostgreSQL. By default
   # we use default Postgres value of `64`
   @max_length Application.compile_env(:supabase, :namedatalen, 64) - 1
@@ -392,25 +388,6 @@ defmodule Supavisor.Helpers do
   def no_warm_pool_user?(user) do
     no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
     user in no_warm_pool_users
-  end
-
-  @doc """
-  Checks if a token matches either a PAT or JWT.
-
-  ## Parameters
-
-  - `token`: The token string
-  """
-  def token_matches?(<<"sbp_", _rest::binary>>), do: true
-
-  def token_matches?(token) do
-    case String.split(token, ".") do
-      ["eyJ" <> _, "eyJ" <> _, _sig] ->
-        true
-
-      _ ->
-        false
-    end
   end
 
   @doc """

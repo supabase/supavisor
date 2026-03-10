@@ -70,18 +70,6 @@ defmodule Supavisor.HelpersTest do
       assert new_min_heap_words >= expected_words
     end
   end
-
-  describe "token_matches/1" do
-    test "supabase pat is recognised" do
-      assert @subject.token_matches?("sbp_dfe467a1-f7e4-4c27-87de-a930270f4622")
-    end
-
-    test "JWT is recognised" do
-      assert @subject.token_matches?(
-               "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30"
-             )
-    end
-  end
 end
 
 defmodule Supavisor.HelpersJitAuthTest do
