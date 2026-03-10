@@ -44,8 +44,8 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
   end
 
   alias Supavisor.ClientHandler.Auth.{SASLSecrets, ValidationSecrets}
-  alias Supavisor.Protocol.Server
   alias Supavisor.Helpers
+  alias Supavisor.Protocol.Server
 
   require Supavisor
 

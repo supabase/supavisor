@@ -26,8 +26,8 @@ defmodule Supavisor.ClientHandler.Auth.Jit do
     defstruct [:id, :tenant, :db_user, :peer_ip]
   end
 
-  alias Supavisor.Errors.{JitRequestFailedError, JitUnauthorizedError}
   alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.Errors.{JitRequestFailedError, JitUnauthorizedError}
   alias Supavisor.{Helpers, Protocol.Server}
 
   require Supavisor
