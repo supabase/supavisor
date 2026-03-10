@@ -170,11 +170,11 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
   @spec validate_scram_user(Context.t(), binary()) ::
           {:ok, binary()} | {:error, Exception.t()}
   defp validate_scram_user(context, user) do
-    if user not in [context.user, ""] do
+    if user in [context.user, ""] do
+      {:ok, user}
+    else
       # TODO: proper auth error here
       {:error, %Supavisor.Errors.AuthProtocolError{}}
-    else
-      {:ok, user}
     end
   end
 end

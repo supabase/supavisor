@@ -567,10 +567,11 @@ defmodule Supavisor.ClientHandler do
   # SCRAM authentication - waiting for final response
   def handle_event(:info, {proto, _socket, bin}, :auth_scram_final_wait, data)
       when proto in @proto do
-    with {:ok, message, final_secrets} <- Auth.SCRAM.handle_scram_final(data.auth_context, bin) do
-      :ok = HandlerHelpers.sock_send(data.sock, message)
-      handle_auth_success(data.sock, final_secrets, data)
-    else
+    case Auth.SCRAM.handle_scram_final(data.auth_context, bin) do
+      {:ok, message, final_secrets} ->
+        :ok = HandlerHelpers.sock_send(data.sock, message)
+        handle_auth_success(data.sock, final_secrets, data)
+
       {:error, exception} ->
         handle_auth_failure(exception, data)
     end

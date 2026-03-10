@@ -12,7 +12,9 @@ defmodule Supavisor.ClientHandler.Auth.ValidationSecrets do
   require Logger
 
   alias Supavisor.AuthQuery
-  alias Supavisor.ClientHandler.Auth.{PasswordSecrets, SASLSecrets, ManagerSecrets}
+  alias Supavisor.ClientHandler.Auth.{ManagerSecrets, PasswordSecrets, SASLSecrets}
+  alias Supavisor.ClientHandler.Auth.Password
+  alias Supavisor.ClientHandler.Auth.SCRAM
 
   @type t :: %__MODULE__{
           sasl_secrets: SASLSecrets.t(),
@@ -206,11 +208,11 @@ defmodule Supavisor.ClientHandler.Auth.ValidationSecrets do
     end
   end
 
-  defp get_user_and_db_user(%Supavisor.ClientHandler.Auth.SCRAM.Context{} = ctx),
-    do: Supavisor.ClientHandler.Auth.SCRAM.get_user_and_db_user(ctx)
+  defp get_user_and_db_user(%SCRAM.Context{} = ctx),
+    do: SCRAM.get_user_and_db_user(ctx)
 
-  defp get_user_and_db_user(%Supavisor.ClientHandler.Auth.Password.Context{} = ctx),
-    do: Supavisor.ClientHandler.Auth.Password.get_user_and_db_user(ctx)
+  defp get_user_and_db_user(%Password.Context{} = ctx),
+    do: Password.get_user_and_db_user(ctx)
 
   # Notice that this is only valid for pg_shadow sourced SASL secrets, since the salt will change
   # if we have locally generated password.
