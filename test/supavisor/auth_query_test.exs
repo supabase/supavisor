@@ -40,9 +40,13 @@ defmodule Supavisor.AuthQueryTest do
               }} = AuthQuery.parse_secret(secret, user)
     end
 
-    test "parses md5 secrets correctly" do
-      assert {:ok,
-              %Supavisor.ClientHandler.Auth.MD5Secrets{password: "supersecret", user: "user"}} =
+    test "rejects md5 secrets" do
+      assert {:error,
+              %Supavisor.Errors.AuthQueryError{
+                reason: :md5_not_supported,
+                details: nil,
+                code: "EAUTHQUERY"
+              }} =
                AuthQuery.parse_secret("md5supersecret", "user")
     end
 

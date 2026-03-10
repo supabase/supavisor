@@ -4,7 +4,7 @@ defmodule Supavisor.SecretCacheTest do
   require Supavisor
   alias Supavisor.SecretCache
   alias Supavisor.TenantCache
-  alias Supavisor.ClientHandler.Auth.{ValidationSecrets, PasswordSecrets}
+  alias Supavisor.ClientHandler.Auth.{PasswordSecrets, ValidationSecrets}
 
   setup do
     Cachex.clear(Supavisor.Cache)

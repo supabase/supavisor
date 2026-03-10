@@ -3,6 +3,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   use SupavisorWeb.ConnCase
 
   require Logger
+  alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
 
@@ -351,7 +352,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "jit successful authentication via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -369,7 +370,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "jit invalid token rejected via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -393,7 +394,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "jit access fails without tls via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -418,7 +419,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "jit token fails assuming wrong role via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -443,7 +444,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "jit token fails with role mismatch via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -467,7 +468,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "jit api error results in failed auth via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -491,7 +492,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "scram credentials join jit-created pool via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -504,7 +505,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "valid jit token joins scram-created pool via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -522,7 +523,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "valid credentials work via proxy node (scram-sha256, no tls)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -535,7 +536,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "valid credentials work via proxy node (password, tls)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -548,7 +549,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "non-jit role auth works via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -566,7 +567,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
 
   test "invalid scram credentials rejected via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -615,7 +616,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   test "supavisor does not reuse jit token for new connections via proxy node",
        %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
@@ -664,7 +665,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   test "stale jit token rejected by database returns clear error via proxy node",
        %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
