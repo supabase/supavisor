@@ -62,6 +62,7 @@ defmodule Supavisor.SecretCache do
         {:ok, {:cached, value}} -> {:ok, value}
         {:commit, {:cached, value}, _opts} -> {:ok, value}
         {:ignore, resp} -> resp
+        {:error, _} = error -> error
       end
     end
   end

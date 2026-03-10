@@ -35,7 +35,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     %{db_conf: db_conf}
   end
 
-  defp setup_tenant(db_conf) do
+  defp setup_tenant(db_conf, opts \\ []) do
     random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
     tenant_id = "update_creds_tenant_#{System.unique_integer([:positive])}_#{random_suffix}"
     cert_dir = Path.expand("../../priv/jit/postgres/certs", __DIR__)
@@ -60,6 +60,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
         upstream_ssl: true,
         upstream_verify: :peer,
         enforce_ssl: false,
+        availability_zone: Keyword.get(opts, :availability_zone),
         use_jit: true,
         jit_api_url: "http://localhost:8080/projects/odvmrtdcoyfyvfrdxzsj/database/jit",
         users: [
@@ -349,56 +350,32 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   end
 
   test "jit successful authentication via proxy node", %{db_conf: db_conf} do
-    # Peer node has its own Repo connection and can't see sandbox data.
-    # Run tenant creation outside the sandbox so it's committed to Postgres.
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
-    # Start a second node and cluster it
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Connect directly to main node with JIT
-    assert {:ok, pid1} =
+    assert {:ok, pid} =
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
                jit: true
              )
 
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Connect through the secondary node's proxy port with JIT
-    assert {:ok, pid2} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
   test "jit invalid token rejected via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Invalid token via proxy node
     assert {:error,
             %Postgrex.Error{
               postgres: %{
@@ -410,30 +387,19 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
             }} =
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_112233d26b63d9a3557c72a1b9902cbb84120000",
-               jit: true,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
+               jit: true
              )
   end
 
   test "jit access fails without tls via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # No TLS via proxy node
     assert {:error,
             %Postgrex.Error{
               postgres: %{
@@ -446,30 +412,19 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb84100000",
                ssl: false,
-               jit: true,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
+               jit: true
              )
   end
 
   test "jit token fails assuming wrong role via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Wrong role via proxy node
     assert {:error,
             %Postgrex.Error{
               postgres: %{
@@ -482,30 +437,19 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb84100001",
                username: "supabase_admin",
-               jit: true,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
+               jit: true
              )
   end
 
   test "jit token fails with role mismatch via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Role mismatch token via proxy node
     assert {:error,
             %Postgrex.Error{
               postgres: %{
@@ -517,30 +461,19 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
             }} =
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c000",
-               jit: true,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
+               jit: true
              )
   end
 
   test "jit api error results in failed auth via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # API error token via proxy node
     assert {:error,
             %Postgrex.Error{
               postgres: %{
@@ -552,150 +485,94 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
             }} =
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_4444e3d26b63d9a3557c72a1b9902cbb84121111",
-               jit: true,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
+               jit: true
              )
   end
 
   test "scram credentials join jit-created pool via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool via JIT on main node
-    assert {:ok, pid1} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Join with scram credentials via proxy node
-    assert {:ok, pid2} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+    assert {:ok, pid} = single_connection(db_conf, tenant_id, ca_cert, [])
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
   test "valid jit token joins scram-created pool via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool via scram on main node
-    assert {:ok, pid1} = single_connection(db_conf, tenant_id, ca_cert, [])
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Join with JIT token via proxy node
-    assert {:ok, pid2} =
+    assert {:ok, pid} =
              single_connection(db_conf, tenant_id, ca_cert,
                password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
-               jit: true,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
+               jit: true
              )
 
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
   test "valid credentials work via proxy node (scram-sha256, no tls)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} = single_connection(db_conf, tenant_id, ca_cert, ssl: false)
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Connect via proxy node
-    assert {:ok, pid2} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               ssl: false,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+    assert {:ok, pid} = single_connection(db_conf, tenant_id, ca_cert, ssl: false)
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
   test "valid credentials work via proxy node (password, tls)", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} = single_connection(db_conf, tenant_id, ca_cert, [])
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Connect via proxy node
-    assert {:ok, pid2} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+    assert {:ok, pid} = single_connection(db_conf, tenant_id, ca_cert, [])
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
   test "non-jit role auth works via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} =
+    assert {:ok, pid} =
              single_connection(db_conf, tenant_id, ca_cert,
                password: "56lRXbZStSL9vY3cJJxLZd5wQxpWvfl9",
                username: "supabase_admin"
              )
 
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Same non-JIT role via proxy node
-    assert {:ok, pid2} =
-             single_connection(db_conf, tenant_id, ca_cert,
-               password: "56lRXbZStSL9vY3cJJxLZd5wQxpWvfl9",
-               username: "supabase_admin",
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
-             )
-
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid2, "SELECT 1")
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
   test "invalid scram credentials rejected via proxy node", %{db_conf: db_conf} do
     {tenant_id, ca_cert} =
       Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
-        setup_tenant(db_conf)
+        setup_tenant(db_conf, availability_zone: "ap-southeast-1c")
       end)
 
     assert {:ok, _peer, node2} = Cluster.start_node()
     Node.connect(node2)
 
-    # Create pool on main node
-    assert {:ok, pid1} = single_connection(db_conf, tenant_id, ca_cert, [])
-    assert {:ok, %P.Result{}} = SingleConnection.query(pid1, "SELECT 1")
-
-    # Bad password via proxy node
     assert {:error,
             %Postgrex.Error{
               postgres: %{
@@ -706,8 +583,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
               }
             }} =
              single_connection(db_conf, tenant_id, ca_cert,
-               password: "something_something_secret",
-               port: Application.get_env(:supavisor, :secondary_proxy_port)
+               password: "something_something_secret"
              )
   end
 

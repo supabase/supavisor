@@ -18,29 +18,35 @@ defmodule Supavisor.SecretChecker do
   @spec get_secrets(Supavisor.id()) ::
           {:ok, Supavisor.secrets()} | {:error, :not_started}
   def get_secrets(id) do
-    erpc_call_node(id, fn ->
-      case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
-        [] ->
-          {:error, :not_started}
+    erpc_call_node(id, __MODULE__, :do_get_secrets, [id])
+  end
 
-        [{pid, _}] ->
-          GenServer.call(pid, :get_secrets)
-      end
-    end)
+  @doc false
+  def do_get_secrets(id) do
+    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+      [] ->
+        {:error, :not_started}
+
+      [{pid, _}] ->
+        GenServer.call(pid, :get_secrets)
+    end
   end
 
   @spec update_credentials(Supavisor.id(), String.t(), String.t()) ::
           :ok | {:error, :not_started}
   def update_credentials(id, new_user, password) do
-    erpc_call_node(id, fn ->
-      case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
-        [] ->
-          {:error, :not_started}
+    erpc_call_node(id, __MODULE__, :do_update_credentials, [id, new_user, password])
+  end
 
-        [{pid, _}] ->
-          GenServer.call(pid, {:update_credentials, new_user, password})
-      end
-    end)
+  @doc false
+  def do_update_credentials(id, new_user, password) do
+    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+      [] ->
+        {:error, :not_started}
+
+      [{pid, _}] ->
+        GenServer.call(pid, {:update_credentials, new_user, password})
+    end
   end
 
   def init(args) do
@@ -154,13 +160,13 @@ defmodule Supavisor.SecretChecker do
 
   defp jitter, do: :rand.uniform(div(@interval, 10))
 
-  defp erpc_call_node(id, fun) do
+  defp erpc_call_node(id, mod, fun, args) do
     case Supavisor.get_global_sup(id) do
       nil ->
         {:error, :not_started}
 
       pid ->
-        :erpc.call(node(pid), fun)
+        :erpc.call(node(pid), mod, fun, args)
     end
   end
 end
