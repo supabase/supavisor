@@ -91,6 +91,10 @@ pgbench:
 		   -P 10 -M extended \
 		   --rate ${PGBENCH_RATE}
 
+.PHONY: cover
+cover:
+	MIX_ENV=test mix coveralls.html $(OPTIONS); open cover/excoveralls.html
+
 clean:
 	rm -rf _build && rm -rf deps
 
