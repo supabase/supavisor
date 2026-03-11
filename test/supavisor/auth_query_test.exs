@@ -35,7 +35,7 @@ defmodule Supavisor.AuthQueryTest do
                 salt: "salt",
                 stored_key: "storedKey",
                 server_key: "serverKey",
-                client_key: "storedKey",
+                client_key: nil,
                 user: ^user
               }} = AuthQuery.parse_secret(secret, user)
     end

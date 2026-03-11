@@ -135,7 +135,6 @@ defmodule Supavisor.AuthQuery do
          iterations: String.to_integer(iterations),
          salt: salt,
          stored_key: decoded_stored_key,
-         client_key: decoded_stored_key,
          server_key: decoded_server_key
        }}
     else
