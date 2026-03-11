@@ -11,6 +11,7 @@
     "lib/supavisor_web.ex",
     "lib/supavisor_web/endpoint.ex",
     "lib/supavisor_web/telemetry.ex",
-    "lib/supavisor/monitoring/phoenix.ex"
+    "lib/supavisor/monitoring/phoenix.ex",
+    "lib/supavisor_web/open_api_schemas.ex"
   ]
 }
