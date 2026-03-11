@@ -1,5 +1,5 @@
-defmodule Supavisor.ClientHandler.Auth.MD5Secrets do
-  @moduledoc "Secrets for MD5 authentication"
+defmodule Supavisor.Secrets.PasswordSecrets do
+  @moduledoc "Secrets for password authentication (plaintext password)"
 
   @derive {Inspect, except: [:password]}
   defstruct [:user, :password]

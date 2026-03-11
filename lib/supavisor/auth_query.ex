@@ -4,7 +4,7 @@ defmodule Supavisor.AuthQuery do
   to fetch user secrets (SCRAM-SHA-256 or MD5).
   """
 
-  alias Supavisor.ClientHandler.Auth.{ManagerSecrets, SASLSecrets}
+  alias Supavisor.Secrets.{ManagerSecrets, SASLSecrets}
   alias Supavisor.Errors.AuthQueryError
   alias Supavisor.Helpers
   alias Supavisor.Tenants.Tenant

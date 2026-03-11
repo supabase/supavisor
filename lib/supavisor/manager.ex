@@ -188,7 +188,6 @@ defmodule Supavisor.Manager do
       db_host: db_host,
       db_port: db_port,
       db_database: db_database,
-      auth_query: auth_query,
       default_parameter_status: ps,
       ip_version: ip_ver,
       default_pool_size: default_pool_size,
@@ -202,19 +201,16 @@ defmodule Supavisor.Manager do
     pool_size = (user_config && user_config.pool_size) || default_pool_size
     max_clients = (user_config && user_config.max_clients) || default_max_clients
 
-    auth = %{
+    connection_params = %Supavisor.ConnectionParameters{
       host: String.to_charlist(db_host),
       sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
-      user: user,
-      auth_query: auth_query,
       database: if(db_name != nil, do: db_name, else: db_database),
       application_name: "Supavisor",
       ip_version: Helpers.ip_version(ip_ver, db_host),
       upstream_ssl: Supavisor.id(args.id, :upstream_tls),
       upstream_verify: tenant_record.upstream_verify,
-      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
-      require_user: tenant_record.require_user
+      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca)
     }
 
     persisted_ps = Supavisor.TenantCache.get_parameter_status(args.id)
@@ -230,7 +226,7 @@ defmodule Supavisor.Manager do
       default_parameter_status: ps,
       max_clients: max_clients,
       idle_timeout: client_idle_timeout,
-      auth: auth,
+      connection_params: connection_params,
       mode: mode,
       replica_type: replica_type,
       pool_size: pool_size,
@@ -313,7 +309,7 @@ defmodule Supavisor.Manager do
   def handle_call(:get_config, _, state) do
     config = %{
       id: state.id,
-      auth: state.auth,
+      connection_params: state.connection_params,
       user: Supavisor.id(state.id, :user),
       tenant: state.tenant,
       mode: state.mode,
@@ -381,7 +377,7 @@ defmodule Supavisor.Manager do
     Logger.debug("Manager: Registering #{inspect(db_handler_pid)} as waiting for secrets")
 
     # Check if secrets are already available to avoid race condition
-    case Supavisor.SecretCache.get_upstream_auth_secrets(state.id) do
+    case Supavisor.UpstreamAuthentication.get_upstream_auth_secrets(state.id) do
       {:ok, _secrets} ->
         Supavisor.DbHandler.notify_secrets_available(db_handler_pid)
         {:noreply, state}

@@ -79,7 +79,7 @@ defmodule Supavisor.DbHandlerTest do
     def handle_call(:get_config, _from, state) do
       config = %{
         id: state.id,
-        auth: state.auth,
+        connection_params: state.connection_params,
         user: state.user,
         tenant: state.tenant,
         mode: state.mode,
@@ -92,12 +92,28 @@ defmodule Supavisor.DbHandlerTest do
     end
 
     def handle_call(:get_auth, _from, state) do
-      {:reply, state.auth, state}
+      {:reply, state.connection_params, state}
     end
 
     def handle_cast({:shutdown_with_error, _error}, state) do
       {:noreply, state}
     end
+  end
+
+  alias Supavisor.ConnectionParameters
+  alias Supavisor.Secrets.{PasswordSecrets, SASLSecrets}
+
+  defp connection_params(overrides \\ %{}) do
+    defaults = %{
+      host: ~c"localhost",
+      port: 5432,
+      ip_version: :inet,
+      database: "postgres",
+      application_name: "Supavisor"
+    }
+
+    merged = Map.merge(defaults, overrides)
+    struct!(ConnectionParameters, merged)
   end
 
   defp sockpair do
@@ -122,8 +138,8 @@ defmodule Supavisor.DbHandlerTest do
 
   describe "init/1" do
     test "starts with correct state" do
-      secrets = %{user: "user", db_user: "user"}
-      auth = %{secrets: secrets}
+      secrets = %PasswordSecrets{user: "user", password: "pass"}
+      conn_params = connection_params(%{secrets: secrets})
       tenant = "test_tenant"
       user = "user"
 
@@ -131,11 +147,11 @@ defmodule Supavisor.DbHandlerTest do
       table = :ets.new(:tenant_cache, [:set, :public])
       Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
 
-      Supavisor.SecretCache.put_upstream_auth_secrets(@id, secrets)
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(@id, secrets)
 
       manager_config = %{
         id: @id,
-        auth: auth,
+        connection_params: conn_params,
         tenant: {:single, tenant},
         user: user,
         mode: :transaction,
@@ -152,7 +168,7 @@ defmodule Supavisor.DbHandlerTest do
       assert next_event == :internal
       assert data.sock == nil
       assert data.caller == nil
-      assert data.auth == auth
+      assert data.connection_params == conn_params
       assert data.tenant == manager_config.tenant
       assert data.db_state == nil
       assert data.parameter_status == %{}
@@ -161,7 +177,7 @@ defmodule Supavisor.DbHandlerTest do
     end
 
     test "enters waiting_for_secrets state when upstream secrets are missing" do
-      auth = %{host: ~c"localhost", port: 5432}
+      conn_params = connection_params()
       tenant = "test_tenant"
       user = "user"
 
@@ -171,7 +187,7 @@ defmodule Supavisor.DbHandlerTest do
 
       manager_config = %{
         id: @id,
-        auth: auth,
+        connection_params: conn_params,
         tenant: {:single, tenant},
         user: user,
         mode: :transaction,
@@ -190,10 +206,10 @@ defmodule Supavisor.DbHandlerTest do
     end
 
     test "transitions from waiting_for_secrets to connect when secrets become available" do
-      auth = %{host: ~c"localhost", port: 5432}
+      conn_params = connection_params()
       tenant = "test_tenant"
       user = "user"
-      secrets = %{user: "some user", password: "secret", client_key: "key"}
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
 
       # Set up tenant cache
       table = :ets.new(:tenant_cache, [:set, :public])
@@ -201,7 +217,7 @@ defmodule Supavisor.DbHandlerTest do
 
       manager_config = %{
         id: @id,
-        auth: auth,
+        connection_params: conn_params,
         tenant: {:single, tenant},
         user: user,
         mode: :transaction,
@@ -217,13 +233,13 @@ defmodule Supavisor.DbHandlerTest do
       assert {:ok, :waiting_for_secrets, data} = Db.init(args)
 
       # Now put secrets in cache
-      Supavisor.SecretCache.put_upstream_auth_secrets(@id, secrets)
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(@id, secrets)
 
       # Notify that secrets are available
       assert {:next_state, :connect, updated_data, {:next_event, :internal, :connect}} =
                Db.handle_event(:cast, :secrets_available, :waiting_for_secrets, data)
 
-      assert updated_data.auth.secrets == secrets
+      assert updated_data.connection_params.secrets == secrets
       assert updated_data.manager_ref == nil
     end
   end
@@ -233,22 +249,20 @@ defmodule Supavisor.DbHandlerTest do
       {:ok, sock} = :gen_tcp.listen(0, mode: :binary, active: false)
       {:ok, {host, port}} = :inet.sockname(sock)
 
-      secrets = %{user: "some user", db_user: "some user"}
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
 
-      auth = %{
-        host: host,
-        port: port,
-        user: "some user",
-        require_user: true,
-        database: "some database",
-        application_name: "some application name",
-        ip_version: :inet,
-        secrets: secrets
-      }
+      conn_params =
+        connection_params(%{
+          host: host,
+          port: port,
+          database: "some database",
+          application_name: "some application name",
+          secrets: secrets
+        })
 
       state =
         Db.handle_event(:internal, :connect, :connect, %{
-          auth: auth,
+          connection_params: conn_params,
           sock: {:gen_tcp, nil},
           id: @id,
           mode: :session,
@@ -257,16 +271,7 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:next_state, :authentication,
               %{
-                auth: %{
-                  application_name: "some application name",
-                  database: "some database",
-                  host: ^host,
-                  port: ^port,
-                  user: "some user",
-                  require_user: true,
-                  ip_version: :inet,
-                  secrets: ^secrets
-                },
+                connection_params: ^conn_params,
                 sock: {:gen_tcp, _},
                 id: @id,
                 mode: :session
@@ -278,23 +283,20 @@ defmodule Supavisor.DbHandlerTest do
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
       {host, port} = {{127, 0, 0, 1}, 12345}
 
-      secrets = %{user: "some user", db_user: "some user"}
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
 
-      auth = %{
-        id: @id,
-        host: host,
-        port: port,
-        user: "some user",
-        database: "some database",
-        application_name: "some application name",
-        require_user: true,
-        ip_version: :inet,
-        secrets: secrets
-      }
+      conn_params =
+        connection_params(%{
+          host: host,
+          port: port,
+          database: "some database",
+          application_name: "some application name",
+          secrets: secrets
+        })
 
       assert {:keep_state, _data, {:state_timeout, 2_500, :connect}} =
                Db.handle_event(:internal, :connect, :connect, %{
-                 auth: auth,
+                 connection_params: conn_params,
                  sock: nil,
                  id: @id,
                  proxy: false,
@@ -304,7 +306,7 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:stop, {:failed_to_connect, _}} =
                Db.handle_event(:internal, :connect, :connect, %{
-                 auth: auth,
+                 connection_params: conn_params,
                  sock: nil,
                  id: @id,
                  proxy: false,
@@ -351,22 +353,20 @@ defmodule Supavisor.DbHandlerTest do
         :gen_tcp.send(recv, <<?N>>)
       end)
 
-      secrets = %{user: "some user", db_user: "some user"}
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
 
-      auth = %{
-        host: host,
-        port: port,
-        user: "some user",
-        require_user: true,
-        database: "some database",
-        application_name: "some application name",
-        ip_version: :inet,
-        secrets: secrets,
-        upstream_ssl: true
-      }
+      conn_params =
+        connection_params(%{
+          host: host,
+          port: port,
+          database: "some database",
+          application_name: "some application name",
+          secrets: secrets,
+          upstream_ssl: true
+        })
 
       data = %{
-        auth: auth,
+        connection_params: conn_params,
         sock: {:gen_tcp, nil},
         id: @id,
         proxy: false,
@@ -390,16 +390,13 @@ defmodule Supavisor.DbHandlerTest do
 
       content = {:tcp, b, bin}
 
+      conn_params =
+        connection_params(%{
+          secrets: %PasswordSecrets{user: "some_user", password: "some_password"}
+        })
+
       data = %{
-        auth: %{
-          password: fn -> "some_password" end,
-          user: "some_user",
-          method: :password,
-          secrets: %Supavisor.ClientHandler.Auth.PasswordSecrets{
-            user: "some_user",
-            password: "some_password"
-          }
-        },
+        connection_params: conn_params,
         sock: {:gen_tcp, a}
       }
 
@@ -407,11 +404,7 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:ok, message} = :gen_tcp.recv(b, 0)
 
-      # client response
-      # p, identifies the payload as password message
-      # 0,0,0,9 is the payload length (length field + null terminated string)
-      # 41, 41, 41, 41, 00 is the null terminated password string
-      password = <<data.auth.password.()::binary, 0>>
+      password = <<"some_password", 0>>
 
       assert message ==
                <<?p, byte_size(password) + 4::32-big, password::binary>>
@@ -422,12 +415,13 @@ defmodule Supavisor.DbHandlerTest do
     setup do
       {send, recv} = sockpair()
 
+      conn_params =
+        connection_params(%{
+          secrets: %PasswordSecrets{user: "user", password: "pass"}
+        })
+
       data = %{
-        auth: %{
-          user: "user",
-          require_user: false,
-          secrets: %{user: "user", password: "pass"}
-        },
+        connection_params: conn_params,
         sock: {:gen_tcp, send},
         nonce: "some nonce"
       }
@@ -468,7 +462,7 @@ defmodule Supavisor.DbHandlerTest do
       {a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      secrets = %Supavisor.ClientHandler.Auth.SASLSecrets{
+      secrets = %SASLSecrets{
         user: "user",
         digest: "SCRAM-SHA-256",
         iterations: 4096,
@@ -478,14 +472,10 @@ defmodule Supavisor.DbHandlerTest do
         server_key: :binary.copy(<<3>>, 32)
       }
 
+      conn_params = connection_params(%{secrets: secrets})
+
       data = %{
-        auth: %{
-          user: "user",
-          secrets: secrets,
-          require_user: false,
-          method: :auth_query,
-          nonce: "nonce12345"
-        },
+        connection_params: conn_params,
         sock: {:gen_tcp, a},
         nonce: "nonce12345",
         server_proof: nil
@@ -607,17 +597,12 @@ defmodule Supavisor.DbHandlerTest do
       recv: recv,
       content: content
     } do
-      auth = %{
-        password: fn -> "some_password" end,
-        user: "some_user",
-        method: :password,
-        secrets: %Supavisor.ClientHandler.Auth.PasswordSecrets{
-          user: "some_user",
-          password: "some_password"
-        }
-      }
+      conn_params =
+        connection_params(%{
+          secrets: %PasswordSecrets{user: "some_user", password: "some_password"}
+        })
 
-      data = Map.put(data, :auth, auth)
+      data = Map.put(data, :connection_params, conn_params)
 
       assert {:keep_state, ^data} = Db.handle_event(:info, content, :authentication, data)
 
@@ -631,15 +616,12 @@ defmodule Supavisor.DbHandlerTest do
       recv: recv,
       content: content
     } do
-      auth = %{
-        secrets: %Supavisor.ClientHandler.Auth.PasswordSecrets{
-          user: "some_user",
-          password: "some_password"
-        },
-        method: :auth_query_md5
-      }
+      conn_params =
+        connection_params(%{
+          secrets: %PasswordSecrets{user: "some_user", password: "some_password"}
+        })
 
-      data = Map.put(data, :auth, auth)
+      data = Map.put(data, :connection_params, conn_params)
 
       assert {:keep_state, ^data} = Db.handle_event(:info, content, :authentication, data)
 

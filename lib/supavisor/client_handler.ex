@@ -33,8 +33,9 @@ defmodule Supavisor.ClientHandler do
   }
 
   alias Supavisor.ClientHandler.{
-    Auth,
+    AuthMethods,
     Cancel,
+    Checks,
     Data,
     Error,
     ProtocolHelpers,
@@ -44,7 +45,6 @@ defmodule Supavisor.ClientHandler do
   alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer}
 
   alias Supavisor.Errors.{
-    AddressNotAllowedError,
     CheckoutTimeoutError,
     ClientSocketClosedError,
     DbHandlerExitedError,
@@ -52,7 +52,6 @@ defmodule Supavisor.ClientHandler do
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
     SslHandshakeError,
-    SslRequiredError,
     StartupPacketTooLargeError,
     SubscribeRetriesExhaustedError,
     WorkerNotFoundError
@@ -105,7 +104,7 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       local: local,
       ssl: false,
-      auth: %{},
+      connection_params: nil,
       mode: opts.mode,
       stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
       stats: %{},
@@ -241,11 +240,11 @@ defmodule Supavisor.ClientHandler do
              search_path: search_path,
              upstream_tls: upstream_tls
            ),
-         :ok <- check_ssl_enforcement(data, info, user),
-         :ok <- check_address_allowed(sock, info),
+         :ok <- Checks.check_ssl_enforcement(data, info, user),
+         :ok <- Checks.check_address_allowed(sock, info),
          :ok <- Manager.check_client_limit(id, info, data.mode),
          {:ok, auth_method} <-
-           Auth.fetch_authentication_method(info.tenant, client_jit, effective_ssl, user) do
+           AuthMethods.fetch_authentication_method(info.tenant, client_jit, effective_ssl, user) do
       Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
       new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
 
@@ -257,7 +256,6 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  # TODO: can we get rid of `info`?
   def handle_event(
         :internal,
         {:start_authentication, auth_method, info},
@@ -271,20 +269,20 @@ defmodule Supavisor.ClientHandler do
         case auth_method do
           :jit ->
             :ok = HandlerHelpers.sock_send(sock, Server.password_request())
-            auth_context = Auth.Jit.new_context(info, data.id, data.peer_ip)
+            auth_context = AuthMethods.Jit.new_context(info, data.id, data.peer_ip)
 
             {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
 
           :password ->
             :ok = HandlerHelpers.sock_send(sock, Server.password_request())
-            auth_context = Auth.Password.new_context(info, data.id)
+            auth_context = AuthMethods.Password.new_context(info, data.id)
 
             {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
 
           :scram_sha_256 ->
-            auth_context = Auth.SCRAM.new_context(info, data.id)
+            auth_context = AuthMethods.SCRAM.new_context(info, data.id)
             :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
 
             {:next_state, :auth_scram_first_wait, %{data | auth_context: auth_context},
@@ -301,7 +299,7 @@ defmodule Supavisor.ClientHandler do
 
     with :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
          {:ok, sup} <-
-           Supavisor.start_dist(data.id, data.auth.secrets,
+           Supavisor.start_dist(data.id, data.connection_params.secrets,
              availability_zone: data.tenant_availability_zone,
              log_level: nil
            ),
@@ -361,7 +359,7 @@ defmodule Supavisor.ClientHandler do
            Proxy.start_proxy_connection(
              data.id,
              data.max_clients,
-             data.auth,
+             data.connection_params,
              data.tenant_feature_flags,
              data.pool_ranch,
              client_ssl: data.ssl,
@@ -534,11 +532,11 @@ defmodule Supavisor.ClientHandler do
       when proto in @proto do
     result =
       case data.auth_context do
-        %Auth.Jit.Context{} ->
-          Auth.Jit.handle_password(data.auth_context, bin)
+        %AuthMethods.Jit.Context{} ->
+          AuthMethods.Jit.handle_password(data.auth_context, bin)
 
-        %Auth.Password.Context{} ->
-          Auth.Password.handle_password(data.auth_context, bin)
+        %AuthMethods.Password.Context{} ->
+          AuthMethods.Password.handle_password(data.auth_context, bin)
       end
 
     case result do
@@ -553,7 +551,7 @@ defmodule Supavisor.ClientHandler do
   # SCRAM authentication - waiting for first message
   def handle_event(:info, {proto, _socket, bin}, :auth_scram_first_wait, data)
       when proto in @proto do
-    case Auth.SCRAM.handle_scram_first(data.auth_context, bin) do
+    case AuthMethods.SCRAM.handle_scram_first(data.auth_context, bin) do
       {:ok, message, auth_context} ->
         :ok = HandlerHelpers.sock_send(data.sock, Server.exchange_message(:first, message))
         new_data = %{data | auth_context: auth_context}
@@ -567,7 +565,7 @@ defmodule Supavisor.ClientHandler do
   # SCRAM authentication - waiting for final response
   def handle_event(:info, {proto, _socket, bin}, :auth_scram_final_wait, data)
       when proto in @proto do
-    case Auth.SCRAM.handle_scram_final(data.auth_context, bin) do
+    case AuthMethods.SCRAM.handle_scram_final(data.auth_context, bin) do
       {:ok, message, final_secrets} ->
         :ok = HandlerHelpers.sock_send(data.sock, message)
         handle_auth_success(data.sock, final_secrets, data)
@@ -733,18 +731,16 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
   defp handle_auth_success(sock, final_secrets, data) do
-    upstream_secrets = Auth.resolve_upstream_secrets(final_secrets, data.auth)
+    Logger.info("ClientHandler: Connection authenticated")
 
     if data.mode != :proxy do
-      Supavisor.SecretCache.put_upstream_auth_secrets(data.id, upstream_secrets)
-      Supavisor.Manager.notify_secrets_available(data.id)
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(data.id, final_secrets)
     end
 
-    Logger.info("ClientHandler: Connection authenticated")
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
     Telem.client_join(:ok, data.id)
 
-    auth = Map.put(data.auth, :secrets, upstream_secrets)
+    connection_params = %{data.connection_params | secrets: final_secrets}
 
     conn_type =
       if data.mode == :proxy,
@@ -754,23 +750,13 @@ defmodule Supavisor.ClientHandler do
     {
       :next_state,
       :connecting,
-      %{data | auth_context: nil, auth: auth},
+      %{data | auth_context: nil, connection_params: connection_params},
       {:next_event, :internal, conn_type}
     }
   end
 
-  # On auth failure, we check if the secrets have changed and update the cache accordingly.
-  #
-  # This operation is rate-limited at `ValidationSecrets` to avoid spamming the database with auth
-  # queries.
-  #
-  # If the validation secrets indeed changed,  we must invalidate upstream auth secrets too,
-  # as connections using them would fail
   defp handle_auth_failure(exception, data) do
-    with :changed <- Auth.ValidationSecrets.maybe_update_if_changed(data.auth_context, exception) do
-      Supavisor.SecretCache.delete_upstream_auth_secrets(data.id)
-    end
-
+    AuthMethods.handle_auth_failure(data.auth_context, exception)
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
     Error.terminate_with_error(data, exception, :handshake)
   end
@@ -891,22 +877,17 @@ defmodule Supavisor.ClientHandler do
         do: :password,
         else: :auth_query
 
-    auth = %{
+    connection_params = %Supavisor.ConnectionParameters{
       application_name: data.app_name || "Supavisor",
       database: db_name,
       host: to_charlist(info.tenant.db_host),
       sni_hostname:
         if(info.tenant.sni_hostname != nil, do: to_charlist(info.tenant.sni_hostname)),
       port: info.tenant.db_port,
-      user: user,
-      password: info.user.db_password,
-      require_user: info.tenant.require_user,
-      method: proxy_type,
+      ip_version: Helpers.ip_version(info.tenant.ip_version, info.tenant.db_host),
       upstream_ssl: Supavisor.id(id, :upstream_tls),
       upstream_tls_ca: info.tenant.upstream_tls_ca,
-      upstream_verify: info.tenant.upstream_verify,
-      use_jit: info.tenant.use_jit,
-      jit_api_url: info.tenant.jit_api_url
+      upstream_verify: info.tenant.upstream_verify
     }
 
     %{
@@ -921,28 +902,10 @@ defmodule Supavisor.ClientHandler do
         ps: info.tenant.default_parameter_status,
         proxy_type: proxy_type,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
-        auth: auth,
+        connection_params: connection_params,
         max_clients: info.user.max_clients || info.tenant.default_max_clients,
         use_jit_flow: client_jit
     }
-  end
-
-  defp check_ssl_enforcement(data, info, user) do
-    if !data.local and info.tenant.enforce_ssl and !data.ssl do
-      {:error, %SslRequiredError{user: user}}
-    else
-      :ok
-    end
-  end
-
-  defp check_address_allowed(sock, info) do
-    {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
-
-    if HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] do
-      {:error, %AddressNotAllowedError{address: addr}}
-    else
-      :ok
-    end
   end
 
   defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?

@@ -1,4 +1,4 @@
-defmodule Supavisor.ClientHandler.Auth.SCRAM do
+defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
   @moduledoc """
   Handles SCRAM-SHA-256 authentication between the client and Supavisor.
 
@@ -19,31 +19,30 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
     Fields:
       - `id` — the pool identifier tuple
       - `tenant` — the tenant record
-      - `manager_user` — the manager user record (used for auth_query lookups)
-      - `user` — the username of the authenticating client
+      - `user` — the user record (manager user for auth_query tenants, db user for require_user tenants)
+      - `db_user` — the username of the authenticating client
       - `nonce` — the client nonce from the first SCRAM message
       - `channel` — the channel binding value from the first SCRAM message
       - `signatures` — computed client and server signatures (`%{client: binary, server: binary}`)
       - `secret` — the `SASLSecrets` struct used for validation
     """
 
-    # TODO: rename `manager_user` to `user`. If `require_user` is `true`, it is the `user` with name == db_user,
-    # not the manager user.
     @type t :: %__MODULE__{
             id: Supavisor.id(),
-            tenant: map(),
-            manager_user: map(),
-            user: String.t(),
+            tenant: Supavisor.Tenants.Tenant.t(),
+            user: Supavisor.Tenants.User.t(),
+            db_user: String.t(),
             nonce: binary() | nil,
             channel: binary() | nil,
             signatures: %{client: binary(), server: binary()} | nil,
-            secret: Supavisor.ClientHandler.Auth.SASLSecrets.t() | nil
+            secret: Supavisor.Secrets.SASLSecrets.t() | nil
           }
 
-    defstruct [:id, :tenant, :signatures, :manager_user, :nonce, :channel, :secret, :user]
+    defstruct [:id, :tenant, :signatures, :user, :nonce, :channel, :secret, :db_user]
   end
 
-  alias Supavisor.ClientHandler.Auth.{SASLSecrets, ValidationSecrets}
+  alias Supavisor.ClientAuthentication
+  alias Supavisor.Secrets.{PasswordSecrets, SASLSecrets}
   alias Supavisor.Helpers
   alias Supavisor.Protocol.Server
 
@@ -54,12 +53,10 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
   """
   @spec new_context(map(), Supavisor.id()) :: Context.t()
   def new_context(info, id) do
-    Supavisor.id(user: user) = id
+    Supavisor.id(user: db_user) = id
 
-    %Context{id: id, tenant: info.tenant, manager_user: info.user, user: user}
+    %Context{id: id, tenant: info.tenant, user: info.user, db_user: db_user}
   end
-
-  def get_user_and_db_user(%Context{manager_user: user, user: db_user}), do: {user, db_user}
 
   @doc """
   Processes the client's SCRAM first message.
@@ -74,10 +71,9 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
     with {:ok, {user, nonce, channel}} <- decode_scram_first(bin, context),
          {:ok, _} <- validate_scram_user(context, user),
          {:ok, %{sasl_secrets: secret}} <-
-           ValidationSecrets.fetch_validation_secrets(
+           ClientAuthentication.fetch_validation_secrets(
              context.id,
              context.tenant,
-             context.manager_user,
              context.user
            ) do
       message = Server.exchange_first_message(nonce, secret.salt)
@@ -112,15 +108,26 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
   server's final message and the resolved `SASLSecrets` (with `client_key` populated).
   """
   @spec handle_scram_final(Context.t(), binary()) ::
-          {:ok, iodata(), SASLSecrets.t()} | {:error, Exception.t()}
+          {:ok, iodata(), SASLSecrets.t() | PasswordSecrets.t()} | {:error, Exception.t()}
   def handle_scram_final(%Context{signatures: %{server: server_signature}} = context, bin) do
     with {:ok, {:first_msg_response, %{"p" => p}}} <-
            decode_password_message(:first_msg_response, bin, context),
          {:ok, client_key} <- validate_scram_proof(context, p) do
       message = Server.exchange_message(:final, "v=#{Base.encode64(server_signature)}")
-      final_secrets = %{context.secret | client_key: client_key}
+      final_secrets = resolve_final_secrets(context, client_key)
       {:ok, message, final_secrets}
     end
+  end
+
+  # For require_user tenants, the SCRAM validation used a random salt that the
+  # upstream database doesn't know about. Return PasswordSecrets with the plaintext
+  # password so DbHandler can derive SCRAM keys from whatever salt Postgres sends.
+  defp resolve_final_secrets(%{tenant: %{require_user: true}} = context, _client_key) do
+    %PasswordSecrets{user: context.db_user, password: context.user.db_password}
+  end
+
+  defp resolve_final_secrets(context, client_key) do
+    %{context.secret | client_key: client_key}
   end
 
   @spec validate_scram_proof(Context.t(), binary()) ::
@@ -131,7 +138,7 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
     if Helpers.hash(client_key) == context.secret.stored_key do
       {:ok, client_key}
     else
-      {:error, %Supavisor.Errors.WrongPasswordError{user: context.user}}
+      {:error, %Supavisor.Errors.WrongPasswordError{user: context.db_user}}
     end
   end
 
@@ -170,7 +177,7 @@ defmodule Supavisor.ClientHandler.Auth.SCRAM do
   @spec validate_scram_user(Context.t(), binary()) ::
           {:ok, binary()} | {:error, Exception.t()}
   defp validate_scram_user(context, user) do
-    if user in [context.user, ""] do
+    if user in [context.db_user, ""] do
       {:ok, user}
     else
       # TODO: proper auth error here

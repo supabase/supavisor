@@ -1,11 +1,9 @@
-defmodule Supavisor.ClientHandler.Auth do
+defmodule Supavisor.ClientHandler.AuthMethods do
   @moduledoc """
-  Helpers that work for more than one authentication method
+  Determines the authentication method based on tenant configuration and client options.
   """
 
-  require Logger
-
-  alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.ClientHandler.AuthMethods.Jit
   alias Supavisor.Errors.SslRequiredError
 
   @doc """
@@ -33,23 +31,25 @@ defmodule Supavisor.ClientHandler.Auth do
   end
 
   @doc """
-  Resolves the secrets to use for upstream database authentication.
-
-  For `require_user: true` tenants, the client-facing SCRAM validation uses
-  SASLSecrets with a random salt, which can't be used to authenticate upstream
-  (Postgres has its own salt). Instead, we use PasswordSecrets with the plaintext
-  password so DbHandler can derive SCRAM keys from whatever salt Postgres sends.
-
-  For other tenants, the final_secrets from client auth are used as-is.
+  Handles an auth failure in the different authentication methods.
   """
-  @spec resolve_upstream_secrets(
-          Supavisor.ClientHandler.Auth.PasswordSecrets.t()
-          | Supavisor.ClientHandler.Auth.SASLSecrets.t(),
-          %{require_user: boolean()}
-        ) :: map()
-  def resolve_upstream_secrets(_final_secrets, %{require_user: true} = auth) do
-    %PasswordSecrets{user: auth.user, password: auth.password}
+  def handle_auth_failure(%Jit.Context{}, _err) do
+    :ok
   end
 
-  def resolve_upstream_secrets(final_secrets, _auth), do: final_secrets
+  def handle_auth_failure(%_{tenant: %{require_user: true}}, _err) do
+    :ok
+  end
+
+  def handle_auth_failure(context, %Supavisor.Errors.WrongPasswordError{}) do
+    Supavisor.ClientAuthentication.handle_wrong_password(
+      context.id,
+      context.tenant,
+      Supavisor.Secrets.ManagerSecrets.from_manager_user(context.user)
+    )
+  end
+
+  def handle_auth_failure(_, _) do
+    :ok
+  end
 end

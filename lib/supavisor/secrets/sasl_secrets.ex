@@ -1,4 +1,4 @@
-defmodule Supavisor.ClientHandler.Auth.SASLSecrets do
+defmodule Supavisor.Secrets.SASLSecrets do
   @moduledoc "Secrets for SCRAM-SHA-256 authentication"
 
   @derive {Inspect, except: [:client_key, :server_key, :salt, :stored_key]}

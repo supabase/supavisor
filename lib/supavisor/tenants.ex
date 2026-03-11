@@ -7,7 +7,7 @@ defmodule Supavisor.Tenants do
   alias Supavisor.Repo
 
   alias Supavisor.CircuitBreaker
-  alias Supavisor.ClientHandler.Auth.ManagerSecrets
+  alias Supavisor.Secrets.ManagerSecrets
   alias Supavisor.Errors.TenantOrUserNotFoundError
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants

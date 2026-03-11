@@ -18,7 +18,7 @@ defmodule Supavisor.SynHandlerTest do
   test "resolving conflict" do
     {:ok, peer, node2} = Cluster.start_node_unclustered(:peer.random_name())
 
-    secret = %Supavisor.ClientHandler.Auth.PasswordSecrets{
+    secret = %Supavisor.Secrets.PasswordSecrets{
       user: "postgres",
       password: "postgres"
     }

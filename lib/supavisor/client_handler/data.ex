@@ -15,7 +15,7 @@ defmodule Supavisor.ClientHandler.Data do
     :ssl,
     :auth_context,
     :auth_secrets,
-    :auth,
+    :connection_params,
     :tenant,
     :tenant_feature_flags,
     :tenant_availability_zone,

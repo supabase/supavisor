@@ -29,7 +29,7 @@ defmodule Supavisor.AuthQueryTest do
       user = "user@example.com"
 
       assert {:ok,
-              %Supavisor.ClientHandler.Auth.SASLSecrets{
+              %Supavisor.Secrets.SASLSecrets{
                 digest: "SCRAM-SHA-256",
                 iterations: 4000,
                 salt: "salt",
@@ -77,7 +77,7 @@ defmodule Supavisor.AuthQueryTest do
       conn = start_conn()
       auth_query = "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1"
 
-      assert {:ok, %Supavisor.ClientHandler.Auth.SASLSecrets{user: "postgres"}} =
+      assert {:ok, %Supavisor.Secrets.SASLSecrets{user: "postgres"}} =
                AuthQuery.fetch_user_secret(conn, auth_query, "postgres")
 
       GenServer.stop(conn)

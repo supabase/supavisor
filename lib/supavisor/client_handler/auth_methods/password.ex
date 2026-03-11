@@ -1,4 +1,4 @@
-defmodule Supavisor.ClientHandler.Auth.Password do
+defmodule Supavisor.ClientHandler.AuthMethods.Password do
   @moduledoc """
   Handles cleartext password authentication between the client and Supavisor.
 
@@ -30,15 +30,16 @@ defmodule Supavisor.ClientHandler.Auth.Password do
 
     @type t :: %__MODULE__{
             id: Supavisor.id(),
-            tenant: map(),
-            user: map(),
+            tenant: Supavisor.Tenants.Tenant.t(),
+            user: Supavisor.Tenants.User.t(),
             db_user: String.t()
           }
 
     defstruct [:id, :tenant, :user, :db_user]
   end
 
-  alias Supavisor.ClientHandler.Auth.{PasswordSecrets, ValidationSecrets}
+  alias Supavisor.ClientAuthentication
+  alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Protocol.Server
 
   require Supavisor
@@ -52,8 +53,6 @@ defmodule Supavisor.ClientHandler.Auth.Password do
 
     %Context{id: id, tenant: info.tenant, user: info.user, db_user: db_user}
   end
-
-  def get_user_and_db_user(%Context{user: user, db_user: db_user}), do: {user, db_user}
 
   @doc """
   Processes the client's cleartext password message.
@@ -83,7 +82,7 @@ defmodule Supavisor.ClientHandler.Auth.Password do
 
   defp validate_password(password, ctx) do
     with {:ok, %{password_secrets: password_secrets, sasl_secrets: sasl_secrets}} <-
-           ValidationSecrets.fetch_validation_secrets(ctx.id, ctx.tenant, ctx.user, ctx.db_user) do
+           ClientAuthentication.fetch_validation_secrets(ctx.id, ctx.tenant, ctx.user) do
       if password_secrets && password == password_secrets.password do
         :ok
       else

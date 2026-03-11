@@ -196,7 +196,7 @@ defmodule Supavisor.Helpers do
   @spec get_client_final(map(), map(), binary(), binary(), binary()) ::
           {iolist(), binary()}
   def get_client_final(
-        %Supavisor.ClientHandler.Auth.PasswordSecrets{} = secrets,
+        %Supavisor.Secrets.PasswordSecrets{} = secrets,
         srv_first,
         client_nonce,
         user_name,
@@ -225,7 +225,7 @@ defmodule Supavisor.Helpers do
   end
 
   def get_client_final(
-        %Supavisor.ClientHandler.Auth.SASLSecrets{} = secrets,
+        %Supavisor.Secrets.SASLSecrets{} = secrets,
         srv_first,
         client_nonce,
         user_name,
@@ -248,7 +248,7 @@ defmodule Supavisor.Helpers do
 
   def verify_password_against_scram(
         password,
-        %Supavisor.ClientHandler.Auth.SASLSecrets{} = secrets
+        %Supavisor.Secrets.SASLSecrets{} = secrets
       ) do
     salted_password =
       :pgo_scram.hi(:pgo_sasl_prep_profile.validate(password), secrets.salt, secrets.iterations)

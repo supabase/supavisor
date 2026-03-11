@@ -45,7 +45,7 @@ defmodule Supavisor.ClientHandler.ProxyTest do
               :noop
           end
 
-          :timer.sleep(2)
+          :timer.sleep(5)
         end)
       end)
 

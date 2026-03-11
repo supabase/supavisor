@@ -1,4 +1,4 @@
-defmodule Supavisor.ClientHandler.Auth.Jit do
+defmodule Supavisor.ClientHandler.AuthMethods.Jit do
   @moduledoc """
   Handles JIT (Just-In-Time) access token authentication.
 
@@ -16,7 +16,7 @@ defmodule Supavisor.ClientHandler.Auth.Jit do
 
     @type t :: %__MODULE__{
             id: Supavisor.id(),
-            tenant: map(),
+            tenant: Supavisor.Tenant.t(),
             db_user: String.t(),
             # todo: correct type
             peer_ip: term()
@@ -26,7 +26,7 @@ defmodule Supavisor.ClientHandler.Auth.Jit do
     defstruct [:id, :tenant, :db_user, :peer_ip]
   end
 
-  alias Supavisor.ClientHandler.Auth.PasswordSecrets
+  alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Errors.{JitRequestFailedError, JitUnauthorizedError}
   alias Supavisor.{Helpers, Protocol.Server}
 

@@ -6,7 +6,8 @@ defmodule Supavisor.SecretChecker do
   require Supavisor
 
   alias Supavisor.AuthQuery
-  alias Supavisor.ClientHandler.Auth.ValidationSecrets
+  alias Supavisor.ClientAuthentication
+  alias Supavisor.ClientAuthentication.ValidationSecrets
 
   @interval :timer.seconds(15)
 
@@ -107,25 +108,11 @@ defmodule Supavisor.SecretChecker do
   def check_secrets(user, %{tenant_record: tenant, conn: conn} = state) do
     case AuthQuery.fetch_user_secret(conn, tenant.auth_query, user) do
       {:ok, sasl_secrets} ->
-        update_cache =
-          case Supavisor.SecretCache.get_validation_secrets(state.tenant, state.user) do
-            {:ok, %ValidationSecrets{sasl_secrets: old_sasl}} ->
-              Map.delete(sasl_secrets, :client_key) != Map.delete(old_sasl, :client_key)
-
-            _other ->
-              true
-          end
-
         validation_secrets = ValidationSecrets.from_sasl_secrets(sasl_secrets)
 
-        if update_cache do
-          Logger.info("Secrets changed or not present, updating cache")
-
-          Supavisor.SecretCache.put_validation_secrets(
-            state.tenant,
-            state.user,
-            validation_secrets
-          )
+        case ClientAuthentication.refresh_if_changed(state.tenant, state.user, validation_secrets) do
+          :changed -> Logger.info("Secrets changed or not present, updating cache")
+          :noop -> :ok
         end
 
         {:ok, validation_secrets}
@@ -145,7 +132,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   def handle_call({:update_credentials, new_user, password}, _from, state) do
-    alias Supavisor.ClientHandler.Auth.ManagerSecrets
+    alias Supavisor.Secrets.ManagerSecrets
 
     Logger.info("SecretChecker: changing auth_query user to #{new_user}")
 
