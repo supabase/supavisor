@@ -12,24 +12,34 @@ defmodule Supavisor.AuthQuery do
   @doc """
   Starts and links a Postgrex connection configured for auth-query use.
   """
-  @spec start_link(Tenant.t(), ManagerSecrets.t()) :: {:ok, pid()} | {:error, term()}
+  @spec start_link(Tenant.t(), ManagerSecrets.t()) ::
+          {:ok, pid()} | {:error, AuthQueryError.t()}
   def start_link(%Tenant{} = tenant, %ManagerSecrets{} = manager) do
     ssl_opts = build_ssl_options(tenant)
     ip_version = Helpers.ip_version(tenant.ip_version, tenant.db_host)
 
-    Postgrex.start_link(
-      hostname: tenant.db_host,
-      port: tenant.db_port,
-      database: tenant.db_database,
-      password: manager.db_password,
-      username: manager.db_user,
-      parameters: [application_name: "Supavisor (auth_query)"],
-      ssl: tenant.upstream_ssl,
-      socket_options: [ip_version],
-      queue_target: 1_000,
-      queue_interval: 5_000,
-      ssl_opts: ssl_opts
-    )
+    case Postgrex.start_link(
+           hostname: tenant.db_host,
+           port: tenant.db_port,
+           database: tenant.db_database,
+           password: manager.db_password,
+           username: manager.db_user,
+           parameters: [application_name: "Supavisor (auth_query)"],
+           ssl: tenant.upstream_ssl,
+           socket_options: [ip_version],
+           queue_target: 1_000,
+           queue_interval: 5_000,
+           ssl_opts: ssl_opts
+         ) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      :ignore ->
+        {:error, %AuthQueryError{reason: :connection_failed, details: "connection ignored"}}
+
+      {:error, reason} ->
+        {:error, %AuthQueryError{reason: :connection_failed, details: inspect(reason)}}
+    end
   end
 
   @doc """
@@ -49,6 +59,35 @@ defmodule Supavisor.AuthQuery do
     end)
 
     :ok
+  end
+
+  @doc """
+  Opens a one-off connection, fetches the user secret, and closes the
+  connection before returning. Use this when no long-lived connection is
+  available.
+  """
+  @spec connect_and_fetch_user_secret(
+          Tenant.t(),
+          ManagerSecrets.t(),
+          String.t() | nil,
+          String.t()
+        ) ::
+          {:ok, SASLSecrets.t()} | {:error, AuthQueryError.t()}
+  def connect_and_fetch_user_secret(
+        %Tenant{} = tenant,
+        %ManagerSecrets{} = manager,
+        auth_query,
+        user
+      ) do
+    case start_link(tenant, manager) do
+      {:ok, conn} ->
+        result = fetch_user_secret(conn, auth_query, user)
+        stop_connection_async(conn)
+        result
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @doc """

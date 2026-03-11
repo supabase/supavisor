@@ -13,6 +13,7 @@ defmodule Supavisor.Errors.AuthQueryError do
           | :unsupported_secret_format
           | :parse_error
           | :md5_not_supported
+          | :connection_failed
 
   @type t() :: %__MODULE__{
           reason: reason(),
@@ -37,6 +38,12 @@ defmodule Supavisor.Errors.AuthQueryError do
 
   def error_message(%{reason: :md5_not_supported}),
     do: "MD5 secrets are not supported for auth_query, use require_user instead"
+
+  def error_message(%{reason: :connection_failed, details: details}),
+    do: "auth_query connection failed: #{details}"
+
+  def error_message(%{reason: :connection_failed}),
+    do: "auth_query connection failed"
 
   defp humanize(%DBConnection.ConnectionError{reason: :queue_timeout}),
     do: "connection to database not available"

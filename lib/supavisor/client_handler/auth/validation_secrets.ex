@@ -191,16 +191,10 @@ defmodule Supavisor.ClientHandler.Auth.ValidationSecrets do
       {:error, :not_started} ->
         Logger.info("SecretChecker not started, using a one-off auth_query connection")
         manager = %ManagerSecrets{db_user: user.db_user, db_password: user.db_password}
-        {:ok, conn} = AuthQuery.start_link(tenant, manager)
 
-        case AuthQuery.fetch_user_secret(conn, tenant.auth_query, db_user) do
-          {:ok, sasl_secrets} ->
-            AuthQuery.stop_connection_async(conn)
-            {:ok, from_sasl_secrets(sasl_secrets)}
-
-          {:error, _} = error ->
-            AuthQuery.stop_connection_async(conn)
-            error
+        case AuthQuery.connect_and_fetch_user_secret(tenant, manager, tenant.auth_query, db_user) do
+          {:ok, sasl_secrets} -> {:ok, from_sasl_secrets(sasl_secrets)}
+          {:error, _} = error -> error
         end
 
       {:error, _} = error ->
