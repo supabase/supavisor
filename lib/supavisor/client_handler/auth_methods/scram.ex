@@ -68,8 +68,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
   @spec handle_scram_first(Context.t(), binary()) ::
           {:ok, binary(), Context.t()} | {:error, Exception.t()}
   def handle_scram_first(context, bin) do
-    with {:ok, {user, nonce, channel}} <- decode_scram_first(bin, context),
-         {:ok, _} <- validate_scram_user(context, user),
+    with {:ok, {scram_user, nonce, channel}} <- decode_scram_first(bin, context),
          {:ok, %{sasl_secrets: secret}} <-
            ClientAuthentication.fetch_validation_secrets(
              context.id,
@@ -85,7 +84,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
           secret.server_key,
           server_first_parts,
           nonce,
-          user,
+          scram_user,
           channel
         )
 
@@ -169,20 +168,6 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
          %Supavisor.Errors.AuthProtocolError{
            details: "decode error during SCRAM auth: #{inspect(error)}"
          }}
-    end
-  end
-
-  @spec validate_scram_user(Context.t(), binary()) ::
-          {:ok, binary()} | {:error, Exception.t()}
-  defp validate_scram_user(context, user) do
-    if user in [context.db_user, ""] do
-      {:ok, user}
-    else
-      {:error,
-       %Supavisor.Errors.AuthProtocolError{
-         details:
-           "SCRAM user mismatch: client sent #{inspect(user)}, expected #{inspect(context.db_user)}"
-       }}
     end
   end
 end
