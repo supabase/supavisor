@@ -153,7 +153,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
 
   @spec decode_password_message(atom(), binary(), Context.t()) ::
           {:ok, term()} | {:error, Exception.t()}
-  defp decode_password_message(expected_type, bin, context) do
+  defp decode_password_message(expected_type, bin, _context) do
     case Server.decode_pkt(bin) do
       {:ok, %{tag: :password_message, payload: {^expected_type, _} = payload}, _} ->
         {:ok, payload}
@@ -161,15 +161,13 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
       {:ok, other, _} ->
         {:error,
          %Supavisor.Errors.AuthProtocolError{
-           details: {:unexpected_message, other},
-           context: context
+           details: "unexpected message during SCRAM auth: #{inspect(other)}"
          }}
 
       {:error, error} ->
         {:error,
          %Supavisor.Errors.AuthProtocolError{
-           details: {:decode_error, error},
-           context: context
+           details: "decode error during SCRAM auth: #{inspect(error)}"
          }}
     end
   end
@@ -180,8 +178,11 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
     if user in [context.db_user, ""] do
       {:ok, user}
     else
-      # TODO: proper auth error here
-      {:error, %Supavisor.Errors.AuthProtocolError{}}
+      {:error,
+       %Supavisor.Errors.AuthProtocolError{
+         details:
+           "SCRAM user mismatch: client sent #{inspect(user)}, expected #{inspect(context.db_user)}"
+       }}
     end
   end
 end

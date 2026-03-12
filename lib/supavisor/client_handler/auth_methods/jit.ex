@@ -78,7 +78,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Jit do
     end
   end
 
-  defp decode_password(bin, context) do
+  defp decode_password(bin, _context) do
     case Server.decode_pkt(bin) do
       {:ok, %{tag: :password_message, payload: {:cleartext_password, password}}, _} ->
         {:ok, IO.iodata_to_binary(password)}
@@ -86,15 +86,13 @@ defmodule Supavisor.ClientHandler.AuthMethods.Jit do
       {:ok, other, _} ->
         {:error,
          %Supavisor.Errors.AuthProtocolError{
-           details: {:unexpected_message, other},
-           context: context
+           details: "unexpected message during JIT auth: #{inspect(other)}"
          }}
 
       {:error, error} ->
         {:error,
          %Supavisor.Errors.AuthProtocolError{
-           details: {:decode_error, error},
-           context: context
+           details: "decode error during JIT auth: #{inspect(error)}"
          }}
     end
   end

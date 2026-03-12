@@ -107,7 +107,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
 
   @spec decode_password(binary(), Context.t()) ::
           {:ok, binary()} | {:error, Exception.t()}
-  defp decode_password(bin, context) do
+  defp decode_password(bin, _context) do
     case Server.decode_pkt(bin) do
       {:ok, %{tag: :password_message, payload: {:cleartext_password, password}}, _} ->
         {:ok, IO.iodata_to_binary(password)}
@@ -115,15 +115,13 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
       {:ok, other, _} ->
         {:error,
          %Supavisor.Errors.AuthProtocolError{
-           details: {:unexpected_message, other},
-           context: context
+           details: "unexpected message during password auth: #{inspect(other)}"
          }}
 
       {:error, error} ->
         {:error,
          %Supavisor.Errors.AuthProtocolError{
-           details: {:decode_error, error},
-           context: context
+           details: "decode error during password auth: #{inspect(error)}"
          }}
     end
   end
