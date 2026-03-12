@@ -16,7 +16,7 @@ defmodule Supavisor.ConnectionParameters do
           application_name: String.t(),
           sni_hostname: charlist() | nil,
           upstream_ssl: boolean(),
-          upstream_verify: String.t() | nil,
+          upstream_verify: :peer | :none | nil,
           upstream_tls_ca: binary() | nil,
           secrets: PasswordSecrets.t() | SASLSecrets.t() | nil
         }

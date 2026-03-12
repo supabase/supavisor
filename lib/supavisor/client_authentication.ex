@@ -80,7 +80,7 @@ defmodule Supavisor.ClientAuthentication do
 
   Shouldn't be used for `require_user = true` tenants.
   """
-  @spec handle_wrong_password(Supavisor.id(), Supavisor.Tenant.t(), ManagerSecrets.t()) :: :ok
+  @spec handle_wrong_password(Supavisor.id(), Supavisor.Tenants.Tenant.t(), ManagerSecrets.t()) :: :ok
   def handle_wrong_password(id, tenant, %ManagerSecrets{} = manager_secrets) do
     with :ok <- RefreshLimiter.check(id),
          {:ok, new_secrets} <- fetch_secrets_from_database(id, tenant, manager_secrets),

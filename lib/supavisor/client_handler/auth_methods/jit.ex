@@ -16,7 +16,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Jit do
 
     @type t :: %__MODULE__{
             id: Supavisor.id(),
-            tenant: Supavisor.Tenant.t(),
+            tenant: Supavisor.Tenants.Tenant.t(),
             db_user: String.t(),
             # todo: correct type
             peer_ip: term()
