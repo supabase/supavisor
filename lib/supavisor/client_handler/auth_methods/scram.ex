@@ -42,9 +42,9 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
   end
 
   alias Supavisor.ClientAuthentication
-  alias Supavisor.Secrets.{PasswordSecrets, SASLSecrets}
   alias Supavisor.Helpers
   alias Supavisor.Protocol.Server
+  alias Supavisor.Secrets.{PasswordSecrets, SASLSecrets}
 
   require Supavisor
 

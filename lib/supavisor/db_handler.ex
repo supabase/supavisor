@@ -32,10 +32,10 @@ defmodule Supavisor.DbHandler do
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
   alias Supavisor.ConnectionParameters
-  alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
   alias Supavisor.Errors.DbHandlerExitedError
+  alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
 
   alias Supavisor.{

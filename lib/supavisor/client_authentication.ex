@@ -16,7 +16,7 @@ defmodule Supavisor.ClientAuthentication do
   require Supavisor
 
   alias Supavisor.AuthQuery
-  alias Supavisor.ClientAuthentication.ValidationSecrets
+  alias Supavisor.ClientAuthentication.{RefreshLimiter, ValidationSecrets}
   alias Supavisor.Secrets.{ManagerSecrets, PasswordSecrets}
   alias Supavisor.UpstreamAuthentication
 
@@ -82,7 +82,7 @@ defmodule Supavisor.ClientAuthentication do
   """
   @spec handle_wrong_password(Supavisor.id(), Supavisor.Tenant.t(), ManagerSecrets.t()) :: :ok
   def handle_wrong_password(id, tenant, %ManagerSecrets{} = manager_secrets) do
-    with :ok <- Supavisor.ClientAuthentication.RefreshLimiter.check(id),
+    with :ok <- RefreshLimiter.check(id),
          {:ok, new_secrets} <- fetch_secrets_from_database(id, tenant, manager_secrets),
          :changed <- refresh_if_changed(tenant.external_id, Supavisor.id(id, :user), new_secrets) do
       Logger.warning(

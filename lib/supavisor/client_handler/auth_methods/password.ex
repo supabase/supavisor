@@ -39,8 +39,8 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
   end
 
   alias Supavisor.ClientAuthentication
-  alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Protocol.Server
+  alias Supavisor.Secrets.PasswordSecrets
 
   require Supavisor
 

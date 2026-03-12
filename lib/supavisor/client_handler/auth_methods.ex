@@ -3,8 +3,10 @@ defmodule Supavisor.ClientHandler.AuthMethods do
   Determines the authentication method based on tenant configuration and client options.
   """
 
+  alias Supavisor.ClientAuthentication
   alias Supavisor.ClientHandler.AuthMethods.Jit
   alias Supavisor.Errors.SslRequiredError
+  alias Supavisor.Secrets.ManagerSecrets
 
   @doc """
   Fetches potential authentication methods for the tenant. If the authentication
@@ -42,10 +44,10 @@ defmodule Supavisor.ClientHandler.AuthMethods do
   end
 
   def handle_auth_failure(context, %Supavisor.Errors.WrongPasswordError{}) do
-    Supavisor.ClientAuthentication.handle_wrong_password(
+    ClientAuthentication.handle_wrong_password(
       context.id,
       context.tenant,
-      Supavisor.Secrets.ManagerSecrets.from_manager_user(context.user)
+      ManagerSecrets.from_manager_user(context.user)
     )
   end
 
