@@ -25,7 +25,8 @@ defmodule Supavisor.AuthQueryTest do
     test "parses SCRAM-SHA-256 secrets correctly" do
       encoded_stored_key = Base.encode64("storedKey")
       encoded_server_key = Base.encode64("serverKey")
-      secret = "SCRAM-SHA-256$4000:salt$#{encoded_stored_key}:#{encoded_server_key}"
+      encoded_salt = Base.encode64("salt")
+      secret = "SCRAM-SHA-256$4000:#{encoded_salt}$#{encoded_stored_key}:#{encoded_server_key}"
       user = "user@example.com"
 
       assert {:ok,

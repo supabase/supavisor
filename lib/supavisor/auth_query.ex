@@ -127,13 +127,14 @@ defmodule Supavisor.AuthQuery do
     with [_, digest, iterations, salt, stored_key, server_key] <-
            Regex.run(~r/^(.+)\$(\d+):(.+)\$(.+):(.+)$/, secret),
          {:ok, decoded_stored_key} <- Base.decode64(stored_key),
-         {:ok, decoded_server_key} <- Base.decode64(server_key) do
+         {:ok, decoded_server_key} <- Base.decode64(server_key),
+         {:ok, decoded_salt} <- Base.decode64(salt) do
       {:ok,
        %SASLSecrets{
          user: user,
          digest: digest,
          iterations: String.to_integer(iterations),
-         salt: salt,
+         salt: decoded_salt,
          stored_key: decoded_stored_key,
          server_key: decoded_server_key
        }}

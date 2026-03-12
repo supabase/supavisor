@@ -86,12 +86,10 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
       if password_secrets && password == password_secrets.password do
         :ok
       else
-        salt = Base.decode64!(sasl_secrets.salt)
-
         salted_password =
           :pgo_scram.hi(
             :pgo_sasl_prep_profile.validate([password]),
-            salt,
+            sasl_secrets.salt,
             sasl_secrets.iterations
           )
 

@@ -58,7 +58,7 @@ defmodule Supavisor.ClientAuthentication.ValidationSecrets do
       user: user,
       digest: "SCRAM-SHA-256",
       iterations: iterations,
-      salt: Base.encode64(salt),
+      salt: salt,
       stored_key: stored_key,
       server_key: server_key,
       client_key: client_key

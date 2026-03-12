@@ -158,10 +158,10 @@ defmodule Supavisor.Protocol.ServerTest do
 
   test "exchange_first_message/3" do
     nonce = "^!^\"^#^$"
-    salt = "RUsreCtyT2NNeUVnK0ZwWGlqckFHY01CQlE9PQ=="
+    salt = Base.decode64!("RUsreCtyT2NNeUVnK0ZwWGlqckFHY01CQlE9PQ==")
     result = Server.exchange_first_message(nonce, salt)
     assert String.starts_with?(result, "r=^!^\"^#^$")
-    assert String.contains?(result, ",s=#{salt},")
+    assert String.contains?(result, ",s=#{Base.encode64(salt)},")
     assert String.ends_with?(result, ",i=4096")
   end
 
