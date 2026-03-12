@@ -16,7 +16,7 @@ defmodule Supavisor.ClientHandler.AuthMethods do
   has `use_jit` enabled, returns `:jit` to route to the dedicated JIT auth module.
   """
   @spec fetch_authentication_method(
-          %{use_jit: boolean()},
+          Supavisor.Tenants.Tenant.t(),
           client_jit :: boolean(),
           ssl? :: boolean(),
           String.t()
