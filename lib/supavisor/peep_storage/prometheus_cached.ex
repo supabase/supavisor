@@ -54,10 +54,11 @@ defmodule Supavisor.PeepStorage.PrometheusCached do
     type = ["# TYPE ", name, " histogram"]
 
     distributions =
-      Enum.map(tagged_series, fn {tags_id, {counts, sum, above_max, boundaries}} ->
-        labels = resolve_labels(reverse_tags_tid, cache_tid, tags_id, global_tags)
+      for {tags_id, {counts, sum, above_max, boundaries}} <- tagged_series,
+          labels = resolve_labels(reverse_tags_tid, cache_tid, tags_id, global_tags),
+          labels != :deleted do
         format_distribution(name, labels, counts, sum, above_max, boundaries)
-      end)
+      end
 
     [help, ?\n, type, ?\n, distributions]
   end
@@ -98,15 +99,17 @@ defmodule Supavisor.PeepStorage.PrometheusCached do
     type = ["# TYPE ", name, " ", to_string(type)]
 
     samples =
-      Enum.map(series, fn {tags_id, value} ->
-        case resolve_labels(reverse_tags_tid, cache_tid, tags_id, global_tags) do
+      for {tags_id, value} <- series,
+          labels = resolve_labels(reverse_tags_tid, cache_tid, tags_id, global_tags),
+          labels != :deleted do
+        case labels do
           nil ->
             [name, " ", format_value(value), ?\n]
 
           labels ->
             [name, ?{, labels, ?}, " ", format_value(value), ?\n]
         end
-      end)
+      end
 
     [help, ?\n, type, ?\n, samples]
   end
@@ -117,10 +120,17 @@ defmodule Supavisor.PeepStorage.PrometheusCached do
         cached
 
       [] ->
-        [{_, tags}] = :ets.lookup(reverse_tags_tid, tags_id)
-        formatted = do_format_labels(Map.merge(global_tags, tags))
-        :ets.insert(cache_tid, {tags_id, formatted})
-        formatted
+        case :ets.lookup(reverse_tags_tid, tags_id) do
+          [{_, tags}] ->
+            formatted = do_format_labels(Map.merge(global_tags, tags))
+            :ets.insert(cache_tid, {tags_id, formatted})
+            formatted
+
+          [] ->
+            # Entry was deleted by the metrics cleaner between the cache
+            # miss and this lookup. Return :deleted so callers can skip it.
+            :deleted
+        end
     end
   end
 

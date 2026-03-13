@@ -25,7 +25,7 @@ defmodule Supavisor.MetricsCleaner do
       []
     )
 
-    {:ok, %{check_ref: check()}}
+    {:ok, %{check_ref: check(), pending: MapSet.new()}}
   end
 
   @doc false
@@ -39,13 +39,14 @@ defmodule Supavisor.MetricsCleaner do
   def handle_continue(:clean, state) do
     Process.cancel_timer(state.check_ref)
 
-    :telemetry.span([:supavisor, :metrics_cleaner], %{}, fn ->
-      count = loop_and_cleanup_metrics_table()
-      Logger.info("Cleaned #{count} orphaned metrics")
-      {[], %{orphaned_metrics: count}, %{}}
-    end)
+    new_pending =
+      :telemetry.span([:supavisor, :metrics_cleaner], %{}, fn ->
+        {sweep_count, new_pending} = mark_and_sweep(state.pending)
+        Logger.info("Cleaned #{sweep_count} orphaned metrics")
+        {new_pending, %{orphaned_metrics: sweep_count}, %{}}
+      end)
 
-    {:noreply, %{state | check_ref: check()}}
+    {:noreply, %{state | check_ref: check(), pending: new_pending}}
   end
 
   def handle_cast(:clean, state) do
@@ -63,30 +64,44 @@ defmodule Supavisor.MetricsCleaner do
 
   defp check, do: Process.send_after(self(), :check, @interval)
 
-  defp loop_and_cleanup_metrics_table do
+  defp mark_and_sweep(pending) do
     {_, {tags_tid, metric_tids, reverse_tags_tid, cache_tid}} =
       Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
 
-    metric_tids
-    |> Tuple.to_list()
-    |> Enum.sum_by(&clean_table(&1, tags_tid, reverse_tags_tid, cache_tid))
+    # Phase 1: Sweep — delete everything for tags_ids marked in the previous cycle.
+    # By now, tags_tid entries were removed 1 cycle ago, so no new writes can use these ids.
+    sweep_count = sweep(pending, metric_tids, reverse_tags_tid, cache_tid)
+
+    # Phase 2: Mark — find orphaned tags_ids and remove them from tags_tid
+    # to prevent new writes from reusing them. They'll be swept next cycle.
+    new_pending = mark(metric_tids, tags_tid, reverse_tags_tid)
+
+    {sweep_count, new_pending}
   end
 
-  defp clean_table(tid, tags_tid, reverse_tags_tid, cache_tid) do
-    :ets.foldl(
-      fn {{metric_id, tags_id}, _val}, acc ->
-        tags = resolve_tags(reverse_tags_tid, tags_id)
+  defp sweep(pending, metric_tids, reverse_tags_tid, cache_tid) do
+    if MapSet.size(pending) == 0 do
+      0
+    else
+      sweep_count =
+        metric_tids
+        |> Tuple.to_list()
+        |> Enum.sum_by(&sweep_metric_table(&1, pending))
 
-        if tags[:tenant] && tenant_down?(tags) do
-          :ets.delete(tid, {metric_id, tags_id})
-          # Clean up tag mappings and label cache for this tags_id.
-          # Other scheduler tables may still reference this tags_id,
-          # but orphaned entries in tags/reverse_tags are harmless
-          # and will be cleaned on subsequent passes once all references
-          # are gone.
-          :ets.delete(cache_tid, tags_id)
-          :ets.delete(reverse_tags_tid, tags_id)
-          :ets.delete(tags_tid, tags)
+      Enum.each(pending, fn tags_id ->
+        :ets.delete(reverse_tags_tid, tags_id)
+        :ets.delete(cache_tid, tags_id)
+      end)
+
+      sweep_count
+    end
+  end
+
+  defp sweep_metric_table(tid, pending) do
+    :ets.foldl(
+      fn {{_metric_id, tags_id} = key, _val}, acc ->
+        if MapSet.member?(pending, tags_id) do
+          :ets.delete(tid, key)
           acc + 1
         else
           acc
@@ -95,6 +110,41 @@ defmodule Supavisor.MetricsCleaner do
       0,
       tid
     )
+  end
+
+  defp mark(metric_tids, tags_tid, reverse_tags_tid) do
+    all_tags_ids =
+      metric_tids
+      |> Tuple.to_list()
+      |> Enum.reduce(MapSet.new(), fn tid, acc ->
+        :ets.foldl(
+          fn {{_metric_id, tags_id}, _val}, inner_acc ->
+            MapSet.put(inner_acc, tags_id)
+          end,
+          acc,
+          tid
+        )
+      end)
+
+    orphaned =
+      Enum.reduce(all_tags_ids, MapSet.new(), fn tags_id, acc ->
+        tags = resolve_tags(reverse_tags_tid, tags_id)
+
+        if tags[:tenant] && tenant_down?(tags) do
+          MapSet.put(acc, tags_id)
+        else
+          acc
+        end
+      end)
+
+    # Delete from tags_tid to prevent new writes from reusing these ids.
+    # reverse_tags_tid is left intact so exports still work until sweep.
+    Enum.each(orphaned, fn tags_id ->
+      tags = resolve_tags(reverse_tags_tid, tags_id)
+      :ets.delete(tags_tid, tags)
+    end)
+
+    orphaned
   end
 
   defp resolve_tags(reverse_tags_tid, tags_id) do
@@ -118,6 +168,8 @@ defmodule Supavisor.MetricsCleaner do
   defp tenant_down?(%{tenant: tenant}) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant) == []
   end
+
+  defp tenant_down?(map) when map_size(map), do: true
 
   defp tenant_down?(_), do: false
 end

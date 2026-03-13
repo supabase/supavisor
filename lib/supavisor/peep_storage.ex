@@ -146,8 +146,7 @@ defmodule Supavisor.PeepStorage do
             id
 
           false ->
-            [{_, existing_id}] = :ets.lookup(tags_tid, tags)
-            existing_id
+            get_or_create_tags_id(tags_tid, reverse_tags_tid, tags)
         end
     end
   end

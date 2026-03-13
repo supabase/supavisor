@@ -29,8 +29,10 @@ defmodule Supavisor.MetricsCleanerTest do
 
     assert IO.iodata_to_binary(metrics) =~ ~r/non-existent/
 
+    # First clean marks orphans (removes from tags_tid), second clean sweeps them
     @subject.clean()
-
+    assert_receive {:metrics, _}
+    @subject.clean()
     assert_receive {:metrics, _}
 
     metrics = Supavisor.Monitoring.PromEx.get_metrics()
@@ -51,7 +53,8 @@ defmodule Supavisor.MetricsCleanerTest do
     assert IO.iodata_to_binary(metrics) =~ ~r/non-existent/
 
     @subject.clean()
-
+    assert_receive {:metrics, _}
+    @subject.clean()
     assert_receive {:metrics, _}
 
     metrics = Supavisor.Monitoring.PromEx.get_metrics()
@@ -89,11 +92,19 @@ defmodule Supavisor.MetricsCleanerTest do
     assert :ets.lookup(reverse_tags_tid, tags_id) != []
     assert :ets.lookup(cache_tid, tags_id) != []
 
+    # First clean marks (deletes from tags_tid), second clean sweeps the rest
     @subject.clean()
-
     assert_receive {:metrics, _}
 
-    # All three tag tables should be cleaned up
+    # After mark: tags_tid is cleaned, but reverse_tags and cache remain
+    assert :ets.lookup(tags_tid, tags_map) == []
+    assert :ets.lookup(reverse_tags_tid, tags_id) != []
+    assert :ets.lookup(cache_tid, tags_id) != []
+
+    @subject.clean()
+    assert_receive {:metrics, _}
+
+    # After sweep: all three tag tables should be cleaned up
     assert :ets.lookup(tags_tid, tags_map) == []
     assert :ets.lookup(reverse_tags_tid, tags_id) == []
     assert :ets.lookup(cache_tid, tags_id) == []
