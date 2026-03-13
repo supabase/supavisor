@@ -10,12 +10,7 @@ defmodule Supavisor.ClientHandler do
   require Logger
 
   require Record
-
-  # Import the sslsocket record definition
-  Record.defrecord(
-    :sslsocket,
-    Record.extract(:sslsocket, from_lib: "ssl/src/ssl_api.hrl")
-  )
+  require Supavisor
 
   @behaviour :ranch_protocol
   @behaviour :gen_statem
@@ -25,19 +20,22 @@ defmodule Supavisor.ClientHandler do
   @timeout_subscribe 500
   @clients_registry Supavisor.Registry.TenantClients
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
+  @max_startup_packet_size Supavisor.Protocol.max_startup_packet_size()
 
   alias Supavisor.{
     DbHandler,
     HandlerHelpers,
     Helpers,
+    Manager,
     Monitoring.Telem,
     Protocol.Debug,
     Tenants
   }
 
   alias Supavisor.ClientHandler.{
-    Auth,
+    AuthMethods,
     Cancel,
+    Checks,
     Data,
     Error,
     ProtocolHelpers,
@@ -45,6 +43,19 @@ defmodule Supavisor.ClientHandler do
   }
 
   alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer}
+
+  alias Supavisor.Errors.{
+    CheckoutTimeoutError,
+    ClientSocketClosedError,
+    DbHandlerExitedError,
+    PoolCheckoutError,
+    PoolConfigNotFoundError,
+    PoolRanchNotFoundError,
+    SslHandshakeError,
+    StartupPacketTooLargeError,
+    SubscribeRetriesExhaustedError,
+    WorkerNotFoundError
+  }
 
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
@@ -76,7 +87,7 @@ defmodule Supavisor.ClientHandler do
     Helpers.set_max_heap_size(90)
 
     {:ok, sock} = :ranch.handshake(ref)
-    sock_ref = {:port, Port.monitor(sock)}
+    sock_ref = Port.monitor(sock)
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
 
@@ -93,7 +104,7 @@ defmodule Supavisor.ClientHandler do
       peer_ip: peer_ip,
       local: local,
       ssl: false,
-      auth: %{},
+      connection_params: nil,
       mode: opts.mode,
       stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
       stats: %{},
@@ -161,12 +172,10 @@ defmodule Supavisor.ClientHandler do
           {:keep_state, %{data | sock: socket, ssl: true}}
 
         error ->
-          Logger.error("ClientHandler: SSL handshake error: #{inspect(error)}")
-          Telem.client_join(:fail, data.id)
-          {:stop, :normal}
+          Error.terminate_with_error(data, %SslHandshakeError{reason: error}, :handshake)
       end
     else
-      Logger.error(
+      Logger.warning(
         "ClientHandler: User requested SSL connection but no downstream cert/key found"
       )
 
@@ -175,201 +184,131 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:info, {_, _, bin}, :handshake, _) when byte_size(bin) > 1024 do
-    Logger.error("ClientHandler: Startup packet too large #{byte_size(bin)}")
-    {:stop, :normal}
+  def handle_event(:info, {_, _, bin}, :handshake, data)
+      when byte_size(bin) > @max_startup_packet_size do
+    Error.terminate_with_error(
+      data,
+      %StartupPacketTooLargeError{packet_size: byte_size(bin)},
+      :handshake
+    )
   end
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, log_level} ->
-        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path}}}
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}, app_name,
+       log_level} ->
+        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}}
         if log_level, do: Logger.put_process_level(self(), log_level)
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
 
-      {:error, {:invalid_user_info, {:invalid_format, {user, _}}} = reason} ->
-        # Extract tenant from the attempted parsing for telemetry
-        {_, {_, tenant_or_alias, _}} = HandlerHelpers.parse_user_info(%{"user" => user})
-        Telem.client_join(:fail, tenant_or_alias)
-        Error.maybe_log_and_send_error(data.sock, {:error, reason})
-        {:stop, :normal}
-
-      {:error, error} ->
-        Logger.error("ClientHandler: Client startup message error: #{inspect(error)}")
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :handshake)
     end
   end
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_name, search_path}}},
+        {:hello, {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls}}},
         :handshake,
         %{sock: sock} = data
       ) do
     sni_hostname = HandlerHelpers.try_get_sni(sock)
 
-    case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
-      {:ok, info} ->
-        db_name = db_name || info.tenant.db_database
+    Logger.metadata(
+      project: tenant_or_alias,
+      user: user,
+      mode: data.mode,
+      type: type,
+      app_name: data.app_name
+    )
 
-        id =
-          Supavisor.id(
-            {type, tenant_or_alias},
-            user,
-            data.mode,
-            info.user.mode_type,
-            db_name,
-            search_path
-          )
+    # When receiving a proxied connection on a local listener, client_tls
+    # carries the original client's TLS status. Otherwise, use data.ssl.
+    effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
 
-        Logger.metadata(
-          project: tenant_or_alias,
-          user: user,
-          mode: data.mode,
-          type: type,
-          db_name: db_name,
-          app_name: data.app_name
-        )
+    with {:ok, info} <- Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname),
+         _ = Logger.metadata(db_name: db_name),
+         upstream_tls = upstream_tls(info.tenant, effective_ssl),
+         id =
+           Supavisor.id(
+             type: type,
+             tenant: tenant_or_alias,
+             user: user,
+             mode: data.mode,
+             db: db_name,
+             search_path: search_path,
+             upstream_tls: upstream_tls
+           ),
+         :ok <- Checks.check_ssl_enforcement(data, info, user),
+         :ok <- Checks.check_address_allowed(sock, info),
+         :ok <- Manager.check_client_limit(id, info, data.mode),
+         {:ok, auth_method} <-
+           AuthMethods.fetch_authentication_method(info.tenant, client_jit, effective_ssl, user) do
+      Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
+      new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
 
-        {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
-
-        cond do
-          !data.local and info.tenant.enforce_ssl and !data.ssl ->
-            Error.maybe_log_and_send_error(sock, {:error, :ssl_required, user})
-            Telem.client_join(:fail, id)
-            {:stop, :normal}
-
-          HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] ->
-            Error.maybe_log_and_send_error(sock, {:error, :address_not_allowed, addr})
-            Telem.client_join(:fail, id)
-            {:stop, :normal}
-
-          check_max_clients_reached(id, info, data.mode) ->
-            error =
-              if data.mode == :session do
-                {:error, :max_clients_reached_session}
-              else
-                {:error, :max_clients_reached}
-              end
-
-            Error.maybe_log_and_send_error(sock, error)
-            Telem.client_join(:fail, id)
-            {:stop, :normal}
-
-          true ->
-            new_data = set_tenant_info(data, info, user, id, db_name)
-
-            case Supavisor.CircuitBreaker.check(tenant_or_alias, :get_secrets) do
-              :ok ->
-                case Auth.get_user_secrets(data.id, info, user, tenant_or_alias, data.ssl) do
-                  {:ok, auth_secrets} ->
-                    Logger.debug("ClientHandler: Authentication method: #{inspect(auth_secrets)}")
-
-                    {:keep_state, new_data,
-                     {:next_event, :internal, {:handle, auth_secrets, info}}}
-
-                  {:error, reason} ->
-                    Supavisor.CircuitBreaker.record_failure(tenant_or_alias, :get_secrets)
-
-                    Error.maybe_log_and_send_error(
-                      sock,
-                      {:error, :auth_error, reason},
-                      :handshake
-                    )
-
-                    Telem.client_join(:fail, id)
-                    {:stop, :normal}
-                end
-
-              {:error, :circuit_open, blocked_until} ->
-                Error.maybe_log_and_send_error(
-                  sock,
-                  {:error, :circuit_breaker_open, :get_secrets, blocked_until},
-                  :handshake
-                )
-
-                Telem.client_join(:fail, id)
-                {:stop, :normal}
-            end
-        end
-
-      {:error, reason} ->
-        Error.maybe_log_and_send_error(
-          sock,
-          {:error, :tenant_not_found, reason, type, user, tenant_or_alias}
-        )
-
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
+      {:keep_state, new_data,
+       {:next_event, :internal, {:start_authentication, auth_method, info}}}
+    else
+      {:error, exception} when is_exception(exception) ->
+        Error.terminate_with_error(data, exception, :handshake)
     end
   end
 
   def handle_event(
         :internal,
-        {:handle, {method, secrets}, info},
+        {:start_authentication, auth_method, info},
         _state,
         %{sock: sock} = data
       ) do
-    Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(method)}")
+    Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(auth_method)}")
 
     case Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error) do
       :ok ->
-        case method do
-          :auth_query_md5 ->
-            auth_context = Auth.create_auth_context(method, secrets, info)
-            :ok = HandlerHelpers.sock_send(sock, Server.md5_request(auth_context.salt))
-
-            {:next_state, :auth_md5_wait, %{data | auth_context: auth_context},
-             {:timeout, 15_000, :auth_timeout}}
-
-          :auth_query_jit ->
-            auth_context = Auth.create_auth_context(method, secrets, info)
+        case auth_method do
+          :jit ->
             :ok = HandlerHelpers.sock_send(sock, Server.password_request())
+            auth_context = AuthMethods.Jit.new_context(info, data.id, data.peer_ip)
 
             {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
 
-          _scram_method ->
+          :password ->
+            :ok = HandlerHelpers.sock_send(sock, Server.password_request())
+            auth_context = AuthMethods.Password.new_context(info, data.id)
+
+            {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
+             {:timeout, 15_000, :auth_timeout}}
+
+          :scram_sha_256 ->
+            auth_context = AuthMethods.SCRAM.new_context(info, data.id)
             :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
-            auth_context = Auth.create_auth_context(method, secrets, info)
 
             {:next_state, :auth_scram_first_wait, %{data | auth_context: auth_context},
              {:timeout, 15_000, :auth_timeout}}
         end
 
-      {:error, :circuit_open, blocked_until} ->
-        Error.maybe_log_and_send_error(
-          sock,
-          {:error, :circuit_breaker_open, :auth_error, blocked_until},
-          :handshake
-        )
-
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :handshake)
     end
   end
 
   def handle_event(:internal, :subscribe, _state, data) do
-    Logger.debug("ClientHandler: Subscribe to tenant #{inspect(data.id)}")
+    Logger.debug("ClientHandler: Subscribe to tenant #{Supavisor.inspect_id(data.id)}")
 
     with :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
          {:ok, sup} <-
-           Supavisor.start_dist(data.id, data.auth_secrets,
+           Supavisor.start_dist(data.id, data.connection_params.secrets,
              availability_zone: data.tenant_availability_zone,
              log_level: nil
            ),
-         true <-
-           if(node(sup) != node() and data.mode in [:transaction, :session],
-             do: :proxy,
-             else: true
-           ),
-         {:ok, opts} <- Supavisor.subscribe(sup, data.id) do
-      manager_ref = Process.monitor(opts.workers.manager)
-      data = Map.merge(data, opts.workers)
-      db_connection = maybe_checkout(:on_connect, data)
-
+         :not_proxy <-
+           if(node(sup) != node() and data.mode != :proxy, do: :proxy, else: :not_proxy),
+         {:ok, opts} <- Supavisor.subscribe(data.id),
+         manager_ref = Process.monitor(opts.workers.manager),
+         data = Map.merge(data, opts.workers),
+         {:ok, db_connection} <- maybe_checkout(:on_connect, data) do
       data = %{
         data
         | manager: manager_ref,
@@ -384,87 +323,53 @@ defmodule Supavisor.ClientHandler do
           {:next_state, :idle, data, handle_actions(data)}
 
         opts.ps == [] ->
-          {:keep_state, data, {:timeout, 10_000, :wait_ps}}
+          {:keep_state, data, {:timeout, 1_000, :wait_ps}}
 
         true ->
           {:keep_state, data, {:next_event, :internal, {:greetings, opts.ps}}}
       end
     else
-      {:error, :circuit_open, blocked_until} ->
-        Error.maybe_log_and_send_error(
-          data.sock,
-          {:error, :circuit_breaker_open, :db_connection, blocked_until}
-        )
+      {:error, %WorkerNotFoundError{}} ->
+        timeout_subscribe_or_terminate(data)
 
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
+      {:error, %PoolConfigNotFoundError{}} ->
+        timeout_subscribe_or_terminate(data)
 
-      {:error, :max_clients_reached} ->
-        Error.maybe_log_and_send_error(data.sock, {:error, :max_clients_reached})
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
-
-      {:error, :max_pools_reached} ->
-        Error.maybe_log_and_send_error(data.sock, {:error, :max_pools_reached})
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
-
-      {:error, :terminating, error} ->
-        error_message = Server.encode_error_message(error)
-        HandlerHelpers.sock_send(data.sock, error_message)
-        Telem.client_join(:fail, data.id)
-        {:stop, :normal}
+      {:error, exception} when is_exception(exception) ->
+        Error.terminate_with_error(data, exception, :handshake)
 
       :proxy ->
-        case Proxy.prepare_proxy_connection(data) do
-          {:ok, updated_data} ->
+        case Supavisor.get_pool_ranch(data.id) do
+          {:ok, pool_ranch} ->
             Logger.metadata(proxy: true)
             Registry.register(@proxy_clients_registry, data.id, [])
 
-            {:keep_state, updated_data, {:next_event, :internal, :connect_db}}
+            {:keep_state, %{data | pool_ranch: pool_ranch}, {:next_event, :internal, :connect_db}}
 
-          {:error, other} ->
-            Logger.error("ClientHandler: Subscribe proxy error: #{inspect(other)}")
+          {:error, %PoolRanchNotFoundError{}} ->
             timeout_subscribe_or_terminate(data)
         end
-
-      error ->
-        Logger.error("ClientHandler: Subscribe error: #{inspect(error)}")
-        timeout_subscribe_or_terminate(data)
     end
   end
 
   def handle_event(:internal, :connect_db, _state, data) do
     Logger.debug("ClientHandler: Trying to connect to DB")
 
-    args = Proxy.build_db_handler_args(data)
-
-    {:ok, db_pid} = DbHandler.start_link(args)
-
-    case DbHandler.checkout(db_pid, data.sock, self()) do
-      {:ok, db_sock} ->
-        {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
-
-      {:error, {:exit, {:timeout, _}}} ->
-        timeout_error(data)
-
-      {:error, %{"S" => "FATAL"} = error_map} ->
-        Logger.debug(
-          "ClientHandler: Received error from DbHandler checkout (proxy): #{inspect(error_map)}"
-        )
-
-        error_message = Server.encode_error_message(error_map)
-        HandlerHelpers.sock_send(data.sock, error_message)
-        {:stop, :normal}
-
-      # Errors are already forwarded to the client socket, so we can safely ignore them
-      # here.
-      {:error, {:exit, {reason, _}}} ->
-        Logger.error(
-          "ClientHandler: error checking out DbHandler (proxy), exit with reason: #{inspect(reason)}"
-        )
-
-        {:stop, :normal}
+    with {:ok, db_pid} <-
+           Proxy.start_proxy_connection(
+             data.id,
+             data.max_clients,
+             data.connection_params,
+             data.tenant_feature_flags,
+             data.pool_ranch,
+             client_ssl: data.ssl,
+             client_jit: data.use_jit_flow
+           ),
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
+      {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
+    else
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :authenticated)
     end
   end
 
@@ -538,9 +443,14 @@ defmodule Supavisor.ClientHandler do
   end
 
   # linked DbHandler went down
-  def handle_event(:info, {:EXIT, db_pid, reason}, _state, data) do
-    Error.maybe_log_and_send_error(data.sock, {:error, :db_handler_exited, db_pid, reason})
-    {:stop, :normal}
+  def handle_event(:info, {:EXIT, db_pid, reason}, state, data) do
+    context = if state in [:idle, :busy], do: :authenticated, else: :handshake
+
+    Error.terminate_with_error(
+      data,
+      %DbHandlerExitedError{pid: db_pid, reason: reason},
+      context
+    )
   end
 
   # pool's manager went down
@@ -562,7 +472,7 @@ defmodule Supavisor.ClientHandler do
         :info,
         {:DOWN, ref, _, _, _reason},
         state,
-        %{sock_ref: {_, ref}} = data
+        %{sock_ref: ref} = data
       ) do
     handle_socket_close(state, data)
   end
@@ -618,110 +528,62 @@ defmodule Supavisor.ClientHandler do
 
   # Authentication state handlers
 
-  # MD5 authentication - waiting for password response
-  def handle_event(:info, {proto, _socket, bin}, :auth_md5_wait, data) when proto in @proto do
-    auth_context = data.auth_context
-
-    with {:ok, client_md5} <- Auth.parse_auth_message(bin, auth_context.method),
-         {:ok, key} <-
-           Auth.validate_credentials(
-             auth_context.method,
-             auth_context.secrets.().secret,
-             auth_context.salt,
-             client_md5
-           ) do
-      handle_auth_success(data.sock, {auth_context.method, auth_context.secrets}, key, data)
-    else
-      {:error, reason} ->
-        handle_auth_failure(data.sock, reason, data, :auth_md5_wait)
-    end
-  end
-
-  def handle_event(:info, {proto, socket, bin}, :auth_password_wait, data)
+  def handle_event(:info, {proto, _socket, bin}, :auth_password_wait, data)
       when proto in @proto do
-    auth_context = data.auth_context
-    rhost = Helpers.peer_ip(socket)
+    result =
+      case data.auth_context do
+        %AuthMethods.Jit.Context{} ->
+          AuthMethods.Jit.handle_password(data.auth_context, bin)
 
-    with {:ok, cls_password} <- Auth.parse_auth_message(bin, auth_context.method),
-         {:ok, key, method} <-
-           Auth.validate_credentials(
-             auth_context.method,
-             auth_context.info.tenant,
-             auth_context.secrets,
-             cls_password,
-             rhost
-           ) do
-      handle_auth_success(
-        data.sock,
-        {method, auth_context.secrets},
-        key,
-        cls_password,
-        data
-      )
-    else
-      {:error, reason, _} ->
-        handle_auth_failure(data.sock, reason, data, :auth_password_wait)
+        %AuthMethods.Password.Context{} ->
+          AuthMethods.Password.handle_password(data.auth_context, bin)
+      end
+
+    case result do
+      {:ok, secrets} ->
+        handle_auth_success(data.sock, secrets, data)
+
+      {:error, exception} ->
+        handle_auth_failure(exception, data)
     end
   end
 
   # SCRAM authentication - waiting for first message
   def handle_event(:info, {proto, _socket, bin}, :auth_scram_first_wait, data)
       when proto in @proto do
-    auth_context = data.auth_context
-
-    case Auth.parse_auth_message(bin, auth_context.method) do
-      {:ok, {user, nonce, channel}} ->
-        {message, signatures} =
-          Auth.prepare_auth_challenge(
-            auth_context.method,
-            auth_context.secrets,
-            nonce,
-            user,
-            channel
-          )
-
+    case AuthMethods.SCRAM.handle_scram_first(data.auth_context, bin) do
+      {:ok, message, auth_context} ->
         :ok = HandlerHelpers.sock_send(data.sock, Server.exchange_message(:first, message))
-
-        new_auth_context = Auth.update_auth_context_with_signatures(auth_context, signatures)
-        new_data = %{data | auth_context: new_auth_context}
+        new_data = %{data | auth_context: auth_context}
         {:next_state, :auth_scram_final_wait, new_data, {:timeout, 15_000, :auth_timeout}}
 
-      {:error, reason} ->
-        handle_auth_failure(data.sock, reason, data, :auth_scram_first_wait)
+      {:error, exception} ->
+        handle_auth_failure(exception, data)
     end
   end
 
   # SCRAM authentication - waiting for final response
   def handle_event(:info, {proto, _socket, bin}, :auth_scram_final_wait, data)
       when proto in @proto do
-    auth_context = data.auth_context
+    case AuthMethods.SCRAM.handle_scram_final(data.auth_context, bin) do
+      {:ok, message, final_secrets} ->
+        :ok = HandlerHelpers.sock_send(data.sock, message)
+        handle_auth_success(data.sock, final_secrets, data)
 
-    with {:ok, p} <- Auth.parse_auth_message(bin, auth_context.method),
-         {:ok, key} <-
-           Auth.validate_credentials(
-             auth_context.method,
-             auth_context.secrets,
-             auth_context.signatures,
-             p
-           ) do
-      message = Auth.build_scram_final_response(auth_context)
-      :ok = HandlerHelpers.sock_send(data.sock, message)
-      handle_auth_success(data.sock, {auth_context.method, auth_context.secrets}, key, data)
-    else
-      {:error, reason} ->
-        handle_auth_failure(data.sock, reason, data, :auth_scram_final_wait)
+      {:error, exception} ->
+        handle_auth_failure(exception, data)
     end
   end
 
   # Authentication timeout handler
   def handle_event(:timeout, :auth_timeout, auth_state, data)
       when auth_state in [
-             :auth_md5_wait,
              :auth_scram_first_wait,
              :auth_scram_final_wait,
              :auth_password_wait
            ] do
-    handle_auth_failure(data.sock, :timeout, data, auth_state)
+    exception = %Supavisor.Errors.AuthTimeoutError{context: auth_state}
+    handle_auth_failure(exception, data)
   end
 
   def handle_event(:enter, old_state, new_state, data) do
@@ -789,11 +651,15 @@ defmodule Supavisor.ClientHandler do
 
   # Any message when idle - checkout and send to db
   def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
-    db_connection = maybe_checkout(:on_query, data)
+    case maybe_checkout(:on_query, data) do
+      {:ok, db_connection} ->
+        {:next_state, :busy,
+         %{data | db_connection: db_connection, query_start: System.monotonic_time()},
+         [{:next_event, :internal, {proto, socket, msg}}]}
 
-    {:next_state, :busy,
-     %{data | db_connection: db_connection, query_start: System.monotonic_time()},
-     [{:next_event, :internal, {proto, socket, msg}}]}
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :authenticated)
+    end
   end
 
   # Any message when busy: send to db
@@ -802,10 +668,8 @@ defmodule Supavisor.ClientHandler do
       {:ok, updated_data} ->
         {:keep_state, updated_data}
 
-      # Handle data already handles the errors, so we are fine to just ignore them
-      # and terminate
-      {:error, _reason} ->
-        {:stop, :normal}
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :authenticated)
     end
   end
 
@@ -821,7 +685,7 @@ defmodule Supavisor.ClientHandler do
       {"state", state}
     ]
 
-    Logger.error("ClientHandler: Undefined msg: #{inspect(msg, pretty: true)}")
+    Logger.warning("ClientHandler: Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
   end
@@ -865,127 +729,56 @@ defmodule Supavisor.ClientHandler do
     Map.put(status, :queue, [])
   end
 
-  @impl true
-  def code_change(_version, state, old_data, :monitor_socket) do
-    new_data =
-      case old_data do
-        %{sock: {:gen_tcp, port}} ->
-          ref = Port.monitor(port)
-          Map.put(old_data, :sock_ref, {:port, ref})
-
-        # This is reliant on the internal implementation of SSL, but
-        # a necessary evil since there's no API in Erlang to read the
-        # port, or to monitor the SSL connection
-        %{sock: {:ssl, sslsocket(pid: [connection_handler | _])}} ->
-          ref = Process.monitor(connection_handler)
-          Map.put(old_data, :sock_ref, {:process, ref})
-
-        _ ->
-          old_data
-      end
-
-    {:ok, state, new_data}
-  end
-
   ## Internal functions
-  defp handle_auth_success(sock, {method, secrets}, client_key, data) do
-    handle_auth_success(sock, {method, secrets}, client_key, nil, data)
-  end
+  defp handle_auth_success(sock, final_secrets, data) do
+    Logger.info("ClientHandler: Connection authenticated")
 
-  defp handle_auth_success(sock, {method, secrets}, client_key, password, data) do
-    final_secrets = Auth.prepare_final_secrets(secrets, client_key, password)
-
-    # Only store in TenantCache for pool modes (transaction/session)
-    # For proxy mode, secrets are passed directly to DbHandler via data.auth
     if data.mode != :proxy do
-      Supavisor.SecretCache.put_upstream_auth_secrets(data.id, method, final_secrets)
-
-      # Notify any waiting db handlers that secrets are now available
-      Supavisor.Manager.notify_secrets_available(data.id)
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(data.id, final_secrets)
     end
 
-    Logger.info("ClientHandler: Connection authenticated")
     :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
     Telem.client_join(:ok, data.id)
 
-    auth = Map.put(data.auth, :secrets, {method, final_secrets})
+    connection_params = %{data.connection_params | secrets: final_secrets}
 
     conn_type =
       if data.mode == :proxy,
         do: :connect_db,
         else: :subscribe
 
-    {:next_state, :connecting,
-     %{data | auth_context: nil, auth_secrets: {method, final_secrets}, auth: auth},
-     {:next_event, :internal, conn_type}}
+    {
+      :next_state,
+      :connecting,
+      %{data | auth_context: nil, connection_params: connection_params},
+      {:next_event, :internal, conn_type}
+    }
   end
 
-  defp handle_auth_failure(sock, reason, data, context) do
-    auth_context = data.auth_context
-
-    # Check if secrets changed and update cache, but don't retry
-    # Most clients don't cope well with auto-retry on auth errors
-    Auth.check_and_update_secrets(
-      auth_context.method,
-      reason,
-      data.id,
-      auth_context.info,
-      data.tenant,
-      data.user,
-      auth_context.secrets,
-      data.ssl
-    )
-
+  defp handle_auth_failure(exception, data) do
+    AuthMethods.handle_auth_failure(data.auth_context, exception)
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
-    Error.maybe_log_and_send_error(sock, {:error, :auth_error, reason, data.user}, context)
-    Telem.client_join(:fail, data.id)
-    {:stop, :normal}
+    Error.terminate_with_error(data, exception, :handshake)
   end
 
-  @spec maybe_checkout(:on_connect | :on_query, map) :: Data.db_connection()
+  @spec maybe_checkout(:on_connect | :on_query, map) ::
+          {:ok, Data.db_connection()} | {:ok, nil} | {:error, Exception.t()}
   defp maybe_checkout(_, %{mode: mode, db_connection: {pool, db_pid, db_sock}})
        when is_pid(db_pid) and mode in [:session, :proxy] do
-    {pool, db_pid, db_sock}
+    {:ok, {pool, db_pid, db_sock}}
   end
 
-  defp maybe_checkout(:on_connect, %{mode: :transaction}), do: nil
+  defp maybe_checkout(:on_connect, %{mode: :transaction}), do: {:ok, nil}
 
   defp maybe_checkout(_, data) do
     start = System.monotonic_time(:microsecond)
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self()) do
+    with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout, data.mode),
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
-      {data.pool, db_pid, db_sock}
-    else
-      {:error, {:exit, {:timeout, _}}} ->
-        {:stop, reason} = timeout_error(data)
-        exit(reason)
-
-      {:error, %{"S" => "FATAL"} = error_map} ->
-        Logger.debug(
-          "ClientHandler: Received error from DbHandler checkout: #{inspect(error_map)}"
-        )
-
-        error_message = Server.encode_error_message(error_map)
-        HandlerHelpers.sock_send(data.sock, error_message)
-        exit(:normal)
-
-      {:error, {:exit, e}} ->
-        exit(e)
+      {:ok, {data.pool, db_pid, db_sock}}
     end
-  end
-
-  defp timeout_error(data) do
-    error =
-      case data.mode do
-        :session -> {:error, :session_timeout}
-        :transaction -> {:error, :transaction_timeout}
-      end
-
-    Error.maybe_log_and_send_error(data.sock, error)
-    {:stop, :normal}
   end
 
   @spec maybe_checkin(:proxy, pool_pid :: pid(), Data.db_connection()) :: Data.db_connection()
@@ -1000,7 +793,7 @@ defmodule Supavisor.ClientHandler do
   defp maybe_checkin(:session, _, db_connection), do: db_connection
   defp maybe_checkin(:proxy, _, db_connection), do: db_connection
 
-  @spec handle_data(binary(), map()) :: {:ok, map()} | {:error, atom()}
+  @spec handle_data(binary(), map()) :: {:ok, map()} | {:error, Exception.t()}
   defp handle_data(data_to_send, data) do
     Logger.debug(
       "ClientHandler: Forward pkt to db #{Debug.packet_to_string(data_to_send, :frontend)} #{inspect(data.db_connection)}"
@@ -1011,9 +804,8 @@ defmodule Supavisor.ClientHandler do
          :ok <- sock_send(pkts, data) do
       {:ok, %{data | stream_state: new_stream_state}}
     else
-      error ->
-        Error.maybe_log_and_send_error(data.sock, error, "sending query")
-        {:error, elem(error, 1)}
+      {:error, exception} ->
+        {:error, exception}
     end
   end
 
@@ -1065,39 +857,37 @@ defmodule Supavisor.ClientHandler do
       {:keep_state, %{data | subscribe_retries: subscribe_retries + 1},
        {:timeout, @timeout_subscribe, :subscribe}}
     else
-      Error.maybe_log_and_send_error(data.sock, {:error, :subscribe_retries_exhausted})
-      {:stop, :normal}
+      Error.terminate_with_error(data, %SubscribeRetriesExhaustedError{}, :handshake)
     end
   end
 
-  defp pool_checkout(pool, timeout) do
+  defp pool_checkout(pool, timeout, mode) do
     {:ok, :poolboy.checkout(pool, true, timeout)}
   catch
-    :exit, reason -> {:error, {:exit, reason}}
+    :exit, {:timeout, _} ->
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+
+    :exit, reason ->
+      {:error, %PoolCheckoutError{reason: reason}}
   end
 
-  defp set_tenant_info(data, info, user, id, db_name) do
+  defp set_tenant_info(data, info, user, id, db_name, client_jit) do
     proxy_type =
       if info.tenant.require_user,
         do: :password,
         else: :auth_query
 
-    auth = %{
+    connection_params = %Supavisor.ConnectionParameters{
       application_name: data.app_name || "Supavisor",
       database: db_name,
       host: to_charlist(info.tenant.db_host),
       sni_hostname:
         if(info.tenant.sni_hostname != nil, do: to_charlist(info.tenant.sni_hostname)),
       port: info.tenant.db_port,
-      user: user,
-      password: info.user.db_password,
-      require_user: info.tenant.require_user,
-      method: proxy_type,
-      upstream_ssl: info.tenant.upstream_ssl,
+      ip_version: Helpers.ip_version(info.tenant.ip_version, info.tenant.db_host),
+      upstream_ssl: Supavisor.id(id, :upstream_tls),
       upstream_tls_ca: info.tenant.upstream_tls_ca,
-      upstream_verify: info.tenant.upstream_verify,
-      use_jit: info.tenant.use_jit,
-      jit_api_url: info.tenant.jit_api_url
+      upstream_verify: info.tenant.upstream_verify
     }
 
     %{
@@ -1112,49 +902,20 @@ defmodule Supavisor.ClientHandler do
         ps: info.tenant.default_parameter_status,
         proxy_type: proxy_type,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
-        auth: auth
+        connection_params: connection_params,
+        max_clients: info.user.max_clients || info.tenant.default_max_clients,
+        use_jit_flow: client_jit
     }
   end
 
-  defp check_max_clients_reached(id, info, mode) do
-    limit =
-      if mode == :session do
-        info.user.pool_size || info.tenant.default_pool_size
-      else
-        info.user.max_clients || info.tenant.default_max_clients
-      end
-
-    case Registry.lookup(Supavisor.Registry.ManagerTables, id) do
-      [{_pid, tid}] ->
-        current_clients = :ets.info(tid, :size)
-
-        current_clients >= limit
-
-      _ ->
-        false
-    end
-  end
+  defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?
+  defp upstream_tls(%{upstream_ssl: upstream_ssl}, _ssl?), do: upstream_ssl
 
   defp handle_socket_close(state, data) do
-    level =
-      cond do
-        state == :idle or data.mode == :proxy ->
-          :info
-
-        state == :handshake ->
-          :warning
-
-        true ->
-          :error
-      end
-
-    Logger.log(
-      level,
-      "ClientHandler: socket closed while state was #{state} (#{data.mode})"
-    )
-
     maybe_cleanup_db_handler(state, data)
 
-    {:stop, :normal}
+    error = %ClientSocketClosedError{mode: data.mode, client_state: state}
+    context = if state in [:idle, :busy], do: :authenticated, else: :handshake
+    Error.terminate_with_error(data, error, context)
   end
 end

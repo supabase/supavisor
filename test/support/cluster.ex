@@ -169,6 +169,10 @@ defmodule Supavisor.Support.Cluster do
     []
   end
 
+  defp transform_config_value({:supavisor, Supavisor.Repo}, val, _clustered, _port_config) do
+    Keyword.put(val, :pool, DBConnection.ConnectionPool)
+  end
+
   defp transform_config_value(_key, val, _clustered, _port_config) do
     val
   end

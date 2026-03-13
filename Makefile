@@ -91,6 +91,10 @@ pgbench:
 		   -P 10 -M extended \
 		   --rate ${PGBENCH_RATE}
 
+.PHONY: cover
+cover:
+	MIX_ENV=test mix coveralls.html $(OPTIONS); open cover/excoveralls.html
+
 clean:
 	rm -rf _build && rm -rf deps
 
@@ -104,6 +108,12 @@ dev_up:
 	rm -rf _build/dev/lib/supavisor && \
 	MIX_ENV=dev mix compile && \
 	mix release supavisor
+
+jit_dev_setup:
+	bash scripts/jit_dev_setup.sh
+
+jit_dev_stop:
+	docker-compose -p supavisor-jit -f docker-compose.jit.yml down -v
 
 dev_start_rel:
 	MIX_ENV=dev \

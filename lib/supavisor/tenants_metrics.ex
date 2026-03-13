@@ -2,6 +2,7 @@ defmodule Supavisor.TenantsMetrics do
   @moduledoc false
   use GenServer, restart: :transient
   require Logger
+  require Supavisor
 
   alias Supavisor.Monitoring.PromEx
 
@@ -31,8 +32,8 @@ defmodule Supavisor.TenantsMetrics do
     active_pools = PromEx.do_cache_tenants_metrics() |> MapSet.new()
 
     MapSet.difference(state.pools, active_pools)
-    |> Enum.each(fn {{_type, tenant}, _, _, _, _} = pool ->
-      Logger.debug("Removing cached metrics for #{inspect(pool)}")
+    |> Enum.each(fn Supavisor.id(tenant: tenant) = pool ->
+      Logger.debug("Removing cached metrics for #{Supavisor.inspect_id(pool)}")
       Cachex.del(Supavisor.Cache, {:metrics, tenant})
     end)
 

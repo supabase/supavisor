@@ -122,7 +122,7 @@ defmodule Supavisor.Protocol.Server do
       |> :pgo_scram.get_nonce()
       |> Base.encode64()
 
-    secret = if salt, do: salt, else: server_nonce
+    secret = if salt, do: Base.encode64(salt), else: server_nonce
     "r=#{nonce <> server_nonce},s=#{secret},i=#{iterations}"
   end
 
@@ -181,7 +181,6 @@ defmodule Supavisor.Protocol.Server do
 
   @spec admin_shutdown :: map()
   def admin_shutdown do
-    # PostgreSQL error code 57P01: admin_shutdown
     %{
       "S" => "FATAL",
       "V" => "FATAL",

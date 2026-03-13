@@ -1,6 +1,7 @@
 defmodule Supavisor.Integration.SecretCheckerTest do
   use SupavisorWeb.ConnCase, async: false
 
+  require Supavisor
   alias Postgrex, as: P
 
   setup do
@@ -66,9 +67,17 @@ defmodule Supavisor.Integration.SecretCheckerTest do
     Process.sleep(100)
 
     pool_id =
-      {{:single, tenant_id}, to_string(db_conf[:username]), :transaction, alt_db_name, nil}
+      Supavisor.id(
+        type: :single,
+        tenant: tenant_id,
+        user: to_string(db_conf[:username]),
+        mode: :transaction,
+        db: alt_db_name
+      )
 
-    assert {:ok, {_method, secrets_fn}} = Supavisor.SecretChecker.get_secrets(pool_id)
-    assert %{user: _} = secrets_fn.()
+    assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{} = secrets} =
+             Supavisor.SecretChecker.get_secrets(pool_id)
+
+    assert %{user: _} = secrets.sasl_secrets
   end
 end

@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
   use SupavisorWeb.ConnCase, async: false
 
   require Logger
+  require Supavisor
 
   alias Postgrex, as: P
 
@@ -100,14 +101,19 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
       Process.sleep(100)
 
       id =
-        {{:single, tenant_id}, to_string(db_conf[:username]), :transaction, db_conf[:database],
-         nil}
+        Supavisor.id(
+          type: :single,
+          tenant: tenant_id,
+          user: to_string(db_conf[:username]),
+          mode: :transaction,
+          db: db_conf[:database]
+        )
 
       [{secret_checker_pid, _}] =
         Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id})
 
       old_state = :sys.get_state(secret_checker_pid)
-      assert old_state.auth.user == to_string(db_conf[:username])
+      assert old_state.manager_secrets.db_user == to_string(db_conf[:username])
 
       P.query!(
         origin,
@@ -132,8 +138,8 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
       Process.sleep(200)
 
       new_state = :sys.get_state(secret_checker_pid)
-      assert new_state.auth.user == new_manager_user
-      assert new_state.auth.password.() == new_manager_password
+      assert new_state.manager_secrets.db_user == new_manager_user
+      assert new_state.manager_secrets.db_password == new_manager_password
       assert Process.alive?(new_state.conn)
 
       GenServer.stop(proxy)

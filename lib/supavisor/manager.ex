@@ -5,10 +5,16 @@ defmodule Supavisor.Manager do
 
   use GenServer
   require Logger
+  require Supavisor
 
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
   alias Supavisor.Helpers
+
+  alias Supavisor.Errors.{
+    MaxConnectionsError,
+    PoolTerminatingError
+  }
 
   @check_timeout 120_000
 
@@ -29,10 +35,35 @@ defmodule Supavisor.Manager do
   """
   @spec subscribe(pid, pid) ::
           {:ok, iodata() | [], integer}
-          | {:error, :max_clients_reached}
-          | {:error, :terminating, term()}
-  def subscribe(manager, pid) do
+          | {:error, MaxConnectionsError.t()}
+          | {:error, PoolTerminatingError.t()}
+  def subscribe(manager, pid) when node(manager) == node() do
     GenServer.call(manager, {:subscribe, pid})
+  end
+
+  @doc """
+  Checks if the client limit has been reached for a pool.
+
+  This is used by ClientHandler for early rejection before authentication.
+  If the Manager's ETS table exists, checks the current count against the limit.
+  If the table doesn't exist yet (pool not started), allows the connection to proceed.
+
+  The limit is determined by mode:
+  - `:session` mode: limited by pool_size (each client holds a connection)
+  - `:transaction` mode: limited by max_clients
+  """
+  @spec check_client_limit(Supavisor.id(), map(), :session | :transaction) ::
+          :ok | {:error, MaxConnectionsError.t()}
+  def check_client_limit(id, info, mode) do
+    case Registry.lookup(Supavisor.Registry.ManagerTables, id) do
+      [{_pid, tid}] ->
+        pool_size = info.user.pool_size || info.tenant.default_pool_size
+        max_clients = info.user.max_clients || info.tenant.default_max_clients
+        check_limit(mode, pool_size, max_clients, :ets.info(tid, :size))
+
+      _ ->
+        :ok
+    end
   end
 
   @doc """
@@ -128,8 +159,7 @@ defmodule Supavisor.Manager do
     tid = :ets.new(__MODULE__, [:protected])
     pid_to_ref = :ets.new(__MODULE__.PidToRef, [:protected])
 
-    {{type, tenant}, user, mode, db_name, _search_path} = args.id
-    {method, secrets} = args.secrets
+    Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db_name) = args.id
 
     {tenant_record, replica_type} =
       case type do
@@ -158,7 +188,6 @@ defmodule Supavisor.Manager do
       db_host: db_host,
       db_port: db_port,
       db_database: db_database,
-      auth_query: auth_query,
       default_parameter_status: ps,
       ip_version: ip_ver,
       default_pool_size: default_pool_size,
@@ -172,33 +201,17 @@ defmodule Supavisor.Manager do
     pool_size = (user_config && user_config.pool_size) || default_pool_size
     max_clients = (user_config && user_config.max_clients) || default_max_clients
 
-    auth = %{
+    connection_params = %Supavisor.ConnectionParameters{
       host: String.to_charlist(db_host),
       sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
-      user: user,
-      auth_query: auth_query,
       database: if(db_name != nil, do: db_name, else: db_database),
       application_name: "Supavisor",
       ip_version: Helpers.ip_version(ip_ver, db_host),
-      upstream_ssl: tenant_record.upstream_ssl,
+      upstream_ssl: Supavisor.id(args.id, :upstream_tls),
       upstream_verify: tenant_record.upstream_verify,
-      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca),
-      require_user: tenant_record.require_user,
-      method: method,
-      secrets: args.secrets
+      upstream_tls_ca: Helpers.upstream_cert(tenant_record.upstream_tls_ca)
     }
-
-    secrets_struct = secrets.()
-
-    alias Supavisor.ClientHandler.Auth
-
-    if method == :password or match?(%Auth.SASLSecrets{}, secrets_struct) do
-      Supavisor.SecretCache.put_validation_secrets(tenant, user, method, secrets)
-      Supavisor.SecretCache.put_upstream_auth_secrets(args.id, method, secrets)
-    else
-      Supavisor.SecretCache.put_validation_secrets_if_missing(tenant, user, method, secrets)
-    end
 
     persisted_ps = Supavisor.TenantCache.get_parameter_status(args.id)
 
@@ -213,7 +226,7 @@ defmodule Supavisor.Manager do
       default_parameter_status: ps,
       max_clients: max_clients,
       idle_timeout: client_idle_timeout,
-      auth: auth,
+      connection_params: connection_params,
       mode: mode,
       replica_type: replica_type,
       pool_size: pool_size,
@@ -234,33 +247,32 @@ defmodule Supavisor.Manager do
   @impl true
   def handle_call({:subscribe, _pid}, _, %{terminating_error: error} = state)
       when not is_nil(error) do
-    Logger.warning("Rejecting subscription to terminating pool #{inspect(state.id)}")
-    {:reply, {:error, :terminating, error}, state}
+    Logger.warning("Rejecting subscription to terminating pool #{Supavisor.inspect_id(state.id)}")
+    {:reply, {:error, %PoolTerminatingError{underlying_error: error}}, state}
   end
 
   def handle_call({:subscribe, pid}, _, state) do
-    Logger.debug("Subscribing #{inspect(pid)} to tenant #{inspect(state.id)}")
+    Logger.debug("Subscribing #{inspect(pid)} to tenant #{Supavisor.inspect_id(state.id)}")
+    current_count = :ets.info(state.tid, :size)
 
-    limit = if state.mode == :session, do: state.pool_size, else: state.max_clients
-
-    {reply, new_state} =
-      if :ets.info(state.tid, :size) < limit do
+    case check_limit(state.mode, state.pool_size, state.max_clients, current_count) do
+      :ok ->
         ref = Process.monitor(pid)
         :ets.insert(state.tid, {ref, pid, now()})
         :ets.insert(state.pid_to_ref, {pid, ref})
 
-        case state.parameter_status do
-          [] ->
-            {{:ok, [], state.idle_timeout}, update_in(state.wait_ps, &[pid | &1])}
+        new_state =
+          if state.parameter_status == [] do
+            update_in(state.wait_ps, &[pid | &1])
+          else
+            state
+          end
 
-          ps ->
-            {{:ok, ps, state.idle_timeout}, state}
-        end
-      else
-        {{:error, :max_clients_reached}, state}
-      end
+        {:reply, {:ok, state.parameter_status, state.idle_timeout}, new_state}
 
-    {:reply, reply, new_state}
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
   end
 
   def handle_call({:unsubscribe, pid}, _from, state) do
@@ -274,7 +286,8 @@ defmodule Supavisor.Manager do
     end
 
     new_state = %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
-    {:reply, :ok, new_state}
+
+    {:reply, :ok, maybe_complete_drain(new_state)}
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
@@ -296,9 +309,9 @@ defmodule Supavisor.Manager do
   def handle_call(:get_config, _, state) do
     config = %{
       id: state.id,
-      auth: state.auth,
-      user: elem(state.id, 1),
-      tenant: {:single, state.tenant},
+      connection_params: state.connection_params,
+      user: Supavisor.id(state.id, :user),
+      tenant: state.tenant,
       mode: state.mode,
       replica_type: state.replica_type,
       log_level: state.log_level,
@@ -314,12 +327,15 @@ defmodule Supavisor.Manager do
 
   def handle_call({:graceful_shutdown, _timeout}, _from, %{terminating_error: error} = state)
       when not is_nil(error) do
-    Logger.debug("Pool #{inspect(state.id)} already terminating, skipping graceful shutdown")
+    Logger.debug(
+      "Pool #{Supavisor.inspect_id(state.id)} already terminating, skipping graceful shutdown"
+    )
+
     {:reply, :ok, state}
   end
 
   def handle_call({:graceful_shutdown, timeout}, from, state) do
-    Logger.info("Pool #{inspect(state.id)} shutting down gracefully")
+    Logger.info("Pool #{Supavisor.inspect_id(state.id)} shutting down gracefully")
 
     each_client(state, fn {_, pid, _} ->
       Supavisor.ClientHandler.graceful_shutdown(pid)
@@ -342,7 +358,10 @@ defmodule Supavisor.Manager do
 
   @impl true
   def handle_cast({:shutdown_with_error, error}, state) do
-    Logger.warning("Shutting down pool #{inspect(state.id)} with error: #{inspect(error)}")
+    Logger.warning(
+      "Shutting down pool #{Supavisor.inspect_id(state.id)} with error: #{inspect(error)}"
+    )
+
     error_message = Server.encode_error_message(error)
 
     each_client(state, fn {_, pid, _} ->
@@ -358,7 +377,7 @@ defmodule Supavisor.Manager do
     Logger.debug("Manager: Registering #{inspect(db_handler_pid)} as waiting for secrets")
 
     # Check if secrets are already available to avoid race condition
-    case Supavisor.SecretCache.get_upstream_auth_secrets(state.id) do
+    case Supavisor.UpstreamAuthentication.get_upstream_auth_secrets(state.id) do
       {:ok, _secrets} ->
         Supavisor.DbHandler.notify_secrets_available(db_handler_pid)
         {:noreply, state}
@@ -390,14 +409,7 @@ defmodule Supavisor.Manager do
     :ets.delete(state.tid, ref)
     :ets.delete(state.pid_to_ref, pid)
 
-    state =
-      if state.drain_caller && :ets.info(state.tid, :size) == 0 do
-        if state.drain_timer, do: Process.cancel_timer(state.drain_timer)
-        GenServer.reply(state.drain_caller, :ok)
-        %{state | drain_caller: nil, drain_timer: nil}
-      else
-        state
-      end
+    state = maybe_complete_drain(state)
 
     {:noreply, %{state | check_ref: check_subscribers()}}
   end
@@ -409,7 +421,9 @@ defmodule Supavisor.Manager do
   end
 
   def handle_info(:drain_timeout, state) do
-    Logger.warning("Pool #{inspect(state.id)} drain timeout, force terminating remaining clients")
+    Logger.warning(
+      "Pool #{Supavisor.inspect_id(state.id)} drain timeout, force terminating remaining clients"
+    )
 
     error_message = Server.encode_error_message(Server.admin_shutdown())
 
@@ -428,7 +442,7 @@ defmodule Supavisor.Manager do
     Process.cancel_timer(state.check_ref)
 
     if :ets.info(state.tid, :size) == 0 do
-      Logger.info("No subscribers for pool #{inspect(state.id)}, shutting down")
+      Logger.info("No subscribers for pool #{Supavisor.inspect_id(state.id)}, shutting down")
       async_stop_sup(state)
       {:noreply, state}
     else
@@ -492,6 +506,18 @@ defmodule Supavisor.Manager do
     end)
   end
 
+  defp maybe_complete_drain(%{drain_caller: nil} = state), do: state
+
+  defp maybe_complete_drain(state) do
+    if :ets.info(state.tid, :size) == 0 do
+      if state.drain_timer, do: Process.cancel_timer(state.drain_timer)
+      GenServer.reply(state.drain_caller, :ok)
+      %{state | drain_caller: nil, drain_timer: nil}
+    else
+      state
+    end
+  end
+
   defp each_client(state, fun) do
     wrapped = fn client, _acc -> fun.(client) end
     :ets.foldl(wrapped, nil, state.tid)
@@ -503,8 +529,22 @@ defmodule Supavisor.Manager do
 
   defp resolve_manager(id) do
     case Supavisor.get_local_manager(id) do
-      nil -> raise "Manager not found for pool #{inspect(id)}"
+      nil -> raise "Manager not found for pool #{Supavisor.inspect_id(id)}"
       pid -> pid
     end
   end
+
+  @spec check_limit(Supavisor.mode(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
+          :ok | {:error, MaxConnectionsError.t()}
+  defp check_limit(:session, pool_size, _max_clients, current_count)
+       when current_count >= pool_size do
+    {:error, MaxConnectionsError.new(:session, pool_size)}
+  end
+
+  defp check_limit(:transaction, _pool_size, max_clients, current_count)
+       when current_count >= max_clients do
+    {:error, MaxConnectionsError.new(:transaction, max_clients)}
+  end
+
+  defp check_limit(_mode, _pool_size, _max_clients, _current_count), do: :ok
 end

@@ -77,6 +77,14 @@ end
             "pool_checkout_timeout" => 500
           },
           %{
+            "db_user" => "checkout_timeout_test",
+            "db_password" => "postgres",
+            "pool_size" => 2,
+            "max_clients" => 100,
+            "mode_type" => "transaction",
+            "pool_checkout_timeout" => 500
+          },
+          %{
             "db_user" => "no_warm_pool_user",
             "db_password" => "postgres",
             "pool_size" => 5,
@@ -89,6 +97,28 @@ end
       |> Tenants.create_tenant()
   end
 end)
+
+if !Tenants.get_tenant_by_external_id("proxy_pool_tenant") do
+  {:ok, _} =
+    %{
+      db_host: db_conf[:hostname],
+      db_port: db_conf[:port],
+      db_database: db_conf[:database],
+      default_parameter_status: %{},
+      external_id: "proxy_pool_tenant",
+      require_user: true,
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 2,
+          "max_clients" => 2,
+          "mode_type" => "transaction"
+        }
+      ]
+    }
+    |> Tenants.create_tenant()
+end
 
 # Create tenants with specific prepared statements feature flag settings for transaction mode
 [
@@ -121,8 +151,31 @@ end)
   end
 end)
 
-# Create tenants for circuit breaker tests
-["circuit_breaker_secrets", "circuit_breaker_db_conn", "circuit_breaker_auth"]
+if !Tenants.get_tenant_by_external_id("circuit_breaker_secrets") do
+  {:ok, _} =
+    %{
+      db_host: db_conf[:hostname],
+      db_port: db_conf[:port],
+      db_database: db_conf[:database],
+      default_parameter_status: %{},
+      external_id: "circuit_breaker_secrets",
+      require_user: false,
+      auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 1,
+          "mode_type" => "transaction",
+          "is_manager" => true
+        }
+      ]
+    }
+    |> Tenants.create_tenant()
+end
+
+# Create tenants for other circuit breaker tests
+["circuit_breaker_db_conn", "circuit_breaker_auth"]
 |> Enum.each(fn tenant ->
   if !Tenants.get_tenant_by_external_id(tenant) do
     {:ok, _} =
@@ -185,6 +238,8 @@ end
       "create user session with password 'postgres';",
       "drop user if exists max_clients;",
       "create user max_clients with password 'postgres';",
+      "drop user if exists checkout_timeout_test;",
+      "create user checkout_timeout_test with password 'postgres';",
       "drop user if exists no_warm_pool_user;",
       "create user no_warm_pool_user with password 'postgres';",
       "drop table if exists \"public\".\"test\";",

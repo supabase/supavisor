@@ -13,8 +13,9 @@ defmodule Supavisor.TenantCache do
     GenServer.start_link(__MODULE__, args)
   end
 
-  def init(%{id: id}) do
+  def init(%{id: id, upstream_auth_secrets: upstream_auth_secrets}) do
     table = :ets.new(:tenant_cache, [:set, :public])
+    :ets.insert(table, {:upstream_auth_secrets, upstream_auth_secrets})
     Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
     {:ok, %{table: table, id: id}}
   end
@@ -45,7 +46,7 @@ defmodule Supavisor.TenantCache do
   end
 
   @spec get_upstream_auth_secrets(Supavisor.id()) ::
-          {:ok, {atom(), function()}} | {:error, :not_found}
+          {:ok, map()} | {:error, :not_found}
   def get_upstream_auth_secrets(id) do
     case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
       [{_pid, table}] ->
@@ -59,7 +60,7 @@ defmodule Supavisor.TenantCache do
     end
   end
 
-  @spec put_upstream_auth_secrets(Supavisor.id(), {atom(), function()}) :: true
+  @spec put_upstream_auth_secrets(Supavisor.id(), map()) :: true
   def put_upstream_auth_secrets(id, secrets) do
     case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
       [{_pid, table}] ->

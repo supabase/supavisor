@@ -7,8 +7,6 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   @tenant "proxy_tenant_ps_enabled"
 
-  @moduletag integration: true
-
   @sample_query """
   SELECT schemaname, tablename, tableowner, hasindexes
   FROM pg_tables
@@ -170,7 +168,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
 
   test "prepared statements error on simple query protocol", %{conn_opts: conn_opts} do
     expected_message =
-      "Supavisor transaction mode only supports prepared statements using the Extended Query Protocol"
+      "(EPSSIMPLEQUERY) transaction mode only supports prepared statements using the Extended Query Protocol"
 
     {:ok, conn} = start_supervised({SingleConnection, conn_opts})
 

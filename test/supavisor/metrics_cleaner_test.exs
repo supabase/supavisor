@@ -1,6 +1,7 @@
 defmodule Supavisor.MetricsCleanerTest do
   use ExUnit.Case, async: false
 
+  require Supavisor
   alias Supavisor.PromEx.Plugins.Tenant, as: Metrics
 
   @subject Supavisor.MetricsCleaner
@@ -22,7 +23,13 @@ defmodule Supavisor.MetricsCleanerTest do
   test "metrics for unknown tenant are removed" do
     :ok =
       Metrics.emit_telemetry_for_tenant(
-        {{{:single, "non-existent"}, "foo", :transaction, "bar", nil}, 2137}
+        {Supavisor.id(
+           type: :single,
+           tenant: "non-existent",
+           user: "foo",
+           mode: :transaction,
+           db: "bar"
+         ), 2137}
       )
 
     metrics = Supavisor.Monitoring.PromEx.get_metrics()
@@ -45,7 +52,13 @@ defmodule Supavisor.MetricsCleanerTest do
       Supavisor.Monitoring.Telem.handler_action(
         :db_handler,
         :stopped,
-        {{:single, "non-existent"}, "foo", :transaction, "bar", nil}
+        Supavisor.id(
+          type: :single,
+          tenant: "non-existent",
+          user: "foo",
+          mode: :transaction,
+          db: "bar"
+        )
       )
 
     metrics = Supavisor.Monitoring.PromEx.get_metrics()

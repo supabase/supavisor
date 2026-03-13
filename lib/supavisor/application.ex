@@ -99,7 +99,7 @@ defmodule Supavisor.Application do
         {Cachex, name: Supavisor.Cache},
         Supavisor.ErlSysMon,
         Supavisor.Health,
-        Supavisor.CacheRefreshLimiter,
+        Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,
         {Task.Supervisor, name: Supavisor.PoolTerminator},
         {Registry, keys: :unique, name: Supavisor.Registry.Tenants},

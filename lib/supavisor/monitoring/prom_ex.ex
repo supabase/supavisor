@@ -6,8 +6,10 @@ defmodule Supavisor.Monitoring.PromEx do
   """
 
   use PromEx, otp_app: :supavisor
+
   require Logger
   require Peep.Persistent
+  require Supavisor
 
   alias PromEx.Plugins
   alias Supavisor.PeepStorage
@@ -86,7 +88,7 @@ defmodule Supavisor.Monitoring.PromEx do
       Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
       |> Enum.uniq()
 
-    Enum.each(pools, fn {{_type, tenant}, _, _, _, _} ->
+    Enum.each(pools, fn Supavisor.id(tenant: tenant) ->
       {_, _, _, metrics_map} = fetch_metrics_for(tenant: tenant)
 
       if metrics_map != %{} do

@@ -3,9 +3,11 @@ defmodule Supavisor.SecretChecker do
 
   use GenServer
   require Logger
+  require Supavisor
 
-  alias Supavisor.ClientHandler.Auth
-  alias Supavisor.Helpers
+  alias Supavisor.AuthQuery
+  alias Supavisor.ClientAuthentication
+  alias Supavisor.ClientAuthentication.ValidationSecrets
 
   @interval :timer.seconds(15)
 
@@ -15,66 +17,53 @@ defmodule Supavisor.SecretChecker do
   end
 
   @spec get_secrets(Supavisor.id()) ::
-          {:ok, {method :: atom(), Supavisor.secrets()}} | {:error, :not_started}
+          {:ok, ValidationSecrets.t()}
+          | {:error, :not_started}
+          | {:error, :no_auth_config}
+          | {:error, Supavisor.Errors.AuthQueryError.t()}
   def get_secrets(id) do
-    erpc_call_node(id, fn ->
-      case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
-        [] ->
-          {:error, :not_started}
-
-        [{pid, _}] ->
-          GenServer.call(pid, :get_secrets)
-      end
-    end)
+    erpc_call_node(id, __MODULE__, :do_get_secrets, [id])
   end
 
-  @spec update_credentials(Supavisor.id(), String.t(), (-> String.t())) ::
-          :ok | {:error, :not_started}
-  def update_credentials(id, new_user, password_fn) do
-    erpc_call_node(id, fn ->
-      case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
-        [] ->
-          {:error, :not_started}
+  @doc false
+  def do_get_secrets(id) do
+    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+      [] ->
+        {:error, :not_started}
 
-        [{pid, _}] ->
-          GenServer.call(pid, {:update_credentials, new_user, password_fn})
-      end
-    end)
+      [{pid, _}] ->
+        GenServer.call(pid, :get_secrets)
+    end
+  end
+
+  @spec update_credentials(Supavisor.id(), String.t(), String.t()) ::
+          :ok | {:error, :not_started}
+  def update_credentials(id, new_user, password) do
+    erpc_call_node(id, __MODULE__, :do_update_credentials, [id, new_user, password])
+  end
+
+  @doc false
+  def do_update_credentials(id, new_user, password) do
+    case Registry.lookup(Supavisor.Registry.Tenants, {:secret_checker, id}) do
+      [] ->
+        {:error, :not_started}
+
+      [{pid, _}] ->
+        GenServer.call(pid, {:update_credentials, new_user, password})
+    end
   end
 
   def init(args) do
     Logger.debug("SecretChecker: Starting secret checker")
-    {{_type, tenant_external_id}, pool_user, _mode, _db_name, _search_path} = args.id
+    Supavisor.id(tenant: tenant_external_id, user: pool_user) = args.id
 
     tenant = Supavisor.Tenants.get_tenant_cache(tenant_external_id, nil)
     manager_secrets = Supavisor.Tenants.get_manager_user_cache(tenant_external_id)
 
-    auth =
-      if manager_secrets do
-        %{
-          host: String.to_charlist(tenant.db_host),
-          sni_hostname: if(tenant.sni_hostname != nil, do: to_charlist(tenant.sni_hostname)),
-          port: tenant.db_port,
-          user: manager_secrets.db_user,
-          manager_secrets: manager_secrets,
-          auth_query: tenant.auth_query,
-          database: tenant.db_database,
-          password: fn -> manager_secrets.db_password end,
-          application_name: "Supavisor",
-          ip_version: Supavisor.Helpers.ip_version(tenant.ip_version, tenant.db_host),
-          upstream_ssl: tenant.upstream_ssl,
-          upstream_verify: tenant.upstream_verify,
-          upstream_tls_ca: Supavisor.Helpers.upstream_cert(tenant.upstream_tls_ca),
-          use_jit: tenant.use_jit,
-          jit_api_url: tenant.jit_api_url
-        }
-      else
-        nil
-      end
-
     state = %{
       tenant: tenant_external_id,
-      auth: auth,
+      tenant_record: tenant,
+      manager_secrets: manager_secrets,
       user: pool_user,
       ttl: :timer.hours(24),
       conn: nil,
@@ -85,17 +74,17 @@ defmodule Supavisor.SecretChecker do
     {:ok, state, {:continue, :init_conn}}
   end
 
-  def handle_continue(:init_conn, %{auth: nil} = state) do
-    # No auth config (require_user: true tenant), skip connection setup
+  def handle_continue(:init_conn, %{manager_secrets: nil} = state) do
+    # No manager user (require_user: true tenant), skip connection setup
     {:noreply, state}
   end
 
-  def handle_continue(:init_conn, %{auth: auth} = state) do
-    {:ok, conn} = start_postgrex_connection(auth)
+  def handle_continue(:init_conn, state) do
+    {:ok, conn} = AuthQuery.start_link(state.tenant_record, state.manager_secrets)
     {:noreply, %{state | conn: conn}}
   end
 
-  def handle_info(:check, %{auth: nil} = state) do
+  def handle_info(:check, %{manager_secrets: nil} = state) do
     {:noreply, %{state | check_ref: check()}}
   end
 
@@ -109,49 +98,24 @@ defmodule Supavisor.SecretChecker do
     {:noreply, state}
   end
 
-  def terminate(_, state) do
-    :gen_statem.stop(state.conn)
-    :ok
+  def terminate(_reason, state) do
+    if state.conn, do: AuthQuery.stop_connection_async(state.conn)
   end
 
   def check(interval \\ @interval),
     do: Process.send_after(self(), :check, interval + jitter())
 
-  def check_secrets(user, %{auth: auth, conn: conn} = state) do
-    alias Supavisor.ClientHandler.Auth
+  def check_secrets(user, %{tenant_record: tenant, conn: conn} = state) do
+    case AuthQuery.fetch_user_secret(conn, tenant.auth_query, user) do
+      {:ok, sasl_secrets} ->
+        validation_secrets = ValidationSecrets.from_sasl_secrets(sasl_secrets)
 
-    # get tenant information so that we can check configuration information
-    # that affects secrets, like :use_jit
-    t = Supavisor.Tenants.get_tenant_cache(state.tenant, state.auth.sni_hostname)
-
-    case Helpers.get_user_secret(conn, auth.auth_query, user) do
-      {:ok, secret} ->
-        method =
-          case {t.use_jit, secret} do
-            {true, %Auth.SASLSecrets{}} -> :auth_query_jit
-            {_, %Auth.MD5Secrets{}} -> :auth_query_md5
-            {_, %Auth.SASLSecrets{}} -> :auth_query
-          end
-
-        update_cache =
-          case Supavisor.SecretCache.get_validation_secrets(state.tenant, state.user) do
-            {:ok, {old_method, old_secrets_fn}} ->
-              method != old_method or
-                Map.delete(secret, :client_key) != Map.delete(old_secrets_fn.(), :client_key)
-
-            _other ->
-              true
-          end
-
-        if update_cache do
-          Logger.info("Secrets changed or not present, updating cache")
-
-          Supavisor.SecretCache.put_validation_secrets(state.tenant, state.user, method, fn ->
-            secret
-          end)
+        case ClientAuthentication.refresh_if_changed(state.tenant, state.user, validation_secrets) do
+          :changed -> Logger.info("Secrets changed or not present, updating cache")
+          :noop -> :ok
         end
 
-        {:ok, {method, fn -> secret end}}
+        {:ok, validation_secrets}
 
       other ->
         Logger.error("Failed to get secret: #{inspect(other)}")
@@ -159,7 +123,7 @@ defmodule Supavisor.SecretChecker do
     end
   end
 
-  def handle_call(:get_secrets, _from, %{auth: nil} = state) do
+  def handle_call(:get_secrets, _from, %{manager_secrets: nil} = state) do
     {:reply, {:error, :no_auth_config}, state}
   end
 
@@ -167,78 +131,32 @@ defmodule Supavisor.SecretChecker do
     {:reply, check_secrets(state.user, state), state}
   end
 
-  def handle_call({:update_credentials, new_user, password_fn}, _from, state) do
+  def handle_call({:update_credentials, new_user, password}, _from, state) do
+    alias Supavisor.Secrets.ManagerSecrets
+
     Logger.info("SecretChecker: changing auth_query user to #{new_user}")
 
-    new_auth = %{
-      state.auth
-      | user: new_user,
-        password: password_fn
-    }
+    new_manager = %ManagerSecrets{db_user: new_user, db_password: password}
+    {:ok, new_conn} = AuthQuery.start_link(state.tenant_record, new_manager)
 
-    {:ok, new_conn} = start_postgrex_connection(new_auth)
-
-    old_conn = state.conn
-    Process.unlink(old_conn)
-
-    Task.start(fn ->
-      try do
-        GenServer.stop(old_conn, :normal, 5_000)
-      catch
-        :exit, _ -> Process.exit(old_conn, :kill)
-      end
-    end)
+    AuthQuery.stop_connection_async(state.conn)
 
     # Clear the secrets cache for this tenant/user
-    tenant = state.tenant
-    user = state.user
-    Cachex.del(Supavisor.Cache, {:secrets, tenant, user})
+    Cachex.del(Supavisor.Cache, {:secrets, state.tenant, state.user})
 
     Logger.info("SecretChecker: Successfully changed auth_query user")
-    {:reply, :ok, %{state | auth: new_auth, conn: new_conn}}
-  end
-
-  defp start_postgrex_connection(auth) do
-    ssl_opts =
-      if auth.upstream_ssl and auth.upstream_verify == :peer do
-        [
-          verify: :verify_peer,
-          cacerts: [Helpers.upstream_cert(auth.upstream_tls_ca)],
-          server_name_indication: auth.host,
-          customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
-        ]
-      else
-        [
-          verify: :verify_none
-        ]
-      end
-
-    Postgrex.start_link(
-      hostname: auth.host,
-      port: auth.port,
-      database: auth.database,
-      password: auth.password.(),
-      username: auth.user,
-      parameters: [application_name: "Supavisor (auth_query)"],
-      ssl: auth.upstream_ssl,
-      socket_options: [
-        auth.ip_version
-      ],
-      queue_target: 1_000,
-      queue_interval: 5_000,
-      ssl_opts: ssl_opts
-    )
+    {:reply, :ok, %{state | manager_secrets: new_manager, conn: new_conn}}
   end
 
   defp jitter, do: :rand.uniform(div(@interval, 10))
 
-  defp erpc_call_node(id, fun) do
+  defp erpc_call_node(id, mod, fun, args) do
     case Supavisor.get_global_sup(id) do
       nil ->
         {:error, :not_started}
 
       pid ->
-        :erpc.call(node(pid), fun)
+        :erpc.call(node(pid), mod, fun, args)
     end
   end
 end
