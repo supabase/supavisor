@@ -72,7 +72,7 @@ defmodule Supavisor.MetricsCleaner do
     |> Enum.sum_by(&clean_table(&1, tags_tid, reverse_tags_tid, cache_tid))
   end
 
-  defp clean_table(tid, _tags_tid, reverse_tags_tid, cache_tid) do
+  defp clean_table(tid, tags_tid, reverse_tags_tid, cache_tid) do
     :ets.foldl(
       fn {{metric_id, tags_id}, _val}, acc ->
         tags = resolve_tags(reverse_tags_tid, tags_id)
@@ -81,10 +81,12 @@ defmodule Supavisor.MetricsCleaner do
           :ets.delete(tid, {metric_id, tags_id})
           # Clean up tag mappings and label cache for this tags_id.
           # Other scheduler tables may still reference this tags_id,
-          # but orphaned entries in tags/reverse_tags/cache are harmless
+          # but orphaned entries in tags/reverse_tags are harmless
           # and will be cleaned on subsequent passes once all references
           # are gone.
           :ets.delete(cache_tid, tags_id)
+          :ets.delete(reverse_tags_tid, tags_id)
+          :ets.delete(tags_tid, tags)
           acc + 1
         else
           acc
