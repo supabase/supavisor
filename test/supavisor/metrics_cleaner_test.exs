@@ -76,7 +76,7 @@ defmodule Supavisor.MetricsCleanerTest do
   end
 
   test "metrics with no reverse tag mapping are cleaned up" do
-    {_, {tags_tid, metric_tids, reverse_tags_tid, cache_tid}} =
+    {_, {_tags_tid, metric_tids, reverse_tags_tid, cache_tid}} =
       Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
 
     # Simulate a metric entry whose reverse tag mapping is missing.
@@ -112,7 +112,13 @@ defmodule Supavisor.MetricsCleanerTest do
 
     :ok =
       Metrics.emit_telemetry_for_tenant(
-        {{{:single, "orphan-tags-test"}, "foo", :transaction, "bar", nil}, 42}
+        {Supavisor.id(
+           type: :single,
+           tenant: "orphan-tags-test",
+           user: "foo",
+           mode: :transaction,
+           db: "bar"
+         ), 42}
       )
 
     # Trigger a scrape so the cache_tid gets populated via the export path
