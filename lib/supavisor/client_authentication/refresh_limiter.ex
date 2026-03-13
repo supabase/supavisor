@@ -1,4 +1,4 @@
-defmodule Supavisor.CacheRefreshLimiter do
+defmodule Supavisor.ClientAuthentication.RefreshLimiter do
   @moduledoc false
 
   use GenServer
@@ -11,10 +11,15 @@ defmodule Supavisor.CacheRefreshLimiter do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
 
-  @spec cache_refresh_limited?(Supavisor.id()) :: boolean()
-  def cache_refresh_limited?(id) do
+  @spec check(Supavisor.id()) :: :ok | {:error, :rate_limited}
+  def check(id) do
     counter = :ets.update_counter(@table_name, id, {2, 1}, {id, 0})
-    counter > @cache_refresh_limit
+
+    if counter > @cache_refresh_limit do
+      {:error, :rate_limited}
+    else
+      :ok
+    end
   end
 
   @impl true

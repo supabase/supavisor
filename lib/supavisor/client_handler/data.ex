@@ -15,7 +15,7 @@ defmodule Supavisor.ClientHandler.Data do
     :ssl,
     :auth_context,
     :auth_secrets,
-    :auth,
+    :connection_params,
     :tenant,
     :tenant_feature_flags,
     :tenant_availability_zone,
@@ -41,6 +41,7 @@ defmodule Supavisor.ClientHandler.Data do
     :subscribe_retries,
     :client_ready,
     :max_clients,
-    :pool_ranch
+    :pool_ranch,
+    :use_jit_flow
   ]
 end

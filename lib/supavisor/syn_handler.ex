@@ -6,20 +6,22 @@ defmodule Supavisor.SynHandler do
   @behaviour :syn_event_handler
 
   require Logger
+  require Supavisor
 
   @impl true
   def on_process_unregistered(
         :tenants,
-        {{type, tenant}, user, mode, db_name, _search_path} = id,
+        Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db, search_path: _) =
+          id,
         _pid,
         _meta,
         reason
       ) do
-    Logger.debug("Process unregistered: #{inspect(id)} #{inspect(reason)}", %{
+    Logger.debug("Process unregistered: #{Supavisor.inspect_id(id)} #{inspect(reason)}", %{
       project: tenant,
       user: user,
       mode: mode,
-      db_name: db_name,
+      db_name: db,
       type: type
     })
   end
@@ -32,7 +34,7 @@ defmodule Supavisor.SynHandler do
         {pid2, _, time2} = local
       ) do
     Logger.info(
-      "SynHandler: resolving #{inspect(id)} conflict: #{inspect(local)} vs #{inspect(remote)}"
+      "SynHandler: resolving #{Supavisor.inspect_id(id)} conflict: #{inspect(local)} vs #{inspect(remote)}"
     )
 
     {keep, stop} =
@@ -65,12 +67,12 @@ defmodule Supavisor.SynHandler do
           end
 
         Logger.warning(
-          "SynHandler: Resolving #{inspect(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
+          "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
         )
       end)
     else
       Logger.warning(
-        "SynHandler: Resolving #{inspect(id)} conflict, remote pid: #{inspect(stop)}"
+        "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, remote pid: #{inspect(stop)}"
       )
     end
 

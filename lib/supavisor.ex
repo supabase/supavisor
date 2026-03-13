@@ -9,14 +9,36 @@ defmodule Supavisor do
     Tenants
   }
 
+  require Record
+
   @type sock :: tcp_sock() | ssl_sock()
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
   @type workers :: %{manager: pid, pool: pid}
-  @type secrets :: {:password | :auth_query, fun()}
+  @type secrets :: map()
   @type mode :: :transaction | :session | :native | :proxy
-  @type id :: {{:single | :cluster, String.t()}, String.t(), mode, String.t(), String.t() | nil}
   @type subscribe_opts :: %{workers: workers, ps: list, idle_timeout: integer}
+
+  Record.defrecord(:id, [
+    :type,
+    :tenant,
+    :user,
+    :mode,
+    :db,
+    :search_path,
+    upstream_tls: false
+  ])
+
+  @type id() ::
+          record(:id,
+            type: :single | :cluster,
+            tenant: String.t(),
+            user: String.t(),
+            mode: mode(),
+            db: String.t(),
+            search_path: String.t() | nil,
+            upstream_tls: boolean()
+          )
 
   @registry Supavisor.Registry.Tenants
   @max_pools Application.compile_env(:supavisor, :max_pools, 20)
@@ -35,10 +57,10 @@ defmodule Supavisor do
         node = if force_node, do: force_node, else: determine_node(id, availability_zone)
 
         if node == node() do
-          Logger.debug("Starting local pool for #{inspect(id)}")
+          Logger.debug("Starting local pool for #{inspect_id(id)}")
           try_start_local_pool(id, secrets, log_level)
         else
-          Logger.debug("Starting remote pool for #{inspect(id)}")
+          Logger.debug("Starting remote pool for #{inspect_id(id)}")
           Helpers.rpc(node, __MODULE__, :try_start_local_pool, [id, secrets, log_level])
         end
 
@@ -111,7 +133,7 @@ defmodule Supavisor do
   @spec dirty_terminate(String.t(), pos_integer()) :: map()
   def dirty_terminate(tenant, timeout \\ 15_000) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant)
-    |> Enum.reduce(%{}, fn {pid, %{user: user, mode: _mode}}, acc ->
+    |> Enum.reduce(%{}, fn {pid, id(user: user)}, acc ->
       stop =
         try do
           Supervisor.stop(pid, :shutdown, timeout)
@@ -136,33 +158,24 @@ defmodule Supavisor do
   Updates credentials for all SecretChecker processes for a tenant across the cluster.
   Used for auth_query mode (require_user: false) to hot-update credentials without restarting pools.
   """
-  @spec update_secret_checker_credentials_global(String.t(), String.t(), (-> String.t())) :: [
+  @spec update_secret_checker_credentials_global(String.t(), String.t(), String.t()) :: [
           {node(), term()}
         ]
-  def update_secret_checker_credentials_global(tenant, new_user, password_fn) do
+  def update_secret_checker_credentials_global(tenant, new_user, password) do
     :erpc.multicall(
       [node() | Node.list()],
       Supavisor,
       :update_secret_checker_credentials_local,
-      [tenant, new_user, password_fn],
+      [tenant, new_user, password],
       60_000
     )
   end
 
-  @spec update_secret_checker_credentials_local(String.t(), String.t(), (-> String.t())) :: map()
-  def update_secret_checker_credentials_local(tenant, new_user, password_fn) do
+  @spec update_secret_checker_credentials_local(String.t(), String.t(), String.t()) :: map()
+  def update_secret_checker_credentials_local(tenant, new_user, password) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant)
-    |> Enum.reduce(%{}, fn {_pid,
-                            %{
-                              user: user,
-                              mode: mode,
-                              type: type,
-                              db_name: db_name,
-                              search_path: search_path
-                            }},
-                           acc ->
-      id = {{type, tenant}, user, mode, db_name, search_path}
-      result = Supavisor.SecretChecker.update_credentials(id, new_user, password_fn)
+    |> Enum.reduce(%{}, fn {_pid, id(user: user, mode: mode) = pool_id}, acc ->
+      result = Supavisor.SecretChecker.update_credentials(pool_id, new_user, password)
       Map.put(acc, {user, mode}, result)
     end)
   end
@@ -229,7 +242,7 @@ defmodule Supavisor do
   end
 
   @spec get_local_pool(id) :: map | pid | nil
-  def get_local_pool({{:single, _}, _, _, _, _} = id) do
+  def get_local_pool(id(type: :single) = id) do
     case Registry.lookup(@registry, {:pool, :write, 0, id}) do
       [{pid, _}] -> pid
       _ -> nil
@@ -262,33 +275,8 @@ defmodule Supavisor do
     end
   end
 
-  @spec id({:single | :cluster, String.t()}, String.t(), mode, mode, String.t(), String.t() | nil) ::
-          id
-  def id(tenant, user, port_mode, user_mode, db_name, search_path) do
-    # temporary hack
-    mode =
-      if port_mode == :transaction do
-        user_mode
-      else
-        port_mode
-      end
-
-    {tenant, user, mode, db_name, search_path}
-  end
-
-  @spec tenant(id) :: String.t()
-  def tenant({{_, tenant}, _, _, _, _}), do: tenant
-
-  @spec mode(id) :: atom()
-  def mode({_, _, mode, _, _}), do: mode
-
-  @spec search_path(id) :: String.t() | nil
-  def search_path({_, _, _, _, search_path}), do: search_path
-
   @spec determine_node(id, String.t() | nil) :: Node.t()
-  def determine_node(id, availability_zone) do
-    tenant_id = tenant(id)
-
+  def determine_node(id(tenant: tenant), availability_zone) do
     # If the AWS zone group is empty, we will use all nodes.
     # If the AWS zone group exists with the same zone, we will use nodes from this group.
     #   :syn.members(:availability_zone, "1c")
@@ -302,7 +290,7 @@ defmodule Supavisor do
         _ -> [node() | Node.list()]
       end
 
-    index = :erlang.phash2(tenant_id, length(nodes))
+    index = :erlang.phash2(tenant, length(nodes))
 
     nodes
     |> Enum.sort()
@@ -311,20 +299,20 @@ defmodule Supavisor do
 
   @spec try_start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
   def try_start_local_pool(id, secrets, log_level) do
-    if count_pools(tenant(id)) < @max_pools,
+    if count_pools(id(id, :tenant)) < @max_pools,
       do: start_local_pool(id, secrets, log_level),
       else: {:error, %Supavisor.Errors.MaxPoolsReachedError{}}
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
   def start_local_pool(
-        {{type, tenant}, _user, _mode, _db_name, _search_path} = id,
+        id(tenant: tenant, type: type) = id,
         secrets,
         log_level \\ nil
       ) do
-    Logger.info("Starting pool(s) for #{inspect(id)}")
+    Logger.info("Starting pool(s) for #{inspect_id(id)}")
 
-    secrets_map = elem(secrets, 1).()
+    secrets_map = secrets
     user = secrets_map.user
 
     case type do
@@ -393,7 +381,7 @@ defmodule Supavisor do
   end
 
   @spec get_local_server(id) :: map()
-  def get_local_server({_, _, mode, _, _} = id) do
+  def get_local_server(id(mode: mode) = id) do
     host = Application.get_env(:supavisor, :node_host)
 
     ports =
@@ -404,6 +392,51 @@ defmodule Supavisor do
 
     shard = :erlang.phash2(id, length(ports))
     %{host: host, port: :ranch.get_port({:pg_proxy_internal, mode, shard})}
+  end
+
+  def inspect_id(id, opts \\ %Inspect.Opts{})
+
+  def inspect_id(
+        id(
+          type: type,
+          tenant: tenant,
+          mode: mode,
+          user: user,
+          db: db,
+          search_path: search_path,
+          upstream_tls: upstream_tls
+        ),
+        opts
+      ) do
+    import Inspect.Algebra
+
+    fields = [
+      {"type: ", type},
+      {"tenant: ", tenant},
+      {"mode: ", mode},
+      {"user: ", user},
+      {"db: ", db},
+      {"search_path: ", search_path},
+      {"upstream_tls: ", upstream_tls}
+    ]
+
+    fun = fn {key, value}, doc_opts ->
+      if value do
+        concat(key, to_doc(value, doc_opts))
+      else
+        empty()
+      end
+    end
+
+    ["Supavisor.id", container_doc("(", fields, ")", opts, fun, break: :strict)]
+    |> concat()
+    |> Inspect.Algebra.format(160)
+    |> IO.iodata_to_binary()
+  end
+
+  # Catch-all for invalid ids
+  def inspect_id(id, _) do
+    inspect(id)
   end
 
   @spec count_pools(String.t()) :: non_neg_integer()

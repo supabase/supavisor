@@ -1,5 +1,7 @@
 defmodule SupavisorTest do
-  use Supavisor.DataCase, async: true
+  use ExUnit.Case, async: true
+
+  require Supavisor
 
   import Supavisor.Asserts
 
@@ -9,7 +11,75 @@ defmodule SupavisorTest do
     PoolConfigNotFoundError
   }
 
-  @fake_id {{:single, "nonexistent_tenant"}, "user", :transaction, "db", ""}
+  @fake_id Supavisor.id(
+             type: :single,
+             tenant: "nonexistent_tenant",
+             user: "user",
+             mode: :transaction,
+             db: "db",
+             search_path: nil
+           )
+
+  describe "inspect_id/1" do
+    test "key and value are never split across lines" do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: "some_very_long_tenant_name_that_could_cause_wrapping",
+          user: "postgres",
+          mode: :session,
+          db: "some_very_long_tenant_name_that_could_cause_wrapping",
+          search_path: nil
+        )
+
+      assert Supavisor.inspect_id(id) == """
+             Supavisor.id(
+               type: :single,
+               tenant: "some_very_long_tenant_name_that_could_cause_wrapping",
+               mode: :session,
+               user: "postgres",
+               db: "some_very_long_tenant_name_that_could_cause_wrapping"
+             )\
+             """
+    end
+
+    test "omits nil values" do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: "my_tenant",
+          user: "postgres",
+          mode: :session,
+          db: "my_db",
+          search_path: nil
+        )
+
+      assert Supavisor.inspect_id(id) == """
+             Supavisor.id(type: :single, tenant: "my_tenant", mode: :session, user: "postgres", db: "my_db")\
+             """
+    end
+
+    test "includes search_path when set" do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: "my_tenant",
+          user: "postgres",
+          mode: :session,
+          db: "my_db",
+          search_path: "public"
+        )
+
+      assert Supavisor.inspect_id(id) ==
+               """
+               Supavisor.id(type: :single, tenant: "my_tenant", mode: :session, user: "postgres", db: "my_db", search_path: "public")\
+               """
+    end
+
+    test "falls back to inspect for invalid ids" do
+      assert Supavisor.inspect_id(:not_an_id) == ":not_an_id"
+    end
+  end
 
   describe "stop/1" do
     test "returns WorkerNotFoundError for nonexistent id" do
@@ -40,11 +110,10 @@ defmodule SupavisorTest do
 
   describe "start_local_pool/3" do
     test "returns PoolConfigNotFoundError when tenant config not found" do
-      fake_id = {{:single, "nonexistent_config_tenant"}, "user", :transaction, "db", ""}
-      secrets = {:password, fn -> %{user: "user"} end}
+      secrets = %{user: "user"}
 
-      assert {:error, %PoolConfigNotFoundError{id: ^fake_id}} =
-               result = Supavisor.start_local_pool(fake_id, secrets, nil)
+      assert {:error, %PoolConfigNotFoundError{id: @fake_id}} =
+               result = Supavisor.start_local_pool(@fake_id, secrets, nil)
 
       assert_valid_error(result)
     end

@@ -20,46 +20,6 @@ defmodule Supavisor.HandlerHelpers do
     mod.setopts(sock, opts)
   end
 
-  @spec active_once(Supavisor.sock()) :: :ok | {:error, term}
-  def active_once(sock), do: setopts(sock, active: :once)
-
-  @spec try_ssl_handshake(Supavisor.tcp_sock(), boolean) ::
-          {:ok, Supavisor.sock()} | {:error, term()}
-  def try_ssl_handshake(sock, true) do
-    case sock_send(sock, Server.ssl_request()) do
-      :ok -> ssl_recv(sock)
-      error -> error
-    end
-  end
-
-  def try_ssl_handshake(sock, false), do: {:ok, sock}
-
-  @spec ssl_recv(Supavisor.tcp_sock()) :: {:ok, Supavisor.ssl_sock()} | {:error, term}
-  def ssl_recv({:gen_tcp, sock} = s) do
-    case :gen_tcp.recv(sock, 1, 15_000) do
-      {:ok, <<?S>>} -> ssl_connect(s)
-      {:ok, <<?N>>} -> {:ok, s}
-      {:error, _} = error -> error
-    end
-  end
-
-  @spec ssl_connect(Supavisor.tcp_sock(), pos_integer) ::
-          {:ok, Supavisor.ssl_sock()} | {:error, term}
-  def ssl_connect({:gen_tcp, sock}, timeout \\ 5000) do
-    opts = [verify: :verify_none]
-
-    case :ssl.connect(sock, opts, timeout) do
-      {:ok, ssl_sock} -> {:ok, {:ssl, ssl_sock}}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  @spec send_error(Supavisor.sock(), String.t(), String.t()) :: :ok | {:error, term()}
-  def send_error(sock, code, message) do
-    data = Server.error_message(code, message)
-    sock_send(sock, data)
-  end
-
   @spec try_get_sni(Supavisor.sock()) :: String.t() | nil
   def try_get_sni({:ssl, sock}) do
     case :ssl.connection_information(sock, [:sni_hostname]) do

@@ -109,6 +109,12 @@ dev_up:
 	MIX_ENV=dev mix compile && \
 	mix release supavisor
 
+jit_dev_setup:
+	bash scripts/jit_dev_setup.sh
+
+jit_dev_stop:
+	docker-compose -p supavisor-jit -f docker-compose.jit.yml down -v
+
 dev_start_rel:
 	MIX_ENV=dev \
 	VAULT_ENC_KEY="aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7" \

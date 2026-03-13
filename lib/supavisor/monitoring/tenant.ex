@@ -3,6 +3,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   use PromEx.Plugin
   require Logger
+  require Supavisor
 
   alias Supavisor, as: S
 
@@ -259,7 +260,16 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   @spec emit_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
-  def emit_telemetry_for_tenant({{{type, tenant}, user, mode, db_name, search_path}, count}) do
+  def emit_telemetry_for_tenant(
+        {Supavisor.id(
+           type: type,
+           tenant: tenant,
+           user: user,
+           mode: mode,
+           db: db_name,
+           search_path: search_path
+         ), count}
+      ) do
     :telemetry.execute(
       [:supavisor, :connections],
       %{active: count},
@@ -306,7 +316,14 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   @spec emit_client_connection_lifetime({Supavisor.id(), keyword()}, integer()) :: :ok | :noop
   def emit_client_connection_lifetime(
-        {{{type, tenant}, user, mode, db_name, search_path}, meta},
+        {Supavisor.id(
+           type: type,
+           tenant: tenant,
+           user: user,
+           mode: mode,
+           db: db_name,
+           search_path: search_path
+         ), meta},
         read_time
       ) do
     # soft-release backwards compatibility: old client connections may not have it
@@ -354,7 +371,16 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
   end
 
   @spec emit_proxy_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
-  def emit_proxy_telemetry_for_tenant({{{type, tenant}, user, mode, db_name, search_path}, count}) do
+  def emit_proxy_telemetry_for_tenant(
+        {Supavisor.id(
+           type: type,
+           tenant: tenant,
+           user: user,
+           mode: mode,
+           db: db_name,
+           search_path: search_path
+         ), count}
+      ) do
     :telemetry.execute(
       [:supavisor, :proxy, :connections],
       %{active: count},

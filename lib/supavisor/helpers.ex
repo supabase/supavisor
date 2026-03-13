@@ -24,11 +24,14 @@ defmodule Supavisor.Helpers do
   def check_creds_get_ver(_), do: {:ok, nil}
 
   def do_check_creds_get_ver(params) do
+    upstream_verify =
+      if params["upstream_verify"] == "peer", do: :peer, else: nil
+
     Enum.reduce_while(params["users"], {nil, nil}, fn user, _ ->
-      upstream_ssl? = !!params["upstream_ssl"]
+      upstream_ssl = !!params["upstream_ssl"]
 
       ssl_opts =
-        if upstream_ssl? and params["upstream_verify"] == "peer" do
+        if upstream_ssl and upstream_verify == :peer do
           [
             verify: :verify_peer,
             cacerts: [upstream_cert(params["upstream_tls_ca"])],
@@ -36,9 +39,7 @@ defmodule Supavisor.Helpers do
             customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
           ]
         else
-          [
-            verify: :verify_none
-          ]
+          [verify: :verify_none]
         end
 
       {:ok, conn} =
@@ -48,10 +49,9 @@ defmodule Supavisor.Helpers do
           database: params["db_database"],
           password: user["db_password"],
           username: user["db_user"],
-          ssl: upstream_ssl?,
-          socket_options: [
-            ip_version(params["ip_version"], params["db_host"])
-          ],
+          parameters: [application_name: "Supavisor (auth_query)"],
+          ssl: upstream_ssl,
+          socket_options: [ip_version(params["ip_version"], params["db_host"])],
           queue_target: 1_000,
           queue_interval: 5_000,
           ssl_opts: ssl_opts
@@ -64,7 +64,11 @@ defmodule Supavisor.Helpers do
             if params["require_user"] do
               {:cont, {:ok, version}}
             else
-              case get_user_secret(conn, params["auth_query"], user["db_user"]) do
+              case Supavisor.AuthQuery.fetch_user_secret(
+                     conn,
+                     params["auth_query"],
+                     user["db_user"]
+                   ) do
                 {:ok, _} ->
                   {:halt, {:ok, version}}
 
@@ -77,7 +81,7 @@ defmodule Supavisor.Helpers do
             {:halt, {:error, "Can't connect the user #{user["db_user"]}: #{inspect(reason)}"}}
         end
 
-      GenServer.stop(conn)
+      Supavisor.AuthQuery.stop_connection_async(conn)
       check
     end)
     |> case do
@@ -88,81 +92,6 @@ defmodule Supavisor.Helpers do
         other
     end
   end
-
-  @spec get_user_secret(pid(), String.t() | nil, String.t()) ::
-          {:ok, map()} | {:error, String.t()}
-  def get_user_secret(_conn, nil, _user), do: {:error, "No auth_query specified"}
-
-  def get_user_secret(conn, auth_query, user) when is_binary(auth_query) do
-    Postgrex.query!(conn, auth_query, [user])
-  catch
-    _error, reason ->
-      {:error, "Authentication query failed: #{humanize_postgrex_error(reason)}"}
-  else
-    %{columns: [_, _], rows: [[^user, secret]]} ->
-      parse_secret(secret, user)
-
-    %{columns: [_, _], rows: []} ->
-      {:error,
-       "There is no user '#{user}' in the database. Please create it or change the user in the config"}
-
-    %{columns: columns} ->
-      {:error,
-       "Authentication query returned wrong format. Should be two columns: user and secret, but got: #{inspect(columns)}"}
-  end
-
-  defp humanize_postgrex_error(%DBConnection.ConnectionError{message: message, reason: reason}) do
-    case reason do
-      :queue_timeout -> "Connection to database not available"
-      :error -> message
-    end
-  end
-
-  defp humanize_postgrex_error(%Postgrex.Error{postgres: %{message: message}}) do
-    message
-  end
-
-  defp humanize_postgrex_error(reason) do
-    inspect(reason)
-  end
-
-  @spec parse_secret(String.t(), String.t()) ::
-          {:ok,
-           Supavisor.ClientHandler.Auth.SASLSecrets.t()
-           | Supavisor.ClientHandler.Auth.MD5Secrets.t()}
-          | {:error, String.t()}
-  def parse_secret("SCRAM-SHA-256" <> _ = secret, user) do
-    # <digest>$<iteration>:<salt>$<stored_key>:<server_key>
-    case Regex.run(~r/^(.+)\$(\d+):(.+)\$(.+):(.+)$/, secret) do
-      [_, digest, iterations, salt, stored_key, server_key] ->
-        decoded_stored_key = Base.decode64!(stored_key)
-        decoded_server_key = Base.decode64!(server_key)
-
-        {:ok,
-         %Supavisor.ClientHandler.Auth.SASLSecrets{
-           user: user,
-           digest: digest,
-           iterations: String.to_integer(iterations),
-           salt: salt,
-           stored_key: decoded_stored_key,
-           client_key: decoded_stored_key,
-           server_key: decoded_server_key
-         }}
-
-      _ ->
-        {:error, "Can't parse secret"}
-    end
-  end
-
-  def parse_secret("md5" <> secret, user) do
-    {:ok, %Supavisor.ClientHandler.Auth.MD5Secrets{user: user, password: secret}}
-  end
-
-  def parse_secret(_secret, _user) do
-    {:error, "Unsupported or invalid secret format"}
-  end
-
-  def parse_postgres_secret(_), do: {:error, "Digest not supported"}
 
   ## Internal functions
 
@@ -264,11 +193,10 @@ defmodule Supavisor.Helpers do
     Application.get_env(:supavisor, :global_downstream_key)
   end
 
-  @spec get_client_final(:password | :auth_query, map(), map(), binary(), binary(), binary()) ::
+  @spec get_client_final(map(), map(), binary(), binary(), binary()) ::
           {iolist(), binary()}
   def get_client_final(
-        :password,
-        secrets,
+        %Supavisor.Secrets.PasswordSecrets{} = secrets,
         srv_first,
         client_nonce,
         user_name,
@@ -297,8 +225,7 @@ defmodule Supavisor.Helpers do
   end
 
   def get_client_final(
-        :auth_query,
-        secrets,
+        %Supavisor.Secrets.SASLSecrets{} = secrets,
         srv_first,
         client_nonce,
         user_name,
@@ -317,6 +244,18 @@ defmodule Supavisor.Helpers do
     server_signature = :pgo_scram.hmac(secrets.server_key, auth_message)
 
     {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature}
+  end
+
+  def verify_password_against_scram(
+        password,
+        %Supavisor.Secrets.SASLSecrets{} = secrets
+      ) do
+    salted_password =
+      :pgo_scram.hi(:pgo_sasl_prep_profile.validate(password), secrets.salt, secrets.iterations)
+
+    client_key = :pgo_scram.hmac(salted_password, "Client Key")
+    stored_key = :pgo_scram.h(client_key)
+    stored_key == secrets.stored_key
   end
 
   def signatures(stored_key, server_key, srv_first, client_nonce, user_name, channel) do
@@ -406,10 +345,6 @@ defmodule Supavisor.Helpers do
     end
   end
 
-  @spec controlling_process(Supavisor.sock(), pid) :: :ok | {:error, any()}
-  def controlling_process({mod, socket}, pid),
-    do: mod.controlling_process(socket, pid)
-
   # This is the value of `NAMEDATALEN` set when compiling PostgreSQL. By default
   # we use default Postgres value of `64`
   @max_length Application.compile_env(:supabase, :namedatalen, 64) - 1
@@ -453,25 +388,6 @@ defmodule Supavisor.Helpers do
   def no_warm_pool_user?(user) do
     no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
     user in no_warm_pool_users
-  end
-
-  @doc """
-  Checks if a token matches either a PAT or JWT.
-
-  ## Parameters
-
-  - `token`: The token string
-  """
-  def token_matches?(<<"sbp_", _rest::binary>>), do: true
-
-  def token_matches?(token) do
-    case String.split(token, ".") do
-      ["eyJ" <> _, "eyJ" <> _, _sig] ->
-        true
-
-      _ ->
-        false
-    end
   end
 
   @doc """

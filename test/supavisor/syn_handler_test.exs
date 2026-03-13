@@ -2,27 +2,33 @@ defmodule Supavisor.SynHandlerTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
   require Logger
+  require Supavisor
   alias Ecto.Adapters.SQL.Sandbox
   alias Supavisor.Support.Cluster
 
-  @id {{:single, "syn_tenant"}, "postgres", :session, "postgres", nil}
+  @id Supavisor.id(
+        type: :single,
+        tenant: "syn_tenant",
+        user: "postgres",
+        mode: :session,
+        db: "postgres"
+      )
 
   @tag cluster: true
   test "resolving conflict" do
     {:ok, peer, node2} = Cluster.start_node_unclustered(:peer.random_name())
 
-    secret = %Supavisor.ClientHandler.Auth.PasswordSecrets{
+    secret = %Supavisor.Secrets.PasswordSecrets{
       user: "postgres",
       password: "postgres"
     }
 
-    auth_secret = {:password, fn -> secret end}
     {:ok, pid2} = :peer.call(peer, Supavisor.FixturesHelpers, :start_pool, [@id, secret])
     assert :peer.call(peer, Supavisor, :get_global_sup, [@id]) == pid2
     assert node(pid2) == node2
 
     assert nil == Supavisor.get_global_sup(@id)
-    {:ok, pid1} = Supavisor.start(@id, auth_secret)
+    {:ok, pid1} = Supavisor.start(@id, secret)
     assert pid1 == Supavisor.get_global_sup(@id)
     assert node(pid1) == node()
 

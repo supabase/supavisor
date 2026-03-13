@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
   use Supavisor.DataCase, async: false
 
   require Logger
+  require Supavisor
 
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
@@ -127,6 +128,12 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
   end
 
   defp tenant_key(tenant_name, db_conf) do
-    {{:single, tenant_name}, db_conf[:username], :transaction, db_conf[:database], nil}
+    Supavisor.id(
+      type: :single,
+      tenant: tenant_name,
+      user: db_conf[:username],
+      mode: :transaction,
+      db: db_conf[:database]
+    )
   end
 end

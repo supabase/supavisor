@@ -4,6 +4,7 @@ defmodule Supavisor.ClientHandler.Proxy do
   """
 
   require Logger
+  require Supavisor
 
   alias Supavisor.ClientHandler.Proxy.Supervisor, as: ProxySupervisor
 
@@ -30,12 +31,32 @@ defmodule Supavisor.ClientHandler.Proxy do
 
   Returns `{:ok, db_pid}` on success, or one of the errors defined in `start_error()`.
   """
-  @spec start_proxy_connection(Supavisor.id(), pos_integer(), map(), map(), map()) ::
+  @spec start_proxy_connection(
+          Supavisor.id(),
+          pos_integer(),
+          Supavisor.ConnectionParameters.t(),
+          map(),
+          map(),
+          keyword()
+        ) ::
           {:ok, pid()} | {:error, start_error()}
-  def start_proxy_connection(id, max_clients, auth, tenant_feature_flags, pool_ranch) do
+  def start_proxy_connection(
+        id,
+        max_clients,
+        connection_params,
+        tenant_feature_flags,
+        pool_ranch,
+        client_opts
+      ) do
     child_spec =
       Supavisor.DbHandler.child_spec(
-        build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch)
+        build_db_handler_args(
+          id,
+          connection_params,
+          tenant_feature_flags,
+          pool_ranch,
+          client_opts
+        )
       )
 
     do_start_proxy_connection(id, max_clients, child_spec, @max_sup_retries)
@@ -74,30 +95,42 @@ defmodule Supavisor.ClientHandler.Proxy do
       do_start_proxy_connection(id, max_clients, child_spec, retries - 1)
   end
 
-  @spec build_db_handler_args(Supavisor.id(), map(), map(), map()) :: map()
-  defp build_db_handler_args(id, auth, tenant_feature_flags, pool_ranch) do
-    {tenant, user, _mode, _db_name, _search_path} = id
-
-    proxy_auth =
-      Map.merge(auth, %{
-        port: pool_ranch.port,
+  @spec build_db_handler_args(
+          Supavisor.id(),
+          Supavisor.ConnectionParameters.t(),
+          map(),
+          map(),
+          keyword()
+        ) :: map()
+  defp build_db_handler_args(
+         Supavisor.id(tenant: tenant, user: user) = id,
+         connection_params,
+         tenant_feature_flags,
+         pool_ranch,
+         client_opts
+       ) do
+    proxy_connection_params = %{
+      connection_params
+      | port: pool_ranch.port,
         host: to_charlist(pool_ranch.host),
         ip_version: :inet,
         upstream_ssl: false,
         upstream_tls_ca: nil,
         upstream_verify: nil
-      })
+    }
 
     %{
       id: id,
-      auth: proxy_auth,
+      connection_params: proxy_connection_params,
       user: user,
       tenant: tenant,
       tenant_feature_flags: tenant_feature_flags,
       replica_type: :write,
       mode: :proxy,
       proxy: true,
-      log_level: nil
+      log_level: nil,
+      client_tls: Keyword.fetch!(client_opts, :client_ssl),
+      client_jit: Keyword.fetch!(client_opts, :client_jit)
     }
   end
 end

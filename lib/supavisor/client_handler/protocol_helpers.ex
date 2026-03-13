@@ -37,7 +37,9 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
           | {:error, PreparedStatementNotFoundError.t()}
 
   @type startup_message_data() ::
-          {atom(), {String.t(), String.t(), String.t() | nil, String.t() | nil}}
+          {atom(),
+           {String.t(), String.t(), String.t() | nil, String.t() | nil, boolean(),
+            boolean() | nil}}
 
   ## Startup Packet Processing
 
@@ -51,12 +53,14 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
           | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
-         {:ok, {type, {user, tenant_or_alias, db_name, search_path}}} <-
+         {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}} <-
            extract_and_validate_user_info(hello.payload) do
       Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
       app_name = normalize_app_name(hello.payload["application_name"])
       log_level = extract_log_level(hello)
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path}}, app_name, log_level}
+
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}, app_name,
+       log_level}
     end
   end
 
@@ -70,8 +74,11 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(payload)
 
     if Helpers.validate_name(user) and Helpers.validate_name(db_name) do
-      search_path = payload["search_path"] || payload["options"]["search_path"]
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path}}}
+      options = payload["options"] || %{}
+      search_path = payload["search_path"] || options["search_path"]
+      jit = options["jit"] == "true"
+      client_tls = options["client_tls"] && options["client_tls"] == "true"
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}}
     else
       {:error, %InvalidUserInfoError{user: user, db_name: db_name}}
     end

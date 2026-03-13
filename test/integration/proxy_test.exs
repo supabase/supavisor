@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.ProxyTest do
   use Supavisor.DataCase, async: false
 
   require Logger
+  require Supavisor
 
   alias Postgrex, as: P
   alias Supavisor.Protocol.Server
@@ -226,7 +227,13 @@ defmodule Supavisor.Integration.ProxyTest do
 
     [{_, client_pid, _}] =
       Supavisor.get_local_manager(
-        {{:single, "proxy_tenant1"}, "transaction", :transaction, "postgres", nil}
+        Supavisor.id(
+          type: :single,
+          tenant: "proxy_tenant1",
+          user: "transaction",
+          mode: :transaction,
+          db: "postgres"
+        )
       )
       |> :sys.get_state()
       |> Access.get(:tid)
@@ -428,7 +435,13 @@ defmodule Supavisor.Integration.ProxyTest do
 
     pool_sup_pid =
       Supavisor.get_global_sup(
-        {{:single, tenant}, db_conf[:username], :transaction, test_db, nil}
+        Supavisor.id(
+          type: :single,
+          tenant: tenant,
+          user: db_conf[:username],
+          mode: :transaction,
+          db: test_db
+        )
       )
 
     assert is_pid(pool_sup_pid)
@@ -635,7 +648,13 @@ defmodule Supavisor.Integration.ProxyTest do
     assert [%P.Result{rows: [["1"]]}] = P.SimpleConnection.call(conn, {:query, "select 1;"})
 
     tenant_id =
-      {{:single, "proxy_tenant1"}, "no_warm_pool_user", :session, db_conf[:database], nil}
+      Supavisor.id(
+        type: :single,
+        tenant: "proxy_tenant1",
+        user: "no_warm_pool_user",
+        mode: :session,
+        db: db_conf[:database]
+      )
 
     # Pool should have workers while connected
     assert count_pool_workers(tenant_id) > 0
@@ -823,7 +842,15 @@ defmodule Supavisor.Integration.ProxyTest do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     tenant = "proxy_pool_tenant"
     username = db_conf[:username] <> "." <> tenant
-    id = {{:single, tenant}, db_conf[:username], :transaction, db_conf[:database], nil}
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: db_conf[:username],
+        mode: :transaction,
+        db: db_conf[:database]
+      )
 
     assert {:ok, _pid, node2} = Cluster.start_node()
     Node.connect(node2)
