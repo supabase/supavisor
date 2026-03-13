@@ -128,20 +128,26 @@ defmodule Supavisor.MetricsCleaner do
 
     orphaned =
       Enum.reduce(all_tags_ids, MapSet.new(), fn tags_id, acc ->
-        tags = resolve_tags(reverse_tags_tid, tags_id)
+        case resolve_tags(reverse_tags_tid, tags_id) do
+          {:ok, tags} ->
+            if tags[:tenant] && tenant_down?(tags) do
+              MapSet.put(acc, tags_id)
+            else
+              acc
+            end
 
-        if tags[:tenant] && tenant_down?(tags) do
-          MapSet.put(acc, tags_id)
-        else
-          acc
+          {:error, :not_found} ->
+            MapSet.put(acc, tags_id)
         end
       end)
 
     # Delete from tags_tid to prevent new writes from reusing these ids.
     # reverse_tags_tid is left intact so exports still work until sweep.
     Enum.each(orphaned, fn tags_id ->
-      tags = resolve_tags(reverse_tags_tid, tags_id)
-      :ets.delete(tags_tid, tags)
+      case resolve_tags(reverse_tags_tid, tags_id) do
+        {:ok, tags} -> :ets.delete(tags_tid, tags)
+        {:error, _} -> :ok
+      end
     end)
 
     orphaned
@@ -149,8 +155,8 @@ defmodule Supavisor.MetricsCleaner do
 
   defp resolve_tags(reverse_tags_tid, tags_id) do
     case :ets.lookup(reverse_tags_tid, tags_id) do
-      [{_, tags}] -> tags
-      [] -> %{}
+      [{_, tags}] -> {:ok, tags}
+      [] -> {:error, :not_found}
     end
   end
 
@@ -168,8 +174,6 @@ defmodule Supavisor.MetricsCleaner do
   defp tenant_down?(%{tenant: tenant}) do
     Registry.lookup(Supavisor.Registry.TenantSups, tenant) == []
   end
-
-  defp tenant_down?(map) when map_size(map), do: true
 
   defp tenant_down?(_), do: false
 end

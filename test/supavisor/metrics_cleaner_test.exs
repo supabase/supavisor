@@ -62,6 +62,37 @@ defmodule Supavisor.MetricsCleanerTest do
     refute IO.iodata_to_binary(metrics) =~ ~r/non-existent/
   end
 
+  test "metrics with no reverse tag mapping are cleaned up" do
+    {_, {tags_tid, metric_tids, reverse_tags_tid, cache_tid}} =
+      Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
+
+    # Simulate a metric entry whose reverse tag mapping is missing.
+    # This can happen if tags_tid and reverse_tags_tid get out of sync.
+    orphan_tags_id = System.unique_integer()
+    metric_tid = elem(metric_tids, 0)
+    # Use metric_id 0 — the actual id doesn't matter for the cleaner
+    :ets.insert(metric_tid, {{0, orphan_tags_id}, 42})
+
+    # Verify the metric entry exists but has no reverse tag or cache mapping
+    assert :ets.lookup(metric_tid, {0, orphan_tags_id}) != []
+    assert :ets.lookup(reverse_tags_tid, orphan_tags_id) == []
+    assert :ets.lookup(cache_tid, orphan_tags_id) == []
+
+    # First clean: mark phase — tags_id has no reverse mapping so it is
+    # immediately considered orphaned. No tags_tid entry to delete.
+    @subject.clean()
+    assert_receive {:metrics, _}
+
+    # The metric entry still exists after the mark phase
+    assert :ets.lookup(metric_tid, {0, orphan_tags_id}) != []
+
+    # Second clean: sweep phase — removes the metric entry
+    @subject.clean()
+    assert_receive {:metrics, _}
+
+    assert :ets.lookup(metric_tid, {0, orphan_tags_id}) == []
+  end
+
   test "tag tables are cleaned up for orphaned tenants" do
     {_, {tags_tid, _metric_tids, reverse_tags_tid, cache_tid}} =
       Peep.Persistent.storage(Supavisor.Monitoring.PromEx.Metrics)
