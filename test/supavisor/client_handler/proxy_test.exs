@@ -2,6 +2,9 @@ defmodule Supavisor.ClientHandler.ProxyTest do
   use ExUnit.Case, async: true
 
   require Supavisor
+
+  import Supavisor.Asserts
+
   alias Supavisor.ClientHandler.Proxy
 
   alias Supavisor.Errors.{
@@ -24,7 +27,10 @@ defmodule Supavisor.ClientHandler.ProxyTest do
 
     test "fails if retries exhausted", %{id: id} do
       assert {:error, %ProxySupervisorUnavailableError{}} =
+               error =
                Proxy.do_start_proxy_connection(id, 200, agent_child_spec(), 0)
+
+      assert_valid_error(error)
     end
 
     test "property: handles concurrent exits on the supervisor", %{id: id} do
@@ -79,17 +85,26 @@ defmodule Supavisor.ClientHandler.ProxyTest do
 
     test "crashing child", %{id: id} do
       assert {:error, %FailedToStartProxyConnectionError{}} =
+               error =
                Proxy.do_start_proxy_connection(id, 200, crashing_child_spec(), 1)
+
+      assert_valid_error(error)
     end
 
     test "throwing child", %{id: id} do
       assert {:error, %FailedToStartProxyConnectionError{}} =
+               error =
                Proxy.do_start_proxy_connection(id, 200, throwing_child_spec(), 1)
+
+      assert_valid_error(error)
     end
 
     test "exiting child", %{id: id} do
       assert {:error, %FailedToStartProxyConnectionError{}} =
+               error =
                Proxy.do_start_proxy_connection(id, 200, exiting_child_spec(), 1)
+
+      assert_valid_error(error)
     end
 
     test "max children", %{id: id} do
@@ -99,7 +114,9 @@ defmodule Supavisor.ClientHandler.ProxyTest do
       end
 
       assert {:error, %MaxConnectionsError{mode: :proxy, limit: 100, code: "EMAXCONN"}} =
-               Proxy.do_start_proxy_connection(id, 100, agent_child_spec(), 3)
+               error = Proxy.do_start_proxy_connection(id, 100, agent_child_spec(), 3)
+
+      assert_valid_error(error)
     end
   end
 
