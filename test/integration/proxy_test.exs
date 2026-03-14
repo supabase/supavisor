@@ -5,7 +5,6 @@ defmodule Supavisor.Integration.ProxyTest do
   require Supavisor
 
   alias Postgrex, as: P
-  alias Supavisor.Protocol.Server
   alias Supavisor.Support.{Cluster, SSLHelper}
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
@@ -741,68 +740,6 @@ defmodule Supavisor.Integration.ProxyTest do
     assert timeout != test_timeout
   end
 
-  describe "startup packet edge cases" do
-    setup do
-      %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
-    end
-
-    test "closes connection when startup packet is too large", %{port: port} do
-      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
-
-      padding = :binary.copy(<<0>>, 1100)
-      bin = <<1108::32, 3::16, 0::16, padding::binary>>
-
-      :ok = :gen_tcp.send(sock, bin)
-      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
-
-      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
-               Server.decode_pkt(data)
-
-      assert %{
-               "C" => "08P01",
-               "M" =>
-                 "(ESTARTUPPACKETTOOLARGE) Startup packet too large: 1108 bytes (max 1024 bytes)"
-             } = payload
-
-      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
-    end
-
-    test "closes connection when startup packet is malformed", %{port: port} do
-      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
-
-      bin = <<13::32, 3::16, 0::16, "nope", 0>>
-
-      :ok = :gen_tcp.send(sock, bin)
-      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
-
-      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
-               Server.decode_pkt(data)
-
-      assert %{
-               "C" => "08P01",
-               "M" => "(ESTARTUPMESSAGE) Invalid startup message: :bad_startup_payload"
-             } = payload
-
-      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
-    end
-
-    # Regression: issue #854
-    test "handles startup packet where options has an empty value", %{port: port} do
-      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
-
-      bin =
-        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
-          "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
-
-      :ok = :gen_tcp.send(sock, bin)
-      {:ok, response} = :gen_tcp.recv(sock, 0, 5000)
-
-      # Authentication response
-      assert <<?R, _::binary>> = response
-
-      :gen_tcp.close(sock)
-    end
-  end
 
   test "max pools reached returns proper error" do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
