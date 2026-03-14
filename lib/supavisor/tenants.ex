@@ -7,6 +7,8 @@ defmodule Supavisor.Tenants do
   alias Supavisor.Repo
 
   alias Supavisor.CircuitBreaker
+  alias Supavisor.Errors.MultipleTenantUsersError
+  alias Supavisor.Errors.NoTenantIdentifierError
   alias Supavisor.Errors.TenantOrUserNotFoundError
   alias Supavisor.Secrets.ManagerSecrets
   alias Supavisor.Tenants.Cluster
@@ -90,37 +92,31 @@ defmodule Supavisor.Tenants do
   def get_tenant(_, _), do: nil
 
   @spec get_user_cache(:single | :cluster, String.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, map()} | {:error, TenantOrUserNotFoundError.t()}
+          {:ok, map()}
+          | {:error,
+             NoTenantIdentifierError.t()
+             | TenantOrUserNotFoundError.t()
+             | MultipleTenantUsersError.t()}
   def get_user_cache(type, user, external_id, sni_hostname) do
     cache_key = {:user_cache, type, user, external_id, sni_hostname}
 
-    result =
-      case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
-             {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
-              ttl: :timer.hours(24)}
-           end) do
-        {_, {:cached, value}} -> value
-        {_, {:cached, value}, _} -> value
-      end
-
-    case result do
-      {:error, :not_found} ->
-        {:error,
-         %TenantOrUserNotFoundError{
-           type: type,
-           user: user,
-           tenant_or_alias: external_id || sni_hostname
-         }}
-
-      other ->
-        other
+    case Cachex.fetch(Supavisor.Cache, cache_key, fn _key ->
+           {:commit, {:cached, get_user(type, user, external_id, sni_hostname)},
+            ttl: :timer.hours(24)}
+         end) do
+      {_, {:cached, value}} -> value
+      {_, {:cached, value}, _} -> value
     end
   end
 
   @spec get_user(atom(), String.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, map()} | {:error, any()}
+          {:ok, map()}
+          | {:error,
+             NoTenantIdentifierError.t()
+             | TenantOrUserNotFoundError.t()
+             | MultipleTenantUsersError.t()}
   def get_user(_, _, nil, nil) do
-    {:error, "Either external_id or sni_hostname must be provided"}
+    {:error, %NoTenantIdentifierError{}}
   end
 
   def get_user(:cluster, user, external_id, sni_hostname) do
@@ -135,10 +131,10 @@ defmodule Supavisor.Tenants do
         get_user(:single, user, ct.tenant_external_id, sni_hostname)
 
       [_ | _] ->
-        {:error, :multiple_results}
+        multiple_users_error(:cluster, user, external_id, sni_hostname)
 
       _ ->
-        {:error, :not_found}
+        not_found_error(:cluster, user, external_id, sni_hostname)
     end
   end
 
@@ -146,15 +142,33 @@ defmodule Supavisor.Tenants do
     query = build_user_query(user, external_id, sni_hostname)
 
     case Repo.all(query) do
-      [{%User{}, %Tenant{}} = {user, tenant}] ->
+      [{%User{}, %Tenant{}}] = [{user, tenant}] ->
         {:ok, %{user: user, tenant: tenant}}
 
       [_ | _] ->
-        {:error, :multiple_results}
+        multiple_users_error(:single, user, external_id, sni_hostname)
 
       _ ->
-        {:error, :not_found}
+        not_found_error(:single, user, external_id, sni_hostname)
     end
+  end
+
+  defp not_found_error(type, user, external_id, sni_hostname) do
+    {:error,
+     %TenantOrUserNotFoundError{
+       type: type,
+       user: user,
+       tenant_or_alias: external_id || sni_hostname
+     }}
+  end
+
+  defp multiple_users_error(type, user, external_id, sni_hostname) do
+    {:error,
+     %MultipleTenantUsersError{
+       type: type,
+       user: user,
+       tenant_or_alias: external_id || sni_hostname
+     }}
   end
 
   @spec get_manager_user(String.t()) :: User.t() | nil
