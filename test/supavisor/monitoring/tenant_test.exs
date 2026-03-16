@@ -1,6 +1,7 @@
 defmodule Supavisor.PromEx.Plugins.TenantTest do
   use Supavisor.E2ECase, async: false
 
+  require Supavisor
   alias Supavisor.PromEx.Plugins.Tenant
 
   @moduletag telemetry: true
@@ -103,6 +104,95 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                db_name: ctx.db,
                search_path: nil
              }
+    end
+  end
+
+  describe "execute_tenant_metrics/0" do
+    test "aggregates clients with different upstream_tls into one count" do
+      base_id =
+        Supavisor.id(
+          type: :single,
+          tenant: "metrics_tls_test",
+          user: "test_user",
+          mode: :transaction,
+          db: "test_db",
+          search_path: nil,
+          upstream_tls: false
+        )
+
+      tls_id = Supavisor.id(base_id, upstream_tls: true)
+
+      # Register 3 clients without TLS and 2 with TLS
+      for {id, i} <- Enum.with_index([base_id, base_id, base_id, tls_id, tls_id]) do
+        start_supervised!(
+          {Task,
+           fn ->
+             Registry.register(Supavisor.Registry.TenantClients, id, [])
+             Process.sleep(:infinity)
+           end},
+          id: :"client_#{i}"
+        )
+      end
+
+      ref = attach_handler([:supavisor, :connections])
+      Tenant.execute_tenant_metrics()
+
+      assert_receive {^ref, {[:supavisor, :connections], %{active: 5}, meta}}
+
+      assert meta == %{
+               tenant: "metrics_tls_test",
+               user: "test_user",
+               mode: :transaction,
+               type: :single,
+               db_name: "test_db",
+               search_path: nil
+             }
+
+      refute_receive {^ref, {[:supavisor, :connections], _, _}}
+    end
+  end
+
+  describe "execute_tenant_proxy_metrics/0" do
+    test "aggregates proxy clients with different upstream_tls into one count" do
+      base_id =
+        Supavisor.id(
+          type: :single,
+          tenant: "proxy_metrics_tls_test",
+          user: "test_user",
+          mode: :transaction,
+          db: "test_db",
+          search_path: nil,
+          upstream_tls: false
+        )
+
+      tls_id = Supavisor.id(base_id, upstream_tls: true)
+
+      for {id, i} <- Enum.with_index([base_id, base_id, tls_id]) do
+        start_supervised!(
+          {Task,
+           fn ->
+             Registry.register(Supavisor.Registry.TenantProxyClients, id, [])
+             Process.sleep(:infinity)
+           end},
+          id: :"proxy_client_#{i}"
+        )
+      end
+
+      ref = attach_handler([:supavisor, :proxy, :connections])
+      Tenant.execute_tenant_proxy_metrics()
+
+      assert_receive {^ref, {[:supavisor, :proxy, :connections], %{active: 3}, meta}}
+
+      assert meta == %{
+               tenant: "proxy_metrics_tls_test",
+               user: "test_user",
+               mode: :transaction,
+               type: :single,
+               db_name: "test_db",
+               search_path: nil
+             }
+
+      refute_receive {^ref, {[:supavisor, :proxy, :connections], _, _}}
     end
   end
 

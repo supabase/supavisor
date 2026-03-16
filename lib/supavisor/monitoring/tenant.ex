@@ -255,7 +255,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   def execute_tenant_metrics do
     Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
-    |> Enum.frequencies()
+    |> Enum.frequencies_by(&Supavisor.id(&1, upstream_tls: false))
     |> Enum.each(&emit_telemetry_for_tenant/1)
   end
 
@@ -366,7 +366,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   def execute_tenant_proxy_metrics do
     Registry.select(Supavisor.Registry.TenantProxyClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
-    |> Enum.frequencies()
+    |> Enum.frequencies_by(&Supavisor.id(&1, upstream_tls: false))
     |> Enum.each(&emit_proxy_telemetry_for_tenant/1)
   end
 
