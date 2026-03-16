@@ -86,7 +86,7 @@ defmodule Supavisor.Monitoring.PromEx do
   def do_cache_tenants_metrics do
     pools =
       Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
-      |> Enum.uniq()
+      |> Enum.uniq_by(&Supavisor.id(&1, upstream_tls: false))
 
     Enum.each(pools, fn Supavisor.id(tenant: tenant) ->
       {_, _, _, metrics_map} = fetch_metrics_for(tenant: tenant)
