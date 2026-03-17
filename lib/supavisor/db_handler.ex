@@ -369,6 +369,12 @@ defmodule Supavisor.DbHandler do
         {:keep_state_and_data,
          {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
 
+      {:error_response, %{"C" => "57P03"} = error} ->
+        Logger.error("DbHandler: Database is shutting down: #{inspect(error)}")
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
+
       {:error_response, error} ->
         Logger.error("DbHandler: Error response during auth: #{inspect(error)}")
 
