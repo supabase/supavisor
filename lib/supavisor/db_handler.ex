@@ -277,8 +277,15 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, {:terminate_with_error, error, pool_action}, _state, data) do
     Logger.debug("DbHandler: Transitioning to terminating_with_error state")
 
-    if pool_action == :shutdown_pool and not data.proxy do
-      Supavisor.Manager.shutdown_with_error(data.id, error)
+    case pool_action do
+      :shutdown_pool when not data.proxy ->
+        Supavisor.Manager.shutdown_with_error(data.id, error)
+
+      :graceful_shutdown_pool when not data.proxy ->
+        Supavisor.async_stop(data.id)
+
+      _ ->
+        :ok
     end
 
     # If not checked out yet, the postponed checkout will handle sending the error
@@ -373,7 +380,7 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Database is shutting down: #{inspect(error)}")
 
         {:keep_state_and_data,
-         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
+         {:next_event, :internal, {:terminate_with_error, error, :graceful_shutdown_pool}}}
 
       {:error_response, error} ->
         Logger.error("DbHandler: Error response during auth: #{inspect(error)}")

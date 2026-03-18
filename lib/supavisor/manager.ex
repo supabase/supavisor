@@ -498,12 +498,8 @@ defmodule Supavisor.Manager do
     end
   end
 
-  # Use a task to stop the pool supervisor to avoid deadlock, since the Manager
-  # is a child of the TenantSupervisor that Supavisor.stop/1 will terminate
   defp async_stop_sup(state) do
-    Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
-      Supavisor.stop(state.id)
-    end)
+    Supavisor.async_stop(state.id)
   end
 
   defp maybe_complete_drain(%{drain_caller: nil} = state), do: state

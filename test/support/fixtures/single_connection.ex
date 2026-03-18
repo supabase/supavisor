@@ -10,6 +10,8 @@ defmodule SingleConnection do
       [%P.Result{} = result] -> {:ok, result}
       other -> {:error, other}
     end
+  catch
+    :exit, {%Postgrex.Error{} = error, _} -> {:error, error}
   end
 
   def child_spec(conf) do
