@@ -73,7 +73,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   def extract_and_validate_user_info(payload) do
     {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(payload)
 
-    if Helpers.validate_name(user) and Helpers.validate_name(db_name) do
+    if Helpers.validate_name(user) and (is_nil(db_name) or Helpers.validate_name(db_name)) do
       options = payload["options"] || %{}
       search_path = payload["search_path"] || options["search_path"]
       jit = options["jit"] == "true"
