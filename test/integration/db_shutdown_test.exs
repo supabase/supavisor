@@ -98,8 +98,8 @@ defmodule Supavisor.Integration.DbShutdownTest do
              SingleConnection.query(new_conn, "SELECT 1")
 
     # In-progress transaction should complete successfully
-    assert {:ok, %P.Result{}} = Task.await(query_task, 10000)
-    Task.await(shutdown_task, 10000)
+    assert {:ok, %P.Result{}} = Task.await(query_task, 10_000)
+    Task.await(shutdown_task, 10_000)
   end
 
   test "session mode connection fails when db shuts down",
@@ -161,7 +161,7 @@ defmodule Supavisor.Integration.DbShutdownTest do
 
     # Fast shutdown terminates in-progress connections with admin_shutdown
     assert {:error, %Postgrex.Error{postgres: %{code: :admin_shutdown}}} =
-             Task.await(query_task, 10000)
+             Task.await(query_task, 10_000)
   end
 
   defp start_container do
