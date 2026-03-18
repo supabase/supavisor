@@ -3,7 +3,14 @@ defmodule Supavisor.TenantsTest do
 
   alias Supavisor.Tenants
   alias Supavisor.Tenants.{Cluster, Tenant, User}
-  alias Supavisor.Errors.TenantOrUserNotFoundError
+
+  alias Supavisor.Errors.{
+    MultipleTenantUsersError,
+    NoTenantIdentifierError,
+    TenantOrUserNotFoundError
+  }
+
+  import Supavisor.Asserts
   import Supavisor.TenantsFixtures
 
   describe "tenants" do
@@ -138,18 +145,68 @@ defmodule Supavisor.TenantsTest do
       assert %Ecto.Changeset{} = Tenants.change_tenant(tenant)
     end
 
-    test "get_user/4" do
+    test "get_user/4 returns user when tenant exists" do
       _tenant = tenant_fixture()
-      assert {:error, :not_found} = Tenants.get_user(:single, "no_user", "no_tenant", "")
 
       assert {:ok, %{tenant: _, user: _}} =
                Tenants.get_user(:single, "postgres", "dev_tenant", "")
     end
 
+    test "get_user/4 returns TenantOrUserNotFoundError when not found" do
+      assert {:error, %TenantOrUserNotFoundError{} = error} =
+               result = Tenants.get_user(:single, "no_user", "no_tenant", "")
+
+      assert_valid_error(result)
+      assert error.type == :single
+      assert error.user == "no_user"
+      assert error.tenant_or_alias == "no_tenant"
+    end
+
+    test "get_user/4 returns NoTenantIdentifierError when both external_id and sni_hostname are nil" do
+      assert {:error, %NoTenantIdentifierError{}} =
+               result = Tenants.get_user(:single, "postgres", nil, nil)
+
+      assert_valid_error(result)
+    end
+
+    test "get_user/4 returns MultipleTenantUsersError when multiple users match" do
+      external_id = "multi_user_tenant_#{System.unique_integer([:positive])}"
+
+      tenant_fixture(%{
+        external_id: external_id,
+        require_user: false,
+        auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
+        users: [
+          %{
+            "db_user" => "user_a",
+            "db_password" => "pass",
+            "pool_size" => 1,
+            "mode_type" => "transaction",
+            "is_manager" => true
+          },
+          %{
+            "db_user" => "user_b",
+            "db_password" => "pass",
+            "pool_size" => 1,
+            "mode_type" => "session",
+            "is_manager" => true
+          }
+        ]
+      })
+
+      assert {:error, %MultipleTenantUsersError{} = error} =
+               result = Tenants.get_user(:single, "user_a", external_id, nil)
+
+      assert_valid_error(result)
+      assert error.user == "user_a"
+      assert error.tenant_or_alias == external_id
+    end
+
     test "get_user_cache/4 returns TenantOrUserNotFoundError when tenant is not found" do
       assert {:error, %TenantOrUserNotFoundError{} = error} =
-               Tenants.get_user_cache(:single, "no_user", "no_tenant", nil)
+               result = Tenants.get_user_cache(:single, "no_user", "no_tenant", nil)
 
+      assert_valid_error(result)
       assert error.type == :single
       assert error.user == "no_user"
       assert error.tenant_or_alias == "no_tenant"
@@ -158,9 +215,17 @@ defmodule Supavisor.TenantsTest do
 
     test "get_user_cache/4 returns TenantOrUserNotFoundError with sni_hostname as tenant_or_alias" do
       assert {:error, %TenantOrUserNotFoundError{} = error} =
-               Tenants.get_user_cache(:single, "no_user", nil, "no_host.example.com")
+               result = Tenants.get_user_cache(:single, "no_user", nil, "no_host.example.com")
 
+      assert_valid_error(result)
       assert error.tenant_or_alias == "no_host.example.com"
+    end
+
+    test "get_user_cache/4 returns NoTenantIdentifierError when both identifiers are nil" do
+      assert {:error, %NoTenantIdentifierError{}} =
+               result = Tenants.get_user_cache(:single, "postgres", nil, nil)
+
+      assert_valid_error(result)
     end
 
     test "get_user_cache/4 returns user info when tenant exists" do
