@@ -31,7 +31,6 @@ config :supavisor,
   transaction_proxy_ports:
     System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107") |> parse_integer_list.(),
   max_pools: 10,
-  reconnect_retries: System.get_env("RECONNECT_RETRIES", "5") |> String.to_integer(),
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer()
 
 config :supavisor, Supavisor.Repo,

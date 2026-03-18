@@ -294,25 +294,17 @@ defmodule Supavisor.DbHandlerTest do
           secrets: secrets
         })
 
-      assert {:keep_state, _data, {:state_timeout, 2_500, :connect}} =
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
                Db.handle_event(:internal, :connect, :connect, %{
                  connection_params: conn_params,
                  sock: nil,
                  id: @id,
                  proxy: false,
-                 tenant: {:single, "some tenant"},
-                 reconnect_retries: 0
+                 tenant: {:single, "some tenant"}
                })
 
-      assert {:stop, {:failed_to_connect, _}} =
-               Db.handle_event(:internal, :connect, :connect, %{
-                 connection_params: conn_params,
-                 sock: nil,
-                 id: @id,
-                 proxy: false,
-                 tenant: {:single, "some tenant"},
-                 reconnect_retries: 5
-               })
+      assert error["C"] == "08006"
     end
 
     test "checkout returns error when in waiting_for_secrets state" do
@@ -370,12 +362,15 @@ defmodule Supavisor.DbHandlerTest do
         sock: {:gen_tcp, nil},
         id: @id,
         proxy: false,
-        reconnect_retries: 6,
+        tenant: {:single, "some tenant"},
         client_sock: nil
       }
 
-      assert {:stop, {:failed_to_connect, :ssl_not_available}} ==
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
                Db.handle_event(:internal, :connect, :connect, data)
+
+      assert error["C"] == "08006"
     end
   end
 
