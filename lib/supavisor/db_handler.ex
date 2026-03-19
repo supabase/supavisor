@@ -199,9 +199,9 @@ defmodule Supavisor.DbHandler do
     Telem.handler_action(:db_handler, :started, id)
 
     cooldown =
-      if not data.proxy,
-        do: connect_cooldown_remaining(id),
-        else: 0
+      if data.proxy,
+        do: 0,
+        else: connect_cooldown_remaining(id)
 
     if cooldown > 0 do
       {:ok, :connect_cooldown, data, {:state_timeout, cooldown, :connect}}
