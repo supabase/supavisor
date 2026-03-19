@@ -196,6 +196,84 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
     end
   end
 
+  describe "execute_pool_metrics/0" do
+    setup ctx do
+      create_instance([__MODULE__, ctx.line])
+    end
+
+    test "reports idle: 1 after transaction query completes", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "SELECT 1")
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 0}, meta}}
+
+      assert meta == %{
+               tenant: ctx.db,
+               user: String.split(ctx.user, ".") |> List.first(),
+               mode: :transaction,
+               type: :single,
+               db_name: ctx.db,
+               search_path: nil
+             }
+    end
+
+    test "reports checked_out: 1 during an open transaction", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "BEGIN")
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1}, meta}}
+
+      assert meta.mode == :transaction
+      assert meta.tenant == ctx.db
+    end
+
+    test "reports checked_out: 1 for an active session connection", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_session),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "SELECT 1")
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1}, meta}}
+
+      assert meta.mode == :session
+      assert meta.tenant == ctx.db
+    end
+  end
+
   def handle_event(event_name, measurement, meta, {pid, ref}) do
     send(pid, {ref, {event_name, measurement, meta}})
   end
