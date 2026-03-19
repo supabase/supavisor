@@ -164,11 +164,10 @@ defmodule Supavisor.DbHandlerTest do
 
       args = %{id: @id}
 
-      {:ok, :connect, data, {_, next_event, _}} = Db.init(args)
-      assert next_event == :internal
+      {:ok, :connect, data, {:next_event, :internal, :connect}} = Db.init(args)
       assert data.sock == nil
       assert data.caller == nil
-      assert data.connection_params == conn_params
+      assert data.connection_params.secrets == secrets
       assert data.tenant == manager_config.tenant
       assert data.db_state == nil
       assert data.parameter_status == %{}
@@ -200,7 +199,7 @@ defmodule Supavisor.DbHandlerTest do
 
       args = %{id: @id}
 
-      assert {:ok, :waiting_for_secrets, data} = Db.init(args)
+      assert {:ok, :waiting_for_secrets, data, []} = Db.init(args)
       assert data.id == @id
       assert data.manager_ref != nil
     end
@@ -230,7 +229,7 @@ defmodule Supavisor.DbHandlerTest do
 
       # Initialize in waiting_for_secrets state
       args = %{id: @id}
-      assert {:ok, :waiting_for_secrets, data} = Db.init(args)
+      assert {:ok, :waiting_for_secrets, data, []} = Db.init(args)
 
       # Now put secrets in cache
       Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(@id, secrets)

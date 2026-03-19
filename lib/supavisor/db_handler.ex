@@ -52,6 +52,7 @@ defmodule Supavisor.DbHandler do
 
   @type state ::
           :connect
+          | :connect_cooldown
           | :authentication
           | :idle
           | :busy
@@ -170,27 +171,10 @@ defmodule Supavisor.DbHandler do
 
     Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
 
-    {connection_params, manager_ref} =
-      if config[:proxy] do
-        {config.connection_params, nil}
-      else
-        case get_connection_params_with_secrets(config.connection_params, id) do
-          {:ok, conn_params_with_secrets} ->
-            {conn_params_with_secrets, nil}
-
-          {:error, :no_secrets} ->
-            Logger.warning("DbHandler: Secrets not available, entering waiting state")
-            manager_pid = Supavisor.get_local_manager(id)
-            ref = Process.monitor(manager_pid)
-            Supavisor.Manager.register_waiting_for_secrets(id, self())
-            {config.connection_params, ref}
-        end
-      end
-
     data = %{
       id: id,
       sock: nil,
-      connection_params: connection_params,
+      connection_params: config.connection_params,
       user: config.user,
       tenant: config.tenant,
       tenant_feature_flags: config.tenant_feature_flags,
@@ -209,15 +193,21 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       client_sock: nil,
       terminating_error: nil,
-      manager_ref: manager_ref
+      manager_ref: nil
     }
 
     Telem.handler_action(:db_handler, :started, id)
 
-    if manager_ref do
-      {:ok, :waiting_for_secrets, data}
+    cooldown =
+      if not data.proxy,
+        do: connect_cooldown_remaining(id),
+        else: 0
+
+    if cooldown > 0 do
+      {:ok, :connect_cooldown, data, {:state_timeout, cooldown, :connect}}
     else
-      {:ok, :connect, data, {:next_event, :internal, :connect}}
+      {initial_state, data, actions} = resolve_secrets(data)
+      {:ok, initial_state, data, actions}
     end
   end
 
@@ -225,9 +215,12 @@ defmodule Supavisor.DbHandler do
   def callback_mode, do: [:handle_event_function]
 
   @impl true
-  def handle_event(:internal, :connect, :connect, %{connection_params: conn_params} = data) do
-    if not data.proxy, do: await_connect_cooldown(data.id)
+  def handle_event(:state_timeout, :connect, :connect_cooldown, data) do
+    {next_state, data, actions} = resolve_secrets(data)
+    {:next_state, next_state, data, actions}
+  end
 
+  def handle_event(:internal, :connect, :connect, %{connection_params: conn_params} = data) do
     Logger.debug("DbHandler: Try to connect to DB")
 
     sock_opts = [
@@ -981,18 +974,33 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
   end
 
-  defp await_connect_cooldown(id) do
+  defp resolve_secrets(data) do
+    if data.proxy do
+      {:connect, data, {:next_event, :internal, :connect}}
+    else
+      case get_connection_params_with_secrets(data.connection_params, data.id) do
+        {:ok, conn_params_with_secrets} ->
+          {:connect, %{data | connection_params: conn_params_with_secrets},
+           {:next_event, :internal, :connect}}
+
+        {:error, :no_secrets} ->
+          Logger.warning("DbHandler: Secrets not available, entering waiting state")
+          manager_pid = Supavisor.get_local_manager(data.id)
+          ref = Process.monitor(manager_pid)
+          Supavisor.Manager.register_waiting_for_secrets(data.id, self())
+          {:waiting_for_secrets, %{data | manager_ref: ref}, []}
+      end
+    end
+  end
+
+  defp connect_cooldown_remaining(id) do
     case Supavisor.TenantCache.get_last_connect_failure(id) do
       nil ->
-        :ok
+        0
 
       last_failure ->
         elapsed = System.monotonic_time(:millisecond) - last_failure
-        remaining = @connect_cooldown_ms - elapsed
-
-        if remaining > 0 do
-          Process.sleep(remaining)
-        end
+        @connect_cooldown_ms - elapsed
     end
   end
 end
