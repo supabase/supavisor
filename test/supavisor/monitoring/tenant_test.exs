@@ -149,7 +149,8 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                search_path: nil
              }
 
-      refute_receive {^ref, {[:supavisor, :connections], _, _}}
+      refute_receive {^ref, {[:supavisor, :connections], %{active: 3}, _}}
+      refute_receive {^ref, {[:supavisor, :connections], %{active: 2}, _}}
     end
   end
 
@@ -193,7 +194,8 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                search_path: nil
              }
 
-      refute_receive {^ref, {[:supavisor, :proxy, :connections], _, _}}
+      refute_receive {^ref, {[:supavisor, :proxy, :connections], %{active: 2}, _}}
+      refute_receive {^ref, {[:supavisor, :proxy, :connections], %{active: 1}, _}}
     end
   end
 
