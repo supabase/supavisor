@@ -277,7 +277,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       assert meta.tenant == ctx.db
     end
 
-    test "logs and error if pool status request times out", ctx do
+    test "logs an error if pool status request times out", ctx do
       conn =
         start_supervised!(
           {SingleConnection,
@@ -305,8 +305,8 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
 
       ref = attach_handler([:supavisor, :pool, :connections])
 
-      capture_log(fn -> Tenant.execute_pool_metrics() end) =~
-        "Failed to execute pool metrics: time out"
+      assert capture_log(fn -> Tenant.execute_pool_metrics() end) =~
+               "Failed to execute pool metrics: timeout"
 
       refute_receive {^ref, {[:supavisor, :pool, :connections], _, _}}
     end
