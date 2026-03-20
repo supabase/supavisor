@@ -391,9 +391,15 @@ defmodule Supavisor.Manager do
   end
 
   def handle_cast(:notify_secrets_available, state) do
-    Logger.info(
-      "Manager: Notifying #{length(state.waiting_for_secrets)} db handlers that secrets are available"
-    )
+    case state.waiting_for_secrets do
+      [] ->
+        :ok
+
+      _ ->
+        Logger.info(
+          "Manager: Notifying #{length(state.waiting_for_secrets)} db handlers that secrets are available"
+        )
+    end
 
     for {ref, pid} <- state.waiting_for_secrets do
       Process.demonitor(ref, [:flush])
