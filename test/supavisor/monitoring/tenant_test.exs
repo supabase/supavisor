@@ -4,6 +4,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
   require Supavisor
   import ExUnit.CaptureLog
   alias Supavisor.PromEx.Plugins.Tenant
+  alias Supavisor.PromEx.Plugins.TenantTest.FakePool
 
   @moduletag telemetry: true
 
@@ -309,6 +310,40 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
 
       refute_receive {^ref, {[:supavisor, :pool, :connections], _, _}}
     end
+
+    test "aggregates multiple pools with the same id into one event" do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: "pool_cluster_test",
+          user: "test_user",
+          mode: :transaction,
+          db: "test_db",
+          search_path: nil,
+          upstream_tls: false
+        )
+
+      # Simulate cluster mode: two pools registered under the same canonical id
+      # but with different replica_type and pool_index (as TenantSupervisor does).
+      for {replica_type, idx, status} <- [
+            {:primary, 0, {:ready, _idle = 3, 0, _checked_out = 1}},
+            {:replica, 1, {:ready, _idle = 1, 0, _checked_out = 2}}
+          ] do
+        start_supervised!(
+          {FakePool, {{:pool, replica_type, idx, id}, status}},
+          id: :"fake_pool_#{idx}"
+        )
+      end
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      # idle: 3+1=4, checked_out: 1+2=3, exactly ONE event (not two)
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 4, checked_out: 3}, meta}}
+      assert meta.tenant == "pool_cluster_test"
+      refute_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 3, checked_out: 1}, _}}
+      refute_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 2}, _}}
+    end
   end
 
   def handle_event(event_name, measurement, meta, {pid, ref}) do
@@ -330,5 +365,22 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
     end)
 
     ref
+  end
+
+  defmodule FakePool do
+    @moduledoc false
+    use GenServer
+
+    def start_link({registry_key, status}),
+      do: GenServer.start_link(__MODULE__, {registry_key, status})
+
+    @impl true
+    def init({registry_key, status}) do
+      Registry.register(Supavisor.Registry.Tenants, registry_key, :primary)
+      {:ok, status}
+    end
+
+    @impl true
+    def handle_call(:status, _from, status), do: {:reply, status, status}
   end
 end
