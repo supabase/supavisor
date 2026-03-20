@@ -17,7 +17,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       concurrent_connections(poll_rate),
       concurrent_proxy_connections(poll_rate),
       concurrent_tenants(poll_rate),
-      client_connections_lifetime(poll_rate)
+      client_connections_lifetime(poll_rate),
+      concurrent_pool_connections(poll_rate)
     ]
   end
 
@@ -420,6 +421,91 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     :telemetry.execute(
       [:supavisor, :tenants],
       %{active: num}
+    )
+  end
+
+  defp concurrent_pool_connections(poll_rate) do
+    Polling.build(
+      :supavisor_concurrent_pool_connections,
+      poll_rate,
+      {__MODULE__, :execute_pool_metrics, []},
+      [
+        last_value(
+          [:supavisor, :pool, :connections, :checked_out],
+          event_name: [:supavisor, :pool, :connections],
+          description: "The count of checked-out (busy) pool connections per tenant.",
+          measurement: :checked_out,
+          tags: @tags
+        ),
+        last_value(
+          [:supavisor, :pool, :connections, :idle],
+          event_name: [:supavisor, :pool, :connections],
+          description: "The count of idle pool connections per tenant.",
+          measurement: :idle,
+          tags: @tags
+        )
+      ]
+    )
+  end
+
+  def execute_pool_metrics do
+    Registry.select(Supavisor.Registry.Tenants, [
+      # {:pool, replica_type, pool_index, args.id}
+      {{{:pool, :_, :_, :"$1"}, :"$2", :_}, [], [{{:"$1", :"$2"}}]}
+    ])
+    |> Enum.group_by(
+      fn {id, _pid} -> Supavisor.id(id, upstream_tls: false) end,
+      fn {_id, pid} -> pid end
+    )
+    |> Enum.each(fn {Supavisor.id(tenant: tenant_id) = id, pool_pids} ->
+      {idle, checked_out} =
+        Enum.reduce(pool_pids, {0, 0}, fn pid, {idle_acc, co_acc} ->
+          case pool_status(tenant_id, pid) do
+            {:error, _reason} ->
+              {idle_acc, co_acc}
+
+            {:ok, {_state, idle, _overflow_in_use, total_checked_out}} ->
+              {idle_acc + idle, co_acc + total_checked_out}
+          end
+        end)
+
+      emit_pool_telemetry({id, idle, checked_out})
+    end)
+  end
+
+  defp pool_status(tenant_id, pool_pid) when is_pid(pool_pid) do
+    {:ok, :gen_server.call(pool_pid, :status, 1_000)}
+  catch
+    :exit, reason ->
+      Logger.error(
+        "Failed to get pool status for #{tenant_id}(#{inspect(pool_pid)}): #{inspect(reason)}"
+      )
+
+      {:error, reason}
+  end
+
+  @spec emit_pool_telemetry({S.id(), non_neg_integer(), non_neg_integer()}) :: :ok
+  def emit_pool_telemetry(
+        {Supavisor.id(
+           type: type,
+           tenant: tenant,
+           user: user,
+           mode: mode,
+           db: db_name,
+           search_path: search_path
+         ), idle, checked_out}
+      ) do
+    :telemetry.execute(
+      [:supavisor, :pool, :connections],
+      %{idle: idle, checked_out: checked_out},
+      %{
+        tenant: tenant,
+        user: user,
+        mode: mode,
+        type: type,
+        db_name: db_name,
+        search_path: search_path
+      }
     )
   end
 end

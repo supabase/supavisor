@@ -2,7 +2,9 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
   use Supavisor.E2ECase, async: false
 
   require Supavisor
+  import ExUnit.CaptureLog
   alias Supavisor.PromEx.Plugins.Tenant
+  alias Supavisor.PromEx.Plugins.TenantTest.FakePool
 
   @moduletag telemetry: true
 
@@ -148,7 +150,8 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                search_path: nil
              }
 
-      refute_receive {^ref, {[:supavisor, :connections], _, _}}
+      refute_receive {^ref, {[:supavisor, :connections], %{active: 3}, _}}
+      refute_receive {^ref, {[:supavisor, :connections], %{active: 2}, _}}
     end
   end
 
@@ -192,7 +195,206 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                search_path: nil
              }
 
-      refute_receive {^ref, {[:supavisor, :proxy, :connections], _, _}}
+      refute_receive {^ref, {[:supavisor, :proxy, :connections], %{active: 2}, _}}
+      refute_receive {^ref, {[:supavisor, :proxy, :connections], %{active: 1}, _}}
+    end
+  end
+
+  describe "execute_pool_metrics/0" do
+    setup ctx do
+      create_instance([__MODULE__, ctx.line])
+    end
+
+    test "reports idle: 1 after transaction query completes", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "SELECT 1")
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 0}, meta}}
+
+      assert meta == %{
+               tenant: ctx.db,
+               user: String.split(ctx.user, ".") |> List.first(),
+               mode: :transaction,
+               type: :single,
+               db_name: ctx.db,
+               search_path: nil
+             }
+    end
+
+    test "reports checked_out: 1 during an open transaction", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "BEGIN")
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1}, meta}}
+
+      assert meta.mode == :transaction
+      assert meta.tenant == ctx.db
+    end
+
+    test "reports checked_out: 1 for an active session connection", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_session),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "SELECT 1")
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1}, meta}}
+
+      assert meta.mode == :session
+      assert meta.tenant == ctx.db
+    end
+
+    test "logs an error if pool status request times out", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_session),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "SELECT 1")
+
+      pid =
+        Supavisor.get_local_pool(
+          Supavisor.id(
+            type: :single,
+            tenant: ctx.external_id,
+            user: String.split(ctx.user, ".") |> List.first(),
+            mode: :session,
+            db: ctx.external_id
+          )
+        )
+
+      :sys.suspend(pid)
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+
+      assert capture_log(fn -> Tenant.execute_pool_metrics() end) =~
+               "Failed to get pool status for #{ctx.external_id}(#{inspect(pid)}): {:timeout"
+
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 0}, _}}
+    end
+
+    test "reports metrics for the remaining pools if a status for a single one times out", ctx do
+      session_conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_session),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(session_conn, "SELECT 1")
+
+      session_pid =
+        Supavisor.get_local_pool(
+          Supavisor.id(
+            type: :single,
+            tenant: ctx.external_id,
+            user: String.split(ctx.user, ".") |> List.first(),
+            mode: :session,
+            db: ctx.external_id
+          )
+        )
+
+      :sys.suspend(session_pid)
+
+      transaction_conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      Task.start_link(fn -> SingleConnection.query(transaction_conn, "SELECT pg_sleep(2)") end)
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      # Still receives metrics for the timed-out pool (with 0 connections)
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 0},
+                       %{tenant: tenant_id, mode: :session}}}
+
+      # And also receives metrics for the other pool
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1},
+                       %{tenant: ^tenant_id, mode: :transaction}}}
+    end
+
+    test "aggregates multiple pools with the same id into one event" do
+      id =
+        Supavisor.id(
+          type: :cluster,
+          tenant: "pool_cluster_test",
+          user: "test_user",
+          mode: :transaction,
+          db: "test_db",
+          search_path: nil,
+          upstream_tls: false
+        )
+
+      # Simulate cluster mode: two pools registered under the same canonical id
+      # but with different replica_type and pool_index (as TenantSupervisor does).
+      for {replica_type, idx, status} <- [
+            {:primary, 0, {:ready, _idle = 3, 0, _checked_out = 1}},
+            {:replica, 1, {:ready, _idle = 1, 0, _checked_out = 2}}
+          ] do
+        start_supervised!(
+          {FakePool, {{:pool, replica_type, idx, id}, status}},
+          id: :"fake_pool_#{idx}"
+        )
+      end
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      # idle: 3+1=4, checked_out: 1+2=3, exactly ONE event (not two)
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 4, checked_out: 3}, meta}}
+      assert meta.tenant == "pool_cluster_test"
+      refute_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 3, checked_out: 1}, _}}
+      refute_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 2}, _}}
     end
   end
 
@@ -215,5 +417,22 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
     end)
 
     ref
+  end
+
+  defmodule FakePool do
+    @moduledoc false
+    use GenServer
+
+    def start_link({registry_key, status}),
+      do: GenServer.start_link(__MODULE__, {registry_key, status})
+
+    @impl true
+    def init({registry_key, status}) do
+      Registry.register(Supavisor.Registry.Tenants, registry_key, :primary)
+      {:ok, status}
+    end
+
+    @impl true
+    def handle_call(:status, _from, status), do: {:reply, status, status}
   end
 end
