@@ -2,6 +2,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
   use Supavisor.E2ECase, async: false
 
   require Supavisor
+  import ExUnit.CaptureLog
   alias Supavisor.PromEx.Plugins.Tenant
 
   @moduletag telemetry: true
@@ -271,6 +272,40 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
 
       assert meta.mode == :session
       assert meta.tenant == ctx.db
+    end
+
+    test "logs and error if pool status request times out", ctx do
+      conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_session),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(conn, "SELECT pg_sleep(2)")
+
+      pid =
+        Supavisor.get_local_pool(
+          Supavisor.id(
+            type: :single,
+            tenant: ctx.external_id,
+            user: String.split(ctx.user, ".") |> List.first(),
+            mode: :session,
+            db: ctx.external_id
+          )
+        )
+
+      :sys.suspend(pid)
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+
+      capture_log(fn -> Tenant.execute_pool_metrics() end) =~
+        "Failed to execute pool metrics: time out"
+
+      refute_receive {^ref, {[:supavisor, :pool, :connections], _, _}}
     end
   end
 

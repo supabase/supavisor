@@ -450,21 +450,28 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   def execute_pool_metrics do
     Registry.select(Supavisor.Registry.Tenants, [
+      # {:pool, replica_type, pool_index, args.id}
       {{{:pool, :_, :_, :"$1"}, :"$2", :_}, [], [{{:"$1", :"$2"}}]}
     ])
     |> Enum.group_by(
-         fn {id, _pid} -> Supavisor.id(id, upstream_tls: false) end,
-         fn {_id, pid} -> pid end
-       )
+      fn {id, _pid} -> Supavisor.id(id, upstream_tls: false) end,
+      fn {_id, pid} -> pid end
+    )
     |> Enum.each(fn {id, pool_pids} ->
-         {idle, checked_out} =
-           Enum.reduce(pool_pids, {0, 0}, fn pid, {idle_acc, co_acc} ->
-             {_state, idle, _overflow_in_use, total_checked_out} = :poolboy.status(pid)
-             {idle_acc + idle, co_acc + total_checked_out}
-           end)
+      {idle, checked_out} =
+        Enum.reduce(pool_pids, {0, 0}, fn pid, {idle_acc, co_acc} ->
+          {_state, idle, _overflow_in_use, total_checked_out} =
+            :gen_server.call(pid, :status, 1_000)
 
-         emit_pool_telemetry({id, idle, checked_out})
-       end)
+          {idle_acc + idle, co_acc + total_checked_out}
+        end)
+
+      emit_pool_telemetry({id, idle, checked_out})
+    end)
+  catch
+    :exit, reason ->
+      Logger.error("Failed to execute pool metrics: #{inspect(reason)}")
+      :ok
   end
 
   @spec emit_pool_telemetry({S.id(), non_neg_integer(), non_neg_integer()}) :: :ok
