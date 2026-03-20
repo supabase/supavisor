@@ -52,8 +52,10 @@ defmodule Supavisor.ClientHandler.Error do
 
   @spec process(term(), term()) :: map()
   defp process(e, stage) when is_exception(e) do
+    postgres_error = e.__struct__.postgres_error(e)
+
     error =
-      case e.__struct__.postgres_error(e) do
+      case postgres_error do
         nil -> nil
         postgres_error -> Server.encode_error_message(postgres_error)
       end
@@ -63,9 +65,11 @@ defmodule Supavisor.ClientHandler.Error do
       log_message: e.__struct__.log_message(e),
       log_level: e.__struct__.log_level(e),
       # It's very important for the protocol implementation that we send ReadyForQuery after
-      # fatal errors in authenticated connections. In non authneticated connections, we should
+      # non-fatal errors in authenticated connections. In non authneticated connections, we should
       # close without sending ReadyForQuery
-      send_ready_for_query: stage == :authenticated,
+      send_ready_for_query:
+        stage == :authenticated &&
+          postgres_error && postgres_error["S"] not in ["PANIC", "FATAL"],
       auth_error: e.__struct__.is_auth_error(e)
     }
   end

@@ -291,15 +291,16 @@ defmodule Supavisor.Integration.ProxyTest do
     {:ok, conn4} = single_connection(connection_opts)
 
     # Try to execute query on 4th connection - should timeout after 500ms
-    assert %Postgrex.Error{
-             postgres: %{
-               code: :internal_error,
-               message:
-                 "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 500ms in Transaction mode",
-               pg_code: "XX000",
-               severity: "FATAL"
-             }
-           } = P.SimpleConnection.call(conn4, {:query, "BEGIN;"})
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :internal_error,
+                message:
+                  "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 500ms in Transaction mode",
+                pg_code: "XX000",
+                severity: "FATAL"
+              }
+            }} = SingleConnection.query(conn4, "BEGIN;")
   end
 
   test "change role password" do

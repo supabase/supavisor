@@ -52,18 +52,27 @@ defmodule Supavisor.DbHandler do
 
   @type state ::
           :connect
+          | :connect_cooldown
           | :authentication
           | :idle
           | :busy
           | :terminating_with_error
           | :waiting_for_secrets
 
-  @reconnect_timeout 2_500
-  @reconnect_timeout_proxy 500
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @cleanup_buffer_limit 65_536
+  @connect_cooldown_ms 2_500
+
+  @auth_error_actions %{
+    "28P01" => {:keep_pool, :invalidate_secrets},
+    "28000" => {:keep_pool, :invalidate_secrets},
+    "3D000" => {:shutdown_pool, :none},
+    "42501" => {:shutdown_pool, :none},
+    "22023" => {:shutdown_pool, :none},
+    "57P03" => {:graceful_shutdown_pool, :none}
+  }
 
   @doc """
   Starts a DbHandler state machine.
@@ -162,27 +171,10 @@ defmodule Supavisor.DbHandler do
 
     Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
 
-    {connection_params, manager_ref} =
-      if config[:proxy] do
-        {config.connection_params, nil}
-      else
-        case get_connection_params_with_secrets(config.connection_params, id) do
-          {:ok, conn_params_with_secrets} ->
-            {conn_params_with_secrets, nil}
-
-          {:error, :no_secrets} ->
-            Logger.warning("DbHandler: Secrets not available, entering waiting state")
-            manager_pid = Supavisor.get_local_manager(id)
-            ref = Process.monitor(manager_pid)
-            Supavisor.Manager.register_waiting_for_secrets(id, self())
-            {config.connection_params, ref}
-        end
-      end
-
     data = %{
       id: id,
       sock: nil,
-      connection_params: connection_params,
+      connection_params: config.connection_params,
       user: config.user,
       tenant: config.tenant,
       tenant_feature_flags: config.tenant_feature_flags,
@@ -200,17 +192,22 @@ defmodule Supavisor.DbHandler do
       replica_type: config.replica_type,
       caller: nil,
       client_sock: nil,
-      reconnect_retries: 0,
       terminating_error: nil,
-      manager_ref: manager_ref
+      manager_ref: nil
     }
 
     Telem.handler_action(:db_handler, :started, id)
 
-    if manager_ref do
-      {:ok, :waiting_for_secrets, data}
+    cooldown =
+      if data.proxy,
+        do: 0,
+        else: connect_cooldown_remaining(id)
+
+    if cooldown > 0 do
+      {:ok, :connect_cooldown, data, {:state_timeout, cooldown, :connect}}
     else
-      {:ok, :connect, data, {:next_event, :internal, :connect}}
+      {initial_state, data, actions} = resolve_secrets(data)
+      {:ok, initial_state, data, actions}
     end
   end
 
@@ -218,6 +215,11 @@ defmodule Supavisor.DbHandler do
   def callback_mode, do: [:handle_event_function]
 
   @impl true
+  def handle_event(:state_timeout, :connect, :connect_cooldown, data) do
+    {next_state, data, actions} = resolve_secrets(data)
+    {:next_state, next_state, data, actions}
+  end
+
   def handle_event(:internal, :connect, :connect, %{connection_params: conn_params} = data) do
     Logger.debug("DbHandler: Try to connect to DB")
 
@@ -262,7 +264,7 @@ defmodule Supavisor.DbHandler do
 
           {:error, reason} ->
             Logger.error("DbHandler: Handshake error #{inspect(reason)}")
-            maybe_reconnect(reason, data)
+            handle_connection_failure(reason, data)
         end
 
       other ->
@@ -277,8 +279,15 @@ defmodule Supavisor.DbHandler do
   def handle_event(:internal, {:terminate_with_error, error, pool_action}, _state, data) do
     Logger.debug("DbHandler: Transitioning to terminating_with_error state")
 
-    if pool_action == :shutdown_pool and not data.proxy do
-      Supavisor.Manager.shutdown_with_error(data.id, error)
+    case pool_action do
+      :shutdown_pool when not data.proxy ->
+        Supavisor.Manager.shutdown_with_error(data.id, error)
+
+      :graceful_shutdown_pool when not data.proxy ->
+        Supavisor.async_stop(data.id)
+
+      _ ->
+        :ok
     end
 
     # If not checked out yet, the postponed checkout will handle sending the error
@@ -296,13 +305,6 @@ defmodule Supavisor.DbHandler do
   def handle_event(:cast, :finalize_termination, :terminating_with_error, _data) do
     Logger.debug("DbHandler: Stopping from terminating_with_error state")
     {:stop, :normal}
-  end
-
-  def handle_event(:state_timeout, :connect, _state, data) do
-    retry = data.reconnect_retries
-    Logger.warning("DbHandler: Reconnect #{retry} to DB")
-
-    {:keep_state, %{data | reconnect_retries: retry + 1}, {:next_event, :internal, :connect}}
   end
 
   def handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, _data) do
@@ -335,45 +337,17 @@ defmodule Supavisor.DbHandler do
       :authentication_cleartext ->
         {:keep_state, data}
 
-      {:error_response, %{"S" => "FATAL", "C" => "28P01"} = error} ->
-        reason = error["M"] || "Authentication failed"
-        handle_authentication_error(data, reason)
-        Logger.error("DbHandler: Auth error #{inspect(error)}")
-
-        {:keep_state_and_data,
-         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
-
-      {:error_response, %{"S" => "FATAL", "C" => "28000"} = error} ->
-        reason = error["M"] || "Authentication failed"
-        handle_authentication_error(data, reason)
-        Logger.error("DbHandler: Auth error #{inspect(error)}")
-
-        {:keep_state_and_data,
-         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
-
-      {:error_response, %{"S" => "FATAL", "C" => "3D000"} = error} ->
-        Logger.error("DbHandler: Database does not exist: #{inspect(error)}")
-
-        {:keep_state_and_data,
-         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
-
-      {:error_response, %{"S" => "FATAL", "C" => "42501"} = error} ->
-        Logger.error("DbHandler: Insufficient privilege: #{inspect(error)}")
-
-        {:keep_state_and_data,
-         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
-
-      {:error_response, %{"S" => "FATAL", "C" => "22023"} = error} ->
-        Logger.error("DbHandler: Invalid parameter value: #{inspect(error)}")
-
-        {:keep_state_and_data,
-         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
-
       {:error_response, error} ->
-        Logger.error("DbHandler: Error response during auth: #{inspect(error)}")
+        {pool_action, side_effect} = Map.get(@auth_error_actions, error["C"], {:keep_pool, :none})
+
+        if side_effect == :invalidate_secrets do
+          handle_authentication_error(data, error["M"] || "Authentication failed")
+        end
+
+        Logger.error("DbHandler: Auth error #{inspect(error)}")
 
         {:keep_state_and_data,
-         {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
+         {:next_event, :internal, {:terminate_with_error, error, pool_action}}}
 
       {:ready_for_query, acc} ->
         ps = acc.ps
@@ -386,7 +360,7 @@ defmodule Supavisor.DbHandler do
           Supavisor.set_parameter_status(data.id, ps)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps, reconnect_retries: 0}}
+        {:next_state, :idle, %{data | parameter_status: ps}}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
@@ -540,14 +514,18 @@ defmodule Supavisor.DbHandler do
     {:stop, {:shutdown, :db_termination}, data}
   end
 
+  def handle_event(_, {closed, _}, :authentication, data) when closed in @sock_closed do
+    Logger.error("DbHandler: Db connection closed when state was authentication")
+
+    handle_connection_failure({:error, :db_connection_closed_in_auth}, data)
+  end
+
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     if state != :terminating_with_error do
       Logger.error("DbHandler: Db connection closed when state was #{state}")
     end
 
-    if Application.get_env(:supavisor, :reconnect_on_db_close),
-      do: {:next_state, :connect, data, {:state_timeout, reconnect_timeout(data), :connect}},
-      else: {:stop, {:shutdown, :db_termination}, data}
+    {:stop, {:shutdown, :db_termination}, data}
   end
 
   # linked client_handler went down
@@ -862,13 +840,6 @@ defmodule Supavisor.DbHandler do
     Supavisor.UpstreamAuthentication.delete_upstream_auth_secrets(data.id)
   end
 
-  @spec reconnect_timeout(map()) :: pos_integer()
-  def reconnect_timeout(%{proxy: true}),
-    do: @reconnect_timeout_proxy
-
-  def reconnect_timeout(_),
-    do: @reconnect_timeout
-
   @spec handle_server_messages(binary(), map()) :: map()
   defp handle_server_messages(bin, data) do
     if FeatureFlag.enabled?(data.tenant_feature_flags, "named_prepared_statements") do
@@ -967,17 +938,6 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  defp maybe_reconnect(reason, data) do
-    max_reconnect_retries = Application.get_env(:supavisor, :reconnect_retries)
-    data = %{data | reconnect_retries: data.reconnect_retries + 1}
-
-    if data.reconnect_retries > max_reconnect_retries do
-      {:stop, {:failed_to_connect, reason}}
-    else
-      {:keep_state, data, {:state_timeout, reconnect_timeout(data), :connect}}
-    end
-  end
-
   defp process_backend_streaming(bin, data) do
     case MessageStreamer.handle_packets(data.stream_state, bin) do
       {:ok, new_stream_state, packets} ->
@@ -1002,8 +962,45 @@ defmodule Supavisor.DbHandler do
   defp handle_connection_failure(reason, data) do
     if not data.proxy do
       Supavisor.CircuitBreaker.record_failure(data.tenant, :db_connection)
+      Supavisor.TenantCache.put_last_connect_failure(data.id, System.monotonic_time(:millisecond))
     end
 
-    maybe_reconnect(reason, data)
+    error = %{
+      "S" => "FATAL",
+      "C" => "08006",
+      "M" => "Failed to connect to database: #{inspect(reason)}"
+    }
+
+    {:keep_state_and_data, {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
+  end
+
+  defp resolve_secrets(data) do
+    if data.proxy do
+      {:connect, data, {:next_event, :internal, :connect}}
+    else
+      case get_connection_params_with_secrets(data.connection_params, data.id) do
+        {:ok, conn_params_with_secrets} ->
+          {:connect, %{data | connection_params: conn_params_with_secrets},
+           {:next_event, :internal, :connect}}
+
+        {:error, :no_secrets} ->
+          Logger.warning("DbHandler: Secrets not available, entering waiting state")
+          manager_pid = Supavisor.get_local_manager(data.id)
+          ref = Process.monitor(manager_pid)
+          Supavisor.Manager.register_waiting_for_secrets(data.id, self())
+          {:waiting_for_secrets, %{data | manager_ref: ref}, []}
+      end
+    end
+  end
+
+  defp connect_cooldown_remaining(id) do
+    case Supavisor.TenantCache.get_last_connect_failure(id) do
+      nil ->
+        0
+
+      last_failure ->
+        elapsed = System.monotonic_time(:millisecond) - last_failure
+        @connect_cooldown_ms - elapsed
+    end
   end
 end

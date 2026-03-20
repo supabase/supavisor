@@ -91,6 +91,12 @@ defmodule Supavisor do
     end
   end
 
+  def async_stop(id) do
+    Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
+      stop(id)
+    end)
+  end
+
   @spec get_local_workers(id) ::
           {:ok, workers} | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def get_local_workers(id) do

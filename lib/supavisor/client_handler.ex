@@ -508,7 +508,6 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:cast, :graceful_shutdown, _state, data) do
-    # Some clients will just show `tcp_closed` unless we send a ReadyForQuery after the fatal error
     HandlerHelpers.sock_send(data.sock, Server.encode_error_message(Server.admin_shutdown()))
 
     {:stop, :normal}
