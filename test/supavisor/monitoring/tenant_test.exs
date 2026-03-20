@@ -288,7 +288,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
            password: "postgres"}
         )
 
-      {:ok, _} = SingleConnection.query(conn, "SELECT pg_sleep(2)")
+      {:ok, _} = SingleConnection.query(conn, "SELECT 1")
 
       pid =
         Supavisor.get_local_pool(
@@ -306,15 +306,67 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       ref = attach_handler([:supavisor, :pool, :connections])
 
       assert capture_log(fn -> Tenant.execute_pool_metrics() end) =~
-               "Failed to execute pool metrics: timeout"
+               "Failed to get pool status for #{ctx.external_id}(#{inspect(pid)}): {:timeout"
 
-      refute_receive {^ref, {[:supavisor, :pool, :connections], _, _}}
+      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 0}, _}}
+    end
+
+    test "reports metrics for the remaining pools if a status for a single one times out", ctx do
+      session_conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_session),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      {:ok, _} = SingleConnection.query(session_conn, "SELECT 1")
+
+      session_pid =
+        Supavisor.get_local_pool(
+          Supavisor.id(
+            type: :single,
+            tenant: ctx.external_id,
+            user: String.split(ctx.user, ".") |> List.first(),
+            mode: :session,
+            db: ctx.external_id
+          )
+        )
+
+      :sys.suspend(session_pid)
+
+      transaction_conn =
+        start_supervised!(
+          {SingleConnection,
+           hostname: "localhost",
+           port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+           database: ctx.db,
+           username: ctx.user,
+           password: "postgres"}
+        )
+
+      Task.start_link(fn -> SingleConnection.query(transaction_conn, "SELECT pg_sleep(2)") end)
+
+      ref = attach_handler([:supavisor, :pool, :connections])
+      Tenant.execute_pool_metrics()
+
+      # Still receives metrics for the timed-out pool (with 0 connections)
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 0},
+                       %{tenant: tenant_id, mode: :session}}}
+
+      # And also receives metrics for the other pool
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1},
+                       %{tenant: ^tenant_id, mode: :transaction}}}
     end
 
     test "aggregates multiple pools with the same id into one event" do
       id =
         Supavisor.id(
-          type: :single,
+          type: :cluster,
           tenant: "pool_cluster_test",
           user: "test_user",
           mode: :transaction,

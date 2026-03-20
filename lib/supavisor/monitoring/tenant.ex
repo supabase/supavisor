@@ -457,21 +457,31 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       fn {id, _pid} -> Supavisor.id(id, upstream_tls: false) end,
       fn {_id, pid} -> pid end
     )
-    |> Enum.each(fn {id, pool_pids} ->
+    |> Enum.each(fn {Supavisor.id(tenant: tenant_id) = id, pool_pids} ->
       {idle, checked_out} =
         Enum.reduce(pool_pids, {0, 0}, fn pid, {idle_acc, co_acc} ->
-          {_state, idle, _overflow_in_use, total_checked_out} =
-            :gen_server.call(pid, :status, 1_000)
+          case pool_status(tenant_id, pid) do
+            {:error, _reason} ->
+              {idle_acc, co_acc}
 
-          {idle_acc + idle, co_acc + total_checked_out}
+            {:ok, {_state, idle, _overflow_in_use, total_checked_out}} ->
+              {idle_acc + idle, co_acc + total_checked_out}
+          end
         end)
 
       emit_pool_telemetry({id, idle, checked_out})
     end)
+  end
+
+  defp pool_status(tenant_id, pool_pid) when is_pid(pool_pid) do
+    {:ok, :gen_server.call(pool_pid, :status, 1_000)}
   catch
     :exit, reason ->
-      Logger.error("Failed to execute pool metrics: #{inspect(reason)}")
-      :ok
+      Logger.error(
+        "Failed to get pool status for #{tenant_id}(#{inspect(pool_pid)}): #{inspect(reason)}"
+      )
+
+      {:error, reason}
   end
 
   @spec emit_pool_telemetry({S.id(), non_neg_integer(), non_neg_integer()}) :: :ok
