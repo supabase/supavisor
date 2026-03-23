@@ -81,9 +81,9 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
   end
 
   defp validate_password(password, ctx) do
-    with {:ok, %{password_secrets: password_secrets, sasl_secrets: sasl_secrets}} <-
+    with {:ok, %{password_secrets: password_secrets, sasl_secrets: sasl_secrets} = validation} <-
            ClientAuthentication.fetch_validation_secrets(ctx.id, ctx.tenant, ctx.user) do
-      if password_secrets && password == password_secrets.password do
+      if password_secrets && Plug.Crypto.secure_compare(password, password_secrets.password) do
         :ok
       else
         salted_password =
