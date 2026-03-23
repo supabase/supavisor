@@ -104,7 +104,8 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                mode: :transaction,
                type: :single,
                db_name: ctx.db,
-               search_path: nil
+               search_path: nil,
+               app_name: ""
              }
     end
   end
@@ -129,7 +130,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
         start_supervised!(
           {Task,
            fn ->
-             Registry.register(Supavisor.Registry.TenantClients, id, [])
+             Registry.register(Supavisor.Registry.TenantClients, id, app_name: "myapp")
              Process.sleep(:infinity)
            end},
           id: :"client_#{i}"
@@ -147,11 +148,63 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                mode: :transaction,
                type: :single,
                db_name: "test_db",
-               search_path: nil
+               search_path: nil,
+               app_name: "myapp"
              }
 
       refute_receive {^ref, {[:supavisor, :connections], %{active: 3}, _}}
       refute_receive {^ref, {[:supavisor, :connections], %{active: 2}, _}}
+    end
+
+    test "groups clients by app_name" do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: "metrics_app_name_test",
+          user: "test_user",
+          mode: :transaction,
+          db: "test_db",
+          search_path: nil,
+          upstream_tls: false
+        )
+
+      clients = [
+        {id, [app_name: "webapp"]},
+        {id, [app_name: "webapp"]},
+        {id, [app_name: "worker"]},
+        {id, [app_name: ""]}
+      ]
+
+      for {{reg_id, meta}, i} <- Enum.with_index(clients) do
+        start_supervised!(
+          {Task,
+           fn ->
+             Registry.register(Supavisor.Registry.TenantClients, reg_id, meta)
+             Process.sleep(:infinity)
+           end},
+          id: :"app_name_client_#{i}"
+        )
+      end
+
+      ref = attach_handler([:supavisor, :connections])
+      Tenant.execute_tenant_metrics()
+
+      events =
+        Enum.reduce_while(1..10, [], fn _, acc ->
+          receive do
+            {^ref, {[:supavisor, :connections], measurement, meta}} ->
+              {:cont, [{measurement, meta} | acc]}
+          after
+            100 -> {:halt, acc}
+          end
+        end)
+
+      assert length(events) == 3
+
+      by_app = Map.new(events, fn {%{active: count}, %{app_name: app}} -> {app, count} end)
+      assert by_app["webapp"] == 2
+      assert by_app["worker"] == 1
+      assert by_app[""] == 1
     end
   end
 
@@ -174,7 +227,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
         start_supervised!(
           {Task,
            fn ->
-             Registry.register(Supavisor.Registry.TenantProxyClients, id, [])
+             Registry.register(Supavisor.Registry.TenantProxyClients, id, app_name: "proxyapp")
              Process.sleep(:infinity)
            end},
           id: :"proxy_client_#{i}"
@@ -192,7 +245,8 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                mode: :transaction,
                type: :single,
                db_name: "test_db",
-               search_path: nil
+               search_path: nil,
+               app_name: "proxyapp"
              }
 
       refute_receive {^ref, {[:supavisor, :proxy, :connections], %{active: 2}, _}}
