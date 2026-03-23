@@ -32,7 +32,13 @@ defmodule Supavisor.SecretChecker do
         {:error, :not_started}
 
       [{pid, _}] ->
-        GenServer.call(pid, :get_secrets)
+        try do
+          GenServer.call(pid, :get_secrets)
+        catch
+          :exit, reason ->
+            Logger.error("SecretChecker: get_secrets call exited: #{inspect(reason)}")
+            {:error, :not_started}
+        end
     end
   end
 
@@ -156,7 +162,13 @@ defmodule Supavisor.SecretChecker do
         {:error, :not_started}
 
       pid ->
-        :erpc.call(node(pid), mod, fun, args)
+        try do
+          :erpc.call(node(pid), mod, fun, args)
+        catch
+          :exit, reason ->
+            Logger.error("SecretChecker: erpc call exited: #{inspect(reason)}")
+            {:error, :not_started}
+        end
     end
   end
 end

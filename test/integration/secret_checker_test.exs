@@ -4,6 +4,24 @@ defmodule Supavisor.Integration.SecretCheckerTest do
   require Supavisor
   alias Postgrex, as: P
 
+  defmodule CrashingSecretChecker do
+    use GenServer
+
+    def start(id) do
+      name = {:via, Registry, {Supavisor.Registry.Tenants, {:secret_checker, id}}}
+      GenServer.start(__MODULE__, nil, name: name)
+    end
+
+    @impl true
+    def init(nil), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:get_secrets, _from, state) do
+      exit(:boom)
+      {:reply, :unreachable, state}
+    end
+  end
+
   setup do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     tenant_id = "secret_checker_tenant_#{System.unique_integer([:positive])}"
@@ -79,5 +97,42 @@ defmodule Supavisor.Integration.SecretCheckerTest do
              Supavisor.SecretChecker.get_secrets(pool_id)
 
     assert %{user: _} = secrets.sasl_secrets
+  end
+
+  test "fetch_validation_secrets does not hang when SecretChecker exits", %{
+    db_conf: db_conf,
+    tenant_id: tenant_id
+  } do
+    tenant = Supavisor.Tenants.get_tenant_by_external_id(tenant_id)
+    manager_user = Enum.find(tenant.users, & &1.is_manager)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant_id,
+        user: to_string(db_conf[:username]),
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    # Register a fake sup in :syn so get_global_sup returns a local pid
+    fake_sup = spawn_link(fn -> Process.sleep(:infinity) end)
+    :syn.register(:tenants, id, fake_sup)
+
+    # Register a GenServer that exits on :get_secrets, simulating the crash
+    # that causes the Cachex Courier deadlock without the fix
+    {:ok, _} = CrashingSecretChecker.start(id)
+
+    Supavisor.ClientAuthentication.invalidate_local(tenant_id, to_string(db_conf[:username]))
+
+    # Before the fix, the exit would kill the Cachex Courier's spawned task,
+    # causing all subsequent Cachex.fetch calls for this key to block forever.
+    task =
+      Task.async(fn ->
+        Supavisor.ClientAuthentication.fetch_validation_secrets(id, tenant, manager_user)
+      end)
+
+    assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{}} =
+             Task.await(task, 5_000)
   end
 end
