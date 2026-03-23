@@ -35,6 +35,8 @@ defmodule Supavisor.Tenants.Tenant do
     field(:feature_flags, :map, default: %{})
     field(:use_jit, :boolean, default: false)
     field(:jit_api_url, :string)
+    field(:banned_at, :utc_datetime)
+    field(:ban_reason, :string)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -130,5 +132,17 @@ defmodule Supavisor.Tenants.Tenant do
 
   defp valid_range?(range) do
     match?({:ok, _}, InetCidr.parse_cidr(range))
+  end
+
+  @doc false
+  def ban_changeset(tenant, %{"banned" => "true"} = params) do
+    tenant
+    |> cast(params, [:ban_reason])
+    |> validate_required([:ban_reason])
+    |> put_change(:banned_at, DateTime.utc_now() |> DateTime.truncate(:second))
+  end
+
+  def unban_changeset(tenant, %{"banned" => "false"}) do
+    change(tenant, banned_at: nil, ban_reason: nil)
   end
 end

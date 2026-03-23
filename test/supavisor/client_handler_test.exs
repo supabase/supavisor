@@ -73,6 +73,32 @@ defmodule Supavisor.ClientHandlerTest do
     end
   end
 
+  describe "ban check" do
+    alias Supavisor.ClientHandler.Checks
+    alias Supavisor.Errors.TenantBannedError
+    alias Supavisor.Tenants.Tenant
+
+    test "returns :ok when tenant is not banned" do
+      info = %{tenant: %Tenant{banned_at: nil, ban_reason: nil}}
+      assert :ok = Checks.check_tenant_not_banned(info)
+    end
+
+    test "returns TenantBannedError when tenant has banned_at set" do
+      info = %{tenant: %Tenant{banned_at: ~U[2026-01-01 00:00:00Z], ban_reason: "abuse"}}
+
+      assert {:error, %TenantBannedError{ban_reason: "abuse"}} =
+               Checks.check_tenant_not_banned(info)
+    end
+
+    test "TenantBannedError produces a FATAL postgres error message" do
+      error = %TenantBannedError{ban_reason: "billing"}
+      postgres_error = TenantBannedError.postgres_error(error)
+      assert postgres_error["S"] == "FATAL"
+      assert postgres_error["M"] =~ "EBANNED"
+      assert postgres_error["M"] =~ "billing"
+    end
+  end
+
   describe "startup packet log_level option" do
     test "sets process log level from options" do
       bin =

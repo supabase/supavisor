@@ -583,6 +583,153 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  describe "PATCH /api/tenants/:external_id" do
+    setup [:create_tenant]
+
+    setup %{conn: conn} do
+      {:ok, conn: put_req_header(conn, "content-type", "application/json")}
+    end
+
+    test "bans a tenant with banned=true and ban_reason", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{
+               data: %{
+                 external_id: ^external_id,
+                 banned_at: banned_at,
+                 ban_reason: "abuse"
+               }
+             } =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{banned: "true", ban_reason: "abuse"})
+               |> json_response(200)
+               |> assert_schema("TenantData")
+
+      assert {:ok, dt, 0} = DateTime.from_iso8601(banned_at)
+      diff = DateTime.diff(DateTime.utc_now(), dt)
+      assert diff >= 0 and diff < 5
+    end
+
+    test "returns 404 for non-existent tenant", %{conn: conn} do
+      assert %{"error" => "not found"} =
+               conn
+               |> patch(~p"/api/tenants/nonexistent_tenant", %{
+                 banned: "true",
+                 ban_reason: "abuse"
+               })
+               |> json_response(404)
+               |> assert_schema("NotFound")
+    end
+
+    test "returns 422 when ban_reason is missing", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{"errors" => _} =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{banned: "true"})
+               |> json_response(422)
+               |> assert_schema("UnprocessablyEntity")
+    end
+
+    test "returns 422 when ban_reason is invalid", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{"errors" => _} =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{banned: "true", ban_reason: 123})
+               |> json_response(422)
+               |> assert_schema("UnprocessablyEntity")
+    end
+
+    test "returns 422 when banned is not a boolean", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{"errors" => _} =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{banned: "yes", ban_reason: "abuse"})
+               |> json_response(422)
+               |> assert_schema("UnprocessablyEntity")
+    end
+
+    test "clears banned_at and ban_reason when unbanning", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      # First ban the tenant
+      conn
+      |> patch(~p"/api/tenants/#{external_id}", %{banned: "true", ban_reason: "abuse"})
+      |> json_response(200)
+
+      # Then unban
+      assert %{
+               data: %{external_id: ^external_id, banned_at: nil, ban_reason: nil}
+             } =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{banned: "false"})
+               |> json_response(200)
+               |> assert_schema("TenantData")
+    end
+
+    test "includes banned_at and ban_reason in GET response after ban", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      conn
+      |> patch(~p"/api/tenants/#{external_id}", %{banned: "true", ban_reason: "billing"})
+      |> json_response(200)
+
+      assert %{
+               data: %{
+                 external_id: ^external_id,
+                 banned_at: banned_at,
+                 ban_reason: "billing"
+               }
+             } =
+               conn
+               |> get(~p"/api/tenants/#{external_id}")
+               |> json_response(200)
+               |> assert_schema("TenantData")
+
+      assert {:ok, dt, 0} = DateTime.from_iso8601(banned_at)
+      diff = DateTime.diff(DateTime.utc_now(), dt)
+      assert diff >= 0 and diff < 5
+    end
+
+    test "does not allow setting banned_at directly via PUT", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      # Ban should be ignored if passed through the regular PUT update
+      conn
+      |> put(~p"/api/tenants/#{external_id}",
+        tenant: Map.put(@update_attrs, :banned_at, "2020-01-01T00:00:00Z")
+      )
+      |> json_response(200)
+
+      assert %{"data" => %{"banned_at" => nil}} =
+               conn
+               |> get(~p"/api/tenants/#{external_id}")
+               |> json_response(200)
+    end
+
+    test "clears cache so subsequent connections see the ban", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      set_cache(external_id)
+
+      conn
+      |> patch(~p"/api/tenants/#{external_id}", %{banned: "true", ban_reason: "test"})
+      |> json_response(200)
+
+      check_cache(external_id)
+    end
+  end
+
   defp create_tenant(_) do
     tenant = tenant_fixture()
     %{tenant: tenant}

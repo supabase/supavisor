@@ -79,6 +79,13 @@ defmodule SupavisorWeb.OpenApiSchemas do
           nullable: true
         },
         users: %Schema{type: :array, items: User},
+        banned_at: %Schema{
+          type: :string,
+          format: :date_time,
+          description: "Ban timestamp",
+          nullable: true
+        },
+        ban_reason: %Schema{type: :string, description: "Reason for ban", nullable: true},
         inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
         updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
       },
@@ -97,6 +104,8 @@ defmodule SupavisorWeb.OpenApiSchemas do
         inserted_at: "2023-03-27T12:00:00Z",
         updated_at: "2023-03-27T12:00:00Z",
         allow_list: ["0.0.0.0/0", "::/0"],
+        banned_at: "2026-01-01T00:00:00Z",
+        ban_reason: "abuse",
         users: [
           %{
             id: "b1024a4c-4eb4-4c64-8f49-c8a46c2b2e16",
@@ -369,5 +378,28 @@ defmodule SupavisorWeb.OpenApiSchemas do
     })
 
     def params, do: {"Clear Network Ban Params", "application/json", __MODULE__}
+  end
+
+  defmodule ToggleTenantBan do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        banned: %Schema{
+          type: :boolean,
+          description: "Set to true to ban the tenant, false to unban"
+        },
+        ban_reason: %Schema{
+          type: :string,
+          description: "Reason for the ban (required when banned is true)"
+        }
+      },
+      required: [:banned],
+      example: %{banned: true, ban_reason: "Acceptable use policy violation"}
+    })
+
+    def params, do: {"ToggleTenant Ban Params", "application/json", __MODULE__}
   end
 end

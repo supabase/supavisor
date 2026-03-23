@@ -243,7 +243,8 @@ defmodule Supavisor.ClientHandler do
             upstream_tls: upstream_tls
           )
 
-        with :ok <- Checks.check_ssl_enforcement(data, info, user),
+        with :ok <- Checks.check_tenant_not_banned(info),
+             :ok <- Checks.check_ssl_enforcement(data, info, user),
              :ok <- Checks.check_address_allowed(sock, info),
              :ok <- Manager.check_client_limit(id, info, data.mode),
              {:ok, auth_method} <-

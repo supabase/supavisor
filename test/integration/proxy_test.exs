@@ -892,6 +892,52 @@ defmodule Supavisor.Integration.ProxyTest do
     GenServer.stop(node2_conn)
   end
 
+  describe "banned tenant" do
+    @ban_tenant "proxy_tenant_ps_enabled"
+
+    setup do
+      on_exit(fn ->
+        Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{"banned" => "false"})
+        Supavisor.del_all_cache_dist(@ban_tenant)
+      end)
+
+      :ok
+    end
+
+    test "connecting to a banned tenant receives FATAL error on the wire" do
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      url =
+        "postgresql://#{db_conf[:username]}.#{@ban_tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/#{db_conf[:database]}"
+
+      # Ban the tenant and clear cache so ClientHandler picks it up fresh
+      {:ok, _} =
+        Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
+          "banned" => "true",
+          "ban_reason" => "integration test ban"
+        })
+
+      Supavisor.del_all_cache_dist(@ban_tenant)
+
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message: "(EBANNED) tenant is banned: integration test ban",
+                  pg_code: "XX000",
+                  severity: "FATAL"
+                }
+              }} = parse_uri(url) |> single_connection()
+
+      # Unban and verify the connection succeeds again
+      {:ok, _} = Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{"banned" => "false"})
+      Supavisor.del_all_cache_dist(@ban_tenant)
+
+      # run the actual query on the connection to verify it works, not just that it connects
+      assert {:ok, _pid} = single_connection(parse_uri(url))
+    end
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,
