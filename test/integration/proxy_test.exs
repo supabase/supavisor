@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
   require Supavisor
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
   alias Supavisor.Support.{Cluster, SSLHelper}
 
@@ -141,7 +142,7 @@ defmodule Supavisor.Integration.ProxyTest do
     username = db_conf[:username]
 
     tenant =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
         tenant_id = "app_name_test_#{System.unique_integer([:positive])}_#{random_suffix}"
 
@@ -194,8 +195,6 @@ defmodule Supavisor.Integration.ProxyTest do
     assert %P.Result{rows: [["Supavisor"]]} =
              P.query!(conn, "SELECT current_setting('application_name')", [])
 
-    Supavisor.get_global_sup(id) |> IO.inspect(label: :global_sup)
-
     # node2 is the pool node
     :ok =
       wait_until(fn ->
@@ -229,7 +228,7 @@ defmodule Supavisor.Integration.ProxyTest do
     username = db_conf[:username]
 
     tenant =
-      Ecto.Adapters.SQL.Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
         random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
         tenant_id = "app_name_empty_#{System.unique_integer([:positive])}_#{random_suffix}"
 
