@@ -136,6 +136,5 @@ defmodule Supavisor.Integration.SecretCheckerTest do
              Task.await(task, 5_000)
 
     :syn.unregister(:tenants, id)
-
   end
 end
