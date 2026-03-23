@@ -43,7 +43,11 @@ defmodule Supavisor.MetricsCleaner do
     new_pending =
       :telemetry.span([:supavisor, :metrics_cleaner], %{}, fn ->
         {sweep_count, new_pending} = mark_and_sweep(state.pending)
-        Logger.info("Cleaned #{sweep_count} orphaned metrics")
+
+        if sweep_count > 0 do
+          Logger.info("Cleaned #{sweep_count} orphaned metrics")
+        end
+
         {new_pending, %{orphaned_metrics: sweep_count}, %{}}
       end)
 

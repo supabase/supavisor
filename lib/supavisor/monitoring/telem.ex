@@ -87,7 +87,7 @@ defmodule Supavisor.Monitoring.Telem do
   end
 
   def client_join(_status, id) do
-    Logger.warning("client_join is called with a mismatched id: #{Supavisor.inspect_id(id)}")
+    Logger.debug("client_join is called with a mismatched id: #{Supavisor.inspect_id(id)}")
   end
 
   @spec handler_action(
@@ -104,7 +104,7 @@ defmodule Supavisor.Monitoring.Telem do
   end
 
   def handler_action(handler, action, id) do
-    Logger.warning(
+    Logger.debug(
       "handler_action is called with a mismatched #{inspect(handler)} #{inspect(action)} #{inspect(id)}"
     )
   end

@@ -220,38 +220,50 @@ defmodule Supavisor.ClientHandler do
       user: user,
       mode: data.mode,
       type: type,
-      app_name: data.app_name
+      app_name: data.app_name,
+      db_name: db_name
     )
 
     # When receiving a proxied connection on a local listener, client_tls
     # carries the original client's TLS status. Otherwise, use data.ssl.
     effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
 
-    with {:ok, info} <- Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname),
-         _ = Logger.metadata(db_name: db_name),
-         upstream_tls = upstream_tls(info.tenant, effective_ssl),
-         id =
-           Supavisor.id(
-             type: type,
-             tenant: tenant_or_alias,
-             user: user,
-             mode: data.mode,
-             db: db_name,
-             search_path: search_path,
-             upstream_tls: upstream_tls
-           ),
-         :ok <- Checks.check_ssl_enforcement(data, info, user),
-         :ok <- Checks.check_address_allowed(sock, info),
-         :ok <- Manager.check_client_limit(id, info, data.mode),
-         {:ok, auth_method} <-
-           AuthMethods.fetch_authentication_method(info.tenant, client_jit, effective_ssl, user) do
-      Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
-      new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
+    case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
+      {:ok, info} ->
+        upstream_tls = upstream_tls(info.tenant, effective_ssl)
 
-      {:keep_state, new_data,
-       {:next_event, :internal, {:start_authentication, auth_method, info}}}
-    else
-      {:error, exception} when is_exception(exception) ->
+        id =
+          Supavisor.id(
+            type: type,
+            tenant: tenant_or_alias,
+            user: user,
+            mode: data.mode,
+            db: db_name,
+            search_path: search_path,
+            upstream_tls: upstream_tls
+          )
+
+        with :ok <- Checks.check_ssl_enforcement(data, info, user),
+             :ok <- Checks.check_address_allowed(sock, info),
+             :ok <- Manager.check_client_limit(id, info, data.mode),
+             {:ok, auth_method} <-
+               AuthMethods.fetch_authentication_method(
+                 info.tenant,
+                 client_jit,
+                 effective_ssl,
+                 user
+               ) do
+          Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
+          new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
+
+          {:keep_state, new_data,
+           {:next_event, :internal, {:start_authentication, auth_method, info}}}
+        else
+          {:error, exception} when is_exception(exception) ->
+            Error.terminate_with_error(%{data | id: id}, exception, :handshake)
+        end
+
+      {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
     end
   end
