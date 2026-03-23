@@ -134,7 +134,5 @@ defmodule Supavisor.Integration.SecretCheckerTest do
 
     assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{}} =
              Task.await(task, 5_000)
-
-    :syn.unregister(:tenants, id)
   end
 end
