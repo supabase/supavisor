@@ -86,6 +86,12 @@ defmodule SupavisorWeb.OpenApiSchemas do
           nullable: true
         },
         ban_reason: %Schema{type: :string, description: "Reason for ban", nullable: true},
+        banned_until: %Schema{
+          type: :string,
+          format: :date_time,
+          description: "Ban expiry timestamp",
+          nullable: true
+        },
         inserted_at: %Schema{type: :string, format: :date_time, readOnly: true},
         updated_at: %Schema{type: :string, format: :date_time, readOnly: true}
       },
@@ -106,6 +112,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         allow_list: ["0.0.0.0/0", "::/0"],
         banned_at: "2026-01-01T00:00:00Z",
         ban_reason: "abuse",
+        banned_until: "2926-04-01T00:00:00Z",
         users: [
           %{
             id: "b1024a4c-4eb4-4c64-8f49-c8a46c2b2e16",
@@ -394,10 +401,19 @@ defmodule SupavisorWeb.OpenApiSchemas do
         ban_reason: %Schema{
           type: :string,
           description: "Reason for the ban (required when banned is true)"
+        },
+        banned_until: %Schema{
+          type: :string,
+          format: :date_time,
+          description: "Optional ban expiry timestamp"
         }
       },
       required: [:banned],
-      example: %{banned: true, ban_reason: "Acceptable use policy violation"}
+      example: %{
+        banned: true,
+        ban_reason: "Acceptable use policy violation",
+        banned_until: "2026-01-01T00:00:00Z"
+      }
     })
 
     def params, do: {"ToggleTenant Ban Params", "application/json", __MODULE__}

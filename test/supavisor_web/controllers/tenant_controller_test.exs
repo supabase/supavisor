@@ -598,11 +598,16 @@ defmodule SupavisorWeb.TenantControllerTest do
                data: %{
                  external_id: ^external_id,
                  banned_at: banned_at,
-                 ban_reason: "abuse"
+                 ban_reason: "abuse",
+                 banned_until: "2099-12-31T00:00:00Z"
                }
              } =
                conn
-               |> patch(~p"/api/tenants/#{external_id}", %{banned: "true", ban_reason: "abuse"})
+               |> patch(~p"/api/tenants/#{external_id}", %{
+                 banned: "true",
+                 ban_reason: "abuse",
+                 banned_until: "2099-12-31T00:00:00Z"
+               })
                |> json_response(200)
                |> assert_schema("TenantData")
 
@@ -666,12 +671,32 @@ defmodule SupavisorWeb.TenantControllerTest do
 
       # Then unban
       assert %{
-               data: %{external_id: ^external_id, banned_at: nil, ban_reason: nil}
+               data: %{
+                 external_id: ^external_id,
+                 banned_at: nil,
+                 ban_reason: nil,
+                 banned_until: nil
+               }
              } =
                conn
                |> patch(~p"/api/tenants/#{external_id}", %{banned: "false"})
                |> json_response(200)
                |> assert_schema("TenantData")
+    end
+
+    test "returns 422 when banned_until is not a valid datetime", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{"errors" => _} =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{
+                 banned: "true",
+                 ban_reason: "abuse",
+                 banned_until: "not-a-date"
+               })
+               |> json_response(422)
+               |> assert_schema("UnprocessablyEntity")
     end
 
     test "includes banned_at and ban_reason in GET response after ban", %{

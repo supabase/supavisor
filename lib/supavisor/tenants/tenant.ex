@@ -37,6 +37,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:jit_api_url, :string)
     field(:banned_at, :utc_datetime)
     field(:ban_reason, :string)
+    field(:banned_until, :utc_datetime)
 
     has_many(:users, User,
       foreign_key: :tenant_external_id,
@@ -137,12 +138,12 @@ defmodule Supavisor.Tenants.Tenant do
   @doc false
   def ban_changeset(tenant, %{"banned" => "true"} = params) do
     tenant
-    |> cast(params, [:ban_reason])
+    |> cast(params, [:ban_reason, :banned_until])
     |> validate_required([:ban_reason])
     |> put_change(:banned_at, DateTime.utc_now() |> DateTime.truncate(:second))
   end
 
   def unban_changeset(tenant, %{"banned" => "false"}) do
-    change(tenant, banned_at: nil, ban_reason: nil)
+    change(tenant, banned_at: nil, ban_reason: nil, banned_until: nil)
   end
 end
