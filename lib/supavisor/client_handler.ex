@@ -744,6 +744,7 @@ defmodule Supavisor.ClientHandler do
   ## Internal functions
   defp handle_auth_success(sock, final_secrets, data) do
     Logger.info("ClientHandler: Connection authenticated")
+    cache_validated_password(data, final_secrets)
 
     if data.mode != :proxy do
       Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(data.id, final_secrets)
@@ -766,6 +767,19 @@ defmodule Supavisor.ClientHandler do
       {:next_event, :internal, conn_type}
     }
   end
+
+  defp cache_validated_password(%{tenant: tenant}, %Supavisor.Secrets.PasswordSecrets{} = secrets) do
+    case Supavisor.ClientAuthentication.get_validation_secrets(tenant, secrets.user) do
+      {:ok, %{password_secrets: nil} = validation} ->
+        updated = %{validation | password_secrets: secrets}
+        Supavisor.ClientAuthentication.put_validation_secrets(tenant, secrets.user, updated)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp cache_validated_password(_data, _secrets), do: :ok
 
   defp handle_auth_failure(exception, data) do
     AuthMethods.handle_auth_failure(data.auth_context, exception)
