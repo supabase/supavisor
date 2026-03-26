@@ -84,7 +84,13 @@ defmodule Supavisor.ClientHandlerTest do
     end
 
     test "returns TenantBannedError for a permanent ban (banned_until nil)" do
-      info = %{tenant: %Tenant{banned_at: ~U[2026-01-01 00:00:00Z], ban_reason: "abuse", banned_until: nil}}
+      info = %{
+        tenant: %Tenant{
+          banned_at: ~U[2026-01-01 00:00:00Z],
+          ban_reason: "abuse",
+          banned_until: nil
+        }
+      }
 
       assert {:error, %TenantBannedError{ban_reason: "abuse"}} =
                Checks.check_tenant_not_banned(info)
@@ -92,7 +98,14 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "returns TenantBannedError when banned_until is in the future" do
       future = DateTime.utc_now() |> DateTime.add(3600, :second)
-      info = %{tenant: %Tenant{banned_at: ~U[2026-01-01 00:00:00Z], ban_reason: "abuse", banned_until: future}}
+
+      info = %{
+        tenant: %Tenant{
+          banned_at: ~U[2026-01-01 00:00:00Z],
+          ban_reason: "abuse",
+          banned_until: future
+        }
+      }
 
       assert {:error, %TenantBannedError{ban_reason: "abuse"}} =
                Checks.check_tenant_not_banned(info)
@@ -100,7 +113,14 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "returns :ok when banned_until is in the past (ban expired)" do
       past = DateTime.utc_now() |> DateTime.add(-3600, :second)
-      info = %{tenant: %Tenant{banned_at: ~U[2026-01-01 00:00:00Z], ban_reason: "abuse", banned_until: past}}
+
+      info = %{
+        tenant: %Tenant{
+          banned_at: ~U[2026-01-01 00:00:00Z],
+          ban_reason: "abuse",
+          banned_until: past
+        }
+      }
 
       assert :ok = Checks.check_tenant_not_banned(info)
     end
