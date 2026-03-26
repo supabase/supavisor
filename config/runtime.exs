@@ -155,6 +155,34 @@ downstream_key =
     end
   end
 
+downstream_ec_cert =
+  if path = System.get_env("DOWNSTREAM_SERVER_ECDSA_CERT") do
+    if File.exists?(path) do
+      Logger.info(
+        "Loaded downstream ECDSA cert from $DOWNSTREAM_SERVER_ECDSA_CERT, path: #{path}",
+        ansi_color: :green
+      )
+
+      path
+    else
+      raise "There is no such file in $DOWNSTREAM_SERVER_ECDSA_CERT"
+    end
+  end
+
+downstream_ec_key =
+  if path = System.get_env("DOWNSTREAM_SERVER_ECDSA_KEY") do
+    if File.exists?(path) do
+      Logger.info(
+        "Loaded downstream ECDSA key from $DOWNSTREAM_SERVER_ECDSA_KEY, path: #{path}",
+        ansi_color: :green
+      )
+
+      path
+    else
+      raise "There is no such file in $DOWNSTREAM_SERVER_ECDSA_KEY"
+    end
+  end
+
 if config_env() != :test do
   config :supavisor,
     session_proxy_ports:
@@ -177,6 +205,8 @@ if config_env() != :test do
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,
+    global_downstream_ec_cert: downstream_ec_cert,
+    global_downstream_ec_key: downstream_ec_key,
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
     cache_bypass_users:
