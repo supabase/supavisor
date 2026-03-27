@@ -296,6 +296,40 @@ defmodule Supavisor.Tenants do
     |> with_cache_invalidation(operation: "update", terminate_pools: true)
   end
 
+  @doc """
+  Toggles the ban status of a tenant.
+
+  When banning a tenant, the `ban_reason` field is required. When unbanning, it is ignored.
+
+  ## Examples
+
+      iex> toggle_tenant_ban("external_id", %{banned: true, ban_reason: "violation"})
+      {:ok, %Tenant{}}
+
+      iex> toggle_tenant_ban("external_id", %{banned: false})
+      {:ok, %Tenant{}}
+  """
+  @spec toggle_tenant_ban(String.t(), map()) ::
+          {:ok, Tenant.t()} | {:error, :not_found | Ecto.Changeset.t()}
+  def toggle_tenant_ban(external_id, %{"banned" => banned?} = params) do
+    case get_tenant_by_external_id(external_id) do
+      nil ->
+        {:error, :not_found}
+
+      tenant when banned? == "true" ->
+        tenant
+        |> Tenant.ban_changeset(params)
+        |> Repo.update()
+        |> with_cache_invalidation(operation: "ban")
+
+      tenant when banned? == "false" ->
+        tenant
+        |> Tenant.unban_changeset(params)
+        |> Repo.update()
+        |> with_cache_invalidation(operation: "unban")
+    end
+  end
+
   def update_tenant_ps(external_id, new_ps) do
     from(t in Tenant, where: t.external_id == ^external_id)
     |> Repo.one()
