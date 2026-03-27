@@ -73,6 +73,67 @@ defmodule Supavisor.ClientHandlerTest do
     end
   end
 
+  describe "ban check" do
+    alias Supavisor.ClientHandler.Checks
+    alias Supavisor.Errors.TenantBannedError
+    alias Supavisor.Tenants.Tenant
+
+    test "returns :ok when tenant is not banned" do
+      info = %{tenant: %Tenant{banned_at: nil, ban_reason: nil}}
+      assert :ok = Checks.check_tenant_not_banned(info)
+    end
+
+    test "returns TenantBannedError for a permanent ban (banned_until nil)" do
+      info = %{
+        tenant: %Tenant{
+          banned_at: ~U[2026-01-01 00:00:00Z],
+          ban_reason: "abuse",
+          banned_until: nil
+        }
+      }
+
+      assert {:error, %TenantBannedError{ban_reason: "abuse"}} =
+               Checks.check_tenant_not_banned(info)
+    end
+
+    test "returns TenantBannedError when banned_until is in the future" do
+      future = DateTime.utc_now() |> DateTime.add(3600, :second)
+
+      info = %{
+        tenant: %Tenant{
+          banned_at: ~U[2026-01-01 00:00:00Z],
+          ban_reason: "abuse",
+          banned_until: future
+        }
+      }
+
+      assert {:error, %TenantBannedError{ban_reason: "abuse"}} =
+               Checks.check_tenant_not_banned(info)
+    end
+
+    test "returns :ok when banned_until is in the past (ban expired)" do
+      past = DateTime.utc_now() |> DateTime.add(-3600, :second)
+
+      info = %{
+        tenant: %Tenant{
+          banned_at: ~U[2026-01-01 00:00:00Z],
+          ban_reason: "abuse",
+          banned_until: past
+        }
+      }
+
+      assert :ok = Checks.check_tenant_not_banned(info)
+    end
+
+    test "TenantBannedError produces a FATAL postgres error message" do
+      error = %TenantBannedError{ban_reason: "billing"}
+      postgres_error = TenantBannedError.postgres_error(error)
+      assert postgres_error["S"] == "FATAL"
+      assert postgres_error["M"] =~ "EBANNED"
+      assert postgres_error["M"] =~ "billing"
+    end
+  end
+
   describe "startup packet log_level option" do
     test "sets process log level from options" do
       bin =

@@ -13,6 +13,7 @@ defmodule SupavisorWeb.Router do
   pipeline :api do
     plug(:accepts, ["json"])
     plug(:check_auth, [:api_jwt_secret, :api_blocklist])
+    plug(OpenApiSpex.Plug.PutApiSpec, module: SupavisorWeb.ApiSpec)
   end
 
   pipeline :metrics do
@@ -43,6 +44,7 @@ defmodule SupavisorWeb.Router do
 
     get("/tenants/:external_id", TenantController, :show)
     put("/tenants/:external_id", TenantController, :update)
+    patch("/tenants/:external_id", TenantController, :patch)
     delete("/tenants/:external_id", TenantController, :delete)
     get("/tenants/:external_id/terminate", TenantController, :terminate)
 

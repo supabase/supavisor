@@ -6,7 +6,22 @@ defmodule Supavisor.ClientHandler.Checks do
   # TODO: remove the dependency, move the functions here
   alias Supavisor.HandlerHelpers
 
-  alias Supavisor.Errors.{AddressNotAllowedError, SslRequiredError}
+  alias Supavisor.Errors.{AddressNotAllowedError, SslRequiredError, TenantBannedError}
+
+  def check_tenant_not_banned(%{tenant: %{banned_at: nil}}), do: :ok
+
+  def check_tenant_not_banned(%{tenant: %{banned_until: banned_until, ban_reason: reason}})
+      when not is_nil(banned_until) do
+    if DateTime.compare(banned_until, DateTime.utc_now()) == :lt do
+      :ok
+    else
+      {:error, %TenantBannedError{ban_reason: reason}}
+    end
+  end
+
+  def check_tenant_not_banned(%{tenant: %{ban_reason: reason}}) do
+    {:error, %TenantBannedError{ban_reason: reason}}
+  end
 
   def check_ssl_enforcement(data, info, user) do
     if !data.local and info.tenant.enforce_ssl and !data.ssl do
