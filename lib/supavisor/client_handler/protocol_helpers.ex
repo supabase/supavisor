@@ -113,15 +113,15 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @doc """
   Normalizes application name from client connection.
 
-  Returns sanitized string or default "Supavisor" for invalid names.
+  Returns sanitized string or default "" for missing/invalid names.
   """
   @spec normalize_app_name(any()) :: String.t()
   def normalize_app_name(name) when is_binary(name), do: name
-  def normalize_app_name(nil), do: "Supavisor"
+  def normalize_app_name(nil), do: ""
 
   def normalize_app_name(name) do
     Logger.debug("ClientHandler: Invalid application name #{inspect(name)}")
-    "Supavisor"
+    ""
   end
 
   @doc """
