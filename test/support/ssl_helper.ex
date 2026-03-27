@@ -51,6 +51,17 @@ defmodule Supavisor.Support.SSLHelper do
       {:ok, cert_path, key_path} ->
         Application.put_env(:supavisor, :global_downstream_cert, cert_path)
         Application.put_env(:supavisor, :global_downstream_key, key_path)
+
+        certs_dir = Path.expand("../../priv/test/certs", __DIR__)
+
+        for {env_key, file} <- [
+              {:global_downstream_ec_cert, "server_ecdsa.crt"},
+              {:global_downstream_ec_key, "server_ecdsa.key"}
+            ] do
+          path = Path.join(certs_dir, file)
+          if File.exists?(path), do: Application.put_env(:supavisor, env_key, path)
+        end
+
         {:ok, cert_path, key_path}
 
       error ->
