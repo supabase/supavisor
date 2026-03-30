@@ -152,8 +152,17 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
     {:OTPSubjectPublicKeyInfo, {:PublicKeyAlgorithm, algo_oid, _}, _} = elem(elem(cert, 1), 7)
 
     case algo_oid do
-      {1, 2, 840, 113_549, 1, 1, 1} -> :rsa
-      {1, 2, 840, 10_045, 2, 1} -> :ec
+       # 1.2     = ISO/ITU-T
+       # 840     = USA (ANSI)
+       # 113549  = RSA Security / PKCS
+       # 1.1.1   = rsaEncryption
+       {1, 2, 840, 113_549, 1, 1, 1} -> :rsa
+
+       # 1.2     = ISO/ITU-T
+       # 840     = USA (ANSI)
+       # 10045   = ANSI X9.62 (elliptic curve standard)
+       # 2.1     = id-ecPublicKey
+       {1, 2, 840, 10_045, 2, 1} -> :ec
     end
   end
 end
