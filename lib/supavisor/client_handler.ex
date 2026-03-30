@@ -149,20 +149,16 @@ defmodule Supavisor.ClientHandler do
         :handshake,
         %{sock: sock} = data
       ) do
-    Logger.debug("ClientHandler: Client is trying to connect with SSL")
-
-    downstream_cert = Helpers.downstream_cert()
-    downstream_key = Helpers.downstream_key()
+    certs_keys = Helpers.downstream_certs_keys()
 
     # SSL negotiation, S/N/Error
-    if !!downstream_cert and !!downstream_key do
+    if certs_keys != [] do
       :ok = HandlerHelpers.setopts(sock, active: false)
       :ok = HandlerHelpers.sock_send(sock, "S")
 
       opts = [
         verify: :verify_none,
-        certfile: downstream_cert,
-        keyfile: downstream_key
+        certs_keys: certs_keys
       ]
 
       case :ssl.handshake(elem(sock, 1), opts) do

@@ -193,6 +193,27 @@ defmodule Supavisor.Helpers do
     Application.get_env(:supavisor, :global_downstream_key)
   end
 
+  @spec downstream_ec_cert() :: Path.t() | nil
+  def downstream_ec_cert do
+    Application.get_env(:supavisor, :global_downstream_ec_cert)
+  end
+
+  @spec downstream_ec_key() :: Path.t() | nil
+  def downstream_ec_key do
+    Application.get_env(:supavisor, :global_downstream_ec_key)
+  end
+
+  @spec downstream_certs_keys() :: [map()]
+  def downstream_certs_keys do
+    for {cert, key} <- [
+          {downstream_ec_cert(), downstream_ec_key()},
+          {downstream_cert(), downstream_key()}
+        ],
+        cert != nil and key != nil do
+      %{certfile: cert, keyfile: key}
+    end
+  end
+
   @spec get_client_final(map(), map(), binary(), binary(), binary()) ::
           {iolist(), binary()}
   def get_client_final(
