@@ -1,7 +1,10 @@
 defmodule Supavisor.Integration.SSLCertNegotiationTest do
   use Supavisor.DataCase, async: false
 
+  require Supavisor.Protocol.Server
+
   @certs_dir Path.expand("../../priv/test/certs", __DIR__)
+
   @rsa_ciphers [
     {:dhe_rsa, :aes_256_gcm, :aead, :sha384},
     {:dhe_rsa, :aes_128_gcm, :aead, :sha256},
@@ -135,7 +138,7 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
   defp ssl_upgrade(ssl_opts) do
     port = Application.get_env(:supavisor, :proxy_port_transaction)
     {:ok, tcp} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
-    :ok = :gen_tcp.send(tcp, <<8::32, 80_877_103::32>>)
+    :ok = :gen_tcp.send(tcp, Supavisor.Protocol.Server.ssl_request_message())
     {:ok, "S"} = :gen_tcp.recv(tcp, 1, 5_000)
     :ssl.connect(tcp, ssl_opts, 5_000)
   end
@@ -152,17 +155,16 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
     {:OTPSubjectPublicKeyInfo, {:PublicKeyAlgorithm, algo_oid, _}, _} = elem(elem(cert, 1), 7)
 
     case algo_oid do
-       # 1.2     = ISO/ITU-T
-       # 840     = USA (ANSI)
-       # 113549  = RSA Security / PKCS
-       # 1.1.1   = rsaEncryption
-       {1, 2, 840, 113_549, 1, 1, 1} -> :rsa
-
-       # 1.2     = ISO/ITU-T
-       # 840     = USA (ANSI)
-       # 10045   = ANSI X9.62 (elliptic curve standard)
-       # 2.1     = id-ecPublicKey
-       {1, 2, 840, 10_045, 2, 1} -> :ec
+      # 1.2     = ISO/ITU-T
+      # 840     = USA (ANSI)
+      # 113549  = RSA Security / PKCS
+      # 1.1.1   = rsaEncryption
+      {1, 2, 840, 113_549, 1, 1, 1} -> :rsa
+      # 1.2     = ISO/ITU-T
+      # 840     = USA (ANSI)
+      # 10045   = ANSI X9.62 (elliptic curve standard)
+      # 2.1     = id-ecPublicKey
+      {1, 2, 840, 10_045, 2, 1} -> :ec
     end
   end
 end
