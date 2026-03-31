@@ -158,7 +158,8 @@ defmodule Supavisor.ClientHandler do
 
       opts = [
         verify: :verify_none,
-        certs_keys: certs_keys
+        certs_keys: certs_keys,
+        sni_fun: fn _hostname -> [certs_keys: certs_keys] end
       ]
 
       case :ssl.handshake(elem(sock, 1), opts) do
@@ -228,10 +229,12 @@ defmodule Supavisor.ClientHandler do
       {:ok, info} ->
         upstream_tls = upstream_tls(info.tenant, effective_ssl)
 
+        resolved_tenant = tenant_or_alias || info.tenant.external_id
+
         id =
           Supavisor.id(
             type: type,
-            tenant: tenant_or_alias,
+            tenant: resolved_tenant,
             user: user,
             mode: data.mode,
             db: db_name,
