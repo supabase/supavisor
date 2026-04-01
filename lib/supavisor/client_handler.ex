@@ -328,7 +328,10 @@ defmodule Supavisor.ClientHandler do
           idle_timeout: opts.idle_timeout
       }
 
-      Registry.register(@clients_registry, data.id, started_at: System.monotonic_time())
+      Registry.register(@clients_registry, data.id,
+        started_at: System.monotonic_time(),
+        app_name: data.app_name
+      )
 
       cond do
         data.client_ready ->
@@ -354,7 +357,7 @@ defmodule Supavisor.ClientHandler do
         case Supavisor.get_pool_ranch(data.id) do
           {:ok, pool_ranch} ->
             Logger.metadata(proxy: true)
-            Registry.register(@proxy_clients_registry, data.id, [])
+            Registry.register(@proxy_clients_registry, data.id, app_name: data.app_name)
 
             {:keep_state, %{data | pool_ranch: pool_ranch}, {:next_event, :internal, :connect_db}}
 
@@ -903,7 +906,7 @@ defmodule Supavisor.ClientHandler do
         else: :auth_query
 
     connection_params = %Supavisor.ConnectionParameters{
-      application_name: data.app_name || "Supavisor",
+      application_name: data.app_name,
       database: db_name,
       host: to_charlist(info.tenant.db_host),
       sni_hostname:

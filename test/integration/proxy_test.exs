@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.ProxyTest do
   require Logger
   require Supavisor
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
   alias Supavisor.Support.{Cluster, SSLHelper}
 
@@ -133,6 +134,177 @@ defmodule Supavisor.Integration.ProxyTest do
                  15_000
                )
     end
+  end
+
+  @tag cluster: true
+  test "app_name is set correctly for the proxy connection" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    username = db_conf[:username]
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "app_name_test_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            availability_zone: "ap-southeast-1c",
+            users: [
+              %{
+                "db_user" => db_conf[:username],
+                "db_password" => db_conf[:password],
+                "pool_size" => 3,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: username,
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: "#{username}.#{tenant}",
+        parameters: [application_name: "my_test_app"]
+      )
+
+    # Upstream DB connection should always identify as "Supavisor"
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(conn, "SELECT current_setting('application_name')", [])
+
+    # node2 is the pool node
+    :ok =
+      wait_until(fn ->
+        :rpc.call(node2, Registry, :lookup, [
+          Supavisor.Registry.TenantClients,
+          id
+        ]) != []
+      end)
+
+    [{_pid, proxy_meta}] =
+      :rpc.call(node2, Registry, :lookup, [
+        Supavisor.Registry.TenantClients,
+        id
+      ])
+
+    assert proxy_meta[:app_name] == "my_test_app"
+
+    # our node is the proxy node
+    :ok =
+      wait_until(fn ->
+        Registry.lookup(Supavisor.Registry.TenantProxyClients, id) != []
+      end)
+
+    [{_pid, pool_meta}] = Registry.lookup(Supavisor.Registry.TenantProxyClients, id)
+    assert pool_meta[:app_name] == "my_test_app"
+  end
+
+  @tag cluster: true
+  test "app_name defaults to empty string when not provided" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    username = db_conf[:username]
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "app_name_empty_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            availability_zone: "ap-southeast-1c",
+            users: [
+              %{
+                "db_user" => db_conf[:username],
+                "db_password" => db_conf[:password],
+                "pool_size" => 3,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: username,
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: "#{username}.#{tenant}"
+      )
+
+    # Upstream DB connection should always identify as "Supavisor"
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(conn, "SELECT current_setting('application_name')", [])
+
+    # node2 is the pool node
+    :ok =
+      wait_until(fn ->
+        :rpc.call(node2, Registry, :lookup, [
+          Supavisor.Registry.TenantClients,
+          id
+        ]) != []
+      end)
+
+    [{_pid, proxy_meta}] =
+      :rpc.call(node2, Registry, :lookup, [
+        Supavisor.Registry.TenantClients,
+        id
+      ])
+
+    assert proxy_meta[:app_name] == ""
+
+    # our node is the proxy node
+    :ok =
+      wait_until(fn ->
+        Registry.lookup(Supavisor.Registry.TenantProxyClients, id) != []
+      end)
+
+    [{_pid, pool_meta}] = Registry.lookup(Supavisor.Registry.TenantProxyClients, id)
+    assert pool_meta[:app_name] == ""
   end
 
   for tenant <- @tenants do

@@ -248,28 +248,35 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :connections],
           description: "The total count of active clients for a tenant.",
           measurement: :active,
-          tags: @tags
+          tags: @tags ++ [:app_name]
         )
       ]
     )
   end
 
   def execute_tenant_metrics do
-    Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
-    |> Enum.frequencies_by(&Supavisor.id(&1, upstream_tls: false))
-    |> Enum.each(&emit_telemetry_for_tenant/1)
+    Supavisor.Registry.TenantClients
+    |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.frequencies_by(fn {id, meta} ->
+      {Supavisor.id(id, upstream_tls: false), meta[:app_name] || ""}
+    end)
+    |> Enum.each(fn {{id, app_name}, count} ->
+      emit_telemetry_for_tenant(id, count, app_name)
+    end)
   end
 
-  @spec emit_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
+  @spec emit_telemetry_for_tenant(S.id(), non_neg_integer(), String.t()) :: :ok
   def emit_telemetry_for_tenant(
-        {Supavisor.id(
-           type: type,
-           tenant: tenant,
-           user: user,
-           mode: mode,
-           db: db_name,
-           search_path: search_path
-         ), count}
+        Supavisor.id(
+          type: type,
+          tenant: tenant,
+          user: user,
+          mode: mode,
+          db: db_name,
+          search_path: search_path
+        ),
+        count,
+        app_name
       ) do
     :telemetry.execute(
       [:supavisor, :connections],
@@ -280,7 +287,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
         mode: mode,
         type: type,
         db_name: db_name,
-        search_path: search_path
+        search_path: search_path,
+        app_name: app_name
       }
     )
   end
@@ -296,7 +304,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :connection, :lifetime],
           measurement: :lifetime,
           description: "How long the client connection has been alive.",
-          tags: @tags,
+          tags: @tags ++ [:app_name],
           unit: {:native, :millisecond},
           reporter_options: [
             peep_bucket_calculator: ClientConnectionLifetimeBuckets
@@ -342,7 +350,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
             mode: mode,
             type: type,
             db_name: db_name,
-            search_path: search_path
+            search_path: search_path,
+            app_name: meta[:app_name] || ""
           }
         )
     end
@@ -359,28 +368,35 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :proxy, :connections],
           description: "The total count of active proxy clients for a tenant.",
           measurement: :active,
-          tags: @tags
+          tags: @tags ++ [:app_name]
         )
       ]
     )
   end
 
   def execute_tenant_proxy_metrics do
-    Registry.select(Supavisor.Registry.TenantProxyClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
-    |> Enum.frequencies_by(&Supavisor.id(&1, upstream_tls: false))
-    |> Enum.each(&emit_proxy_telemetry_for_tenant/1)
+    Supavisor.Registry.TenantProxyClients
+    |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.frequencies_by(fn {id, meta} ->
+      {Supavisor.id(id, upstream_tls: false), meta[:app_name] || ""}
+    end)
+    |> Enum.each(fn {{id, app_name}, count} ->
+      emit_proxy_telemetry_for_tenant(id, count, app_name)
+    end)
   end
 
-  @spec emit_proxy_telemetry_for_tenant({S.id(), non_neg_integer()}) :: :ok
+  @spec emit_proxy_telemetry_for_tenant(S.id(), non_neg_integer(), String.t()) :: :ok
   def emit_proxy_telemetry_for_tenant(
-        {Supavisor.id(
-           type: type,
-           tenant: tenant,
-           user: user,
-           mode: mode,
-           db: db_name,
-           search_path: search_path
-         ), count}
+        Supavisor.id(
+          type: type,
+          tenant: tenant,
+          user: user,
+          mode: mode,
+          db: db_name,
+          search_path: search_path
+        ),
+        count,
+        app_name
       ) do
     :telemetry.execute(
       [:supavisor, :proxy, :connections],
@@ -391,7 +407,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
         mode: mode,
         type: type,
         db_name: db_name,
-        search_path: search_path
+        search_path: search_path,
+        app_name: app_name
       }
     )
   end
