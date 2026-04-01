@@ -259,7 +259,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       create_instance([__MODULE__, ctx.line])
     end
 
-    test "reports idle: 1 after transaction query completes", ctx do
+    test "reports idle: 1 after transaction query completes", %{db: tenant} = ctx do
       conn =
         start_supervised!(
           {SingleConnection,
@@ -275,7 +275,9 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       ref = attach_handler([:supavisor, :pool, :connections])
       Tenant.execute_pool_metrics()
 
-      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 0}, meta}}
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 0},
+                       %{tenant: ^tenant} = meta}}
 
       assert meta == %{
                tenant: ctx.db,
@@ -287,7 +289,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
              }
     end
 
-    test "reports checked_out: 1 during an open transaction", ctx do
+    test "reports checked_out: 1 during an open transaction", %{db: tenant} = ctx do
       conn =
         start_supervised!(
           {SingleConnection,
@@ -303,13 +305,12 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       ref = attach_handler([:supavisor, :pool, :connections])
       Tenant.execute_pool_metrics()
 
-      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1}, meta}}
-
-      assert meta.mode == :transaction
-      assert meta.tenant == ctx.db
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1},
+                       %{tenant: ^tenant, mode: :transaction}}}
     end
 
-    test "reports checked_out: 1 for an active session connection", ctx do
+    test "reports checked_out: 1 for an active session connection", %{db: tenant} = ctx do
       conn =
         start_supervised!(
           {SingleConnection,
@@ -325,13 +326,12 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       ref = attach_handler([:supavisor, :pool, :connections])
       Tenant.execute_pool_metrics()
 
-      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1}, meta}}
-
-      assert meta.mode == :session
-      assert meta.tenant == ctx.db
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1},
+                       %{tenant: ^tenant, mode: :session}}}
     end
 
-    test "logs an error if pool status request times out", ctx do
+    test "logs an error if pool status request times out", %{db: tenant} = ctx do
       conn =
         start_supervised!(
           {SingleConnection,
@@ -362,10 +362,13 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       assert capture_log(fn -> Tenant.execute_pool_metrics() end) =~
                "Failed to get pool status for #{ctx.external_id}(#{inspect(pid)}): {:timeout"
 
-      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 0}, _}}
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 0},
+                       %{tenant: ^tenant}}}
     end
 
-    test "reports metrics for the remaining pools if a status for a single one times out", ctx do
+    test "reports metrics for the remaining pools if a status for a single one times out",
+         %{db: tenant} = ctx do
       session_conn =
         start_supervised!(
           {SingleConnection,
@@ -409,12 +412,12 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       # Still receives metrics for the timed-out pool (with 0 connections)
       assert_receive {^ref,
                       {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 0},
-                       %{tenant: tenant_id, mode: :session}}}
+                       %{tenant: ^tenant, mode: :session}}}
 
       # And also receives metrics for the other pool
       assert_receive {^ref,
                       {[:supavisor, :pool, :connections], %{idle: 0, checked_out: 1},
-                       %{tenant: ^tenant_id, mode: :transaction}}}
+                       %{tenant: ^tenant, mode: :transaction}}}
     end
 
     test "aggregates multiple pools with the same id into one event" do
@@ -445,10 +448,17 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       Tenant.execute_pool_metrics()
 
       # idle: 3+1=4, checked_out: 1+2=3, exactly ONE event (not two)
-      assert_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 4, checked_out: 3}, meta}}
-      assert meta.tenant == "pool_cluster_test"
-      refute_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 3, checked_out: 1}, _}}
-      refute_receive {^ref, {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 2}, _}}
+      assert_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 4, checked_out: 3},
+                       %{tenant: "pool_cluster_test", mode: :transaction}}}
+
+      refute_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 3, checked_out: 1},
+                       %{tenant: "pool_cluster_test", mode: :transaction}}}
+
+      refute_receive {^ref,
+                      {[:supavisor, :pool, :connections], %{idle: 1, checked_out: 2},
+                       %{tenant: "pool_cluster_test", mode: :transaction}}}
     end
   end
 

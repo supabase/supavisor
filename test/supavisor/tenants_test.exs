@@ -235,6 +235,39 @@ defmodule Supavisor.TenantsTest do
                Tenants.get_user_cache(:single, "postgres", "dev_tenant", nil)
     end
 
+    test "get_user_cache/4 resolves tenant via sni_hostname when external_id is nil" do
+      external_id = "sni_routing_tenant_#{System.unique_integer([:positive])}"
+      sni_hostname = "sni-routing-#{System.unique_integer([:positive])}.example.com"
+
+      tenant_fixture(%{
+        external_id: external_id,
+        sni_hostname: sni_hostname,
+        users: [
+          %{
+            "db_user" => "sni_user",
+            "db_password" => "sni_pass",
+            "pool_size" => 3,
+            "mode_type" => "transaction"
+          }
+        ]
+      })
+
+      assert {:ok, %{tenant: tenant, user: user}} =
+               Tenants.get_user_cache(:single, "sni_user", nil, sni_hostname)
+
+      assert tenant.external_id == external_id
+      assert tenant.sni_hostname == sni_hostname
+      assert user.db_user == "sni_user"
+
+      assert [%Tenant{}] = Tenants.get_pool_config(tenant.external_id, "sni_user")
+    end
+
+    test "get_pool_config/2 raises when called with nil external_id" do
+      assert_raise ArgumentError, ~r/comparison with nil is forbidden/, fn ->
+        Tenants.get_pool_config(nil, "some_user")
+      end
+    end
+
     test "get_user_cache/4 returns error when tenant doesn't exist, then returns tenant after creation" do
       external_id = "cache_test_tenant_#{System.unique_integer([:positive])}"
       user = "cache_test_user"

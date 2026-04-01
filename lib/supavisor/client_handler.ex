@@ -149,20 +149,17 @@ defmodule Supavisor.ClientHandler do
         :handshake,
         %{sock: sock} = data
       ) do
-    Logger.debug("ClientHandler: Client is trying to connect with SSL")
-
-    downstream_cert = Helpers.downstream_cert()
-    downstream_key = Helpers.downstream_key()
+    certs_keys = Helpers.downstream_certs_keys()
 
     # SSL negotiation, S/N/Error
-    if !!downstream_cert and !!downstream_key do
+    if certs_keys != [] do
       :ok = HandlerHelpers.setopts(sock, active: false)
       :ok = HandlerHelpers.sock_send(sock, "S")
 
       opts = [
         verify: :verify_none,
-        certfile: downstream_cert,
-        keyfile: downstream_key
+        certs_keys: certs_keys,
+        sni_fun: fn _hostname -> [certs_keys: certs_keys] end
       ]
 
       case :ssl.handshake(elem(sock, 1), opts) do
@@ -232,10 +229,12 @@ defmodule Supavisor.ClientHandler do
       {:ok, info} ->
         upstream_tls = upstream_tls(info.tenant, effective_ssl)
 
+        resolved_tenant = tenant_or_alias || info.tenant.external_id
+
         id =
           Supavisor.id(
             type: type,
-            tenant: tenant_or_alias,
+            tenant: resolved_tenant,
             user: user,
             mode: data.mode,
             db: db_name,
@@ -243,7 +242,8 @@ defmodule Supavisor.ClientHandler do
             upstream_tls: upstream_tls
           )
 
-        with :ok <- Checks.check_ssl_enforcement(data, info, user),
+        with :ok <- Checks.check_tenant_not_banned(info),
+             :ok <- Checks.check_ssl_enforcement(data, info, user),
              :ok <- Checks.check_address_allowed(sock, info),
              :ok <- Manager.check_client_limit(id, info, data.mode),
              {:ok, auth_method} <-
@@ -746,6 +746,7 @@ defmodule Supavisor.ClientHandler do
   ## Internal functions
   defp handle_auth_success(sock, final_secrets, data) do
     Logger.info("ClientHandler: Connection authenticated")
+    cache_validated_password(data, final_secrets)
 
     if data.mode != :proxy do
       Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(data.id, final_secrets)
@@ -768,6 +769,19 @@ defmodule Supavisor.ClientHandler do
       {:next_event, :internal, conn_type}
     }
   end
+
+  defp cache_validated_password(%{tenant: tenant}, %Supavisor.Secrets.PasswordSecrets{} = secrets) do
+    case Supavisor.ClientAuthentication.get_validation_secrets(tenant, secrets.user) do
+      {:ok, %{password_secrets: nil} = validation} ->
+        updated = %{validation | password_secrets: secrets}
+        Supavisor.ClientAuthentication.put_validation_secrets(tenant, secrets.user, updated)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp cache_validated_password(_data, _secrets), do: :ok
 
   defp handle_auth_failure(exception, data) do
     AuthMethods.handle_auth_failure(data.auth_context, exception)

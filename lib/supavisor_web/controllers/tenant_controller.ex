@@ -27,11 +27,15 @@ defmodule SupavisorWeb.TenantController do
     UserCredentialsUpdate
   }
 
+  # TODO: fix the other actions to use CastAndValidate and remove this conditional plug
+  plug OpenApiSpex.Plug.CastAndValidate,
+       [json_render_error_v2: true, replace_params: false] when action == :patch
+
   action_fallback(SupavisorWeb.FallbackController)
 
   @authorization [
     in: :header,
-    name: "Authorization",
+    name: :authorization,
     schema: %OpenApiSpex.Schema{type: :string},
     required: true,
     example:
@@ -291,6 +295,47 @@ defmodule SupavisorWeb.TenantController do
             |> put_view(SupavisorWeb.ChangesetView)
             |> render("error.json", changeset: changeset)
         end
+    end
+  end
+
+  operation(:patch,
+    summary: "Update tenant",
+    description: """
+    Ban or unban a tenant by setting the `banned` field to true or false, respectively.
+    When set to `true`, `ban_reason` must be provided.
+
+    While banned, any client attempting to connect will receive a FATAL error on the wire.
+    """,
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    request_body:
+      {"Update tenant params", "application/json", SupavisorWeb.OpenApiSchemas.ToggleTenantBan,
+       required: true},
+    responses: %{
+      200 => TenantData.response(),
+      404 => NotFound.response(),
+      422 => UnprocessablyEntity.response()
+    }
+  )
+
+  def patch(conn, %{"external_id" => id, "banned" => _} = params) do
+    case Tenants.toggle_tenant_ban(id, params) do
+      {:ok, tenant} ->
+        tenant = Repo.preload(tenant, :users)
+        render(conn, "show.json", tenant: tenant)
+
+      {:error, :not_found} ->
+        conn
+        |> put_status(404)
+        |> render("not_found.json", tenant: nil)
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        conn
+        |> put_status(422)
+        |> put_view(SupavisorWeb.ChangesetView)
+        |> render("error.json", changeset: changeset)
     end
   end
 

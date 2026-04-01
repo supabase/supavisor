@@ -7,6 +7,8 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
 
+  @moduletag integration_docker: true
+
   setup do
     cert_dir = Path.expand("../../priv/jit/postgres/certs", __DIR__)
     cert_path = Path.join(cert_dir, "server.crt")
