@@ -153,12 +153,16 @@ defmodule Supavisor.Tenants do
     end
   end
 
-  defp not_found_error(type, user, external_id, sni_hostname) do
+  defp not_found_error(_type, _user, nil, _sni_hostname) do
+    {:error, %NoTenantIdentifierError{}}
+  end
+
+  defp not_found_error(type, user, external_id, _sni_hostname) do
     {:error,
      %TenantOrUserNotFoundError{
        type: type,
        user: user,
-       tenant_or_alias: external_id || sni_hostname
+       tenant_or_alias: external_id
      }}
   end
 
