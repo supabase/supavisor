@@ -659,11 +659,12 @@ defmodule Supavisor.DbHandler do
             cacerts: [conn_params.upstream_tls_ca],
             # unclear behavior on pg14
             server_name_indication: conn_params.sni_hostname || conn_params.host,
-            customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+            customize_hostname_check: [{:match_fun, fn _, _ -> true end}],
+            receiver_spawn_opts: [min_heap_size: 2048]
           ]
 
         :none ->
-          [verify: :verify_none]
+          [verify: :verify_none, receiver_spawn_opts: [min_heap_size: 2048]]
       end
 
     case :ssl.connect(sock, opts, timeout) do
