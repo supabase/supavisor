@@ -193,7 +193,8 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       client_sock: nil,
       terminating_error: nil,
-      manager_ref: nil
+      manager_ref: nil,
+      derived_secrets: nil
     }
 
     Telem.handler_action(:db_handler, :started, id)
@@ -322,8 +323,8 @@ defmodule Supavisor.DbHandler do
       {:authentication_sasl, nonce} ->
         {:keep_state, %{data | nonce: nonce}}
 
-      {:authentication_server_first_message, server_proof} ->
-        {:keep_state, %{data | server_proof: server_proof}}
+      {:authentication_server_first_message, server_proof, derived_secrets} ->
+        {:keep_state, %{data | server_proof: server_proof, derived_secrets: derived_secrets}}
 
       %{authentication_server_final_message: _server_final} ->
         :keep_state_and_data
@@ -358,9 +359,10 @@ defmodule Supavisor.DbHandler do
 
         if data.mode != :proxy do
           Supavisor.set_parameter_status(data.id, ps)
+          cache_derived_secrets(data)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps}}
+        {:next_state, :idle, %{data | parameter_status: ps, derived_secrets: nil}}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
@@ -774,7 +776,7 @@ defmodule Supavisor.DbHandler do
 
     secrets = data.connection_params.secrets
 
-    {client_final_message, server_proof} =
+    {client_final_message, server_proof, derived_secrets} =
       Helpers.get_client_final(
         secrets,
         server_first_parts,
@@ -786,7 +788,7 @@ defmodule Supavisor.DbHandler do
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
     :ok = HandlerHelpers.sock_send(data.sock, bin)
 
-    {:authentication_server_first_message, server_proof}
+    {:authentication_server_first_message, server_proof, derived_secrets}
   end
 
   defp handle_auth_pkts(
@@ -830,6 +832,12 @@ defmodule Supavisor.DbHandler do
     do: {:error_response, error}
 
   defp handle_auth_pkts(_e, acc, _data), do: acc
+
+  defp cache_derived_secrets(%{derived_secrets: nil}), do: :ok
+
+  defp cache_derived_secrets(%{id: id, derived_secrets: secrets}) do
+    Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, secrets)
+  end
 
   @spec handle_authentication_error(map(), String.t()) :: any()
   defp handle_authentication_error(%{mode: :proxy}, _reason), do: :ok
