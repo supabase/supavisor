@@ -320,7 +320,11 @@ defmodule Supavisor.Tenants do
         tenant
         |> Tenant.ban_changeset(params)
         |> Repo.update()
-        |> with_cache_invalidation(operation: "ban")
+        |> with_cache_invalidation(
+          operation: "ban",
+          terminate_pools: true,
+          terminate_clients: true
+        )
 
       tenant when banned? == "false" ->
         tenant
@@ -380,6 +384,15 @@ defmodule Supavisor.Tenants do
         Logger.info(
           "Delete cache dist on #{operation} #{external_id}: #{inspect(cleanup_result)}"
         )
+
+        # Terminate clients before pools, since terminating pools only kills session clients
+        if opts[:terminate_clients] do
+          client_terminate_result = Supavisor.terminate_client_handlers_global(external_id)
+
+          Logger.warning(
+            "Terminate client handlers on #{operation} #{external_id}: #{inspect(client_terminate_result)}"
+          )
+        end
 
         if opts[:terminate_pools] do
           terminate_result = Supavisor.terminate_global(external_id)
