@@ -159,7 +159,8 @@ defmodule Supavisor.ClientHandler do
       opts = [
         verify: :verify_none,
         certs_keys: certs_keys,
-        sni_fun: fn _hostname -> [certs_keys: certs_keys] end
+        sni_fun: fn _hostname -> :undefined end,
+        receiver_spawn_opts: [min_heap_size: 2048]
       ]
 
       case :ssl.handshake(elem(sock, 1), opts) do
