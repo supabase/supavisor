@@ -7,6 +7,11 @@
 # Dist buffer busy limit in KB (2GB)
 +zdbbl 2097151
 
+# This used to mean the limit of ets tables, but its the size of the
+# hashtable storing ets names. Increasing it means the table eats
+# more memory but reduces the chance of hash collisions
++e 65536
+
 # Set distribution port range
 -kernel inet_dist_listen_min 20000
 -kernel inet_dist_listen_max 21000
