@@ -1,26 +1,18 @@
 ## Customize flags given to the VM: http://erlang.org/doc/man/erl.html
 ## -mode/-name/-sname/-setcookie are configured via env vars, do not set them here
 
-## Number of dirty schedulers doing IO work (file, sockets, and others)
-##+SDio 5
-
-## Increase number of concurrent ports/sockets
-##+Q 65536
-
-## Tweak GC to run more often
-##-env ERL_FULLSWEEP_AFTER 10
-
-## Set number of ETS tables
-+e 5000
-
 ## Set number of processes
 +P 1000000
 
 # Dist buffer busy limit in KB (2GB)
 +zdbbl 2097151
 
+# Set distribution port range
 -kernel inet_dist_listen_min 20000
 -kernel inet_dist_listen_max 21000
+
+# Keep symbols for profiling
++JPperf true
 
 # Distribution socket options:
 # send buffer - 256KB
