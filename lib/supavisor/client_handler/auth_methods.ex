@@ -24,9 +24,8 @@ defmodule Supavisor.ClientHandler.AuthMethods do
           {:ok, :jit | :password | :scram_sha_256} | {:error, SslRequiredError.t()}
   def fetch_authentication_method(tenant, client_jit, ssl?, user) do
     case {tenant.use_jit, client_jit, ssl?} do
-      {false, _, _} -> {:ok, :scram_sha_256}
-      {true, false, false} -> {:ok, :scram_sha_256}
-      {true, false, true} -> {:ok, :password}
+      {_, false, true} -> {:ok, :password}
+      {_, false, false} -> {:ok, :scram_sha_256}
       {true, true, false} -> {:error, %SslRequiredError{user: user}}
       {true, true, true} -> {:ok, :jit}
     end
