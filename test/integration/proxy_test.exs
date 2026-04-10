@@ -3,8 +3,6 @@ defmodule Supavisor.Integration.ProxyTest do
 
   require Logger
   require Supavisor
-  import ExUnit.CaptureLog
-
   alias Postgrex, as: P
   alias Supavisor.Support.{Cluster, SSLHelper}
 
@@ -946,9 +944,12 @@ defmodule Supavisor.Integration.ProxyTest do
                  backoff_type: :stop
                )
 
-      ref = Process.monitor(conn)
+      Postgrex.query(conn, "SELECT 1", [])
 
-      assert %Postgrex.Result{} = Postgrex.query!(conn, "SELECT 1", [])
+      query_task =
+        Task.async(fn ->
+          Postgrex.query(conn, "SELECT pg_sleep(10)", [])
+        end)
 
       {:ok, _} =
         Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
@@ -956,7 +957,25 @@ defmodule Supavisor.Integration.ProxyTest do
           "ban_reason" => "banned while connected test"
         })
 
-      assert_receive {:DOWN, ^ref, :process, ^conn, _reason}, 5_000
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message: "(EBANNED) tenant is banned: banned while connected test"
+                }
+              }} = Task.await(query_task)
+
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{message: "(EBANNED) tenant is banned: banned while connected test"}
+              }} =
+               single_connection(
+                 hostname: db_conf[:hostname],
+                 port: Application.get_env(:supavisor, :proxy_port_transaction),
+                 database: db_conf[:database],
+                 password: db_conf[:password],
+                 username: "#{db_conf[:username]}.#{@ban_tenant}"
+               )
     end
 
     test "has its connections dropped (session mode)" do
@@ -973,9 +992,12 @@ defmodule Supavisor.Integration.ProxyTest do
                  backoff_type: :stop
                )
 
-      ref = Process.monitor(conn)
-
       assert %Postgrex.Result{} = Postgrex.query!(conn, "SELECT 1", [])
+
+      query_task =
+        Task.async(fn ->
+          Postgrex.query(conn, "SELECT pg_sleep(10)", [])
+        end)
 
       {:ok, _} =
         Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
@@ -983,34 +1005,27 @@ defmodule Supavisor.Integration.ProxyTest do
           "ban_reason" => "banned while connected test session"
         })
 
-      assert_receive {:DOWN, ^ref, :process, ^conn, _reason}, 5_000
-    end
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message: "(EBANNED) tenant is banned: banned while connected test session"
+                }
+              }} = Task.await(query_task)
 
-    test "emits relevant log on error while dropping client handlers" do
-      test_id =
-        Supavisor.id(
-          type: :single,
-          tenant: @ban_tenant,
-          mode: :transaction,
-          user: "postgres",
-          db: "test"
-        )
-
-      # Register us as a client handler for the ban tenant
-      Registry.register(
-        Supavisor.Registry.TenantClients,
-        test_id,
-        started_at: System.monotonic_time()
-      )
-
-      capture_log(fn ->
-        {:ok, _} =
-          Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
-            "banned" => "true",
-            "ban_reason" => "error test"
-          })
-      end) =~
-        "Terminate client handlers on ban #{@ban_tenant}: [ok: {:error, {:exit, :timeout"
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  message: "(EBANNED) tenant is banned: banned while connected test session"
+                }
+              }} =
+               single_connection(
+                 hostname: db_conf[:hostname],
+                 port: Application.get_env(:supavisor, :proxy_port_session),
+                 database: db_conf[:database],
+                 password: db_conf[:password],
+                 username: "#{db_conf[:username]}.#{@ban_tenant}"
+               )
     end
   end
 

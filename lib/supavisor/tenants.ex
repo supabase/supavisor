@@ -10,6 +10,7 @@ defmodule Supavisor.Tenants do
   alias Supavisor.Errors.MultipleTenantUsersError
   alias Supavisor.Errors.NoTenantIdentifierError
   alias Supavisor.Errors.TenantOrUserNotFoundError
+  alias Supavisor.Errors.TenantBannedError
   alias Supavisor.Secrets.ManagerSecrets
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
@@ -323,7 +324,7 @@ defmodule Supavisor.Tenants do
         |> with_cache_invalidation(
           operation: "ban",
           terminate_pools: true,
-          terminate_clients: true
+          terminate_error: %TenantBannedError{ban_reason: params["ban_reason"]}
         )
 
       tenant when banned? == "false" ->
@@ -385,17 +386,8 @@ defmodule Supavisor.Tenants do
           "Delete cache dist on #{operation} #{external_id}: #{inspect(cleanup_result)}"
         )
 
-        # Terminate clients before pools, since terminating pools only kills session clients
-        if opts[:terminate_clients] do
-          client_terminate_result = Supavisor.terminate_client_handlers_global(external_id)
-
-          Logger.warning(
-            "Terminate client handlers on #{operation} #{external_id}: #{inspect(client_terminate_result)}"
-          )
-        end
-
         if opts[:terminate_pools] do
-          terminate_result = Supavisor.terminate_global(external_id)
+          terminate_result = Supavisor.terminate_global(external_id, opts[:terminate_error])
 
           Logger.warning(
             "Terminate pools on #{operation} #{external_id}: #{inspect(terminate_result)}"
