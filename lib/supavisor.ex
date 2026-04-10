@@ -161,6 +161,43 @@ defmodule Supavisor do
   end
 
   @doc """
+  Terminates all client handlers for a given tenant locally.
+
+  Uses the id record's field index to efficiently match clients for the given tenant.
+  """
+  def terminate_client_handlers(tenant) do
+    # id(:tenant) returns 0-based index, but :element uses 1-based indexing
+    tenant_index = id(:tenant) + 1
+
+    Registry.select(Supavisor.Registry.TenantClients, [
+      {{:"$1", :"$2", :_}, [{:==, {:element, tenant_index, :"$1"}, tenant}], [:"$2"]}
+    ])
+    |> Enum.reduce([], fn pid, acc ->
+      result =
+        try do
+          GenServer.stop(pid, :shutdown, 5_000)
+        catch
+          error, reason -> {:error, {error, reason}}
+        end
+
+      [result | acc]
+    end)
+  end
+
+  @doc """
+  Terminates all client handlers for a tenant across the cluster.
+  """
+  def terminate_client_handlers_global(tenant) do
+    :erpc.multicall(
+      [node() | Node.list()],
+      Supavisor,
+      :terminate_client_handlers,
+      [tenant],
+      60_000
+    )
+  end
+
+  @doc """
   Updates credentials for all SecretChecker processes for a tenant across the cluster.
   Used for auth_query mode (require_user: false) to hot-update credentials without restarting pools.
   """

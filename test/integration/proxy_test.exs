@@ -3,6 +3,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
   require Logger
   require Supavisor
+  import ExUnit.CaptureLog
 
   alias Postgrex, as: P
   alias Supavisor.Support.{Cluster, SSLHelper}
@@ -904,20 +905,17 @@ defmodule Supavisor.Integration.ProxyTest do
       :ok
     end
 
-    test "connecting to a banned tenant receives FATAL error on the wire" do
+    test "receives FATAL error on the wire on a connection attempt" do
       db_conf = Application.get_env(:supavisor, Supavisor.Repo)
 
       url =
         "postgresql://#{db_conf[:username]}.#{@ban_tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/#{db_conf[:database]}"
 
-      # Ban the tenant and clear cache so ClientHandler picks it up fresh
       {:ok, _} =
         Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
           "banned" => "true",
           "ban_reason" => "integration test ban"
         })
-
-      Supavisor.del_all_cache_dist(@ban_tenant)
 
       assert {:error,
               %Postgrex.Error{
@@ -929,12 +927,90 @@ defmodule Supavisor.Integration.ProxyTest do
                 }
               }} = parse_uri(url) |> single_connection()
 
-      # Unban and verify the connection succeeds again
       {:ok, _} = Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{"banned" => "false"})
-      Supavisor.del_all_cache_dist(@ban_tenant)
 
-      # run the actual query on the connection to verify it works, not just that it connects
       assert {:ok, _pid} = single_connection(parse_uri(url))
+    end
+
+    test "has its connections dropped (transaction mode)" do
+      Process.flag(:trap_exit, true)
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      assert {:ok, conn} =
+               Postgrex.start_link(
+                 hostname: db_conf[:hostname],
+                 port: Application.get_env(:supavisor, :proxy_port_transaction),
+                 database: db_conf[:database],
+                 password: db_conf[:password],
+                 username: "#{db_conf[:username]}.#{@ban_tenant}",
+                 backoff_type: :stop
+               )
+
+      ref = Process.monitor(conn)
+
+      assert %Postgrex.Result{} = Postgrex.query!(conn, "SELECT 1", [])
+
+      {:ok, _} =
+        Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
+          "banned" => "true",
+          "ban_reason" => "banned while connected test"
+        })
+
+      assert_receive {:DOWN, ^ref, :process, ^conn, _reason}, 5_000
+    end
+
+    test "has its connections dropped (session mode)" do
+      Process.flag(:trap_exit, true)
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      assert {:ok, conn} =
+               Postgrex.start_link(
+                 hostname: db_conf[:hostname],
+                 port: Application.get_env(:supavisor, :proxy_port_session),
+                 database: db_conf[:database],
+                 password: db_conf[:password],
+                 username: "#{db_conf[:username]}.#{@ban_tenant}",
+                 backoff_type: :stop
+               )
+
+      ref = Process.monitor(conn)
+
+      assert %Postgrex.Result{} = Postgrex.query!(conn, "SELECT 1", [])
+
+      {:ok, _} =
+        Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
+          "banned" => "true",
+          "ban_reason" => "banned while connected test session"
+        })
+
+      assert_receive {:DOWN, ^ref, :process, ^conn, _reason}, 5_000
+    end
+
+    test "emits relevant log on error while dropping client handlers" do
+      test_id =
+        Supavisor.id(
+          type: :single,
+          tenant: @ban_tenant,
+          mode: :transaction,
+          user: "postgres",
+          db: "test"
+        )
+
+      # Register us as a client handler for the ban tenant
+      Registry.register(
+        Supavisor.Registry.TenantClients,
+        test_id,
+        started_at: System.monotonic_time()
+      )
+
+      capture_log(fn ->
+        {:ok, _} =
+          Supavisor.Tenants.toggle_tenant_ban(@ban_tenant, %{
+            "banned" => "true",
+            "ban_reason" => "error test"
+          })
+      end) =~
+        "Terminate client handlers on ban #{@ban_tenant}: [ok: {:error, {:exit, :timeout"
     end
   end
 
