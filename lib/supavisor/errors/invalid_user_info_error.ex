@@ -21,6 +21,4 @@ defmodule Supavisor.Errors.InvalidUserInfoError do
     "Invalid format for user or db_name: #{inspect({user, db_name})}"
   end
 
-  @impl Supavisor.Error
-  def is_auth_error(_), do: true
 end

@@ -31,6 +31,4 @@ defmodule Supavisor.Errors.JitUnauthorizedError do
     )
   end
 
-  @impl Supavisor.Error
-  def is_auth_error(_), do: true
 end

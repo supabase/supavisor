@@ -26,6 +26,4 @@ defmodule Supavisor.Errors.AuthProtocolError do
     Supavisor.Error.protocol_error("FATAL", "08P01", message(error))
   end
 
-  @impl Supavisor.Error
-  def is_auth_error(_), do: true
 end

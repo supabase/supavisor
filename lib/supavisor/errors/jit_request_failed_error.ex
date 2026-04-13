@@ -21,6 +21,4 @@ defmodule Supavisor.Errors.JitRequestFailedError do
     "JIT request failed for user \"#{user}\": #{reason}"
   end
 
-  @impl Supavisor.Error
-  def is_auth_error(_), do: true
 end
