@@ -20,5 +20,4 @@ defmodule Supavisor.Errors.InvalidUserInfoError do
   def log_message(%{user: user, db_name: db_name}) do
     "Invalid format for user or db_name: #{inspect({user, db_name})}"
   end
-
 end

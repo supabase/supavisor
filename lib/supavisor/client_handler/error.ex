@@ -27,6 +27,7 @@ defmodule Supavisor.ClientHandler.Error do
     log_message = Map.get(error_actions, :log_message)
     log_level = Map.get(error_actions, :log_level, :error)
     send_ready_for_query = Map.get(error_actions, :send_ready_for_query, false)
+
     if log_message do
       Logger.log(log_level, "ClientHandler: #{log_message}")
     end

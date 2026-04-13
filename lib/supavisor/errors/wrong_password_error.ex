@@ -30,5 +30,4 @@ defmodule Supavisor.Errors.WrongPasswordError do
       "password authentication failed for user \"#{user}\""
     )
   end
-
 end

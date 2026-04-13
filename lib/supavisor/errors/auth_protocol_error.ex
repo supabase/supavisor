@@ -25,5 +25,4 @@ defmodule Supavisor.Errors.AuthProtocolError do
   def postgres_error(error) do
     Supavisor.Error.protocol_error("FATAL", "08P01", message(error))
   end
-
 end

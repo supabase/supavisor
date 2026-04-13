@@ -27,11 +27,12 @@ defmodule Supavisor.HotUpgrade do
 
   @spec up(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def up(_app, _from_vsn, to_vsn, appup, _transform) do
-    appup = Enum.reject(appup, fn
-      {:load_module, __MODULE__} -> true
-      {:load_module, __MODULE__, _} -> true
-      _ -> false
-    end)
+    appup =
+      Enum.reject(appup, fn
+        {:load_module, __MODULE__} -> true
+        {:load_module, __MODULE__, _} -> true
+        _ -> false
+      end)
 
     [
       {:load_module, __MODULE__},

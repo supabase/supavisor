@@ -20,5 +20,4 @@ defmodule Supavisor.Errors.JitRequestFailedError do
   def log_message(%{user: user, reason: reason}) do
     "JIT request failed for user \"#{user}\": #{reason}"
   end
-
 end

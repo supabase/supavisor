@@ -30,5 +30,4 @@ defmodule Supavisor.Errors.JitUnauthorizedError do
       "password authentication failed for user \"#{user}\""
     )
   end
-
 end
