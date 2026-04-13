@@ -266,31 +266,6 @@ if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
        }}
 end
 
-if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
-  config :supavisor, :logger, [
-    {:handler, :access_log, :logger_std_h,
-     %{
-       level: :error,
-       formatter:
-         Logger.Formatter.new(
-           format: "$dateT$timeZ $metadata[$level] $message\n",
-           color: false,
-           metadata: [:peer_ip],
-           utc_log: true
-         ),
-       filter_default: :stop,
-       filters: [
-         exchange: {&Supavisor.Logger.Filters.filter_auth_error/2, nil}
-       ],
-       config: %{
-         file: to_charlist(path),
-         # Keep the file clean on each startup
-         modes: [:write]
-       }
-     }}
-  ]
-end
-
 config :logger,
   backends: [:console]
 
