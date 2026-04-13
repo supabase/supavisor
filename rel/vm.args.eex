@@ -16,9 +16,6 @@
 -kernel inet_dist_listen_min 20000
 -kernel inet_dist_listen_max 21000
 
-# Keep symbols for profiling
-+JPperf true
-
 # Distribution socket options:
 # send buffer - 256KB
 # receive buffer - 512KB
