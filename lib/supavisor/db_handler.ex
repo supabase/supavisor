@@ -324,7 +324,7 @@ defmodule Supavisor.DbHandler do
         {:keep_state, %{data | nonce: nonce}}
 
       {:authentication_server_first_message, server_proof, derived_secrets} ->
-        {:keep_state, %{data | server_proof: server_proof, derived_secrets: derived_secrets}}
+        {:keep_state, Map.merge(data, %{server_proof: server_proof, derived_secrets: derived_secrets})}
 
       %{authentication_server_final_message: _server_final} ->
         :keep_state_and_data
@@ -362,7 +362,7 @@ defmodule Supavisor.DbHandler do
           cache_derived_secrets(data)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps, derived_secrets: nil}}
+        {:next_state, :idle, Map.merge(data, %{parameter_status: ps, derived_secrets: nil})}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
@@ -833,11 +833,12 @@ defmodule Supavisor.DbHandler do
 
   defp handle_auth_pkts(_e, acc, _data), do: acc
 
-  defp cache_derived_secrets(%{derived_secrets: nil}), do: :ok
-
-  defp cache_derived_secrets(%{id: id, derived_secrets: secrets}) do
-    Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, secrets)
+  defp cache_derived_secrets(%{id: id, derived_secrets: derived_secrets})
+       when not is_nil(derived_secrets) do
+    Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, derived_secrets)
   end
+
+  defp cache_derived_secrets(_data), do: :ok
 
   @spec handle_authentication_error(map(), String.t()) :: any()
   defp handle_authentication_error(%{mode: :proxy}, _reason), do: :ok
