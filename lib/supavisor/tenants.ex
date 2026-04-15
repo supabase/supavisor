@@ -10,6 +10,7 @@ defmodule Supavisor.Tenants do
   alias Supavisor.Errors.MultipleTenantUsersError
   alias Supavisor.Errors.NoTenantIdentifierError
   alias Supavisor.Errors.TenantOrUserNotFoundError
+  alias Supavisor.Errors.TenantBannedError
   alias Supavisor.Secrets.ManagerSecrets
   alias Supavisor.Tenants.Cluster
   alias Supavisor.Tenants.ClusterTenants
@@ -324,7 +325,11 @@ defmodule Supavisor.Tenants do
         tenant
         |> Tenant.ban_changeset(params)
         |> Repo.update()
-        |> with_cache_invalidation(operation: "ban")
+        |> with_cache_invalidation(
+          operation: "ban",
+          terminate_pools: true,
+          terminate_error: %TenantBannedError{ban_reason: params["ban_reason"]}
+        )
 
       tenant when banned? == "false" ->
         tenant
@@ -386,7 +391,7 @@ defmodule Supavisor.Tenants do
         )
 
         if opts[:terminate_pools] do
-          terminate_result = Supavisor.terminate_global(external_id)
+          terminate_result = Supavisor.terminate_global(external_id, opts[:terminate_error])
 
           Logger.warning(
             "Terminate pools on #{operation} #{external_id}: #{inspect(terminate_result)}"

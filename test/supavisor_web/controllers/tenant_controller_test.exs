@@ -753,6 +753,38 @@ defmodule SupavisorWeb.TenantControllerTest do
 
       check_cache(external_id)
     end
+
+    test "banned tenant get unbanned after deletion and re-creation", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{
+               data: %{
+                 external_id: ^external_id,
+                 banned_at: banned_at,
+                 ban_reason: "abuse"
+               }
+             } =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{
+                 banned: "true",
+                 ban_reason: "abuse"
+               })
+               |> json_response(200)
+               |> assert_schema("TenantData")
+
+      assert banned_at != nil
+
+      conn
+      |> delete(~p"/api/tenants/#{external_id}")
+      |> response(204)
+
+      assert %{data: %{external_id: ^external_id, banned_at: nil, ban_reason: nil}} =
+               conn
+               |> put(~p"/api/tenants/#{external_id}", tenant: @create_attrs)
+               |> json_response(201)
+               |> assert_schema("TenantData")
+    end
   end
 
   defp create_tenant(_) do
