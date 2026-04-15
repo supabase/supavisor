@@ -31,6 +31,7 @@ defmodule Supavisor.Protocol.Client do
         |> Enum.map(fn
           ["options" = k, v] ->
             parsed = Supavisor.Protocol.StartupOptions.parse(v)
+
             # Compatibility: options are not following the standard format, try query_decoding them
             if map_size(parsed) > 0 do
               {k, parsed}
