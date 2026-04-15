@@ -938,6 +938,36 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  test "connect using reference option for tenant name" do
+    tenant = "proxy_tenant_ps_enabled"
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+    base_opts = [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_transaction),
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username]
+    ]
+
+    assert {:ok, proxy} =
+             Postgrex.start_link(base_opts ++ [parameters: [options: "--reference=#{tenant}"]])
+
+    assert %Postgrex.Result{rows: [[1]]} = Postgrex.query!(proxy, "SELECT 1", [])
+
+    assert {:ok, proxy2} =
+             Postgrex.start_link(base_opts ++ [parameters: [options: "reference=#{tenant}"]])
+
+    assert %Postgrex.Result{rows: [[1]]} = Postgrex.query!(proxy2, "SELECT 1", [])
+
+    assert {:ok, proxy3} =
+             Postgrex.start_link(
+               base_opts ++ [parameters: [options: URI.encode("reference=#{tenant}")]]
+             )
+
+    assert %Postgrex.Result{rows: [[1]]} = Postgrex.query!(proxy3, "SELECT 1", [])
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,
