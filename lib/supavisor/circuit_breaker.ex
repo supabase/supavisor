@@ -306,11 +306,7 @@ defmodule Supavisor.CircuitBreaker do
       Enum.reduce(entries, 0, fn {{key, operation} = ets_key, sw}, acc ->
         pre_delete_window = SlidingWindow.window_index(sw)
 
-        blocked =
-          case :ets.lookup(@blocks_table, ets_key) do
-            [{^ets_key, b}] -> b
-            [] -> 0
-          end
+        blocked = :ets.lookup_element(@blocks_table, ets_key, 2, 0)
 
         not_blocked = blocked == 0 or blocked < now
 
