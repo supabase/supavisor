@@ -36,7 +36,7 @@ defmodule Supavisor.Protocol.Client do
             if map_size(parsed) > 0 do
               {k, parsed}
             else
-              {k, URI.decode_query(v, :rfc3986)}
+              {k, URI.decode_query(v, %{}, :rfc3986)}
             end
 
           [k, v] ->
