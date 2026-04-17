@@ -70,6 +70,40 @@ defmodule Supavisor.Support.SSLHelper do
   end
 
   @doc """
+  Configures downstream TLS using the pre-generated test certs in priv/test/certs.
+  Registers an `on_exit` callback to restore the original values.
+
+  Must be called from a test `setup` or `setup_all` block.
+  """
+  def setup_downstream_certs do
+    certs_dir = Path.expand("../../priv/test/certs", __DIR__)
+
+    keys = [
+      {:global_downstream_cert, "server_rsa.crt"},
+      {:global_downstream_key, "server_rsa.key"},
+      {:global_downstream_ec_cert, "server_ecdsa.crt"},
+      {:global_downstream_ec_key, "server_ecdsa.key"}
+    ]
+
+    orig =
+      Map.new(keys, fn {key, _} -> {key, Application.get_env(:supavisor, key)} end)
+
+    for {key, file} <- keys do
+      Application.put_env(:supavisor, key, Path.join(certs_dir, file))
+    end
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {key, val} <- orig do
+        if val,
+          do: Application.put_env(:supavisor, key, val),
+          else: Application.delete_env(:supavisor, key)
+      end
+    end)
+
+    :ok
+  end
+
+  @doc """
   Cleans up test SSL certificates.
   """
   def cleanup_test_ssl do

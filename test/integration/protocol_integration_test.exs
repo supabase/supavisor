@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
   use Supavisor.DataCase, async: false
 
   alias Supavisor.Protocol.Server
+  require Server
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
 
@@ -114,6 +115,99 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert <<?R, _::binary>> = response
 
       :gen_tcp.close(sock)
+    end
+  end
+
+  describe "authentication method selection" do
+    setup do
+      Supavisor.Support.SSLHelper.setup_downstream_certs()
+      %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
+    end
+
+    test "requests SCRAM-SHA-256 when client connects without SSL", %{port: port} do
+      tenant = List.first(@tenants)
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+      user = db_conf[:username]
+
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      startup =
+        :pgo_protocol.encode_startup_message([
+          {"user", "#{user}.#{tenant}"},
+          {"database", to_string(db_conf[:database])}
+        ])
+
+      :ok = :gen_tcp.send(sock, startup)
+
+      {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+      # 10 = AuthenticationSASL
+      assert auth_type == 10
+    end
+
+    test "requests cleartext password when client connects with SSL", %{port: port} do
+      tenant = List.first(@tenants)
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+      user = db_conf[:username]
+
+      {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+      :ok = :gen_tcp.send(tcp, Server.ssl_request_message())
+      {:ok, "S"} = :gen_tcp.recv(tcp, 1, 5000)
+      {:ok, ssl} = :ssl.connect(tcp, [verify: :verify_none, active: false], 5000)
+
+      startup =
+        :pgo_protocol.encode_startup_message([
+          {"user", "#{user}.#{tenant}"},
+          {"database", to_string(db_conf[:database])}
+        ])
+
+      :ok = :ssl.send(ssl, startup)
+
+      {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :ssl.recv(ssl, 0, 5000)
+      # 3 = AuthenticationCleartextPassword
+      assert auth_type == 3
+    end
+
+    test "proxied connection requests SCRAM-SHA-256 without client_tls option" do
+      tenant = List.first(@tenants)
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+      user = db_conf[:username]
+
+      [local_port | _] = Application.get_env(:supavisor, :transaction_proxy_ports)
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", local_port, [:binary, active: false])
+
+      startup =
+        :pgo_protocol.encode_startup_message([
+          {"user", "#{user}.#{tenant}"},
+          {"database", to_string(db_conf[:database])}
+        ])
+
+      :ok = :gen_tcp.send(sock, startup)
+
+      {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+      # 10 = AuthenticationSASL
+      assert auth_type == 10
+    end
+
+    test "proxied connection requests cleartext password with client_tls option" do
+      tenant = List.first(@tenants)
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+      user = db_conf[:username]
+
+      [local_port | _] = Application.get_env(:supavisor, :transaction_proxy_ports)
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", local_port, [:binary, active: false])
+
+      startup =
+        :pgo_protocol.encode_startup_message([
+          {"user", "#{user}.#{tenant}"},
+          {"database", to_string(db_conf[:database])},
+          {"options", "--client_tls=true"}
+        ])
+
+      :ok = :gen_tcp.send(sock, startup)
+
+      {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+      # 3 = AuthenticationCleartextPassword
+      assert auth_type == 3
     end
   end
 
