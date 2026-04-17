@@ -166,15 +166,23 @@ defmodule Supavisor.DbHandler do
         %{} -> {args.id, Supavisor.Manager.get_config(args.id)}
       end
 
+    proxy = Map.get(config, :proxy, false)
+
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
-
     Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
+
+    conn_params =
+      if proxy do
+        config.connection_params
+      else
+        %ConnectionParameters{config.connection_params | application_name: "Supavisor"}
+      end
 
     data = %{
       id: id,
       sock: nil,
-      connection_params: config.connection_params,
+      connection_params: conn_params,
       user: config.user,
       tenant: config.tenant,
       tenant_feature_flags: config.tenant_feature_flags,
@@ -184,7 +192,7 @@ defmodule Supavisor.DbHandler do
       server_proof: nil,
       stats: %{},
       prepared_statements: MapSet.new(),
-      proxy: Map.get(config, :proxy, false),
+      proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
