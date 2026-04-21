@@ -4,6 +4,7 @@ defmodule Supavisor do
   require Logger
 
   alias Supavisor.{
+    Errors.TenantBannedError,
     Helpers,
     Manager,
     Tenants
@@ -133,22 +134,33 @@ defmodule Supavisor do
   end
 
   @doc """
-  During netsplits, or due to certain internal conflicts, :syn may store inconsistent data across the cluster.
-  This function terminates all connection trees related to a specific tenant.
-  """
-  @spec dirty_terminate(String.t(), pos_integer()) :: map()
-  def dirty_terminate(tenant, timeout \\ 15_000) do
-    Registry.lookup(Supavisor.Registry.TenantSups, tenant)
-    |> Enum.reduce(%{}, fn {pid, id(user: user)}, acc ->
-      stop =
-        try do
-          Supervisor.stop(pid, :shutdown, timeout)
-        catch
-          error, reason -> {:error, {error, reason}}
-        end
+  Terminate all connection trees for a tenant across the cluster
 
+  During netsplits, or due to certain internal conflicts, :syn may store inconsistent
+  data across the cluster.
+
+  If `error` is provided, `Manager.shutdown_with_error/2` will be used to first
+  terminate the clients with the provided error, before terminating a pool -
+  which is done asynchronously from the `Manager`.
+
+  There's a race, in which the pool may be terminated before the clients terminate with the error
+  - then their connection will be closed forcibly without the error message.
+  """
+  @spec dirty_terminate(String.t(), Supavisor.Error.t() | nil, pos_integer()) ::
+          map()
+  def dirty_terminate(tenant, error \\ nil, timeout \\ 15_000)
+
+  def dirty_terminate(tenant, nil, timeout) do
+    Supavisor.Registry.TenantSups
+    |> Registry.lookup(tenant)
+    |> Enum.reduce(%{}, fn {pid, id(user: user)}, acc ->
       resp = %{
-        stop: stop,
+        stop:
+          try do
+            Supervisor.stop(pid, :shutdown, timeout)
+          catch
+            error, reason -> {:error, {error, reason}}
+          end,
         cache: del_all_cache(tenant, user)
       }
 
@@ -156,8 +168,32 @@ defmodule Supavisor do
     end)
   end
 
-  def terminate_global(tenant) do
-    :erpc.multicall([node() | Node.list()], Supavisor, :dirty_terminate, [tenant], 60_000)
+  def dirty_terminate(tenant, error, _timeout) do
+    Supavisor.Registry.TenantSups
+    |> Registry.lookup(tenant)
+    |> Enum.reduce(%{}, fn {_pid, id(user: user) = id}, acc ->
+      resp = %{
+        stop:
+          if pid = get_local_manager(id) do
+            Manager.shutdown_with_error(pid, TenantBannedError.postgres_error(error))
+          else
+            {:error, :manager_not_found}
+          end,
+        cache: del_all_cache(tenant, user)
+      }
+
+      Map.put(acc, user, resp)
+    end)
+  end
+
+  def terminate_global(tenant, error \\ nil) do
+    :erpc.multicall(
+      [node() | Node.list()],
+      Supavisor,
+      :dirty_terminate,
+      [tenant, error],
+      60_000
+    )
   end
 
   @doc """
