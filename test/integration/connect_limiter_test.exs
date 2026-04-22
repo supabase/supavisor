@@ -4,7 +4,7 @@ defmodule Supavisor.Integration.ConnectLimiterTest do
   require Supavisor
 
   @tenant "connect_limiter_tenant"
-  @backend_port 23456
+  @backend_port 23_456
 
   defmodule SlowBackend do
     use GenServer
