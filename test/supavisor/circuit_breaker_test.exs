@@ -289,7 +289,7 @@ defmodule Supavisor.CircuitBreakerTest do
                max_failures: 5,
                sliding_window_seconds: 300,
                window_seconds: 600,
-               block_seconds: 600,
+               block_seconds: 30,
                blocked_until: nil
              } = result
     end
