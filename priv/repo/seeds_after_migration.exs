@@ -198,6 +198,28 @@ end
       |> Tenants.create_tenant()
   end
 end)
+if !Tenants.get_tenant_by_external_id("connect_limiter_tenant") do
+  {:ok, _} =
+    %{
+      db_host: "127.0.0.1",
+      db_port: 23456,
+      db_database: db_conf[:database],
+      default_parameter_status: %{},
+      external_id: "connect_limiter_tenant",
+      require_user: true,
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 15,
+          "max_clients" => 25,
+          "mode_type" => "transaction"
+        }
+      ]
+    }
+    |> Tenants.create_tenant()
+end
+
 # Create cluster test tenants for integration tests
 for i <- 1..10 do
   tenant_id = "cluster_pool_tenant_#{i}"

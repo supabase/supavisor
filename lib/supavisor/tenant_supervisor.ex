@@ -43,6 +43,7 @@ defmodule Supavisor.TenantSupervisor do
 
     children =
       [
+        {Supavisor.ConnectLimiter, [id: args.id]},
         {Supavisor.TenantCache, cache_args},
         {Manager, manager_args},
         {SecretChecker, secret_checker_args}

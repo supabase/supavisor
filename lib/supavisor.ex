@@ -387,12 +387,14 @@ defmodule Supavisor do
             end
           end)
 
-        DynamicSupervisor.start_child(
-          {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
-          {Supavisor.TenantSupervisor,
-           %{id: id, replicas: replicas_info, secrets: secrets, log_level: log_level}}
-        )
-        |> case do
+        result =
+          DynamicSupervisor.start_child(
+            {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
+            {Supavisor.TenantSupervisor,
+             %{id: id, replicas: replicas_info, secrets: secrets, log_level: log_level}}
+          )
+
+        case result do
           {:error, {:already_started, pid}} -> {:ok, pid}
           resp -> resp
         end
