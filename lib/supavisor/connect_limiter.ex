@@ -9,8 +9,6 @@ defmodule Supavisor.ConnectLimiter do
 
   Each slot holder is monitored. If the holder dies without releasing, the slot
   is automatically reclaimed.
-
-  Started as a child of TenantSupervisor, one per tenant.
   """
 
   use GenServer
