@@ -310,8 +310,9 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _state, data) do
     Logger.debug("ClientHandler: Subscribe to tenant #{Supavisor.inspect_id(data.id)}")
 
-    with :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
-         {:ok, sup} <-
+    # CB check disabled until we ensure there are no false positives
+    # :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
+    with {:ok, sup} <-
            Supavisor.start_dist(data.id, data.connection_params.secrets,
              availability_zone: data.tenant_availability_zone,
              log_level: nil

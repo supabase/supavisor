@@ -495,6 +495,7 @@ defmodule Supavisor.Integration.ProxyTest do
     Supavisor.CircuitBreaker.clear(tenant, :get_secrets)
   end
 
+  @tag :skip
   test "circuit breaker blocks db_connection after failures" do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     tenant = "circuit_breaker_db_conn"

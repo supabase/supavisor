@@ -124,8 +124,7 @@ defmodule Supavisor.PeepStorage do
               new_atomics
 
             false ->
-              [{_key, existing}] = :ets.lookup(tid, key)
-              existing
+              :ets.lookup_element(tid, key, 2)
           end
       end
 
