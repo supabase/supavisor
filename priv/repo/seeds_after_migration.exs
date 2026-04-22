@@ -202,7 +202,7 @@ if !Tenants.get_tenant_by_external_id("connect_limiter_tenant") do
   {:ok, _} =
     %{
       db_host: "127.0.0.1",
-      db_port: 23456,
+      db_port: 23_456,
       db_database: db_conf[:database],
       default_parameter_status: %{},
       external_id: "connect_limiter_tenant",
