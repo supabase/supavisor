@@ -325,7 +325,7 @@ defmodule Supavisor.CircuitBreakerTest do
       assert result.max_failures == 100
       assert result.sliding_window_seconds == 150
       assert result.window_seconds == 300
-      assert result.block_seconds == 600
+      assert result.block_seconds == 30
     end
   end
 
