@@ -372,7 +372,7 @@ defmodule Supavisor.DbHandler do
         end
 
         release_connect_slot(data)
-        {:next_state, :idle, %{data | parameter_status: ps, slot_ref: nil}}
+        {:next_state, :idle, Map.merge(data, %{parameter_status: ps, slot_ref: nil})}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
@@ -1007,13 +1007,14 @@ defmodule Supavisor.DbHandler do
 
   defp request_connect_slot(data) do
     slot_ref = Supavisor.ConnectLimiter.request_slot(data.id)
-    {:waiting_for_connect_slot, %{data | slot_ref: slot_ref}, []}
+    {:waiting_for_connect_slot, Map.put(data, :slot_ref, slot_ref), []}
   end
 
-  defp release_connect_slot(%{slot_ref: nil}), do: :ok
-
-  defp release_connect_slot(%{id: id, slot_ref: slot_ref}) do
-    Supavisor.ConnectLimiter.release_slot(id, slot_ref)
+  defp release_connect_slot(data) do
+    case Map.get(data, :slot_ref) do
+      nil -> :ok
+      slot_ref -> Supavisor.ConnectLimiter.release_slot(data.id, slot_ref)
+    end
   end
 
   defp connect_cooldown_remaining(id) do
