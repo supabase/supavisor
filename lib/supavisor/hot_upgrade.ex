@@ -27,10 +27,16 @@ defmodule Supavisor.HotUpgrade do
 
   @spec up(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def up(_app, _from_vsn, to_vsn, appup, _transform) do
+    explicit = [__MODULE__, Supavisor.ConnectLimiter, Supavisor.TenantSupervisor]
+
     appup =
       Enum.reject(appup, fn
-        {:load_module, __MODULE__} -> true
-        {:load_module, __MODULE__, _} -> true
+        {:load_module, mod} -> mod in explicit
+        {:load_module, mod, _} -> mod in explicit
+        {:add_module, mod} -> mod in explicit
+        {:delete_module, mod} -> mod in explicit
+        {:update, mod, _} -> mod in explicit
+        {:update, mod, _, _} -> mod in explicit
         _ -> false
       end)
 
@@ -38,18 +44,68 @@ defmodule Supavisor.HotUpgrade do
       {:load_module, __MODULE__},
       {:apply, {__MODULE__, :apply_runtime_config, [to_vsn]}},
       {:apply, {__MODULE__, :remove_access_log_handler, []}}
-    ] ++ appup
+    ] ++
+      appup ++
+      [
+        {:add_module, Supavisor.ConnectLimiter},
+        {:update, Supavisor.TenantSupervisor, :supervisor},
+        {:apply, {__MODULE__, :start_connect_limiters, []}}
+      ]
   end
 
   @spec down(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def down(_app, from_vsn, _to_vsn, appup, _transform) do
+    explicit = [__MODULE__, Supavisor.ConnectLimiter, Supavisor.TenantSupervisor]
+
+    appup =
+      Enum.reject(appup, fn
+        {:load_module, mod} -> mod in explicit
+        {:load_module, mod, _} -> mod in explicit
+        {:add_module, mod} -> mod in explicit
+        {:delete_module, mod} -> mod in explicit
+        {:update, mod, _} -> mod in explicit
+        {:update, mod, _, _} -> mod in explicit
+        _ -> false
+      end)
+
     [
-      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}}
-    ] ++ appup
+      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}},
+      {:apply, {__MODULE__, :stop_connect_limiters, []}}
+    ] ++
+      appup ++
+      [
+        {:update, Supavisor.TenantSupervisor, :supervisor},
+        {:delete_module, Supavisor.ConnectLimiter}
+      ]
   end
 
   def remove_access_log_handler do
     :logger.remove_handler(:access_log)
+  end
+
+  def start_connect_limiters do
+    for {pid, id} <- tenant_supervisors() do
+      try do
+        Supervisor.start_child(pid, {Supavisor.ConnectLimiter, [id: id]})
+      catch
+        :exit, _ -> :ok
+      end
+    end
+  end
+
+  def stop_connect_limiters do
+    for {pid, _id} <- tenant_supervisors() do
+      try do
+        Supervisor.terminate_child(pid, Supavisor.ConnectLimiter)
+        Supervisor.delete_child(pid, Supavisor.ConnectLimiter)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+  end
+
+  defp tenant_supervisors do
+    Registry.select(Supavisor.Registry.TenantSups, [{{:_, :"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}])
   end
 
   @spec apply_runtime_config(version_str()) :: any()

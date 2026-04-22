@@ -100,6 +100,29 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
+  defmodule FakeConnectLimiter do
+    use GenServer
+
+    def start_link({id, test_pid}) do
+      GenServer.start_link(__MODULE__, {id, test_pid})
+    end
+
+    def init({id, test_pid}) do
+      Registry.register(Supavisor.Registry.Tenants, {:connect_limiter, id}, nil)
+      {:ok, test_pid}
+    end
+
+    def handle_cast({:request, pid, ref}, test_pid) do
+      send(test_pid, {:slot_requested, pid, ref})
+      send(pid, {:connect_slot_granted, ref})
+      {:noreply, test_pid}
+    end
+
+    def handle_cast({:release, _pid, _ref}, test_pid) do
+      {:noreply, test_pid}
+    end
+  end
+
   alias Supavisor.ConnectionParameters
   alias Supavisor.Secrets.{PasswordSecrets, SASLSecrets}
 
@@ -161,10 +184,13 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
+      start_supervised!({FakeConnectLimiter, {@id, self()}})
 
       args = %{id: @id}
 
-      {:ok, :connect, data, {:next_event, :internal, :connect}} = Db.init(args)
+      {:ok, :waiting_for_connect_slot, data, []} = Db.init(args)
+      assert_receive {:slot_requested, _pid, ref}
+      assert ref == data.slot_ref
       assert data.sock == nil
       assert data.caller == nil
       assert data.connection_params.secrets == secrets
@@ -226,6 +252,7 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
+      start_supervised!({FakeConnectLimiter, {@id, self()}})
 
       # Initialize in waiting_for_secrets state
       args = %{id: @id}
@@ -235,11 +262,49 @@ defmodule Supavisor.DbHandlerTest do
       Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(@id, secrets)
 
       # Notify that secrets are available
-      assert {:next_state, :connect, updated_data, {:next_event, :internal, :connect}} =
+      assert {:next_state, :waiting_for_connect_slot, updated_data, []} =
                Db.handle_event(:cast, :secrets_available, :waiting_for_secrets, data)
 
+      assert_receive {:slot_requested, _pid, ref}
+      assert ref == updated_data.slot_ref
       assert updated_data.connection_params.secrets == secrets
       assert updated_data.manager_ref == nil
+    end
+
+    test "transitions from waiting_for_connect_slot to connect when slot is granted" do
+      secrets = %PasswordSecrets{user: "user", password: "pass"}
+      conn_params = connection_params(%{secrets: secrets})
+
+      table = :ets.new(:tenant_cache, [:set, :public])
+      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(@id, secrets)
+
+      manager_config = %{
+        id: @id,
+        connection_params: conn_params,
+        tenant: {:single, "test_tenant"},
+        user: "user",
+        mode: :transaction,
+        replica_type: :single,
+        log_level: nil,
+        tenant_feature_flags: %{}
+      }
+
+      {:ok, _manager} = start_supervised({FakeManager, manager_config})
+      start_supervised!({FakeConnectLimiter, {@id, self()}})
+
+      {:ok, :waiting_for_connect_slot, data, []} = Db.init(%{id: @id})
+      assert_receive {:slot_requested, _pid, ref}
+      assert ref == data.slot_ref
+
+      assert {:next_state, :connect, ^data, {:next_event, :internal, :connect}} =
+               Db.handle_event(
+                 :info,
+                 {:connect_slot_granted, data.slot_ref},
+                 :waiting_for_connect_slot,
+                 data
+               )
     end
   end
 

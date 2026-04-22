@@ -58,6 +58,7 @@ defmodule Supavisor.DbHandler do
           | :busy
           | :terminating_with_error
           | :waiting_for_secrets
+          | :waiting_for_connect_slot
 
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
@@ -193,7 +194,8 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       client_sock: nil,
       terminating_error: nil,
-      manager_ref: nil
+      manager_ref: nil,
+      slot_ref: nil
     }
 
     Telem.handler_action(:db_handler, :started, id)
@@ -218,6 +220,15 @@ defmodule Supavisor.DbHandler do
   def handle_event(:state_timeout, :connect, :connect_cooldown, data) do
     {next_state, data, actions} = resolve_secrets(data)
     {:next_state, next_state, data, actions}
+  end
+
+  def handle_event(
+        :info,
+        {:connect_slot_granted, ref},
+        :waiting_for_connect_slot,
+        %{slot_ref: ref} = data
+      ) do
+    {:next_state, :connect, data, {:next_event, :internal, :connect}}
   end
 
   def handle_event(:internal, :connect, :connect, %{connection_params: conn_params} = data) do
@@ -360,7 +371,8 @@ defmodule Supavisor.DbHandler do
           Supavisor.set_parameter_status(data.id, ps)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps}}
+        release_connect_slot(data)
+        {:next_state, :idle, Map.merge(data, %{parameter_status: ps, slot_ref: nil})}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
@@ -546,15 +558,15 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:cast, :secrets_available, :waiting_for_secrets, data) do
-    Logger.info("DbHandler: Secrets are now available, transitioning to connect state")
+    Logger.info("DbHandler: Secrets are now available, requesting connect slot")
 
     Process.demonitor(data.manager_ref, [:flush])
 
     case get_connection_params_with_secrets(data.connection_params, data.id) do
       {:ok, conn_params_with_secrets} ->
-        {:next_state, :connect,
-         %{data | connection_params: conn_params_with_secrets, manager_ref: nil},
-         {:next_event, :internal, :connect}}
+        data = %{data | connection_params: conn_params_with_secrets, manager_ref: nil}
+        {next_state, data, actions} = request_connect_slot(data)
+        {:next_state, next_state, data, actions}
 
       {:error, :no_secrets} ->
         Logger.error("DbHandler: Still no secrets available after notification")
@@ -981,8 +993,7 @@ defmodule Supavisor.DbHandler do
     else
       case get_connection_params_with_secrets(data.connection_params, data.id) do
         {:ok, conn_params_with_secrets} ->
-          {:connect, %{data | connection_params: conn_params_with_secrets},
-           {:next_event, :internal, :connect}}
+          request_connect_slot(%{data | connection_params: conn_params_with_secrets})
 
         {:error, :no_secrets} ->
           Logger.warning("DbHandler: Secrets not available, entering waiting state")
@@ -991,6 +1002,18 @@ defmodule Supavisor.DbHandler do
           Supavisor.Manager.register_waiting_for_secrets(data.id, self())
           {:waiting_for_secrets, %{data | manager_ref: ref}, []}
       end
+    end
+  end
+
+  defp request_connect_slot(data) do
+    slot_ref = Supavisor.ConnectLimiter.request_slot(data.id)
+    {:waiting_for_connect_slot, Map.put(data, :slot_ref, slot_ref), []}
+  end
+
+  defp release_connect_slot(data) do
+    case Map.get(data, :slot_ref) do
+      nil -> :ok
+      slot_ref -> Supavisor.ConnectLimiter.release_slot(data.id, slot_ref)
     end
   end
 
