@@ -214,8 +214,16 @@ defmodule Supavisor.Helpers do
     end
   end
 
+  @doc """
+  Builds the SCRAM client-final message and returns `{client_final, server_signature, derived_secrets}`.
+
+  When called with `PasswordSecrets`, the expensive PBKDF2 derivation runs once and the
+  resulting `SASLSecrets` are returned as the third element so the caller can cache them
+  for future connections. When called with already-derived `SASLSecrets`, the third element
+  is `nil` (nothing new to cache).
+  """
   @spec get_client_final(map(), map(), binary(), binary(), binary()) ::
-          {iolist(), binary()}
+          {iolist(), binary(), Supavisor.Secrets.SASLSecrets.t() | nil}
   def get_client_final(
         %Supavisor.Secrets.PasswordSecrets{} = secrets,
         srv_first,
@@ -242,7 +250,18 @@ defmodule Supavisor.Helpers do
     server_key = :pgo_scram.hmac(salted_password, "Server Key")
     server_signature = :pgo_scram.hmac(server_key, auth_message)
 
-    {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature}
+    derived_secrets = %Supavisor.Secrets.SASLSecrets{
+      user: secrets.user,
+      client_key: client_key,
+      server_key: server_key,
+      stored_key: stored_key,
+      digest: "sha-256",
+      iterations: i,
+      salt: salt
+    }
+
+    {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature,
+     derived_secrets}
   end
 
   def get_client_final(
@@ -264,7 +283,7 @@ defmodule Supavisor.Helpers do
 
     server_signature = :pgo_scram.hmac(secrets.server_key, auth_message)
 
-    {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature}
+    {[client_final_without_proof, ",p=", Base.encode64(client_proof)], server_signature, nil}
   end
 
   def verify_password_against_scram(

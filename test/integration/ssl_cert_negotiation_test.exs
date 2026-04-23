@@ -18,51 +18,7 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
   ]
 
   setup_all do
-    orig = %{
-      cert: Application.get_env(:supavisor, :global_downstream_cert),
-      key: Application.get_env(:supavisor, :global_downstream_key),
-      ec_cert: Application.get_env(:supavisor, :global_downstream_ec_cert),
-      ec_key: Application.get_env(:supavisor, :global_downstream_ec_key)
-    }
-
-    Application.put_env(
-      :supavisor,
-      :global_downstream_cert,
-      Path.join(@certs_dir, "server_rsa.crt")
-    )
-
-    Application.put_env(
-      :supavisor,
-      :global_downstream_key,
-      Path.join(@certs_dir, "server_rsa.key")
-    )
-
-    Application.put_env(
-      :supavisor,
-      :global_downstream_ec_cert,
-      Path.join(@certs_dir, "server_ecdsa.crt")
-    )
-
-    Application.put_env(
-      :supavisor,
-      :global_downstream_ec_key,
-      Path.join(@certs_dir, "server_ecdsa.key")
-    )
-
-    on_exit(fn ->
-      for {key, val} <- [
-            {:global_downstream_cert, orig.cert},
-            {:global_downstream_key, orig.key},
-            {:global_downstream_ec_cert, orig.ec_cert},
-            {:global_downstream_ec_key, orig.ec_key}
-          ] do
-        if val,
-          do: Application.put_env(:supavisor, key, val),
-          else: Application.delete_env(:supavisor, key)
-      end
-    end)
-
-    :ok
+    Supavisor.Support.SSLHelper.setup_downstream_certs()
   end
 
   describe "TLS 1.2" do
