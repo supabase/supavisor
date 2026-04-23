@@ -24,10 +24,7 @@ defmodule Supavisor.TenantCache do
   def get_parameter_status(id) do
     case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
       [{_pid, table}] ->
-        case :ets.lookup(table, :parameter_status) do
-          [{:parameter_status, ps}] -> ps
-          _ -> []
-        end
+        :ets.lookup_element(table, :parameter_status, 2, [])
 
       _ ->
         []
@@ -86,10 +83,7 @@ defmodule Supavisor.TenantCache do
   def get_last_connect_failure(id) do
     case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
       [{_pid, table}] ->
-        case :ets.lookup(table, :last_connect_failure) do
-          [{:last_connect_failure, ts}] -> ts
-          _ -> nil
-        end
+        :ets.lookup_element(table, :last_connect_failure, 2, nil)
 
       _ ->
         nil

@@ -27,18 +27,29 @@ defmodule Supavisor.HotUpgrade do
 
   @spec up(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def up(_app, _from_vsn, to_vsn, appup, _transform) do
+    appup =
+      Enum.reject(appup, fn
+        {:load_module, __MODULE__} -> true
+        {:load_module, __MODULE__, _} -> true
+        _ -> false
+      end)
+
     [
+      {:load_module, __MODULE__},
       {:apply, {__MODULE__, :apply_runtime_config, [to_vsn]}},
-      {:apply, {__MODULE__, :reint_funs, []}}
+      {:apply, {__MODULE__, :remove_access_log_handler, []}}
     ] ++ appup
   end
 
   @spec down(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def down(_app, from_vsn, _to_vsn, appup, _transform) do
     [
-      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}},
-      {:apply, {__MODULE__, :reint_funs, []}}
+      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}}
     ] ++ appup
+  end
+
+  def remove_access_log_handler do
+    :logger.remove_handler(:access_log)
   end
 
   @spec apply_runtime_config(version_str()) :: any()

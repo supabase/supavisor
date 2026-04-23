@@ -159,7 +159,8 @@ defmodule Supavisor.ClientHandler do
       opts = [
         verify: :verify_none,
         certs_keys: certs_keys,
-        sni_fun: fn _hostname -> [certs_keys: certs_keys] end
+        sni_fun: fn _hostname -> :undefined end,
+        receiver_spawn_opts: [min_heap_size: 2048]
       ]
 
       case :ssl.handshake(elem(sock, 1), opts) do
@@ -309,8 +310,9 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:internal, :subscribe, _state, data) do
     Logger.debug("ClientHandler: Subscribe to tenant #{Supavisor.inspect_id(data.id)}")
 
-    with :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
-         {:ok, sup} <-
+    # CB check disabled until we ensure there are no false positives
+    # :ok <- Supavisor.CircuitBreaker.check(data.tenant, :db_connection),
+    with {:ok, sup} <-
            Supavisor.start_dist(data.id, data.connection_params.secrets,
              availability_zone: data.tenant_availability_zone,
              log_level: nil
