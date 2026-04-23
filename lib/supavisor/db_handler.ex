@@ -324,7 +324,8 @@ defmodule Supavisor.DbHandler do
         {:keep_state, %{data | nonce: nonce}}
 
       {:authentication_server_first_message, server_proof, derived_secrets} ->
-        {:keep_state, Map.merge(data, %{server_proof: server_proof, derived_secrets: derived_secrets})}
+        {:keep_state,
+         Map.merge(data, %{server_proof: server_proof, derived_secrets: derived_secrets})}
 
       %{authentication_server_final_message: _server_final} ->
         :keep_state_and_data
