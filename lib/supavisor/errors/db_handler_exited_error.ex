@@ -21,6 +21,10 @@ defmodule Supavisor.Errors.DbHandlerExitedError do
   end
 
   @impl Supavisor.Error
+  def postgres_error(%{reason: {:shutdown, :db_termination}}), do: nil
+  def postgres_error(error), do: super(error)
+
+  @impl Supavisor.Error
   def log_message(%{pid: pid, reason: reason}) do
     "DbHandler #{inspect(pid)} exited #{inspect(reason)}"
   end
