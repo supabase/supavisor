@@ -1060,6 +1060,22 @@ defmodule Supavisor.Integration.ProxyTest do
     assert %Postgrex.Result{rows: [[1]]} = Postgrex.query!(proxy3, "SELECT 1", [])
   end
 
+  test "logs database fatal error reason on admin_shutdown" do
+    %{proxy: proxy, origin: origin} = setup_tenant_connections(List.first(@tenants))
+
+    assert %P.Result{rows: [[backend_pid]]} =
+             P.query!(proxy, "SELECT pg_backend_pid()", [])
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        P.query!(origin, "SELECT pg_terminate_backend($1)", [backend_pid])
+        Process.sleep(500)
+      end)
+
+    assert log =~
+             "DbHandler: Database fatal error when state was idle: terminating connection due to administrator command (57P01)"
+  end
+
   defp parse_uri(uri) do
     %URI{
       userinfo: userinfo,
