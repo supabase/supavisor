@@ -188,6 +188,7 @@ defmodule Supavisor.DbHandler do
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
+      backend_message_streaming: true,
       mode: config.mode,
       replica_type: config.replica_type,
       caller: nil,
@@ -372,12 +373,19 @@ defmodule Supavisor.DbHandler do
   end
 
   # the process received message from db while idle
-  def handle_event(:info, {proto, _, bin}, :idle, data) when proto in @proto do
+  def handle_event(:info, {proto, _, bin}, :idle, %{backend_message_streaming: true} = data)
+      when proto in @proto do
     Logger.debug("DbHandler: Got db response when idle")
 
     {:ok, updated_data, _packets} = process_backend_streaming(bin, data)
 
     {:keep_state, updated_data}
+  end
+
+  # hot code reload compat: remove after full rollout
+  def handle_event(:info, {proto, _, _bin}, :idle, _data) when proto in @proto do
+    Logger.debug("DbHandler: Got db response when idle")
+    :keep_state_and_data
   end
 
   # forward the message to the client
@@ -622,24 +630,6 @@ defmodule Supavisor.DbHandler do
   end
 
   @impl true
-  def code_change(_old_vsn, state, data, _extra) do
-    stream_state = data.stream_state
-
-    new_stream_state =
-      case MessageStreamer.stream_state(stream_state, :handler_state) do
-        BackendMessageHandler.handler_state() ->
-          stream_state
-
-        old_queue ->
-          MessageStreamer.stream_state(stream_state,
-            handler_state: BackendMessageHandler.handler_state(action_queue: old_queue)
-          )
-      end
-
-    {:ok, state, %{data | stream_state: new_stream_state}}
-  end
-
-  @impl true
   def format_status(status) do
     Map.put(status, :queue, [])
   end
@@ -880,7 +870,7 @@ defmodule Supavisor.DbHandler do
   end
 
   @spec handle_server_messages(binary(), map()) :: map()
-  defp handle_server_messages(bin, data) do
+  defp handle_server_messages(bin, %{backend_message_streaming: true} = data) do
     {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
 
     if to_send != [] do
@@ -888,6 +878,12 @@ defmodule Supavisor.DbHandler do
     end
 
     updated_data
+  end
+
+  # hot code reload compat: remove after full rollout
+  defp handle_server_messages(bin, data) do
+    HandlerHelpers.sock_send(data.client_sock, bin)
+    data
   end
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
@@ -1000,12 +996,15 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  defp last_fatal_error(data) do
+  defp last_fatal_error(%{backend_message_streaming: true} = data) do
     BackendMessageHandler.handler_state(
       MessageStreamer.stream_state(data.stream_state, :handler_state),
       :fatal_error
     )
   end
+
+  # hot code reload compat: remove after full rollout
+  defp last_fatal_error(_data), do: nil
 
   defp get_connection_params_with_secrets(conn_params, id) do
     case Supavisor.UpstreamAuthentication.get_upstream_auth_secrets(id) do
