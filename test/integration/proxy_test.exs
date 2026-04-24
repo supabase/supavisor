@@ -1073,7 +1073,7 @@ defmodule Supavisor.Integration.ProxyTest do
       end)
 
     assert log =~
-             "DbHandler: Database fatal error when state was idle: terminating connection due to administrator command (57P01)"
+             "DbHandler: Session terminated by server while idle in the pool: terminating connection due to administrator command (57P01)"
   end
 
   defp parse_uri(uri) do

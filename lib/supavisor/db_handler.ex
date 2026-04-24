@@ -529,7 +529,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(_, {closed, _}, :authentication, data) when closed in @sock_closed do
-    Logger.error("DbHandler: Db connection closed when state was authentication")
+    Logger.error("DbHandler: Connection closed unexpectedly during authentication")
 
     handle_connection_failure({:error, :db_connection_closed_in_auth}, data)
   end
@@ -537,12 +537,14 @@ defmodule Supavisor.DbHandler do
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
     case last_fatal_error(data) do
       %{"M" => msg, "C" => code} ->
-        Logger.error("DbHandler: Database fatal error when state was #{state}: #{msg} (#{code})")
+        status = if state == :busy, do: "checked out by a client", else: "idle in the pool"
+        Logger.error("DbHandler: Session terminated by server while #{status}: #{msg} (#{code})")
         {:stop, :normal, data}
 
       _ ->
         if state != :terminating_with_error do
-          Logger.error("DbHandler: Db connection closed when state was #{state}")
+          status = if state == :busy, do: "checked out by a client", else: "idle in the pool"
+          Logger.error("DbHandler: Connection closed unexpectedly while #{status}")
         end
 
         {:stop, {:shutdown, :db_termination}, data}
