@@ -810,12 +810,16 @@ defmodule Supavisor.ClientHandler do
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
       {:ok, {data.pool, db_pid, db_sock}}
     else
-      {:error, %Supavisor.Errors.DbHandlerExitedError{}} when attempt < @max_checkout_retries ->
-        Logger.warning(
-          "ClientHandler: DbHandler exited during checkout, retrying (attempt #{attempt + 1})"
-        )
+      {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->
+        if attempt < @max_checkout_retries do
+          Logger.warning(
+            "ClientHandler: DbHandler exited during checkout, retrying (attempt #{attempt + 1})"
+          )
 
-        maybe_checkout(event, data, attempt + 1)
+          maybe_checkout(event, data, attempt + 1)
+        else
+          {:error, %Supavisor.Errors.CheckoutRetriesExhaustedError{}}
+        end
 
       other ->
         other
