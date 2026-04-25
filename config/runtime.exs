@@ -280,3 +280,60 @@ if System.get_env("LOGS_ENGINE") == "logflare" do
   config :logger,
     backends: [LogflareLogger.HttpBackend]
 end
+
+# OpenTelemetry — opt-in via OTEL_EXPORTER_OTLP_ENDPOINT.
+#
+# When the endpoint env var is unset, we tell the OpenTelemetry SDK to drop
+# all spans. The instrumentation call sites are still active, but they do
+# constant-time work and do not export anything, so the operational footprint
+# is negligible for users who do not opt in. This matches the contract from
+# issue #93 (OTel must be optional) without resorting to conditional compile
+# tricks that broke Dialyzer in #102.
+otel_endpoint = System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT")
+otel_service_name = System.get_env("OTEL_SERVICE_NAME", "supavisor")
+
+if otel_endpoint && otel_endpoint != "" do
+  protocol =
+    case System.get_env("OTEL_EXPORTER_OTLP_PROTOCOL", "http_protobuf") do
+      "grpc" -> :grpc
+      _ -> :http_protobuf
+    end
+
+  headers =
+    System.get_env("OTEL_EXPORTER_OTLP_HEADERS", "")
+    |> String.split(",", trim: true)
+    |> Enum.flat_map(fn pair ->
+      case String.split(pair, "=", parts: 2) do
+        [k, v] -> [{String.trim(k), String.trim(v)}]
+        _ -> []
+      end
+    end)
+
+  # Application.spec/2 may return nil during release boot if the app is
+  # not yet started; fall back to a string literal so resource.service.version
+  # is always present.
+  service_version =
+    case Application.spec(:supavisor, :vsn) do
+      nil -> "unknown"
+      vsn -> to_string(vsn)
+    end
+
+  config :opentelemetry,
+    span_processor: :batch,
+    traces_exporter: :otlp,
+    resource: %{
+      "service.name" => otel_service_name,
+      "service.namespace" => System.get_env("OTEL_SERVICE_NAMESPACE", "supabase"),
+      "service.version" => service_version
+    }
+
+  config :opentelemetry_exporter,
+    otlp_protocol: protocol,
+    otlp_endpoint: otel_endpoint,
+    otlp_headers: headers
+else
+  # Disable span export entirely when not configured. Calls into the OTel API
+  # are short-circuited via `:otel_tracer_noop` once this is set.
+  config :opentelemetry,
+    traces_exporter: :none
+end

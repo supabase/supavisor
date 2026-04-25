@@ -78,6 +78,14 @@ defmodule Supavisor.MixProject do
       {:rustler, "~> 0.36.1"},
       {:ranch, "~> 2.0", override: true},
 
+      # OpenTelemetry. The application is opt-in: spans are only exported when
+      # the user sets `OTEL_EXPORTER_OTLP_ENDPOINT` (see config/runtime.exs).
+      # The deps are always compiled-in so the call sites can stay
+      # unconditional, which keeps Dialyzer happy (see #93/#102 discussion).
+      {:opentelemetry_api, "~> 1.4"},
+      {:opentelemetry, "~> 1.5"},
+      {:opentelemetry_exporter, "~> 1.8"},
+
       # Linting
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

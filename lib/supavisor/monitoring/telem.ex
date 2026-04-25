@@ -4,6 +4,8 @@ defmodule Supavisor.Monitoring.Telem do
   require Logger
   require Supavisor
 
+  alias Supavisor.Monitoring.OpenTelemetry, as: Otel
+
   @disabled Application.compile_env(:supavisor, :metrics_disabled, false)
 
   if @disabled do
@@ -52,6 +54,16 @@ defmodule Supavisor.Monitoring.Telem do
       )
     end
 
+    # Mirror the checkout timing as an OTel event on the surrounding span so
+    # that tracing backends can show pool latency without a separate metrics
+    # pipeline. We use an event (not a span) because the work has already
+    # happened by the time this is called; see `with_pool_checkout/3` below
+    # for the span-shaped variant.
+    Otel.add_event("supavisor.pool.checkout", %{
+      "duration_us" => time,
+      "supavisor.checkout.same_box" => Atom.to_string(same_box)
+    })
+
     telemetry_execute(
       [:supavisor, :pool, :checkout, :stop, same_box],
       %{duration: time},
@@ -79,6 +91,11 @@ defmodule Supavisor.Monitoring.Telem do
 
   @spec client_join(:ok | :fail, Supavisor.id() | any()) :: :ok | nil
   def client_join(status, Supavisor.id() = id) do
+    # Emit an OTel event that pairs with the existing client_join telemetry.
+    # The client connection span (started in ClientHandler) is still active
+    # at this point, so the event lands on the right trace.
+    Otel.add_event("supavisor.client.join", %{"status" => Atom.to_string(status)})
+
     telemetry_execute(
       [:supavisor, :client, :joins, status],
       %{},
@@ -115,6 +132,41 @@ defmodule Supavisor.Monitoring.Telem do
       %{count: count},
       id_to_tags(id)
     )
+  end
+
+  @doc """
+  Wrap a tenant lookup with an OTel span.
+
+  We do not have a `Supavisor.id()` yet at this point — only the user/tenant
+  pair from the startup packet — so attributes are passed in as a plain map.
+  When OTel is not configured this just calls `fun.()`.
+  """
+  @spec with_tenant_lookup_span(String.t(), String.t() | nil, (-> result)) :: result
+        when result: var
+  def with_tenant_lookup_span(user, tenant, fun) when is_function(fun, 0) do
+    Otel.with_span(
+      "supavisor.tenant.lookup",
+      %{"supavisor.user" => user, "supavisor.tenant" => tenant},
+      fun
+    )
+  end
+
+  @doc """
+  Wrap a pool checkout with an OTel span. Pairs with `pool_checkout_time/3`,
+  which still records the duration metric inside the span.
+  """
+  @spec with_checkout_span(Supavisor.id(), (-> result)) :: result when result: var
+  def with_checkout_span(Supavisor.id() = id, fun) when is_function(fun, 0) do
+    Otel.with_span("supavisor.pool.checkout", id, fun)
+  end
+
+  @doc """
+  Wrap query routing in an OTel span — the lifetime of one Postgres
+  request/response cycle as seen by Supavisor.
+  """
+  @spec with_query_span(Supavisor.id(), (-> result)) :: result when result: var
+  def with_query_span(Supavisor.id() = id, fun) when is_function(fun, 0) do
+    Otel.with_span("supavisor.client.query", id, fun)
   end
 
   @spec id_to_tags(Supavisor.id()) :: map()

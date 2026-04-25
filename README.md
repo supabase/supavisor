@@ -138,6 +138,58 @@ supported ([todo](#future-work)).
     clusters as well
   - Pulumi / Terraform support
 
+## Telemetry
+
+Supavisor ships with both Prometheus metrics (always on) and optional
+distributed tracing via [OpenTelemetry](https://opentelemetry.io/).
+
+### Prometheus
+
+Metrics are exposed on the `/metrics` HTTP endpoint via PromEx. See the
+[metrics docs](https://supabase.github.io/supavisor/monitoring/metrics/)
+for the full list.
+
+### OpenTelemetry tracing (opt-in)
+
+OpenTelemetry instrumentation is opt-in. It is activated automatically when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise the SDK is configured to
+drop spans, so there is no measurable overhead and no behaviour change.
+
+Spans are emitted around the connection-handling hot path:
+
+| Span name                   | When                                                       |
+|-----------------------------|------------------------------------------------------------|
+| `supavisor.tenant.lookup`   | Resolving a tenant/user pair (Cachex + Postgres fallback)  |
+| `supavisor.pool.checkout`   | Acquiring a database connection from the pool             |
+| `supavisor.client.query`    | Routing a single Postgres request/response cycle          |
+
+Each span carries the canonical attribute set
+(`supavisor.tenant`, `supavisor.user`, `supavisor.mode`, `supavisor.type`,
+`supavisor.db_name`, `supavisor.search_path`).
+
+#### Configuration
+
+Supavisor reads the standard
+[OpenTelemetry environment variables](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/):
+
+| Variable                       | Purpose                                                  | Default      |
+|--------------------------------|----------------------------------------------------------|--------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT`  | Required to enable tracing. OTLP collector URL.         | _unset_      |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`  | `http_protobuf` or `grpc`.                               | `http_protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS`   | Comma-separated `key=value` headers (e.g. auth tokens). | _unset_      |
+| `OTEL_SERVICE_NAME`            | Service name reported on every span.                     | `supavisor`  |
+| `OTEL_SERVICE_NAMESPACE`       | Service namespace.                                       | `supabase`   |
+
+Example: forward traces to a local Tempo/Jaeger/SigNoz instance.
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_SERVICE_NAME=supavisor-prod
+```
+
+When the endpoint is not set, instrumentation call sites still execute,
+but the OTel SDK short-circuits to a no-op tracer.
+
 ## Benchmarks
 
 ### Local Benchmarks

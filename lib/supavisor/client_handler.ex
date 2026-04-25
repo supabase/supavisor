@@ -227,7 +227,12 @@ defmodule Supavisor.ClientHandler do
     # carries the original client's TLS status. Otherwise, use data.ssl.
     effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
 
-    case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
+    # Wrap the tenant lookup in an OTel span. The lookup hits Cachex first
+    # and may fall through to Postgres on a miss, so this is the highest-
+    # signal place to trace tenant resolution latency.
+    case Telem.with_tenant_lookup_span(user, tenant_or_alias, fn ->
+           Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname)
+         end) do
       {:ok, info} ->
         upstream_tls = upstream_tls(info.tenant, effective_ssl)
 
@@ -804,26 +809,31 @@ defmodule Supavisor.ClientHandler do
     timeout = data.timeout |> div(attempt + 1)
     start = System.monotonic_time(:microsecond)
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, timeout, data.mode),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
-      same_box = if node(db_pid) == node(), do: :local, else: :remote
-      Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
-      {:ok, {data.pool, db_pid, db_sock}}
-    else
-      {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->
-        if attempt < @max_checkout_retries do
-          Logger.warning(
-            "ClientHandler: DbHandler exited during checkout, retrying (attempt #{attempt + 1})"
-          )
+    # Wrap the connection acquire/release cycle in an OTel span. Retries are
+    # represented as nested spans with the same name so each attempt is
+    # individually visible in the trace tree.
+    Telem.with_checkout_span(data.id, fn ->
+      with {:ok, db_pid} <- pool_checkout(data.pool, timeout, data.mode),
+           {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
+        same_box = if node(db_pid) == node(), do: :local, else: :remote
+        Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
+        {:ok, {data.pool, db_pid, db_sock}}
+      else
+        {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->
+          if attempt < @max_checkout_retries do
+            Logger.warning(
+              "ClientHandler: DbHandler exited during checkout, retrying (attempt #{attempt + 1})"
+            )
 
-          maybe_checkout(event, data, attempt + 1)
-        else
-          {:error, %Supavisor.Errors.CheckoutRetriesExhaustedError{}}
-        end
+            maybe_checkout(event, data, attempt + 1)
+          else
+            {:error, %Supavisor.Errors.CheckoutRetriesExhaustedError{}}
+          end
 
-      other ->
-        other
-    end
+        other ->
+          other
+      end
+    end)
   end
 
   @spec maybe_checkin(:proxy, pool_pid :: pid(), Data.db_connection()) :: Data.db_connection()
