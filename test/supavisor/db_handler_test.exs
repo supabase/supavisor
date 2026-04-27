@@ -472,7 +472,8 @@ defmodule Supavisor.DbHandlerTest do
         connection_params: conn_params,
         sock: {:gen_tcp, a},
         nonce: "nonce12345",
-        server_proof: nil
+        server_proof: nil,
+        derived_secrets: nil
       }
 
       assert {:keep_state, %{server_proof: server_proof}} =

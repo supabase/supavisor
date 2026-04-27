@@ -8,6 +8,12 @@ defmodule Supavisor.ClientHandler.Error do
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
   require Logger
 
+  # TODO: make response delay configurable per error via the Supavisor.Error behaviour
+  @delayed_response_errors [
+    Supavisor.Errors.TenantOrUserNotFoundError,
+    Supavisor.Errors.WrongPasswordError
+  ]
+
   @type context :: :handshake | :authenticated
 
   @doc """
@@ -30,6 +36,10 @@ defmodule Supavisor.ClientHandler.Error do
 
     if log_message do
       Logger.log(log_level, "ClientHandler: #{log_message}")
+    end
+
+    if is_struct(exception) and exception.__struct__ in @delayed_response_errors do
+      Process.sleep(500)
     end
 
     # Only send message if one exists (some errors like socket closed can't send)

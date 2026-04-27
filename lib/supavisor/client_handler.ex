@@ -17,6 +17,7 @@ defmodule Supavisor.ClientHandler do
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
+  @max_checkout_retries 2
   @timeout_subscribe 500
   @clients_registry Supavisor.Registry.TenantClients
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
@@ -788,23 +789,40 @@ defmodule Supavisor.ClientHandler do
     Error.terminate_with_error(data, exception, :handshake)
   end
 
-  @spec maybe_checkout(:on_connect | :on_query, map) ::
+  @spec maybe_checkout(:on_connect | :on_query, map, non_neg_integer()) ::
           {:ok, Data.db_connection()} | {:ok, nil} | {:error, Exception.t()}
-  defp maybe_checkout(_, %{mode: mode, db_connection: {pool, db_pid, db_sock}})
+  defp maybe_checkout(event, data, attempt \\ 0)
+
+  defp maybe_checkout(_, %{mode: mode, db_connection: {pool, db_pid, db_sock}}, _)
        when is_pid(db_pid) and mode in [:session, :proxy] do
     {:ok, {pool, db_pid, db_sock}}
   end
 
-  defp maybe_checkout(:on_connect, %{mode: :transaction}), do: {:ok, nil}
+  defp maybe_checkout(:on_connect, %{mode: :transaction}, _), do: {:ok, nil}
 
-  defp maybe_checkout(_, data) do
+  defp maybe_checkout(event, data, attempt) do
+    timeout = data.timeout |> div(attempt + 1)
     start = System.monotonic_time(:microsecond)
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, data.timeout, data.mode),
+    with {:ok, db_pid} <- pool_checkout(data.pool, timeout, data.mode),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
       {:ok, {data.pool, db_pid, db_sock}}
+    else
+      {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->
+        if attempt < @max_checkout_retries do
+          Logger.warning(
+            "ClientHandler: DbHandler exited during checkout, retrying (attempt #{attempt + 1})"
+          )
+
+          maybe_checkout(event, data, attempt + 1)
+        else
+          {:error, %Supavisor.Errors.CheckoutRetriesExhaustedError{}}
+        end
+
+      other ->
+        other
     end
   end
 
