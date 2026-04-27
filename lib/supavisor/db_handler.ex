@@ -331,6 +331,9 @@ defmodule Supavisor.DbHandler do
       %{authentication_ok: true} ->
         :keep_state_and_data
 
+      resp when resp == %{} ->
+        :keep_state_and_data
+
       :authentication_md5 ->
         {:keep_state, data}
 
@@ -829,6 +832,11 @@ defmodule Supavisor.DbHandler do
 
   defp handle_auth_pkts(%{tag: :error_response, payload: error}, _acc, _data),
     do: {:error_response, error}
+
+  defp handle_auth_pkts(%{tag: :notice_response, payload: notice}, acc, _data) do
+    Logger.notice("DbHandler: Notice during authentication: #{inspect(notice)}")
+    acc
+  end
 
   defp handle_auth_pkts(_e, acc, _data), do: acc
 

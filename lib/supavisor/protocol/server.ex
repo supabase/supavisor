@@ -334,8 +334,9 @@ defmodule Supavisor.Protocol.Server do
   defp decode_payload(:data_row, _payload), do: nil
 
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
-  @spec decode_payload(:error_response, binary()) :: %{String.t() => String.t()}
-  defp decode_payload(:error_response, payload) do
+  @spec decode_payload(:error_response | :notice_response, binary()) ::
+          %{String.t() => String.t()}
+  defp decode_payload(tag, payload) when tag in [:error_response, :notice_response] do
     fields = String.split(payload, <<0>>, trim: true)
 
     Enum.reduce(fields, %{}, fn field, acc ->
