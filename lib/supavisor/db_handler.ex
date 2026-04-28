@@ -28,6 +28,7 @@ defmodule Supavisor.DbHandler do
 
   require Logger
   require Supavisor
+  require Supavisor.Protocol.BackendMessageHandler, as: BackendMessageHandler
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
@@ -40,7 +41,6 @@ defmodule Supavisor.DbHandler do
 
   alias Supavisor.{
     ClientHandler,
-    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
@@ -188,6 +188,7 @@ defmodule Supavisor.DbHandler do
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
+      backend_message_streaming: true,
       mode: config.mode,
       replica_type: config.replica_type,
       caller: nil,
@@ -375,8 +376,18 @@ defmodule Supavisor.DbHandler do
   end
 
   # the process received message from db while idle
-  def handle_event(:info, {proto, _, bin}, :idle, _data) when proto in @proto do
-    Logger.debug("DbHandler: Got db response #{inspect(bin)} when idle")
+  def handle_event(:info, {proto, _, bin}, :idle, %{backend_message_streaming: true} = data)
+      when proto in @proto do
+    Logger.debug("DbHandler: Got db response when idle")
+
+    {:ok, updated_data, _packets} = process_backend_streaming(bin, data)
+
+    {:keep_state, updated_data}
+  end
+
+  # hot code reload compat: remove after full rollout
+  def handle_event(:info, {proto, _, _bin}, :idle, _data) when proto in @proto do
+    Logger.debug("DbHandler: Got db response when idle")
     :keep_state_and_data
   end
 
@@ -436,8 +447,12 @@ defmodule Supavisor.DbHandler do
       data
       | stream_state:
           Enum.reduce(close_pkts, data.stream_state, fn _, stream_state ->
-            MessageStreamer.update_state(stream_state, fn queue ->
-              :queue.in({:intercept, :close}, queue)
+            MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
+                                                            action_queue: queue
+                                                          ) = s ->
+              BackendMessageHandler.handler_state(s,
+                action_queue: :queue.in({:intercept, :close}, queue)
+              )
             end)
           end),
         prepared_statements: prepared_statements
@@ -516,22 +531,27 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
-    {:stop, {:shutdown, :db_termination}, data}
-  end
-
   def handle_event(_, {closed, _}, :authentication, data) when closed in @sock_closed do
-    Logger.error("DbHandler: Db connection closed when state was authentication")
+    Logger.error("DbHandler: Connection closed unexpectedly during authentication")
 
     handle_connection_failure({:error, :db_connection_closed_in_auth}, data)
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
-    if state != :terminating_with_error do
-      Logger.error("DbHandler: Db connection closed when state was #{state}")
-    end
+    case last_fatal_error(data) do
+      %{"M" => msg, "C" => code} ->
+        status = if state == :busy, do: "checked out by a client", else: "idle in the pool"
+        Logger.error("DbHandler: Session terminated by server while #{status}: #{msg} (#{code})")
+        {:stop, :normal, data}
 
-    {:stop, {:shutdown, :db_termination}, data}
+      _ ->
+        if state != :terminating_with_error do
+          status = if state == :busy, do: "checked out by a client", else: "idle in the pool"
+          Logger.error("DbHandler: Connection closed unexpectedly while #{status}")
+        end
+
+        {:stop, {:shutdown, :db_termination}, data}
+    end
   end
 
   # linked client_handler went down
@@ -860,20 +880,20 @@ defmodule Supavisor.DbHandler do
   end
 
   @spec handle_server_messages(binary(), map()) :: map()
-  defp handle_server_messages(bin, data) do
-    if FeatureFlag.enabled?(data.tenant_feature_flags, "named_prepared_statements") do
-      {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
+  defp handle_server_messages(bin, %{backend_message_streaming: true} = data) do
+    {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
 
-      if packets_to_send != [] do
-        HandlerHelpers.sock_send(data.client_sock, packets_to_send)
-      end
-
-      updated_data
-    else
-      HandlerHelpers.sock_send(data.client_sock, bin)
-
-      data
+    if to_send != [] do
+      HandlerHelpers.sock_send(data.client_sock, to_send)
     end
+
+    updated_data
+  end
+
+  # hot code reload compat: remove after full rollout
+  defp handle_server_messages(bin, data) do
+    HandlerHelpers.sock_send(data.client_sock, bin)
+    data
   end
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
@@ -888,9 +908,14 @@ defmodule Supavisor.DbHandler do
       new_data = %{
         data
         | stream_state:
-            MessageStreamer.update_state(data.stream_state, fn queue ->
-              :queue.in({:intercept, :parse}, queue)
-            end),
+            MessageStreamer.update_state(
+              data.stream_state,
+              fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
+                BackendMessageHandler.handler_state(s,
+                  action_queue: :queue.in({:intercept, :parse}, queue)
+                )
+              end
+            ),
           prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
       }
 
@@ -904,8 +929,12 @@ defmodule Supavisor.DbHandler do
        data
        | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name),
          stream_state:
-           MessageStreamer.update_state(data.stream_state, fn queue ->
-             :queue.in({:forward, :close}, queue)
+           MessageStreamer.update_state(data.stream_state, fn BackendMessageHandler.handler_state(
+                                                                action_queue: queue
+                                                              ) = s ->
+             BackendMessageHandler.handler_state(s,
+               action_queue: :queue.in({:forward, :close}, queue)
+             )
            end)
      }}
   end
@@ -922,9 +951,14 @@ defmodule Supavisor.DbHandler do
        %{
          data
          | stream_state:
-             MessageStreamer.update_state(data.stream_state, fn queue ->
-               :queue.in({:inject, :parse}, queue)
-             end)
+             MessageStreamer.update_state(
+               data.stream_state,
+               fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
+                 BackendMessageHandler.handler_state(s,
+                   action_queue: :queue.in({:inject, :parse}, queue)
+                 )
+               end
+             )
        }}
     else
       prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
@@ -934,9 +968,14 @@ defmodule Supavisor.DbHandler do
          data
          | prepared_statements: prepared_statements,
            stream_state:
-             MessageStreamer.update_state(data.stream_state, fn queue ->
-               :queue.in({:forward, :parse}, queue)
-             end)
+             MessageStreamer.update_state(
+               data.stream_state,
+               fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
+                 BackendMessageHandler.handler_state(s,
+                   action_queue: :queue.in({:forward, :parse}, queue)
+                 )
+               end
+             )
        }}
     end
   end
@@ -960,13 +999,22 @@ defmodule Supavisor.DbHandler do
   defp process_backend_streaming(bin, data) do
     case MessageStreamer.handle_packets(data.stream_state, bin) do
       {:ok, new_stream_state, packets} ->
-        updated_data = %{data | stream_state: new_stream_state}
-        {:ok, updated_data, packets}
+        {:ok, %{data | stream_state: new_stream_state}, packets}
 
       err ->
         err
     end
   end
+
+  defp last_fatal_error(%{backend_message_streaming: true} = data) do
+    BackendMessageHandler.handler_state(
+      MessageStreamer.stream_state(data.stream_state, :handler_state),
+      :fatal_error
+    )
+  end
+
+  # hot code reload compat: remove after full rollout
+  defp last_fatal_error(_data), do: nil
 
   defp get_connection_params_with_secrets(conn_params, id) do
     case Supavisor.UpstreamAuthentication.get_upstream_auth_secrets(id) do
