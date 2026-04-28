@@ -457,7 +457,12 @@ defmodule Supavisor.ClientHandler do
     handle_socket_close(state, data)
   end
 
-  # linked DbHandler went down
+  # If the linked DbHandler went down normally, we can trust it to have
+  # sent/logged a proper error message and just terminate
+  def handle_event(:info, {:EXIT, _db_pid, :normal}, _state, _data) do
+    {:stop, :normal}
+  end
+
   def handle_event(:info, {:EXIT, db_pid, reason}, state, data) do
     context = if state in [:idle, :busy], do: :authenticated, else: :handshake
 
