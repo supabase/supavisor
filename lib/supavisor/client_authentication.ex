@@ -114,6 +114,7 @@ defmodule Supavisor.ClientAuthentication do
     case get_validation_secrets(tenant_external_id, db_user) do
       {:ok, current_secrets} ->
         if sasl_secrets_changed?(current_secrets, new_secrets) do
+          invalidate_global(tenant_external_id, db_user)
           put_validation_secrets(tenant_external_id, db_user, new_secrets)
           :changed
         else
@@ -121,6 +122,7 @@ defmodule Supavisor.ClientAuthentication do
         end
 
       {:error, :not_found} ->
+        invalidate_global(tenant_external_id, db_user)
         put_validation_secrets(tenant_external_id, db_user, new_secrets)
         :changed
     end
