@@ -633,7 +633,21 @@ defmodule Supavisor.DbHandlerTest do
       {_a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      assert {:stop, :auth_error, %{}} = Db.handle_event(:info, content, :authentication, %{})
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:stop, :auth_error, %{}} =
+                   Db.handle_event(:info, content, :authentication, %{})
+        end)
+
+      expected_pkt = %Supavisor.Protocol.Server.Pkt{
+        tag: :undefined,
+        len: 5,
+        payload: :undefined,
+        bin: <<?X, 4::32>>
+      }
+
+      assert log =~
+               "DbHandler: Undefined auth response #{inspect({:unexpected_packet, expected_pkt})}"
     end
   end
 

@@ -841,7 +841,7 @@ defmodule Supavisor.DbHandler do
     acc
   end
 
-  defp handle_auth_pkts(_e, acc, _data), do: acc
+  defp handle_auth_pkts(pkt, _acc, _data), do: {:unexpected_packet, pkt}
 
   defp cache_derived_secrets(%{id: id, derived_secrets: derived_secrets})
        when not is_nil(derived_secrets) do
