@@ -633,7 +633,51 @@ defmodule Supavisor.DbHandlerTest do
       {_a, b} = sockpair()
       content = {:tcp, b, bin}
 
-      assert {:stop, :auth_error, %{}} = Db.handle_event(:info, content, :authentication, %{})
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:stop, :auth_error, %{}} =
+                   Db.handle_event(:info, content, :authentication, %{})
+        end)
+
+      expected_pkt = %Supavisor.Protocol.Server.Pkt{
+        tag: :undefined,
+        len: 5,
+        payload: :undefined,
+        bin: <<?X, 4::32>>
+      }
+
+      assert log =~
+               "DbHandler: Undefined auth response #{inspect({:unexpected_packet, expected_pkt})}"
+    end
+  end
+
+  describe "handle_event/4 info tcp notice_response during authentication" do
+    test "logs and keeps state when receiving a standalone notice" do
+      message = ["SNOTICE", 0, "C00000", 0, "Msome notice", 0, 0]
+      bin = IO.iodata_to_binary([<<?N, IO.iodata_length(message) + 4::32>>, message])
+
+      {_a, b} = sockpair()
+      content = {:tcp, b, bin}
+
+      data = %{
+        connection_params:
+          connection_params(%{
+            secrets: %PasswordSecrets{user: "user", password: "pass"}
+          }),
+        sock: {:gen_tcp, nil},
+        id: @id,
+        mode: :session
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :notice], fn ->
+          assert :keep_state_and_data = Db.handle_event(:info, content, :authentication, data)
+        end)
+
+      expected_payload =
+        inspect(%{"S" => "NOTICE", "C" => "00000", "M" => "some notice"})
+
+      assert log =~ "DbHandler: Notice during authentication: " <> expected_payload
     end
   end
 
