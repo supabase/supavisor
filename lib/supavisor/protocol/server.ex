@@ -348,8 +348,8 @@ defmodule Supavisor.Protocol.Server do
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
   @spec decode_payload(:error_response | :notice_response, binary()) ::
           %{String.t() => String.t()}
-  defp decode_payload(tag, payload) when tag in [:error_response, :notice_response], do:
-    decode_error_response(payload)
+  defp decode_payload(tag, payload) when tag in [:error_response, :notice_response],
+    do: decode_error_response(payload)
 
   @spec decode_payload(:password_message, binary()) ::
           {:scram_sha_256, map()} | {:md5, binary()} | :undefined
