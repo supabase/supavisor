@@ -155,7 +155,6 @@ defmodule Supavisor.ClientHandler do
     # SSL negotiation, S/N/Error
     if certs_keys != [] do
       :ok = HandlerHelpers.setopts(sock, active: false)
-      :ok = HandlerHelpers.sock_send(sock, "S")
 
       opts = [
         verify: :verify_none,
@@ -164,12 +163,12 @@ defmodule Supavisor.ClientHandler do
         receiver_spawn_opts: [min_heap_size: 2048]
       ]
 
-      case :ssl.handshake(elem(sock, 1), opts) do
-        {:ok, ssl_sock} ->
-          socket = {:ssl, ssl_sock}
-          :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
-          {:keep_state, %{data | sock: socket, ssl: true}}
-
+      with :ok <- HandlerHelpers.sock_send(sock, "S"),
+           {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts) do
+        socket = {:ssl, ssl_sock}
+        :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
+        {:keep_state, %{data | sock: socket, ssl: true}}
+      else
         error ->
           Error.terminate_with_error(data, %SslHandshakeError{reason: error}, :handshake)
       end
@@ -178,8 +177,13 @@ defmodule Supavisor.ClientHandler do
         "ClientHandler: User requested SSL connection but no downstream cert/key found"
       )
 
-      :ok = HandlerHelpers.sock_send(data.sock, "N")
-      :keep_state_and_data
+      case HandlerHelpers.sock_send(data.sock, "N") do
+        :ok ->
+          :keep_state_and_data
+
+        {:error, _} = error ->
+          Error.terminate_with_error(data, %SslHandshakeError{reason: error}, :handshake)
+      end
     end
   end
 
@@ -274,35 +278,30 @@ defmodule Supavisor.ClientHandler do
         :internal,
         {:start_authentication, auth_method, info},
         _state,
-        %{sock: sock} = data
+        data
       ) do
     Logger.debug("ClientHandler: Handle exchange, auth method: #{inspect(auth_method)}")
 
-    case Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error) do
-      :ok ->
-        case auth_method do
-          :jit ->
-            :ok = HandlerHelpers.sock_send(sock, Server.password_request())
-            auth_context = AuthMethods.Jit.new_context(info, data.id, data.peer_ip)
+    {auth_request, next_state, auth_context} =
+      case auth_method do
+        :jit ->
+          {Server.password_request(), :auth_password_wait,
+           AuthMethods.Jit.new_context(info, data.id, data.peer_ip)}
 
-            {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
-             {:timeout, 15_000, :auth_timeout}}
+        :password ->
+          {Server.password_request(), :auth_password_wait,
+           AuthMethods.Password.new_context(info, data.id)}
 
-          :password ->
-            :ok = HandlerHelpers.sock_send(sock, Server.password_request())
-            auth_context = AuthMethods.Password.new_context(info, data.id)
+        :scram_sha_256 ->
+          {Server.scram_request(), :auth_scram_first_wait,
+           AuthMethods.SCRAM.new_context(info, data.id)}
+      end
 
-            {:next_state, :auth_password_wait, %{data | auth_context: auth_context},
-             {:timeout, 15_000, :auth_timeout}}
-
-          :scram_sha_256 ->
-            auth_context = AuthMethods.SCRAM.new_context(info, data.id)
-            :ok = HandlerHelpers.sock_send(sock, Server.scram_request())
-
-            {:next_state, :auth_scram_first_wait, %{data | auth_context: auth_context},
-             {:timeout, 15_000, :auth_timeout}}
-        end
-
+    with :ok <- Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error),
+         :ok <- client_sock_send(data, auth_request, :handshake) do
+      {:next_state, next_state, %{data | auth_context: auth_context},
+       {:timeout, 15_000, :auth_timeout}}
+    else
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
     end
@@ -388,13 +387,18 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  def handle_event(:internal, {:greetings, ps}, _state, %{sock: sock} = data) do
+  def handle_event(:internal, {:greetings, ps}, _state, data) do
     {header, <<pid::32, key::32>> = payload} = Server.backend_key_data()
     msg = [ps, [header, payload], Server.ready_for_query()]
     :ok = Cancel.listen_cancel_query(pid, key)
-    :ok = HandlerHelpers.sock_send(sock, msg)
-    Telem.client_connection_time(data.connection_start, data.id)
-    {:next_state, :idle, %{data | client_ready: true}, handle_actions(data)}
+
+    with :ok <- client_sock_send(data, msg, :handshake) do
+      Telem.client_connection_time(data.connection_start, data.id)
+      {:next_state, :idle, %{data | client_ready: true}, handle_actions(data)}
+    else
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :handshake)
+    end
   end
 
   def handle_event(:timeout, :subscribe, _state, _) do
@@ -417,8 +421,13 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:timeout, :heartbeat_check, _state, data) do
     Logger.debug("ClientHandler: Send heartbeat to client")
-    HandlerHelpers.sock_send(data.sock, Server.application_name())
-    {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
+
+    with :ok <- client_sock_send(data, Server.application_name(), :idle) do
+      {:keep_state_and_data, {:timeout, data.heartbeat_interval, :heartbeat_check}}
+    else
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :authenticated)
+    end
   end
 
   def handle_event(:info, {:parameter_status, ps}, :connecting, _) do
@@ -560,7 +569,7 @@ defmodule Supavisor.ClientHandler do
 
     case result do
       {:ok, secrets} ->
-        handle_auth_success(data.sock, secrets, data)
+        handle_auth_success(secrets, data)
 
       {:error, exception} ->
         handle_auth_failure(exception, data)
@@ -572,9 +581,14 @@ defmodule Supavisor.ClientHandler do
       when proto in @proto do
     case AuthMethods.SCRAM.handle_scram_first(data.auth_context, bin) do
       {:ok, message, auth_context} ->
-        :ok = HandlerHelpers.sock_send(data.sock, Server.exchange_message(:first, message))
-        new_data = %{data | auth_context: auth_context}
-        {:next_state, :auth_scram_final_wait, new_data, {:timeout, 15_000, :auth_timeout}}
+        with :ok <-
+               client_sock_send(data, Server.exchange_message(:first, message), :handshake) do
+          new_data = %{data | auth_context: auth_context}
+          {:next_state, :auth_scram_final_wait, new_data, {:timeout, 15_000, :auth_timeout}}
+        else
+          {:error, exception} ->
+            Error.terminate_with_error(data, exception, :handshake)
+        end
 
       {:error, exception} ->
         handle_auth_failure(exception, data)
@@ -586,8 +600,12 @@ defmodule Supavisor.ClientHandler do
       when proto in @proto do
     case AuthMethods.SCRAM.handle_scram_final(data.auth_context, bin) do
       {:ok, message, final_secrets} ->
-        :ok = HandlerHelpers.sock_send(data.sock, message)
-        handle_auth_success(data.sock, final_secrets, data)
+        with :ok <- client_sock_send(data, message, :handshake) do
+          handle_auth_success(final_secrets, data)
+        else
+          {:error, exception} ->
+            Error.terminate_with_error(data, exception, :handshake)
+        end
 
       {:error, exception} ->
         handle_auth_failure(exception, data)
@@ -654,9 +672,13 @@ defmodule Supavisor.ClientHandler do
       )
       when proto in @proto do
     Logger.debug("ClientHandler: Receive sync")
-    :ok = HandlerHelpers.sock_send(data.sock, Server.ready_for_query())
 
-    {:keep_state, data, handle_actions(data)}
+    with :ok <- client_sock_send(data, Server.ready_for_query(), :idle) do
+      {:keep_state, data, handle_actions(data)}
+    else
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :authenticated)
+    end
   end
 
   # Sync when busy - send to db
@@ -749,7 +771,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   ## Internal functions
-  defp handle_auth_success(sock, final_secrets, data) do
+  defp handle_auth_success(final_secrets, data) do
     Logger.info("ClientHandler: Connection authenticated")
     cache_validated_password(data, final_secrets)
 
@@ -757,22 +779,26 @@ defmodule Supavisor.ClientHandler do
       Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(data.id, final_secrets)
     end
 
-    :ok = HandlerHelpers.sock_send(sock, Server.authentication_ok())
-    Telem.client_join(:ok, data.id)
+    with :ok <- client_sock_send(data, Server.authentication_ok(), :handshake) do
+      Telem.client_join(:ok, data.id)
 
-    connection_params = %{data.connection_params | secrets: final_secrets}
+      connection_params = %{data.connection_params | secrets: final_secrets}
 
-    conn_type =
-      if data.mode == :proxy,
-        do: :connect_db,
-        else: :subscribe
+      conn_type =
+        if data.mode == :proxy,
+          do: :connect_db,
+          else: :subscribe
 
-    {
-      :next_state,
-      :connecting,
-      %{data | auth_context: nil, connection_params: connection_params},
-      {:next_event, :internal, conn_type}
-    }
+      {
+        :next_state,
+        :connecting,
+        %{data | auth_context: nil, connection_params: connection_params},
+        {:next_event, :internal, conn_type}
+      }
+    else
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :handshake)
+    end
   end
 
   defp cache_validated_password(%{tenant: tenant}, %Supavisor.Secrets.PasswordSecrets{} = secrets) do
@@ -869,6 +895,22 @@ defmodule Supavisor.ClientHandler do
     idle = if data.idle_timeout > 0, do: [{:timeout, data.idle_timeout, :idle_timeout}], else: []
 
     idle ++ heartbeat
+  end
+
+  @spec client_sock_send(map(), iodata(), atom()) ::
+          :ok | {:error, ClientSocketClosedError.t()}
+  defp client_sock_send(data, bin, client_state) do
+    case HandlerHelpers.sock_send(data.sock, bin) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "ClientHandler: Failed to write to client socket in state #{inspect(client_state)}: #{inspect(reason)}"
+        )
+
+        {:error, %ClientSocketClosedError{mode: data.mode, client_state: client_state}}
+    end
   end
 
   @spec sock_send([PreparedStatements.handled_pkt()] | binary(), map()) :: :ok | {:error, term()}
