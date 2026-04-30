@@ -90,9 +90,9 @@ mix release supavisor --overwrite
 
 # ── 3. Start release & create tenant ────────────────────────────────
 info "Starting release as daemon"
-$REL_BIN daemon
+$REL_BIN start &
 
-BEAM_PID=$(pgrep -f "supavisor.*node1@127.0.0.1")
+BEAM_PID=$!
 info "BEAM PID: ${BEAM_PID}"
 
 wait_for_api

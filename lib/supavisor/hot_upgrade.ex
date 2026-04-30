@@ -37,7 +37,8 @@ defmodule Supavisor.HotUpgrade do
     [
       {:load_module, __MODULE__},
       {:apply, {__MODULE__, :apply_runtime_config, [to_vsn]}},
-      {:apply, {__MODULE__, :remove_access_log_handler, []}}
+      {:apply, {__MODULE__, :remove_access_log_handler, []}},
+      {:apply, {__MODULE__, :disdable_needresstart, []}}
     ] ++ appup
   end
 
@@ -50,6 +51,17 @@ defmodule Supavisor.HotUpgrade do
 
   def remove_access_log_handler do
     :logger.remove_handler(:access_log)
+  end
+
+  def disdable_needresstart do
+    with {output, status} when status != 0 <-
+           System.cmd("sed", [
+             "-i",
+             "s/^#\\$nrconf{restart} = 'i';/\\$nrconf{restart} = 'l';/",
+             "/etc/needrestart/needrestart.conf"
+           ]) do
+      Logger.error("Failed to update needrestart.conf: #{output}")
+    end
   end
 
   @spec apply_runtime_config(version_str()) :: any()
