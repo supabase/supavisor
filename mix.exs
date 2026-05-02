@@ -75,6 +75,7 @@ defmodule Supavisor.MixProject do
       {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.3"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
+      {:pg_saslprep, github: "v0idpwn/pg_saslprep"},
       {:rustler, "~> 0.36.1"},
       {:ranch, "~> 2.0", override: true},
 

@@ -49,7 +49,7 @@ defmodule Supavisor.ClientAuthentication.ValidationSecrets do
   defp sasl_secrets_from_password(user, password) do
     iterations = 4096
     salt = :crypto.strong_rand_bytes(16)
-    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate([password]), salt, iterations)
+    salted_password = :pgo_scram.hi(PgSASLprep.scram_normalize(password), salt, iterations)
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
     server_key = :pgo_scram.hmac(salted_password, "Server Key")

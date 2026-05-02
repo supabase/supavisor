@@ -237,7 +237,8 @@ defmodule Supavisor.Helpers do
     salt = srv_first.salt
     i = srv_first.i
 
-    salted_password = :pgo_scram.hi(:pgo_sasl_prep_profile.validate(secrets.password), salt, i)
+    salted_password =
+      :pgo_scram.hi(PgSASLprep.scram_normalize(IO.iodata_to_binary(secrets.password)), salt, i)
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
     client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
@@ -291,7 +292,11 @@ defmodule Supavisor.Helpers do
         %Supavisor.Secrets.SASLSecrets{} = secrets
       ) do
     salted_password =
-      :pgo_scram.hi(:pgo_sasl_prep_profile.validate(password), secrets.salt, secrets.iterations)
+      :pgo_scram.hi(
+        PgSASLprep.scram_normalize(IO.iodata_to_binary(password)),
+        secrets.salt,
+        secrets.iterations
+      )
 
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
