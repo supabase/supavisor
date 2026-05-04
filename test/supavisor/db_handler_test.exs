@@ -308,6 +308,41 @@ defmodule Supavisor.DbHandlerTest do
       assert error["C"] == "08006"
     end
 
+    test "db connection times out", %{id: id} do
+      # TEST-NET-1 (RFC 5737) — reserved for documentation, packets are
+      # blackholed on a normal network so the TCP connect attempt times out
+      # rather than getting refused.
+      {host, port} = {{192, 0, 2, 1}, 5432}
+
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
+
+      conn_params =
+        connection_params(%{
+          host: host,
+          port: port,
+          database: "some database",
+          application_name: "some application name",
+          secrets: secrets
+        })
+
+      # proxy: true uses the 1s connect timeout, keeping the test fast.
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 connection_params: conn_params,
+                 sock: nil,
+                 id: id,
+                 proxy: true,
+                 tenant: {:single, "some tenant"}
+               })
+
+      assert error == %{
+               "S" => "FATAL",
+               "C" => "08006",
+               "M" => "Failed to connect to database: {:error, :timeout}"
+             }
+    end
+
     test "checkout returns error when in waiting_for_secrets state", %{id: id} do
       data = %{id: id}
       from = {self(), make_ref()}

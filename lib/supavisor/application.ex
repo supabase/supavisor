@@ -74,7 +74,11 @@ defmodule Supavisor.Application do
           key,
           :ranch_tcp,
           %{
-            max_connections: String.to_integer(System.get_env("MAX_CONNECTIONS") || "75000"),
+            max_connections:
+              case System.get_env("MAX_CONNECTIONS") do
+                nil -> :infinity
+                value -> String.to_integer(value)
+              end,
             num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
             socket_opts: [port: port, keepalive: true]
           },
