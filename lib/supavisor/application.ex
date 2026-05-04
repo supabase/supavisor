@@ -95,6 +95,7 @@ defmodule Supavisor.Application do
     )
 
     Supavisor.CircuitBreaker.init()
+    Supavisor.ConnectBackoff.init()
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
@@ -105,6 +106,7 @@ defmodule Supavisor.Application do
         Supavisor.Health,
         Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,
+        Supavisor.ConnectBackoff.Janitor,
         {Task.Supervisor, name: Supavisor.PoolTerminator},
         {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
         {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},

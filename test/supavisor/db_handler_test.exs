@@ -13,13 +13,19 @@ defmodule Supavisor.DbHandlerTest do
   require Supavisor
 
   # import Mock
-  @id Supavisor.id(
-        type: :single,
-        tenant: "tenant",
-        user: "user",
-        mode: :transaction,
-        db: "postgres"
-      )
+  setup do
+    {:ok, id: make_id()}
+  end
+
+  defp make_id do
+    Supavisor.id(
+      type: :single,
+      tenant: "tenant_#{System.unique_integer([:positive])}",
+      user: "user",
+      mode: :transaction,
+      db: "postgres"
+    )
+  end
 
   defmodule MockDbHandler do
     use GenServer
@@ -137,20 +143,19 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   describe "init/1" do
-    test "starts with correct state" do
+    test "starts with correct state", %{id: id} do
       secrets = %PasswordSecrets{user: "user", password: "pass"}
       conn_params = connection_params(%{secrets: secrets})
       tenant = "test_tenant"
       user = "user"
 
-      # Set up tenant cache for the @id
       table = :ets.new(:tenant_cache, [:set, :public])
-      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+      Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
 
-      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(@id, secrets)
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, secrets)
 
       manager_config = %{
-        id: @id,
+        id: id,
         connection_params: conn_params,
         tenant: {:single, tenant},
         user: user,
@@ -162,7 +167,7 @@ defmodule Supavisor.DbHandlerTest do
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
 
-      args = %{id: @id}
+      args = %{id: id}
 
       {:ok, :connect, data, {:next_event, :internal, :connect}} = Db.init(args)
       assert data.sock == nil
@@ -175,17 +180,16 @@ defmodule Supavisor.DbHandlerTest do
       assert data.server_proof == nil
     end
 
-    test "enters waiting_for_secrets state when upstream secrets are missing" do
+    test "enters waiting_for_secrets state when upstream secrets are missing", %{id: id} do
       conn_params = connection_params()
       tenant = "test_tenant"
       user = "user"
 
-      # Set up tenant cache but don't put any secrets in it
       table = :ets.new(:tenant_cache, [:set, :public])
-      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+      Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
 
       manager_config = %{
-        id: @id,
+        id: id,
         connection_params: conn_params,
         tenant: {:single, tenant},
         user: user,
@@ -197,25 +201,25 @@ defmodule Supavisor.DbHandlerTest do
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
 
-      args = %{id: @id}
+      args = %{id: id}
 
       assert {:ok, :waiting_for_secrets, data, []} = Db.init(args)
-      assert data.id == @id
+      assert data.id == id
       assert data.manager_ref != nil
     end
 
-    test "transitions from waiting_for_secrets to connect when secrets become available" do
+    test "transitions from waiting_for_secrets to connect when secrets become available",
+         %{id: id} do
       conn_params = connection_params()
       tenant = "test_tenant"
       user = "user"
       secrets = %PasswordSecrets{user: "some user", password: "secret"}
 
-      # Set up tenant cache
       table = :ets.new(:tenant_cache, [:set, :public])
-      Registry.register(Supavisor.Registry.Tenants, {:cache, @id}, table)
+      Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
 
       manager_config = %{
-        id: @id,
+        id: id,
         connection_params: conn_params,
         tenant: {:single, tenant},
         user: user,
@@ -227,12 +231,10 @@ defmodule Supavisor.DbHandlerTest do
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
 
-      # Initialize in waiting_for_secrets state
-      args = %{id: @id}
+      args = %{id: id}
       assert {:ok, :waiting_for_secrets, data, []} = Db.init(args)
 
-      # Now put secrets in cache
-      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(@id, secrets)
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, secrets)
 
       # Notify that secrets are available
       assert {:next_state, :connect, updated_data, {:next_event, :internal, :connect}} =
@@ -244,7 +246,7 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   describe "handle_event/4" do
-    test "db is available" do
+    test "db is available", %{id: id} do
       {:ok, sock} = :gen_tcp.listen(0, mode: :binary, active: false)
       {:ok, {host, port}} = :inet.sockname(sock)
 
@@ -263,7 +265,7 @@ defmodule Supavisor.DbHandlerTest do
         Db.handle_event(:internal, :connect, :connect, %{
           connection_params: conn_params,
           sock: {:gen_tcp, nil},
-          id: @id,
+          id: id,
           mode: :session,
           proxy: false
         })
@@ -272,12 +274,12 @@ defmodule Supavisor.DbHandlerTest do
               %{
                 connection_params: ^conn_params,
                 sock: {:gen_tcp, _},
-                id: @id,
+                id: ^id,
                 mode: :session
               }} = state
     end
 
-    test "db is not available" do
+    test "db is not available", %{id: id} do
       # We assume that there is nothing running on this port
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
       {host, port} = {{127, 0, 0, 1}, 12345}
@@ -298,7 +300,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event(:internal, :connect, :connect, %{
                  connection_params: conn_params,
                  sock: nil,
-                 id: @id,
+                 id: id,
                  proxy: false,
                  tenant: {:single, "some tenant"}
                })
@@ -306,7 +308,7 @@ defmodule Supavisor.DbHandlerTest do
       assert error["C"] == "08006"
     end
 
-    test "db connection times out" do
+    test "db connection times out", %{id: id} do
       # TEST-NET-1 (RFC 5737) — reserved for documentation, packets are
       # blackholed on a normal network so the TCP connect attempt times out
       # rather than getting refused.
@@ -329,7 +331,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event(:internal, :connect, :connect, %{
                  connection_params: conn_params,
                  sock: nil,
-                 id: @id,
+                 id: id,
                  proxy: true,
                  tenant: {:single, "some tenant"}
                })
@@ -341,8 +343,8 @@ defmodule Supavisor.DbHandlerTest do
              }
     end
 
-    test "checkout returns error when in waiting_for_secrets state" do
-      data = %{id: @id}
+    test "checkout returns error when in waiting_for_secrets state", %{id: id} do
+      data = %{id: id}
       from = {self(), make_ref()}
 
       expected_postgres_error = %{
@@ -363,7 +365,7 @@ defmodule Supavisor.DbHandlerTest do
                )
     end
 
-    test "rejects connection when DB responds with SSL negotiation 'N'" do
+    test "rejects connection when DB responds with SSL negotiation 'N'", %{id: id} do
       {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
       {:ok, {host, port}} = :inet.sockname(listen)
 
@@ -394,7 +396,7 @@ defmodule Supavisor.DbHandlerTest do
       data = %{
         connection_params: conn_params,
         sock: {:gen_tcp, nil},
-        id: @id,
+        id: id,
         proxy: false,
         tenant: {:single, "some tenant"},
         client_sock: nil
@@ -519,7 +521,7 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   describe "handle_event/4 info tcp error_response" do
-    test "handles server invalid password" do
+    test "handles server invalid password", %{id: id} do
       bin =
         Server.error_message("28P01", "password authentication failed") |> IO.iodata_to_binary()
 
@@ -527,7 +529,7 @@ defmodule Supavisor.DbHandlerTest do
       content = {:tcp, b, bin}
 
       data = %{
-        id: @id,
+        id: id,
         mode: :session,
         user: "some user",
         client_sock: nil,
@@ -565,13 +567,13 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event(:cast, :finalize_termination, :terminating_with_error, new_data)
     end
 
-    test "encodes and forwards server error to client socket" do
+    test "encodes and forwards server error to client socket", %{id: id} do
       bin = Server.error_message("XX000", "generic error") |> IO.iodata_to_binary()
       {send, recv} = sockpair()
       content = {:tcp, recv, bin}
 
       data = %{
-        id: @id,
+        id: id,
         mode: :session,
         user: "some user",
         client_sock: {:gen_tcp, send},
@@ -687,7 +689,7 @@ defmodule Supavisor.DbHandlerTest do
   end
 
   describe "handle_event/4 info tcp notice_response during authentication" do
-    test "logs and keeps state when receiving a standalone notice" do
+    test "logs and keeps state when receiving a standalone notice", %{id: id} do
       message = ["SNOTICE", 0, "C00000", 0, "Msome notice", 0, 0]
       bin = IO.iodata_to_binary([<<?N, IO.iodata_length(message) + 4::32>>, message])
 
@@ -700,7 +702,7 @@ defmodule Supavisor.DbHandlerTest do
             secrets: %PasswordSecrets{user: "user", password: "pass"}
           }),
         sock: {:gen_tcp, nil},
-        id: @id,
+        id: id,
         mode: :session
       }
 
