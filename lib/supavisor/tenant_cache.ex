@@ -78,5 +78,4 @@ defmodule Supavisor.TenantCache do
         true
     end
   end
-
 end
