@@ -78,26 +78,4 @@ defmodule Supavisor.TenantCache do
         true
     end
   end
-
-  @spec get_last_connect_failure(Supavisor.id()) :: integer() | nil
-  def get_last_connect_failure(id) do
-    case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
-      [{_pid, table}] ->
-        :ets.lookup_element(table, :last_connect_failure, 2, nil)
-
-      _ ->
-        nil
-    end
-  end
-
-  @spec put_last_connect_failure(Supavisor.id(), integer()) :: true
-  def put_last_connect_failure(id, timestamp) do
-    case Registry.lookup(Supavisor.Registry.Tenants, {:cache, id}) do
-      [{_pid, table}] ->
-        :ets.insert(table, {:last_connect_failure, timestamp})
-
-      _ ->
-        true
-    end
-  end
 end
