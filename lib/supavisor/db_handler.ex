@@ -358,8 +358,8 @@ defmodule Supavisor.DbHandler do
       {:ready_for_query, acc} ->
         ps = acc.ps
 
-        Logger.debug(
-          "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
+        Logger.info(
+          "DbHandler: Backend authenticated, backend_pid: #{inspect(acc[:backend_key_data][:pid])}"
         )
 
         if data.mode != :proxy do
