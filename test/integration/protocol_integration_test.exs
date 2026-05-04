@@ -144,28 +144,30 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert auth_type == 10
     end
 
-    test "requests cleartext password when client connects with SSL", %{port: port} do
-      tenant = List.first(@tenants)
-      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
-      user = db_conf[:username]
-
-      {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
-      :ok = :gen_tcp.send(tcp, Server.ssl_request_message())
-      {:ok, "S"} = :gen_tcp.recv(tcp, 1, 5000)
-      {:ok, ssl} = :ssl.connect(tcp, [verify: :verify_none, active: false], 5000)
-
-      startup =
-        :pgo_protocol.encode_startup_message([
-          {"user", "#{user}.#{tenant}"},
-          {"database", to_string(db_conf[:database])}
-        ])
-
-      :ok = :ssl.send(ssl, startup)
-
-      {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :ssl.recv(ssl, 0, 5000)
-      # 3 = AuthenticationCleartextPassword
-      assert auth_type == 3
-    end
+    # Temporarily reverted: password-auth-over-TLS optimization for non-JIT
+    # tenants was disabled, so these expectations no longer hold.
+    # test "requests cleartext password when client connects with SSL", %{port: port} do
+    #   tenant = List.first(@tenants)
+    #   db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    #   user = db_conf[:username]
+    #
+    #   {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+    #   :ok = :gen_tcp.send(tcp, Server.ssl_request_message())
+    #   {:ok, "S"} = :gen_tcp.recv(tcp, 1, 5000)
+    #   {:ok, ssl} = :ssl.connect(tcp, [verify: :verify_none, active: false], 5000)
+    #
+    #   startup =
+    #     :pgo_protocol.encode_startup_message([
+    #       {"user", "#{user}.#{tenant}"},
+    #       {"database", to_string(db_conf[:database])}
+    #     ])
+    #
+    #   :ok = :ssl.send(ssl, startup)
+    #
+    #   {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :ssl.recv(ssl, 0, 5000)
+    #   # 3 = AuthenticationCleartextPassword
+    #   assert auth_type == 3
+    # end
 
     test "proxied connection requests SCRAM-SHA-256 without client_tls option" do
       tenant = List.first(@tenants)
@@ -188,27 +190,29 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert auth_type == 10
     end
 
-    test "proxied connection requests cleartext password with client_tls option" do
-      tenant = List.first(@tenants)
-      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
-      user = db_conf[:username]
-
-      [local_port | _] = Application.get_env(:supavisor, :transaction_proxy_ports)
-      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", local_port, [:binary, active: false])
-
-      startup =
-        :pgo_protocol.encode_startup_message([
-          {"user", "#{user}.#{tenant}"},
-          {"database", to_string(db_conf[:database])},
-          {"options", "--client_tls=true"}
-        ])
-
-      :ok = :gen_tcp.send(sock, startup)
-
-      {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
-      # 3 = AuthenticationCleartextPassword
-      assert auth_type == 3
-    end
+    # Temporarily reverted: password-auth-over-TLS optimization for non-JIT
+    # tenants was disabled, so these expectations no longer hold.
+    # test "proxied connection requests cleartext password with client_tls option" do
+    #   tenant = List.first(@tenants)
+    #   db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    #   user = db_conf[:username]
+    #
+    #   [local_port | _] = Application.get_env(:supavisor, :transaction_proxy_ports)
+    #   {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", local_port, [:binary, active: false])
+    #
+    #   startup =
+    #     :pgo_protocol.encode_startup_message([
+    #       {"user", "#{user}.#{tenant}"},
+    #       {"database", to_string(db_conf[:database])},
+    #       {"options", "--client_tls=true"}
+    #     ])
+    #
+    #   :ok = :gen_tcp.send(sock, startup)
+    #
+    #   {:ok, <<?R, _::32, auth_type::32, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+    #   # 3 = AuthenticationCleartextPassword
+    #   assert auth_type == 3
+    # end
   end
 
   defp recv_until_ready_for_query(sock, buf) do
