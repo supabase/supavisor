@@ -14,6 +14,7 @@ defmodule Supavisor.Errors.AuthQueryError do
           | :parse_error
           | :md5_not_supported
           | :connection_failed
+          | :timeout
 
   @type t() :: %__MODULE__{
           reason: reason(),
@@ -44,6 +45,9 @@ defmodule Supavisor.Errors.AuthQueryError do
 
   def error_message(%{reason: :connection_failed}),
     do: "auth_query connection failed"
+
+  def error_message(%{reason: :timeout}),
+    do: "auth_query secret check timed out"
 
   defp humanize(%DBConnection.ConnectionError{reason: :queue_timeout}),
     do: "connection to database not available"

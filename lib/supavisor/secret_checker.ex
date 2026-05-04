@@ -8,6 +8,7 @@ defmodule Supavisor.SecretChecker do
   alias Supavisor.AuthQuery
   alias Supavisor.ClientAuthentication
   alias Supavisor.ClientAuthentication.ValidationSecrets
+  alias Supavisor.Errors.AuthQueryError
 
   @interval :timer.seconds(15)
 
@@ -33,8 +34,11 @@ defmodule Supavisor.SecretChecker do
 
       [{pid, _}] ->
         try do
-          GenServer.call(pid, :get_secrets)
+          GenServer.call(pid, :get_secrets, 1_000)
         catch
+          :exit, {:timeout, _} ->
+            {:error, %AuthQueryError{reason: :timeout}}
+
           :exit, reason ->
             Logger.error("SecretChecker: get_secrets call exited: #{inspect(reason)}")
             {:error, :not_started}
