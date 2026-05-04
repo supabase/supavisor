@@ -239,6 +239,7 @@ defmodule Supavisor.Helpers do
 
     salted_password =
       :pgo_scram.hi(PgSASLprep.scram_normalize(IO.iodata_to_binary(secrets.password)), salt, i)
+
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
     client_first_bare = [<<"n=">>, user_name, <<",r=">>, client_nonce]
