@@ -235,7 +235,9 @@ defmodule Supavisor.DbHandler do
 
     Telem.handler_action(:db_handler, :db_connection, data.id)
 
-    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts) do
+    connect_timeout = if data.proxy, do: 1_000, else: 5_000
+
+    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts, connect_timeout) do
       {:ok, sock} ->
         # Ensure buffer >= recbuf to avoid unnecessary copying
         # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
