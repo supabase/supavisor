@@ -1029,7 +1029,7 @@ defmodule Supavisor.DbHandler do
   defp handle_connection_failure(reason, data) do
     if not data.proxy do
       Supavisor.CircuitBreaker.record_failure(data.tenant, :db_connection)
-      Supavisor.TenantCache.put_last_connect_failure(data.id, System.monotonic_time(:millisecond))
+      Supavisor.ConnectBackoff.record_failure(data.id, System.monotonic_time(:millisecond))
     end
 
     error = %{
@@ -1061,7 +1061,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp connect_cooldown_remaining(id) do
-    case Supavisor.TenantCache.get_last_connect_failure(id) do
+    case Supavisor.ConnectBackoff.last_failure(id) do
       nil ->
         0
 

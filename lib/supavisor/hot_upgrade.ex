@@ -2,54 +2,84 @@ defmodule Supavisor.HotUpgrade do
   @moduledoc false
   require Logger
 
-  @type app :: atom
   @type version_str :: String.t()
-  @type path_str :: String.t()
-  @type change :: :soft | {:advanced, [term]}
-  @type dep_mods :: [module]
-  @type appup_ver :: charlist | binary
-  @type instruction ::
-          {:add_module, module}
-          | {:delete_module, module}
-          | {:update, module, :supervisor | change}
-          | {:update, module, change, dep_mods}
-          | {:load_module, module}
-          | {:load_module, module, dep_mods}
-          | {:apply, {module, atom, [term]}}
-          | {:add_application, atom}
-          | {:remove_application, atom}
-          | {:restart_application, atom}
-          | :restart_new_emulator
-          | :restart_emulator
-  @type upgrade_instructions :: [{appup_ver, instruction}]
-  @type downgrade_instructions :: [{appup_ver, instruction}]
-  @type appup :: {appup_ver, upgrade_instructions, downgrade_instructions}
 
-  @spec up(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def up(_app, _from_vsn, to_vsn, appup, _transform) do
     appup =
       Enum.reject(appup, fn
         {:load_module, __MODULE__} -> true
         {:load_module, __MODULE__, _} -> true
+        {:add_module, Supavisor.ConnectBackoff} -> true
+        {:add_module, Supavisor.ConnectBackoff, _} -> true
+        {:add_module, Supavisor.ConnectBackoff.Janitor} -> true
+        {:add_module, Supavisor.ConnectBackoff.Janitor, _} -> true
         _ -> false
       end)
 
     [
       {:load_module, __MODULE__},
       {:apply, {__MODULE__, :apply_runtime_config, [to_vsn]}},
-      {:apply, {__MODULE__, :remove_access_log_handler, []}}
+      {:apply, {__MODULE__, :remove_access_log_handler, []}},
+      {:add_module, Supavisor.ConnectBackoff},
+      {:add_module, Supavisor.ConnectBackoff.Janitor},
+      {:apply, {__MODULE__, :prepare_connect_backoff, []}}
     ] ++ appup
   end
 
-  @spec down(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def down(_app, from_vsn, _to_vsn, appup, _transform) do
+    appup =
+      Enum.reject(appup, fn
+        {:delete_module, Supavisor.ConnectBackoff} -> true
+        {:delete_module, Supavisor.ConnectBackoff, _} -> true
+        {:delete_module, Supavisor.ConnectBackoff.Janitor} -> true
+        {:delete_module, Supavisor.ConnectBackoff.Janitor, _} -> true
+        _ -> false
+      end)
+
     [
-      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}}
+      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}},
+      {:apply, {Supavisor.HotUpgrade, :cleanup_connect_backoff, []}},
+      {:delete_module, Supavisor.ConnectBackoff.Janitor},
+      {:delete_module, Supavisor.ConnectBackoff}
     ] ++ appup
   end
 
   def remove_access_log_handler do
     :logger.remove_handler(:access_log)
+  end
+
+  @doc """
+  Creates the `Supavisor.ConnectBackoff` named ETS table and starts the
+  `Supavisor.ConnectBackoff.Janitor` child. Both are normally set up in
+  `Supavisor.Application.start/2`, which does not re-run on a hot upgrade —
+  so we wire them up explicitly here. Both steps are idempotent in case the
+  upgrade is re-applied.
+  """
+  def prepare_connect_backoff do
+    if :ets.whereis(Supavisor.ConnectBackoff) == :undefined do
+      Supavisor.ConnectBackoff.init()
+    end
+
+    case Supervisor.start_child(Supavisor.Supervisor, Supavisor.ConnectBackoff.Janitor) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, :already_present} -> :ok
+    end
+  end
+
+  @doc """
+  Reverses `prepare_connect_backoff/0` for downgrades to a version that does
+  not know about `Supavisor.ConnectBackoff`.
+  """
+  def cleanup_connect_backoff do
+    _ = Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.ConnectBackoff.Janitor)
+    _ = Supervisor.delete_child(Supavisor.Supervisor, Supavisor.ConnectBackoff.Janitor)
+
+    if :ets.whereis(Supavisor.ConnectBackoff) != :undefined do
+      :ets.delete(Supavisor.ConnectBackoff)
+    end
+
+    :ok
   end
 
   @spec apply_runtime_config(version_str()) :: any()
