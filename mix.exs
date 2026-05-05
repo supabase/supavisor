@@ -172,7 +172,7 @@ defmodule Supavisor.MixProject do
           []
         end
 
-      unless "supavisor" in copied do
+      if "supavisor" not in copied do
         Mix.Task.run("supavisor.gen.appup", ["--from=" <> from, "--to=" <> vsn])
       end
 
