@@ -235,7 +235,9 @@ defmodule Supavisor.DbHandler do
 
     Telem.handler_action(:db_handler, :db_connection, data.id)
 
-    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts) do
+    connect_timeout = if data.proxy, do: 1_000, else: 5_000
+
+    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts, connect_timeout) do
       {:ok, sock} ->
         # Ensure buffer >= recbuf to avoid unnecessary copying
         # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
@@ -358,8 +360,8 @@ defmodule Supavisor.DbHandler do
       {:ready_for_query, acc} ->
         ps = acc.ps
 
-        Logger.debug(
-          "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
+        Logger.info(
+          "DbHandler: Backend authenticated, backend_pid: #{inspect(acc[:backend_key_data][:pid])}"
         )
 
         if data.mode != :proxy do
@@ -1029,7 +1031,7 @@ defmodule Supavisor.DbHandler do
   defp handle_connection_failure(reason, data) do
     if not data.proxy do
       Supavisor.CircuitBreaker.record_failure(data.tenant, :db_connection)
-      Supavisor.TenantCache.put_last_connect_failure(data.id, System.monotonic_time(:millisecond))
+      Supavisor.ConnectBackoff.record_failure(data.id, System.monotonic_time(:millisecond))
     end
 
     error = %{
@@ -1061,7 +1063,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp connect_cooldown_remaining(id) do
-    case Supavisor.TenantCache.get_last_connect_failure(id) do
+    case Supavisor.ConnectBackoff.last_failure(id) do
       nil ->
         0
 
