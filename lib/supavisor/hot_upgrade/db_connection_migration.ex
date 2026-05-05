@@ -42,10 +42,12 @@ defmodule Supavisor.HotUpgrade.DbConnectionMigration do
   end
 
   defp find_supervised_pids(target_mod) do
-    :application.which_applications()
-    |> Enum.flat_map(fn {app, _name, _vsn} -> app_root_supervisors(app) end)
-    |> Enum.flat_map(fn root -> walk_supervisor(root, target_mod, MapSet.new([root])) end)
-    |> Enum.uniq()
+    roots =
+      Enum.flat_map(:application.which_applications(), fn {app, _name, _vsn} ->
+        app_root_supervisors(app)
+      end)
+
+    walk(roots, target_mod, MapSet.new(roots), []) |> Enum.uniq()
   end
 
   defp app_root_supervisors(app) do
@@ -61,31 +63,39 @@ defmodule Supavisor.HotUpgrade.DbConnectionMigration do
     end
   end
 
-  defp walk_supervisor(sup, target_mod, seen) do
+  defp walk([], _target_mod, _seen, acc), do: acc
+
+  defp walk([sup | rest], target_mod, seen, acc) do
     case safe_which_children(sup) do
       :error ->
-        []
+        walk(rest, target_mod, seen, acc)
 
       children ->
-        Enum.flat_map(children, fn
-          {_name, pid, :supervisor, mods} when is_pid(pid) ->
-            self_match = if target_mod in mods, do: [pid], else: []
+        {next, seen, acc} =
+          Enum.reduce(children, {rest, seen, acc}, fn
+            {_name, pid, :supervisor, mods}, {next, seen, acc} when is_pid(pid) ->
+              acc = if target_mod in mods, do: [pid | acc], else: acc
 
-            if MapSet.member?(seen, pid) do
-              self_match
-            else
-              self_match ++ walk_supervisor(pid, target_mod, MapSet.put(seen, pid))
-            end
+              if MapSet.member?(seen, pid) do
+                {next, seen, acc}
+              else
+                {[pid | next], MapSet.put(seen, pid), acc}
+              end
 
-          {_name, pid, :worker, mods} when is_pid(pid) and is_list(mods) ->
-            if target_mod in mods, do: [pid], else: []
+            {_name, pid, :worker, mods}, {next, seen, acc}
+            when is_pid(pid) and is_list(mods) ->
+              acc = if target_mod in mods, do: [pid | acc], else: acc
+              {next, seen, acc}
 
-          {_name, pid, :worker, :dynamic} when is_pid(pid) ->
-            if dynamic_mod_match?(pid, target_mod), do: [pid], else: []
+            {_name, pid, :worker, :dynamic}, {next, seen, acc} when is_pid(pid) ->
+              acc = if dynamic_mod_match?(pid, target_mod), do: [pid | acc], else: acc
+              {next, seen, acc}
 
-          _ ->
-            []
-        end)
+            _, state ->
+              state
+          end)
+
+        walk(next, target_mod, seen, acc)
     end
   end
 
