@@ -137,36 +137,42 @@ defmodule Supavisor.MixProject do
       rel_content = File.read!(Path.join(release.version_path, "supavisor.rel"))
       :ok = File.write!(path, rel_content)
 
-      # If appups directory exist, don't run the task to generate, and instead
-      # use the existing appups.
+      # Copy any hand-written appups from relups/<from>-<vsn>/appups/, then
+      # generate the supavisor appup if it isn't among them.
       appups_path = Path.join(["relups", "#{from}-#{vsn}", "appups"])
 
-      if File.dir?(appups_path) do
-        IO.puts("Using existing appups from #{appups_path}")
+      copied =
+        if File.dir?(appups_path) do
+          IO.puts("Using existing appups from #{appups_path}")
 
-        appups_path
-        |> File.ls!()
-        |> Enum.each(fn appup ->
-          [app, version] =
-            appup
-            |> String.trim_trailing(".appup")
-            |> String.split("-")
+          appups_path
+          |> File.ls!()
+          |> Enum.map(fn appup ->
+            [app, version] =
+              appup
+              |> String.trim_trailing(".appup")
+              |> String.split("-")
 
-          file_path = Path.join(appups_path, appup)
+            file_path = Path.join(appups_path, appup)
 
-          destination =
-            Path.join([
-              release.path,
-              "lib",
-              "#{app}-#{version}",
-              "ebin",
-              "#{app}.appup"
-            ])
+            destination =
+              Path.join([
+                release.path,
+                "lib",
+                "#{app}-#{version}",
+                "ebin",
+                "#{app}.appup"
+              ])
 
-          IO.puts("Copying #{file_path} to #{destination}")
-          File.copy(file_path, destination)
-        end)
-      else
+            IO.puts("Copying #{file_path} to #{destination}")
+            File.copy(file_path, destination)
+            app
+          end)
+        else
+          []
+        end
+
+      unless "supavisor" in copied do
         Mix.Task.run("supavisor.gen.appup", ["--from=" <> from, "--to=" <> vsn])
       end
 
