@@ -64,6 +64,7 @@ defmodule Supavisor.DbHandler do
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @cleanup_buffer_limit 65_536
   @connect_cooldown_ms 2_500
+  @authentication_timeout_ms 15_000
 
   @auth_error_actions %{
     "28P01" => {:keep_pool, :invalidate_secrets},
@@ -259,7 +260,9 @@ defmodule Supavisor.DbHandler do
             case send_startup(sock, conn_params, tenant, options) do
               :ok ->
                 :ok = activate(sock)
-                {:next_state, :authentication, %{data | sock: sock}}
+
+                {:next_state, :authentication, %{data | sock: sock},
+                 {:state_timeout, @authentication_timeout_ms, :authentication_timeout}}
 
               {:error, reason} ->
                 Logger.error("DbHandler: Send startup error #{inspect(reason)}")
@@ -314,6 +317,11 @@ defmodule Supavisor.DbHandler do
   def handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, _data) do
     Logger.error("DbHandler: Cleanup timeout, shutting down")
     {:stop, :normal}
+  end
+
+  def handle_event(:state_timeout, :authentication_timeout, :authentication, data) do
+    Logger.error("DbHandler: Authentication timeout after #{@authentication_timeout_ms}ms")
+    handle_connection_failure({:error, :authentication_timeout}, data)
   end
 
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
