@@ -27,7 +27,8 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     [
       system_metrics(),
       client_metrics(),
-      db_metrics()
+      db_metrics(),
+      auth_query_metrics()
     ]
   end
 
@@ -186,6 +187,68 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           reporter_options: [
             peep_bucket_calculator: Buckets
           ]
+        )
+      ]
+    )
+  end
+
+  defp auth_query_metrics do
+    Event.build(
+      :supavisor_auth_query_event_metrics,
+      [
+        distribution(
+          [:supavisor, :auth_query, :connection, :duration],
+          event_name: [:supavisor, :auth_query, :connection, :stop],
+          measurement: :duration,
+          description: "Duration of auth_query Postgrex connection setup.",
+          tags: [:result, :reason],
+          unit: {:native, :millisecond},
+          reporter_options: [peep_bucket_calculator: Buckets]
+        ),
+        distribution(
+          [:supavisor, :auth_query, :query, :duration],
+          event_name: [:supavisor, :auth_query, :query, :stop],
+          measurement: :duration,
+          description: "Duration of auth_query execution including Postgrex queue wait.",
+          tags: [:result, :reason],
+          unit: {:native, :millisecond},
+          reporter_options: [peep_bucket_calculator: Buckets]
+        ),
+        distribution(
+          [:supavisor, :secret_checker, :get_secrets, :duration, :local],
+          event_name: [:supavisor, :secret_checker, :get_secrets, :stop, :local],
+          measurement: :duration,
+          description: "Duration of get_secrets erpc call (same-node).",
+          tags: [:result, :reason],
+          unit: {:native, :millisecond},
+          reporter_options: [peep_bucket_calculator: Buckets]
+        ),
+        distribution(
+          [:supavisor, :secret_checker, :get_secrets, :duration, :remote],
+          event_name: [:supavisor, :secret_checker, :get_secrets, :stop, :remote],
+          measurement: :duration,
+          description: "Duration of get_secrets erpc call (cross-node).",
+          tags: [:result, :reason],
+          unit: {:native, :millisecond},
+          reporter_options: [peep_bucket_calculator: Buckets]
+        ),
+        distribution(
+          [:supavisor, :secret_checker, :update_credentials, :duration, :local],
+          event_name: [:supavisor, :secret_checker, :update_credentials, :stop, :local],
+          measurement: :duration,
+          description: "Duration of update_credentials erpc call (same-node).",
+          tags: [:result, :reason],
+          unit: {:native, :millisecond},
+          reporter_options: [peep_bucket_calculator: Buckets]
+        ),
+        distribution(
+          [:supavisor, :secret_checker, :update_credentials, :duration, :remote],
+          event_name: [:supavisor, :secret_checker, :update_credentials, :stop, :remote],
+          measurement: :duration,
+          description: "Duration of update_credentials erpc call (cross-node).",
+          tags: [:result, :reason],
+          unit: {:native, :millisecond},
+          reporter_options: [peep_bucket_calculator: Buckets]
         )
       ]
     )

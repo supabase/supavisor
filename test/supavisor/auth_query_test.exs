@@ -2,6 +2,8 @@ defmodule Supavisor.AuthQueryTest do
   use ExUnit.Case, async: true
 
   import Supavisor.Asserts
+  import ExUnit.CaptureLog
+  alias Supavisor.Monitoring.Telem
 
   alias Supavisor.AuthQuery
   alias Supavisor.Errors.AuthQueryError
@@ -143,6 +145,78 @@ defmodule Supavisor.AuthQueryTest do
 
       assert_valid_error(result)
       GenServer.stop(conn)
+    end
+  end
+
+  describe "fetch_user_secret/3 telemetry" do
+    setup ctx do
+      ref = make_ref()
+
+      :telemetry.attach(
+        {ctx.test, :auth_query_query_stop},
+        [:supavisor, :auth_query, :query, :stop],
+        fn _event, measurements, metadata, {pid, r} -> send(pid, {r, measurements, metadata}) end,
+        {self(), ref}
+      )
+
+      on_exit(fn -> :telemetry.detach({ctx.test, :auth_query_query_stop}) end)
+      {:ok, ref: ref}
+    end
+
+    test "emits :ok on successful fetch", %{ref: ref} do
+      conn = start_conn()
+
+      AuthQuery.fetch_user_secret(
+        conn,
+        "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
+        "postgres"
+      )
+
+      assert_receive {^ref, %{duration: d}, %{result: :ok, reason: :ok}}
+      assert d > 0
+      GenServer.stop(conn)
+    end
+
+    test "emits :no_auth_query when nil", %{ref: ref} do
+      AuthQuery.fetch_user_secret(self(), nil, "user")
+      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :no_auth_query}}
+    end
+
+    test "emits :user_not_found", %{ref: ref} do
+      conn = start_conn()
+
+      AuthQuery.fetch_user_secret(
+        conn,
+        "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
+        "nonexistent_user_xyz"
+      )
+
+      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :user_not_found}}
+      GenServer.stop(conn)
+    end
+
+    test "emits :query_failed for invalid query", %{ref: ref} do
+      conn = start_conn()
+      AuthQuery.fetch_user_secret(conn, "SELECT * FROM nonexistent_table WHERE u=$1", "user")
+      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :query_failed}}
+      GenServer.stop(conn)
+    end
+
+    test "auth_query_query_stop logs warning when duration exceeds 1s" do
+      slow = System.convert_time_unit(1_001, :millisecond, :native)
+
+      log =
+        capture_log(fn ->
+          Telem.auth_query_query_stop(slow, {:error, %AuthQueryError{reason: :query_failed}})
+        end)
+
+      assert log =~ "auth_query took over"
+    end
+
+    test "auth_query_query_stop does not log warning for fast queries" do
+      fast = System.convert_time_unit(100, :millisecond, :native)
+      log = capture_log(fn -> Telem.auth_query_query_stop(fast, {:ok, %{}}) end)
+      refute log =~ "auth_query took over"
     end
   end
 end

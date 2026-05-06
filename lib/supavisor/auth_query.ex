@@ -6,6 +6,7 @@ defmodule Supavisor.AuthQuery do
 
   alias Supavisor.Errors.AuthQueryError
   alias Supavisor.Helpers
+  alias Supavisor.Monitoring.Telem
   alias Supavisor.Secrets.{ManagerSecrets, SASLSecrets}
   alias Supavisor.Tenants.Tenant
 
@@ -17,29 +18,34 @@ defmodule Supavisor.AuthQuery do
   def start_link(%Tenant{} = tenant, %ManagerSecrets{} = manager) do
     ssl_opts = build_ssl_options(tenant)
     ip_version = Helpers.ip_version(tenant.ip_version, tenant.db_host)
+    start = System.monotonic_time()
 
-    case Postgrex.start_link(
-           hostname: tenant.db_host,
-           port: tenant.db_port,
-           database: tenant.db_database,
-           password: manager.db_password,
-           username: manager.db_user,
-           parameters: [application_name: "Supavisor (auth_query)"],
-           ssl: tenant.upstream_ssl,
-           socket_options: [ip_version],
-           queue_target: 1_000,
-           queue_interval: 5_000,
-           ssl_opts: ssl_opts
-         ) do
-      {:ok, pid} ->
-        {:ok, pid}
+    result =
+      case Postgrex.start_link(
+             hostname: tenant.db_host,
+             port: tenant.db_port,
+             database: tenant.db_database,
+             password: manager.db_password,
+             username: manager.db_user,
+             parameters: [application_name: "Supavisor (auth_query)"],
+             ssl: tenant.upstream_ssl,
+             socket_options: [ip_version],
+             queue_target: 1_000,
+             queue_interval: 5_000,
+             ssl_opts: ssl_opts
+           ) do
+        {:ok, pid} ->
+          {:ok, pid}
 
-      :ignore ->
-        {:error, %AuthQueryError{reason: :connection_failed, details: "connection ignored"}}
+        :ignore ->
+          {:error, %AuthQueryError{reason: :connection_failed, details: "connection ignored"}}
 
-      {:error, reason} ->
-        {:error, %AuthQueryError{reason: :connection_failed, details: inspect(reason)}}
-    end
+        {:error, reason} ->
+          {:error, %AuthQueryError{reason: :connection_failed, details: inspect(reason)}}
+      end
+
+    Telem.auth_query_connection_stop(System.monotonic_time() - start, result)
+    result
   end
 
   @doc """
@@ -96,11 +102,18 @@ defmodule Supavisor.AuthQuery do
   """
   @spec fetch_user_secret(pid(), String.t() | nil, String.t()) ::
           {:ok, SASLSecrets.t()} | {:error, AuthQueryError.t()}
-  def fetch_user_secret(_conn, nil, _user) do
+  def fetch_user_secret(conn, auth_query, user) do
+    start = System.monotonic_time()
+    result = do_fetch_user_secret(conn, auth_query, user)
+    Telem.auth_query_query_stop(System.monotonic_time() - start, result)
+    result
+  end
+
+  defp do_fetch_user_secret(_conn, nil, _user) do
     {:error, %AuthQueryError{reason: :no_auth_query}}
   end
 
-  def fetch_user_secret(conn, auth_query, user) when is_binary(auth_query) do
+  defp do_fetch_user_secret(conn, auth_query, user) when is_binary(auth_query) do
     Postgrex.query!(conn, auth_query, [user])
   catch
     _error, reason ->

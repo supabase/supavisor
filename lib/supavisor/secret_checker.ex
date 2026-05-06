@@ -9,6 +9,7 @@ defmodule Supavisor.SecretChecker do
   alias Supavisor.ClientAuthentication
   alias Supavisor.ClientAuthentication.ValidationSecrets
   alias Supavisor.Errors.AuthQueryError
+  alias Supavisor.Monitoring.Telem
 
   @interval :timer.seconds(15)
 
@@ -40,7 +41,12 @@ defmodule Supavisor.SecretChecker do
             {:error, %AuthQueryError{reason: :timeout}}
 
           :exit, reason ->
-            Logger.error("SecretChecker: get_secrets call exited: #{inspect(reason)}")
+            Supavisor.id(tenant: tenant) = id
+
+            Logger.error("SecretChecker: get_secrets call exited: #{inspect(reason)}",
+              project: tenant
+            )
+
             {:error, :not_started}
         end
     end
@@ -163,16 +169,31 @@ defmodule Supavisor.SecretChecker do
   defp erpc_call_node(id, mod, fun, args) do
     case Supavisor.get_global_sup(id) do
       nil ->
-        {:error, :not_started}
+        result = {:error, :not_started}
+        emit_erpc_metric(fun, 0, result, :local)
+        result
 
       pid ->
-        try do
-          :erpc.call(node(pid), mod, fun, args)
-        catch
-          :exit, reason ->
-            Logger.error("SecretChecker: erpc call exited: #{inspect(reason)}")
-            {:error, :not_started}
-        end
+        locality = if node(pid) == node(), do: :local, else: :remote
+        start = System.monotonic_time()
+
+        result =
+          try do
+            :erpc.call(node(pid), mod, fun, args)
+          catch
+            :exit, reason ->
+              Logger.error("SecretChecker: erpc call exited: #{inspect(reason)}")
+              {:error, :not_started}
+          end
+
+        emit_erpc_metric(fun, System.monotonic_time() - start, result, locality)
+        result
     end
   end
+
+  defp emit_erpc_metric(:do_get_secrets, duration, result, local),
+    do: Telem.get_secrets_stop(duration, result, local)
+
+  defp emit_erpc_metric(:do_update_credentials, duration, result, local),
+    do: Telem.update_credentials_stop(duration, result, local)
 end
