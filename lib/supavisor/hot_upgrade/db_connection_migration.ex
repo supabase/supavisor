@@ -28,6 +28,7 @@ defmodule Supavisor.HotUpgrade.DbConnectionMigration do
             {type, queue, codel, {mono, interval}}
 
           other ->
+            Logger.info("Unexpected state: #{inspect(other)}")
             other
         end)
       catch
