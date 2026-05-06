@@ -3,6 +3,7 @@
    [{load_module, 'Elixir.Supavisor.HotUpgrade.DbConnectionMigration'},
     {add_module, 'Elixir.DBConnection.SensitiveData'},
     {add_module, 'Elixir.Inspect.DBConnection.SensitiveData'},
+    {apply, {'Elixir.Supavisor.HotUpgrade.DbConnectionMigration', reconsolidate_inspect, ["2.9.4"]}},
     {load_module, 'Elixir.DBConnection'},
     {load_module, 'Elixir.DBConnection.Util'},
     {load_module, 'Elixir.DBConnection.Watcher'},
@@ -26,5 +27,6 @@
     {load_module, 'Elixir.DBConnection.Watcher'},
     {load_module, 'Elixir.DBConnection.Util'},
     {load_module, 'Elixir.DBConnection'},
+    {apply, {'Elixir.Supavisor.HotUpgrade.DbConnectionMigration', reconsolidate_inspect, ["2.9.1"]}},
     {delete_module, 'Elixir.Inspect.DBConnection.SensitiveData'},
     {delete_module, 'Elixir.DBConnection.SensitiveData'}]}]}.
