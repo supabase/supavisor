@@ -101,21 +101,17 @@ defmodule Supavisor.HotUpgrade.DbConnectionMigration do
   end
 
   defp safe_which_children(sup) do
-    try do
-      :supervisor.which_children(sup)
-    catch
-      _, _ -> :error
-    end
+    :supervisor.which_children(sup)
+  catch
+    _, _ -> :error
   end
 
   defp dynamic_mod_match?(pid, target_mod) do
-    try do
-      case :gen.call(pid, self(), :get_modules, 5000) do
-        {:ok, mods} when is_list(mods) -> target_mod in mods
-        _ -> false
-      end
-    catch
-      _, _ -> false
+    case :gen.call(pid, self(), :get_modules, 5000) do
+      {:ok, mods} when is_list(mods) -> target_mod in mods
+      _ -> false
     end
+  catch
+    _, _ -> false
   end
 end
