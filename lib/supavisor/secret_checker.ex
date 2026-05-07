@@ -41,10 +41,8 @@ defmodule Supavisor.SecretChecker do
             {:error, %AuthQueryError{reason: :timeout}}
 
           :exit, reason ->
-            Supavisor.id(tenant: tenant) = id
-
             Logger.error("SecretChecker: get_secrets call exited: #{inspect(reason)}",
-              project: tenant
+              project: Supavisor.id(id, :tenant)
             )
 
             {:error, :not_started}
