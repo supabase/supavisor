@@ -355,7 +355,8 @@ defmodule Supavisor.DbHandlerTest do
       assert error == %{
                "S" => "FATAL",
                "C" => "08006",
-               "M" => "Failed to connect to database: authentication did not complete within 15000ms"
+               "M" =>
+                 "Failed to connect to database: authentication did not complete within 15000ms"
              }
     end
 
