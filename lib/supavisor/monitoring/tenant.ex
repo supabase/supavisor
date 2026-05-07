@@ -201,7 +201,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :auth_query, :connection, :stop],
           measurement: :duration,
           description: "Duration of auth_query Postgrex connection setup.",
-          tags: [:result, :reason],
+          tags: [:status],
           unit: {:native, :millisecond},
           reporter_options: [peep_bucket_calculator: Buckets]
         ),
@@ -210,7 +210,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :auth_query, :query, :stop],
           measurement: :duration,
           description: "Duration of auth_query execution including Postgrex queue wait.",
-          tags: [:result, :reason],
+          tags: [:status],
           unit: {:native, :millisecond},
           reporter_options: [peep_bucket_calculator: Buckets]
         ),
