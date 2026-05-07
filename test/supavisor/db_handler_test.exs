@@ -276,7 +276,7 @@ defmodule Supavisor.DbHandlerTest do
                 sock: {:gen_tcp, _},
                 id: ^id,
                 mode: :session
-              }} = state
+              }, {:state_timeout, 15_000, :authentication_timeout}} = state
     end
 
     test "db is not available", %{id: id} do
@@ -340,6 +340,23 @@ defmodule Supavisor.DbHandlerTest do
                "S" => "FATAL",
                "C" => "08006",
                "M" => "Failed to connect to database: {:error, :timeout}"
+             }
+    end
+
+    test "authentication state times out", %{id: id} do
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
+               Db.handle_event(:state_timeout, :authentication_timeout, :authentication, %{
+                 id: id,
+                 proxy: false,
+                 tenant: {:single, "some tenant"}
+               })
+
+      assert error == %{
+               "S" => "FATAL",
+               "C" => "08006",
+               "M" =>
+                 "Failed to connect to database: authentication did not complete within 15000ms"
              }
     end
 

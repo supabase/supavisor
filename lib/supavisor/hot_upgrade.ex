@@ -13,6 +13,9 @@ defmodule Supavisor.HotUpgrade do
         {:add_module, Supavisor.ConnectBackoff, _} -> true
         {:add_module, Supavisor.ConnectBackoff.Janitor} -> true
         {:add_module, Supavisor.ConnectBackoff.Janitor, _} -> true
+        # Owned by db_connection.appup, which load_modules it before its own apply.
+        {:add_module, Supavisor.HotUpgrade.DbConnectionMigration} -> true
+        {:add_module, Supavisor.HotUpgrade.DbConnectionMigration, _} -> true
         _ -> false
       end)
 
@@ -33,6 +36,8 @@ defmodule Supavisor.HotUpgrade do
         {:delete_module, Supavisor.ConnectBackoff, _} -> true
         {:delete_module, Supavisor.ConnectBackoff.Janitor} -> true
         {:delete_module, Supavisor.ConnectBackoff.Janitor, _} -> true
+        {:delete_module, Supavisor.HotUpgrade.DbConnectionMigration} -> true
+        {:delete_module, Supavisor.HotUpgrade.DbConnectionMigration, _} -> true
         _ -> false
       end)
 

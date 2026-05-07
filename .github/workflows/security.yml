@@ -56,6 +56,8 @@ jobs:
         key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
         restore-keys: |
           ${{ runner.os }}-mix-
+    - name: Install dependencies
+      run: mix deps.get --check-locked
     - name: Compile deps
       run: mix deps.compile
     - name: MixAudit check
