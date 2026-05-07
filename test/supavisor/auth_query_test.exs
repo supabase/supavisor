@@ -130,8 +130,10 @@ defmodule Supavisor.AuthQueryTest do
       {:ok, conn} =
         Postgrex.start_link(
           hostname: "invalid.nonexistent.host",
-          port: 5432,
-          database: "test"
+          port: 5433,
+          database: "test",
+          queue_target: 1,
+          queue_interval: 4
         )
 
       assert {:error, %AuthQueryError{reason: :query_failed}} =
