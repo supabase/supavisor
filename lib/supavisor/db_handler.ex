@@ -1045,11 +1045,16 @@ defmodule Supavisor.DbHandler do
     error = %{
       "S" => "FATAL",
       "C" => "08006",
-      "M" => "Failed to connect to database: #{inspect(reason)}"
+      "M" => "Failed to connect to database: #{format_reason(reason)}"
     }
 
     {:keep_state_and_data, {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
   end
+
+  defp format_reason({:error, :authentication_timeout}),
+    do: "authentication did not complete within #{@authentication_timeout_ms}ms"
+
+  defp format_reason(reason), do: inspect(reason)
 
   defp resolve_secrets(data) do
     if data.proxy do
