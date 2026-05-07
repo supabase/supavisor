@@ -143,7 +143,9 @@ defmodule Supavisor.Integration.SecretCheckerTest do
       :telemetry.attach(
         {__MODULE__, ctx.test},
         ctx.event,
-        fn _event, measurements, metadata, {pid, r} -> send(pid, {r, measurements, metadata}) end,
+        fn _event, measurements, metadata, {pid, ref} ->
+          send(pid, {ref, measurements, metadata})
+        end,
         {self(), ref}
       )
 
@@ -167,7 +169,7 @@ defmodule Supavisor.Integration.SecretCheckerTest do
         )
 
       assert {:error, :not_started} = Supavisor.SecretChecker.get_secrets(id)
-      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :not_started}}
+      assert_receive {^ref, %{duration: _}, %{status: :error}}
     end
 
     @tag event: [:supavisor, :secret_checker, :get_secrets, :stop, :local]
@@ -202,8 +204,8 @@ defmodule Supavisor.Integration.SecretCheckerTest do
       assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{}} =
                Supavisor.SecretChecker.get_secrets(pool_id)
 
-      assert_receive {^ref, %{duration: d}, %{result: :ok, reason: :ok}}
-      assert d > 0
+      assert_receive {^ref, %{duration: duration}, %{status: :ok}}
+      assert duration > 0
     end
 
     @tag event: [:supavisor, :secret_checker, :update_credentials, :stop, :local]
@@ -242,8 +244,8 @@ defmodule Supavisor.Integration.SecretCheckerTest do
                  to_string(db_conf[:password])
                )
 
-      assert_receive {^ref, %{duration: d}, %{result: :ok, reason: :ok}}
-      assert d > 0
+      assert_receive {^ref, %{duration: duration}, %{status: :ok}}
+      assert is_integer(duration) and duration > 0
     end
 
     @tag event: [:supavisor, :secret_checker, :update_credentials, :stop, :local]
@@ -264,7 +266,8 @@ defmodule Supavisor.Integration.SecretCheckerTest do
       assert {:error, :not_started} =
                Supavisor.SecretChecker.update_credentials(id, "new_user", "new_password")
 
-      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :not_started}}
+      assert_receive {^ref, %{duration: duration}, %{status: :error}}
+      assert is_integer(duration) and duration >= 0
     end
   end
 end

@@ -3,7 +3,6 @@ defmodule Supavisor.AuthQueryTest do
 
   import Supavisor.Asserts
   import ExUnit.CaptureLog
-  alias Supavisor.Monitoring.Telem
 
   alias Supavisor.AuthQuery
   alias Supavisor.Errors.AuthQueryError
@@ -45,7 +44,7 @@ defmodule Supavisor.AuthQueryTest do
 
     test "rejects md5 secrets" do
       assert {:error,
-              %Supavisor.Errors.AuthQueryError{
+              %AuthQueryError{
                 reason: :md5_not_supported,
                 details: nil,
                 code: "EAUTHQUERY"
@@ -148,6 +147,58 @@ defmodule Supavisor.AuthQueryTest do
     end
   end
 
+  describe "start_link/2 telemetry:" do
+    setup ctx do
+      ref = make_ref()
+
+      :telemetry.attach(
+        {ctx.test, :auth_query_connection_stop},
+        [:supavisor, :auth_query, :connection, :stop],
+        fn _event, measurements, metadata, {pid, ref} ->
+          send(pid, {ref, measurements, metadata})
+        end,
+        {self(), ref}
+      )
+
+      on_exit(fn -> :telemetry.detach({ctx.test, :auth_query_connection_stop}) end)
+
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      tenant = %Supavisor.Tenants.Tenant{
+        db_host: to_string(db_conf[:hostname]),
+        db_port: db_conf[:port],
+        db_database: db_conf[:database]
+      }
+
+      {:ok, ref: ref, db_conf: db_conf, tenant: tenant}
+    end
+
+    test "emits :ok on successful connection", %{ref: ref, db_conf: db_conf, tenant: tenant} do
+      manager = %Supavisor.Secrets.ManagerSecrets{
+        db_user: to_string(db_conf[:username]),
+        db_password: to_string(db_conf[:password])
+      }
+
+      {:ok, _conn} = AuthQuery.start_link(tenant, manager)
+
+      assert_receive {^ref, %{duration: duration}, %{status: :ok}}
+      assert is_integer(duration) && duration > 0
+    end
+
+    test "emits :error on failed connection", %{ref: ref, tenant: tenant} do
+      :meck.new(Postgrex, [:passthrough])
+      :meck.expect(Postgrex, :start_link, fn _opts -> {:error, :reason} end)
+
+      manager = %Supavisor.Secrets.ManagerSecrets{db_user: "user", db_password: nil}
+
+      assert {:error, _} = AuthQuery.start_link(tenant, manager)
+      assert_receive {^ref, %{duration: duration}, %{status: :error}}
+      assert is_integer(duration) && duration >= 0
+
+      :meck.unload(Postgrex)
+    end
+  end
+
   describe "fetch_user_secret/3 telemetry" do
     setup ctx do
       ref = make_ref()
@@ -155,7 +206,9 @@ defmodule Supavisor.AuthQueryTest do
       :telemetry.attach(
         {ctx.test, :auth_query_query_stop},
         [:supavisor, :auth_query, :query, :stop],
-        fn _event, measurements, metadata, {pid, r} -> send(pid, {r, measurements, metadata}) end,
+        fn _event, measurements, metadata, {pid, ref} ->
+          send(pid, {ref, measurements, metadata})
+        end,
         {self(), ref}
       )
 
@@ -172,17 +225,16 @@ defmodule Supavisor.AuthQueryTest do
         "postgres"
       )
 
-      assert_receive {^ref, %{duration: d}, %{result: :ok, reason: :ok}}
-      assert d > 0
-      GenServer.stop(conn)
+      assert_receive {^ref, %{duration: duration}, %{status: :ok}}
+      assert is_integer(duration) && duration > 0
     end
 
-    test "emits :no_auth_query when nil", %{ref: ref} do
+    test "emits :error when query is nil", %{ref: ref} do
       AuthQuery.fetch_user_secret(self(), nil, "user")
-      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :no_auth_query}}
+      assert_receive {^ref, %{duration: _}, %{status: :error}}
     end
 
-    test "emits :user_not_found", %{ref: ref} do
+    test "emits :error when user doesn't exist", %{ref: ref} do
       conn = start_conn()
 
       AuthQuery.fetch_user_secret(
@@ -191,32 +243,41 @@ defmodule Supavisor.AuthQueryTest do
         "nonexistent_user_xyz"
       )
 
-      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :user_not_found}}
-      GenServer.stop(conn)
+      assert_receive {^ref, %{duration: duration}, %{status: :error}}
+      assert is_integer(duration) && duration > 0
     end
 
-    test "emits :query_failed for invalid query", %{ref: ref} do
+    test "emits :error for invalid query", %{ref: ref} do
       conn = start_conn()
+
       AuthQuery.fetch_user_secret(conn, "SELECT * FROM nonexistent_table WHERE u=$1", "user")
-      assert_receive {^ref, %{duration: _}, %{result: :error, reason: :query_failed}}
-      GenServer.stop(conn)
+
+      assert_receive {^ref, %{duration: duration}, %{status: :error}}
+      assert is_integer(duration) && duration > 0
     end
 
     test "auth_query_query_stop logs warning when duration exceeds 1s" do
-      slow = System.convert_time_unit(1_001, :millisecond, :native)
+      conn = start_conn()
 
-      log =
-        capture_log(fn ->
-          Telem.auth_query_query_stop(slow, {:error, %AuthQueryError{reason: :query_failed}})
-        end)
-
-      assert log =~ "auth_query took over"
+      assert capture_log(fn ->
+               AuthQuery.fetch_user_secret(
+                 conn,
+                 "SELECT $1::text, 'dummy'::text FROM pg_sleep(1)",
+                 "postgres"
+               )
+             end) =~ "auth_query took over"
     end
 
     test "auth_query_query_stop does not log warning for fast queries" do
-      fast = System.convert_time_unit(100, :millisecond, :native)
-      log = capture_log(fn -> Telem.auth_query_query_stop(fast, {:ok, %{}}) end)
-      refute log =~ "auth_query took over"
+      conn = start_conn()
+
+      refute capture_log(fn ->
+               AuthQuery.fetch_user_secret(
+                 conn,
+                 "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
+                 "postgres"
+               )
+             end) =~ "auth_query took over"
     end
   end
 end

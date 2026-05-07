@@ -219,7 +219,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :secret_checker, :get_secrets, :stop, :local],
           measurement: :duration,
           description: "Duration of get_secrets erpc call (same-node).",
-          tags: [:result, :reason],
+          tags: [:status],
           unit: {:native, :millisecond},
           reporter_options: [peep_bucket_calculator: Buckets]
         ),
@@ -228,7 +228,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :secret_checker, :get_secrets, :stop, :remote],
           measurement: :duration,
           description: "Duration of get_secrets erpc call (cross-node).",
-          tags: [:result, :reason],
+          tags: [:status],
           unit: {:native, :millisecond},
           reporter_options: [peep_bucket_calculator: Buckets]
         ),
@@ -237,7 +237,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :secret_checker, :update_credentials, :stop, :local],
           measurement: :duration,
           description: "Duration of update_credentials erpc call (same-node).",
-          tags: [:result, :reason],
+          tags: [:status],
           unit: {:native, :millisecond},
           reporter_options: [peep_bucket_calculator: Buckets]
         ),
@@ -246,7 +246,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :secret_checker, :update_credentials, :stop, :remote],
           measurement: :duration,
           description: "Duration of update_credentials erpc call (cross-node).",
-          tags: [:result, :reason],
+          tags: [:status],
           unit: {:native, :millisecond},
           reporter_options: [peep_bucket_calculator: Buckets]
         )

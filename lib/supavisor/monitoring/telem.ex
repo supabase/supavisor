@@ -4,8 +4,6 @@ defmodule Supavisor.Monitoring.Telem do
   require Logger
   require Supavisor
 
-  alias Supavisor.Errors.AuthQueryError
-
   @disabled Application.compile_env(:supavisor, :metrics_disabled, false)
   @slow_auth_query_ms 1_000
 
@@ -120,64 +118,47 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
-  @spec auth_query_connection_stop(integer(), {:ok, any()} | {:error, AuthQueryError.t()}) ::
-          :ok | nil
-  def auth_query_connection_stop(duration, result) do
-    {result_tag, reason_tag} = classify_auth_query_result(result)
-
+  @spec auth_query_connection_stop(integer(), :ok | :error) :: :ok
+  def auth_query_connection_stop(duration, status) do
     telemetry_execute(
       [:supavisor, :auth_query, :connection, :stop],
       %{duration: duration},
-      %{result: result_tag, reason: reason_tag}
+      %{status: status}
     )
   end
 
-  @spec auth_query_query_stop(integer(), {:ok, any()} | {:error, AuthQueryError.t()}) :: :ok | nil
-  def auth_query_query_stop(duration, result) do
+  @spec auth_query_query_stop(integer(), :ok | :error) :: :ok
+  def auth_query_query_stop(duration, status) do
     duration_ms = System.convert_time_unit(duration, :native, :millisecond)
 
     if duration_ms > @slow_auth_query_ms do
       Logger.warning("auth_query took over #{@slow_auth_query_ms}ms (#{duration_ms}ms)")
     end
 
-    {result_tag, reason_tag} = classify_auth_query_result(result)
-
     telemetry_execute(
       [:supavisor, :auth_query, :query, :stop],
       %{duration: duration},
-      %{result: result_tag, reason: reason_tag}
+      %{status: status}
     )
   end
 
-  @spec get_secrets_stop(integer(), {:ok, any()} | {:error, any()}, :local | :remote) :: :ok | nil
-  def get_secrets_stop(duration, result, locality) when locality in [:local, :remote] do
-    {result_tag, reason_tag} =
-      case result do
-        {:error, :not_started} -> {:error, :not_started}
-        {:error, :no_auth_config} -> {:error, :no_auth_config}
-        other -> classify_auth_query_result(other)
-      end
-
+  @spec secret_checker_get_secrets_stop(integer(), :ok | :error, :local | :remote) :: :ok
+  def secret_checker_get_secrets_stop(duration, status, locality)
+      when locality in [:local, :remote] do
     telemetry_execute(
       [:supavisor, :secret_checker, :get_secrets, :stop, locality],
       %{duration: duration},
-      %{result: result_tag, reason: reason_tag}
+      %{status: status}
     )
   end
 
-  @spec update_credentials_stop(integer(), :ok | {:error, any()}, :local | :remote) :: :ok | nil
-  def update_credentials_stop(duration, result, locality) when locality in [:local, :remote] do
-    {result_tag, reason_tag} =
-      case result do
-        :ok -> {:ok, :ok}
-        {:error, :not_started} -> {:error, :not_started}
-        {:error, _} -> {:error, :unknown}
-      end
-
+  @spec secret_checker_update_credentials_stop(integer(), :ok | :error, :local | :remote) :: :ok
+  def secret_checker_update_credentials_stop(duration, status, locality)
+      when locality in [:local, :remote] do
     telemetry_execute(
       [:supavisor, :secret_checker, :update_credentials, :stop, locality],
       %{duration: duration},
-      %{result: result_tag, reason: reason_tag}
+      %{status: status}
     )
   end
 
@@ -201,9 +182,4 @@ defmodule Supavisor.Monitoring.Telem do
       search_path: search_path
     }
   end
-
-  defp classify_auth_query_result(:ok), do: {:ok, :ok}
-  defp classify_auth_query_result({:ok, _}), do: {:ok, :ok}
-  defp classify_auth_query_result({:error, %AuthQueryError{reason: r}}), do: {:error, r}
-  defp classify_auth_query_result({:error, _}), do: {:error, :unknown}
 end

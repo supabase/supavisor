@@ -167,33 +167,42 @@ defmodule Supavisor.SecretChecker do
   defp jitter, do: :rand.uniform(div(@interval, 10))
 
   defp erpc_call_node(id, mod, fun, args) do
+    start = System.monotonic_time()
+
     case Supavisor.get_global_sup(id) do
       nil ->
-        result = {:error, :not_started}
-        emit_erpc_metric(fun, 0, result, :local)
-        result
+        {:error, :not_started}
+        |> tap(&telemetry_stop(fun, start, &1, :local))
 
       pid ->
-        locality = if node(pid) == node(), do: :local, else: :remote
-        start = System.monotonic_time()
-
-        result =
-          try do
-            :erpc.call(node(pid), mod, fun, args)
-          catch
-            :exit, reason ->
-              Logger.error("SecretChecker: erpc call exited: #{inspect(reason)}")
-              {:error, :not_started}
-          end
-
-        emit_erpc_metric(fun, System.monotonic_time() - start, result, locality)
-        result
+        try do
+          :erpc.call(node(pid), mod, fun, args)
+        catch
+          :exit, reason ->
+            Logger.error("SecretChecker: erpc call exited: #{inspect(reason)}")
+            {:error, :not_started}
+        end
+        |> tap(&telemetry_stop(fun, start, &1, (node(pid) == node() && :local) || :remote))
     end
   end
 
-  defp emit_erpc_metric(:do_get_secrets, duration, result, local),
-    do: Telem.get_secrets_stop(duration, result, local)
+  defp telemetry_stop(:do_get_secrets, start, result, locality) do
+    Telem.secret_checker_get_secrets_stop(
+      System.monotonic_time() - start,
+      telemetry_status(result),
+      locality
+    )
+  end
 
-  defp emit_erpc_metric(:do_update_credentials, duration, result, local),
-    do: Telem.update_credentials_stop(duration, result, local)
+  defp telemetry_stop(:do_update_credentials, start, result, locality) do
+    Telem.secret_checker_update_credentials_stop(
+      System.monotonic_time() - start,
+      telemetry_status(result),
+      locality
+    )
+  end
+
+  defp telemetry_status({:error, _}), do: :error
+  defp telemetry_status({:ok, _}), do: :ok
+  defp telemetry_status(:ok), do: :ok
 end

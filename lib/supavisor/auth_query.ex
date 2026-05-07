@@ -20,32 +20,31 @@ defmodule Supavisor.AuthQuery do
     ip_version = Helpers.ip_version(tenant.ip_version, tenant.db_host)
     start = System.monotonic_time()
 
-    result =
-      case Postgrex.start_link(
-             hostname: tenant.db_host,
-             port: tenant.db_port,
-             database: tenant.db_database,
-             password: manager.db_password,
-             username: manager.db_user,
-             parameters: [application_name: "Supavisor (auth_query)"],
-             ssl: tenant.upstream_ssl,
-             socket_options: [ip_version],
-             queue_target: 1_000,
-             queue_interval: 5_000,
-             ssl_opts: ssl_opts
-           ) do
-        {:ok, pid} ->
-          {:ok, pid}
+    [
+      hostname: tenant.db_host,
+      port: tenant.db_port,
+      database: tenant.db_database,
+      password: manager.db_password,
+      username: manager.db_user,
+      parameters: [application_name: "Supavisor (auth_query)"],
+      ssl: tenant.upstream_ssl,
+      socket_options: [ip_version],
+      queue_target: 1_000,
+      queue_interval: 5_000,
+      ssl_opts: ssl_opts
+    ]
+    |> Postgrex.start_link()
+    |> case do
+      {:ok, pid} ->
+        {:ok, pid}
 
-        :ignore ->
-          {:error, %AuthQueryError{reason: :connection_failed, details: "connection ignored"}}
+      :ignore ->
+        {:error, %AuthQueryError{reason: :connection_failed, details: "connection ignored"}}
 
-        {:error, reason} ->
-          {:error, %AuthQueryError{reason: :connection_failed, details: inspect(reason)}}
-      end
-
-    Telem.auth_query_connection_stop(System.monotonic_time() - start, result)
-    result
+      {:error, reason} ->
+        {:error, %AuthQueryError{reason: :connection_failed, details: inspect(reason)}}
+    end
+    |> tap(&telemetry_connection_stop(start, &1))
   end
 
   @doc """
@@ -104,9 +103,10 @@ defmodule Supavisor.AuthQuery do
           {:ok, SASLSecrets.t()} | {:error, AuthQueryError.t()}
   def fetch_user_secret(conn, auth_query, user) do
     start = System.monotonic_time()
-    result = do_fetch_user_secret(conn, auth_query, user)
-    Telem.auth_query_query_stop(System.monotonic_time() - start, result)
-    result
+
+    conn
+    |> do_fetch_user_secret(auth_query, user)
+    |> tap(&telemetry_query_stop(start, &1))
   end
 
   defp do_fetch_user_secret(_conn, nil, _user) do
@@ -180,4 +180,14 @@ defmodule Supavisor.AuthQuery do
   defp build_ssl_options(_tenant) do
     [verify: :verify_none]
   end
+
+  defp telemetry_connection_stop(start, result),
+    do:
+      Telem.auth_query_connection_stop(System.monotonic_time() - start, telemetry_status(result))
+
+  defp telemetry_query_stop(start, result),
+    do: Telem.auth_query_query_stop(System.monotonic_time() - start, telemetry_status(result))
+
+  defp telemetry_status({:ok, _}), do: :ok
+  defp telemetry_status(_), do: :error
 end
