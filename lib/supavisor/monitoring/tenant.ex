@@ -28,7 +28,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       system_metrics(),
       client_metrics(),
       db_metrics(),
-      auth_query_metrics()
+      client_auth_metrics()
     ]
   end
 
@@ -192,9 +192,9 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     )
   end
 
-  defp auth_query_metrics do
+  defp client_auth_metrics do
     Event.build(
-      :supavisor_auth_query_event_metrics,
+      :supavisor_client_auth_event_metrics,
       [
         distribution(
           [:supavisor, :auth_query, :connection, :duration],
