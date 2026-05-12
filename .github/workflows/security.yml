@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  pull_request_target:
+  pull_request:
     branches:
       - main
   schedule:
@@ -34,6 +34,7 @@ jobs:
     - name: Install dependencies
       run: mix deps.get --check-locked
     - name: Submit dependencies to GitHub
+      if: github.event_name != 'pull_request'
       uses: erlef/mix-dependency-submission@fa3e8f349d00a32bf14eec1c7577d6564abe08d2 # v1.3.1
 
   audit:
