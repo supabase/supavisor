@@ -49,6 +49,26 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
     end
   end
 
+  describe "emit_app_version/0" do
+    test "emits application version event" do
+      ref = attach_handler([:supavisor, :prom_ex, :application, :version])
+      expected_current = Application.spec(:supavisor, :vsn) |> to_string()
+      assert :ok = Cluster.emit_app_version()
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :application, :version], measurement, meta}}
+
+      assert %{status: 1} = measurement
+
+      assert %{
+               current: ^expected_current,
+               # this is set to the OPT version in the test env
+               permanent: _permanent,
+               base: "",
+               previous: ""
+             } = meta
+    end
+  end
+
   describe "emit_erpc_latency/0" do
     test "emits ERPC latency events for all nodes" do
       ref = attach_handler([:supavisor, :prom_ex, :cluster, :erpc_ping, :stop])
