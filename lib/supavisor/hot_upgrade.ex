@@ -99,8 +99,14 @@ defmodule Supavisor.HotUpgrade do
   def restart_prom_ex do
     case Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx) do
       :ok ->
-        {:ok, _} = Supervisor.restart_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx)
-        :ok
+        case Supervisor.restart_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.error("PromEx failed to restart after upgrade: #{inspect(reason)}")
+            :ok
+        end
 
       {:error, :not_found} ->
         :ok
