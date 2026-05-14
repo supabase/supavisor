@@ -21,7 +21,6 @@ export FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000
 export SECRET_KEY_BASE="dev"
 export CLUSTER_POSTGRES="true"
 export DB_POOL_SIZE="5"
-export METRICS_DISABLED="true"
 export RELEASE_COOKIE="upgrade_test_cookie"
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -89,10 +88,9 @@ mix deps.get --only prod
 mix release supavisor --overwrite
 
 # ── 3. Start release & create tenant ────────────────────────────────
-info "Starting release as daemon"
-$REL_BIN daemon
-
-BEAM_PID=$(pgrep -f "supavisor.*node1@127.0.0.1")
+info "Starting release in background"
+$REL_BIN start > /tmp/supavisor_upgrade_test.log 2>&1 &
+BEAM_PID=$!
 info "BEAM PID: ${BEAM_PID}"
 
 wait_for_api
