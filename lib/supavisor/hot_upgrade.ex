@@ -95,11 +95,20 @@ defmodule Supavisor.HotUpgrade do
   version on the first poll.
 
   No-ops when PromEx is not present in the supervision tree.
+
+  The :terminate measurement captures the persistent_term.erase GC sweep (sweep 1) since that runs synchronously
+   inside Peep's terminate/2 before terminate_child returns. The :restart measurement captures the
+  persistent_term.store GC sweep (sweep 2) from Peep's init/1. Both times include whatever else those supervisor
+   calls do, but the GC is the dominant cost under load.
   """
   def restart_prom_ex do
-    case Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx) do
+    case timed(:terminate, fn ->
+           Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx)
+         end) do
       :ok ->
-        case Supervisor.restart_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx) do
+        case timed(:restart, fn ->
+               Supervisor.restart_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx)
+             end) do
           {:ok, _} ->
             :ok
 
@@ -111,6 +120,14 @@ defmodule Supavisor.HotUpgrade do
       {:error, :not_found} ->
         :ok
     end
+  end
+
+  defp timed(label, fun) do
+    t0 = System.monotonic_time(:millisecond)
+    result = fun.()
+    elapsed = System.monotonic_time(:millisecond) - t0
+    Logger.info("restart_prom_ex #{label} took #{elapsed}ms")
+    result
   end
 
   @spec apply_runtime_config(version_str()) :: any()
