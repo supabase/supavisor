@@ -26,7 +26,7 @@ defmodule Supavisor.HotUpgrade do
       {:add_module, Supavisor.ConnectBackoff},
       {:add_module, Supavisor.ConnectBackoff.Janitor},
       {:apply, {__MODULE__, :prepare_connect_backoff, []}}
-    ] ++ appup
+    ] ++ appup ++ [{:apply, {__MODULE__, :restart_prom_ex, []}}]
   end
 
   def down(_app, from_vsn, _to_vsn, appup, _transform) do
@@ -46,7 +46,7 @@ defmodule Supavisor.HotUpgrade do
       {:apply, {Supavisor.HotUpgrade, :cleanup_connect_backoff, []}},
       {:delete_module, Supavisor.ConnectBackoff.Janitor},
       {:delete_module, Supavisor.ConnectBackoff}
-    ] ++ appup
+    ] ++ appup ++ [{:apply, {__MODULE__, :restart_prom_ex, []}}]
   end
 
   def remove_access_log_handler do
@@ -85,6 +85,26 @@ defmodule Supavisor.HotUpgrade do
     end
 
     :ok
+  end
+
+  @doc """
+  Restarts `Supavisor.Monitoring.PromEx` within the top-level supervisor so
+  that any new polling metrics introduced by an upgrade (or removed by a
+  downgrade) take effect immediately. Must run after all appup instructions
+  so that `Application.spec(:supavisor, :vsn)` already reflects the new
+  version on the first poll.
+
+  No-ops when PromEx is not present in the supervision tree.
+  """
+  def restart_prom_ex do
+    case Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx) do
+      :ok ->
+        {:ok, _} = Supervisor.restart_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx)
+        :ok
+
+      {:error, :not_found} ->
+        :ok
+    end
   end
 
   @spec apply_runtime_config(version_str()) :: any()
