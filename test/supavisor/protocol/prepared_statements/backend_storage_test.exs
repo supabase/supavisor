@@ -1,182 +1,48 @@
 defmodule Supavisor.Protocol.PreparedStatements.BackendStorageTest do
-  use ExUnit.Case, async: true
-  use ExUnitProperties
+  use ExUnit.Case, async: false
 
   alias Supavisor.Protocol.PreparedStatements.BackendStorage
+  alias Supavisor.Protocol.PreparedStatements.BackendStorage.{LRU, Random}
 
-  describe "new/0" do
-    test "is empty" do
-      storage = BackendStorage.new()
+  @flag "backend_prepared_statements_storage"
 
-      assert BackendStorage.size(storage) == 0
-      refute BackendStorage.member?(storage, "stmt_1")
+  describe "strategies/0" do
+    test "exposes the registry of known strategies" do
+      assert BackendStorage.strategies() == %{"lru" => LRU, "random" => Random}
     end
   end
 
-  describe "put/2" do
-    test "registers a statement" do
-      storage = BackendStorage.new() |> BackendStorage.put("stmt_1")
-
-      assert BackendStorage.size(storage) == 1
-      assert BackendStorage.member?(storage, "stmt_1")
+  describe "select/1" do
+    test "defaults to Random when no flag is set anywhere" do
+      assert BackendStorage.select(%{}) == Random
     end
 
-    test "re-putting an existing statement keeps size and refreshes recency" do
-      storage =
-        BackendStorage.new()
-        |> BackendStorage.put("stmt_1")
-        |> BackendStorage.put("stmt_2")
-        |> BackendStorage.put("stmt_1")
-
-      assert BackendStorage.size(storage) == 2
-
-      {[oldest], _} = BackendStorage.pop_oldest(storage, 1)
-      assert oldest == "stmt_2"
-    end
-  end
-
-  describe "touch/2" do
-    test "refreshes recency of an existing statement" do
-      storage =
-        BackendStorage.new()
-        |> BackendStorage.put("stmt_1")
-        |> BackendStorage.put("stmt_2")
-        |> BackendStorage.touch("stmt_1")
-
-      {[oldest], _} = BackendStorage.pop_oldest(storage, 1)
-      assert oldest == "stmt_2"
+    test "returns LRU when tenant flag is \"lru\"" do
+      assert BackendStorage.select(%{@flag => "lru"}) == LRU
     end
 
-    test "is a no-op for an unknown statement" do
-      storage = BackendStorage.new() |> BackendStorage.put("stmt_1")
-      touched = BackendStorage.touch(storage, "stmt_unknown")
-
-      assert touched == storage
-    end
-  end
-
-  describe "delete/2" do
-    test "removes a statement" do
-      storage =
-        BackendStorage.new()
-        |> BackendStorage.put("stmt_1")
-        |> BackendStorage.put("stmt_2")
-        |> BackendStorage.delete("stmt_1")
-
-      assert BackendStorage.size(storage) == 1
-      refute BackendStorage.member?(storage, "stmt_1")
-      assert BackendStorage.member?(storage, "stmt_2")
+    test "returns Random when tenant flag is \"random\"" do
+      assert BackendStorage.select(%{@flag => "random"}) == Random
     end
 
-    test "deleting an unknown statement is a no-op" do
-      storage = BackendStorage.new() |> BackendStorage.put("stmt_1")
-      after_delete = BackendStorage.delete(storage, "stmt_unknown")
-
-      assert after_delete == storage
-    end
-  end
-
-  describe "pop_oldest/2" do
-    test "returns oldest names in order of recency" do
-      storage =
-        Enum.reduce(1..5, BackendStorage.new(), fn i, acc ->
-          BackendStorage.put(acc, "stmt_#{i}")
-        end)
-
-      {evicted, remaining} = BackendStorage.pop_oldest(storage, 2)
-
-      assert evicted == ["stmt_1", "stmt_2"]
-      assert BackendStorage.size(remaining) == 3
-      refute BackendStorage.member?(remaining, "stmt_1")
-      refute BackendStorage.member?(remaining, "stmt_2")
-      assert BackendStorage.member?(remaining, "stmt_5")
+    test "falls back to default when tenant flag is unknown" do
+      assert BackendStorage.select(%{@flag => "tinylfu"}) == Random
     end
 
-    test "respects recency updated by touch" do
-      storage =
-        BackendStorage.new()
-        |> BackendStorage.put("stmt_1")
-        |> BackendStorage.put("stmt_2")
-        |> BackendStorage.put("stmt_3")
-        |> BackendStorage.touch("stmt_1")
+    test "falls back to app config when tenant flag is missing" do
+      original = Application.get_env(:supavisor, Supavisor.FeatureFlag, %{})
+      Application.put_env(:supavisor, Supavisor.FeatureFlag, Map.put(original, @flag, "lru"))
+      on_exit(fn -> Application.put_env(:supavisor, Supavisor.FeatureFlag, original) end)
 
-      {evicted, _} = BackendStorage.pop_oldest(storage, 1)
-      assert evicted == ["stmt_2"]
+      assert BackendStorage.select(%{}) == LRU
     end
 
-    test "n greater than size returns all and empties storage" do
-      storage =
-        BackendStorage.new()
-        |> BackendStorage.put("stmt_1")
-        |> BackendStorage.put("stmt_2")
+    test "tenant flag overrides app config" do
+      original = Application.get_env(:supavisor, Supavisor.FeatureFlag, %{})
+      Application.put_env(:supavisor, Supavisor.FeatureFlag, Map.put(original, @flag, "lru"))
+      on_exit(fn -> Application.put_env(:supavisor, Supavisor.FeatureFlag, original) end)
 
-      {evicted, remaining} = BackendStorage.pop_oldest(storage, 10)
-
-      assert evicted == ["stmt_1", "stmt_2"]
-      assert BackendStorage.size(remaining) == 0
-    end
-
-    test "returns empty list when storage is empty" do
-      {evicted, remaining} = BackendStorage.pop_oldest(BackendStorage.new(), 5)
-
-      assert evicted == []
-      assert BackendStorage.size(remaining) == 0
-    end
-  end
-
-  describe "LRU invariant" do
-    @names ~w(stmt_a stmt_b stmt_c stmt_d stmt_e)
-
-    property "pop_oldest returns names ordered by last put/touch across arbitrary op sequences" do
-      check all ops <- list_of(operation(), max_length: 50) do
-        {storage, expected_order} = simulate(ops)
-        actual_order = pop_all_in_order(storage)
-
-        assert actual_order == expected_order
-      end
-    end
-
-    defp operation do
-      one_of([
-        tuple({constant(:put), member_of(@names)}),
-        tuple({constant(:touch), member_of(@names)}),
-        tuple({constant(:delete), member_of(@names)})
-      ])
-    end
-
-    defp simulate(ops) do
-      {storage, _seq, shadow} =
-        Enum.reduce(ops, {BackendStorage.new(), 0, %{}}, &apply_op/2)
-
-      expected =
-        shadow
-        |> Enum.sort_by(fn {_name, seq} -> seq end)
-        |> Enum.map(fn {name, _seq} -> name end)
-
-      {storage, expected}
-    end
-
-    defp apply_op({:put, name}, {storage, seq, shadow}) do
-      {BackendStorage.put(storage, name), seq + 1, Map.put(shadow, name, seq + 1)}
-    end
-
-    defp apply_op({:touch, name}, {storage, seq, shadow}) do
-      if Map.has_key?(shadow, name) do
-        {BackendStorage.touch(storage, name), seq + 1, Map.put(shadow, name, seq + 1)}
-      else
-        {BackendStorage.touch(storage, name), seq, shadow}
-      end
-    end
-
-    defp apply_op({:delete, name}, {storage, seq, shadow}) do
-      {BackendStorage.delete(storage, name), seq, Map.delete(shadow, name)}
-    end
-
-    defp pop_all_in_order(storage) do
-      case BackendStorage.size(storage) do
-        0 -> []
-        size -> storage |> BackendStorage.pop_oldest(size) |> elem(0)
-      end
+      assert BackendStorage.select(%{@flag => "random"}) == Random
     end
   end
 end
