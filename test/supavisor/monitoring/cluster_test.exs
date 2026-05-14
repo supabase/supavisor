@@ -61,7 +61,7 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
 
       assert %{
                current: ^expected_current,
-               # this is set to the OPT version in the test env
+               # this is set to the OTP version in the test env
                permanent: _permanent,
                base: "",
                previous: ""
