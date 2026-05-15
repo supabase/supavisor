@@ -39,6 +39,24 @@ defmodule SupavisorWeb.Router do
     get("/", SupavisorWeb.WsProxy, [])
   end
 
+  pipeline :http_sql do
+    plug(:accepts, ["json"])
+
+    plug(Plug.Parsers,
+      parsers: [:json],
+      json_decoder: Jason,
+      length:
+        Application.compile_env(:supavisor, [:http_sql, :max_query_bytes], 1_048_576)
+    )
+
+    plug(SupavisorWeb.Plugs.NeonAuth)
+  end
+
+  scope "/", SupavisorWeb do
+    pipe_through(:http_sql)
+    post("/sql", SqlController, :execute)
+  end
+
   scope "/api", SupavisorWeb do
     pipe_through(:api)
 

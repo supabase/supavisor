@@ -36,7 +36,11 @@ defmodule Supavisor.HttpSql.PoolSpec do
       password: Map.fetch!(ctx, :password),
       database: Map.get(ctx, :database) || "postgres",
       pool_size: Map.get(ctx, :pool_size, Keyword.get(http_sql, :pool_size, 5)),
-      backoff_type: :stop,
+      # `:exp` (default) lets the pool self-heal across transient backend
+      # disconnects (e.g., supavisor terminates its upstream pool when the
+      # tenant is updated). Bad-password failures are bounded by the
+      # tenant-level CircuitBreaker for :auth_error.
+      backoff_type: :exp,
       show_sensitive_data_on_connection_error: false,
       parameters: [application_name: "supavisor-http-sql"],
       timeout: Map.get(ctx, :request_timeout_ms, Keyword.get(http_sql, :request_timeout_ms, 30_000)),
