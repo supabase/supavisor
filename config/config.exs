@@ -15,6 +15,17 @@ config :supavisor,
   switch_active_count: System.get_env("SWITCH_ACTIVE_COUNT", "100") |> String.to_integer(),
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "20") |> String.to_integer()
 
+# Fail-closed defaults for the HTTP `/sql` endpoint. Each value is overridable
+# per-environment via runtime.exs / dev.exs / test.exs.
+config :supavisor, :http_sql,
+  enabled: false,
+  pool_size: 5,
+  pool_max_total: 1000,
+  pool_idle_ttl_seconds: 60,
+  max_query_bytes: 1_048_576,
+  max_response_rows: 10_000,
+  request_timeout_ms: 30_000
+
 config :prom_ex, storage_adapter: Supavisor.Monitoring.PromEx.Store
 
 # Configures the endpoint

@@ -62,6 +62,15 @@ config :supavisor, Supavisor.FeatureFlag, %{
   "override_test" => true
 }
 
+config :supavisor, :http_sql,
+  enabled: true,
+  pool_size: 2,
+  pool_max_total: 10,
+  pool_idle_ttl_seconds: 5,
+  max_query_bytes: 65_536,
+  max_response_rows: 1_000,
+  request_timeout_ms: 5_000
+
 # Print only warnings and errors during test
 config :logger, :default_handler, level: String.to_atom(System.get_env("LOGGER_LEVEL", "none"))
 
