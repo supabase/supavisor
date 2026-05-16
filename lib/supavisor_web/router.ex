@@ -40,15 +40,10 @@ defmodule SupavisorWeb.Router do
   end
 
   pipeline :http_sql do
-    plug(:accepts, ["json"])
-
-    plug(Plug.Parsers,
-      parsers: [:json],
-      json_decoder: Jason,
-      length:
-        Application.compile_env(:supavisor, [:http_sql, :max_query_bytes], 1_048_576)
-    )
-
+    # Body parsing happens at the endpoint level (`SupavisorWeb.Endpoint`).
+    # `SupavisorWeb.Plugs.ForceJsonOnSql` mounted there injects
+    # Content-Type: application/json for the Neon JS driver, which omits
+    # it. Here we only run tenant/auth gating.
     plug(SupavisorWeb.Plugs.NeonAuth)
   end
 

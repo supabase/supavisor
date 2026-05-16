@@ -1,0 +1,132 @@
+defmodule Supavisor.HttpSql.NeonBodyParser do
+  @moduledoc """
+  A standalone `Plug` that reads the request body and JSON-decodes it
+  **whenever the request matches the Neon HTTP-SQL driver fingerprint**,
+  regardless of `Content-Type`.
+
+  ## Why this exists, and why it isn't a `Plug.Parsers` adapter
+
+  The `@neondatabase/serverless` driver POSTs a JSON body to `/sql` with
+  its `Neon-*` headers but no `Content-Type` (Node's built-in `fetch`
+  defaults to `text/plain` for string bodies). The stock `Plug.Parsers`
+  has a strict short-circuit:
+
+      case List.keyfind(req_headers, "content-type", 0) do
+        {"content-type", ct} -> reduce(... parsers ...)
+        _ -> # body_params := %{}, do not run any parser
+      end
+
+  When `Content-Type` is missing, no `Plug.Parsers` adapter ever gets a
+  chance to claim the request. So we can't fix this with a custom
+  parser — we have to run **before** `Plug.Parsers`.
+
+  This plug:
+
+    1. Inspects the request: when `path_info` starts with `"sql"` AND
+       the `Neon-Connection-String` header is present, it reads the body
+       and JSON-decodes it. It writes both `body_params` and `params`
+       on the conn.
+    2. Otherwise passes through unchanged.
+
+  Because `body_params` is set, the downstream `Plug.Parsers` plug
+  sees `body_params: %{...}` (not the default `%Plug.Conn.Unfetched{}`)
+  and short-circuits its second clause without re-reading the body
+  (which would fail — the body is already consumed).
+
+  ## Wiring
+
+  In `SupavisorWeb.Endpoint`, mount this plug **before** `Plug.Parsers`:
+
+      plug Supavisor.HttpSql.NeonBodyParser, json_decoder: Jason
+      plug Plug.Parsers,
+        parsers: [:urlencoded, :multipart, :json],
+        pass: ["*/*"],
+        json_decoder: Phoenix.json_library()
+
+  ## Options
+
+    * `:json_decoder` (required) — module or `{mod, fun, args}` tuple
+    * `:length` — max body size in bytes (forwarded to `read_body/2`)
+    * `:read_length`, `:read_timeout` — forwarded to `read_body/2`
+  """
+
+  @behaviour Plug
+
+  import Plug.Conn
+
+  @impl true
+  def init(opts) do
+    decoder =
+      Keyword.fetch!(opts, :json_decoder)
+      |> normalize_decoder()
+
+    read_body_opts = Keyword.take(opts, [:length, :read_length, :read_timeout])
+    %{decoder: decoder, read_body_opts: read_body_opts}
+  end
+
+  @impl true
+  def call(%Plug.Conn{body_params: %Plug.Conn.Unfetched{}} = conn, state) do
+    # Only run if the body hasn't been parsed yet (production case). When
+    # body_params is already a map — e.g. Plug.Test setting params directly
+    # or an upstream plug having read the body — we leave the conn alone.
+    if neon_sql_request?(conn) do
+      do_parse(conn, state)
+    else
+      conn
+    end
+  end
+
+  def call(conn, _state), do: conn
+
+  # ---------------------------------------------------------------------------
+
+  defp neon_sql_request?(%Plug.Conn{method: "POST", path_info: ["sql" | _]} = conn) do
+    case get_req_header(conn, "neon-connection-string") do
+      [_ | _] -> true
+      _ -> false
+    end
+  end
+
+  defp neon_sql_request?(_), do: false
+
+  defp do_parse(conn, %{decoder: {mod, fun, args}, read_body_opts: opts}) do
+    case read_body(conn, opts) do
+      {:ok, "", conn} ->
+        put_body_params(conn, %{})
+
+      {:ok, body, conn} ->
+        decoded =
+          try do
+            apply(mod, fun, [body | args])
+          rescue
+            e -> raise Plug.Parsers.ParseError, exception: e
+          end
+
+        case decoded do
+          term when is_map(term) -> put_body_params(conn, term)
+          term -> put_body_params(conn, %{"_json" => term})
+        end
+
+      {:more, _data, conn} ->
+        # Body exceeded the configured length. Mirror Plug.Parsers behavior:
+        # raise `Plug.Parsers.RequestTooLargeError` so the framework returns 413.
+        raise Plug.Parsers.RequestTooLargeError, conn: conn
+    end
+  end
+
+  defp put_body_params(conn, params) when is_map(params) do
+    # Setting body_params makes the downstream Plug.Parsers short-circuit
+    # (its clause matches on `body_params: %Plug.Conn.Unfetched{}`).
+    %{conn | body_params: params, params: merge_into_params(conn.params, params)}
+  end
+
+  defp merge_into_params(%Plug.Conn.Unfetched{}, body_params), do: body_params
+  defp merge_into_params(existing, body_params) when is_map(existing),
+    do: Map.merge(existing, body_params)
+
+  defp normalize_decoder(module) when is_atom(module), do: {module, :decode!, []}
+
+  defp normalize_decoder({mod, fun, args})
+       when is_atom(mod) and is_atom(fun) and is_list(args),
+       do: {mod, fun, args}
+end
