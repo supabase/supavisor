@@ -65,7 +65,14 @@ t('Boolean', async () => {
 
 t('Date', async () => {
   const rows = await sql`SELECT '2026-05-15'::date AS d`
-  return ['2026-05-15', rows[0].d.toString()]
+  // pg-types parses date OID 1082 via local-time Date constructor; format
+  // back with local accessors to verify round-trip without TZ skew.
+  const d = rows[0].d
+  const iso =
+    d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0')
+  return ['2026-05-15', iso]
 })
 
 t('Aggregate count', async () => {
