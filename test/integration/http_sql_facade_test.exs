@@ -134,4 +134,33 @@ defmodule Supavisor.Integration.HttpSqlFacadeTest do
                )
     end
   end
+
+  describe "row cap enforcement" do
+    setup do
+      cfg = Application.get_env(:supavisor, :http_sql, [])
+      Application.put_env(:supavisor, :http_sql, Keyword.put(cfg, :max_response_rows, 5))
+      on_exit(fn -> Application.put_env(:supavisor, :http_sql, cfg) end)
+      :ok
+    end
+
+    test "exceeding max_response_rows returns {:row_limit_exceeded, cap}" do
+      assert {:error, {:row_limit_exceeded, 5}} =
+               HttpSql.execute(
+                 ctx(),
+                 "SELECT i FROM generate_series(1, 100) AS s(i)",
+                 [],
+                 %{}
+               )
+    end
+
+    test "under-cap query succeeds" do
+      assert {:ok, %{"rowCount" => 3}} =
+               HttpSql.execute(
+                 ctx(),
+                 "SELECT i FROM generate_series(1, 3) AS s(i)",
+                 [],
+                 %{}
+               )
+    end
+  end
 end

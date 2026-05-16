@@ -12,6 +12,7 @@ defmodule Supavisor.HttpSql do
   for consistent `{status, body}` mapping in the controller.
   """
 
+  alias Supavisor.CircuitBreaker
   alias Supavisor.HttpSql.{ParamCoercer, PoolRegistry, ResponseBuilder, Telemetry, Transaction}
 
   @type ctx :: %{
@@ -45,6 +46,10 @@ defmodule Supavisor.HttpSql do
     with {:ok, pool_pid, _hit} <- checkout(ctx),
          {:ok, qr} <- run_query(pool_pid, sql, params, opts) do
       {:ok, ResponseBuilder.build_single(qr, opts)}
+    else
+      {:error, term} = err ->
+        maybe_record_auth_failure(term, ctx)
+        err
     end
   end
 
@@ -62,6 +67,10 @@ defmodule Supavisor.HttpSql do
          {:ok, pool_pid, _hit} <- checkout(ctx),
          {:ok, results} <- run_batch(pool_pid, txn_sql, queries, opts) do
       {:ok, ResponseBuilder.build_batch(results, opts)}
+    else
+      {:error, term} = err ->
+        maybe_record_auth_failure(term, ctx)
+        err
     end
   end
 
@@ -101,6 +110,10 @@ defmodule Supavisor.HttpSql do
   rescue
     e in [ArgumentError, Postgrex.Error] -> {:error, e}
   catch
+    # `:noproc` means the pool died between PoolRegistry.checkout and our
+    # use of the pid (TOCTOU). Map to a Neon connection_error → 503.
+    :exit, {:noproc, _} -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
+    :exit, :noproc -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
@@ -111,7 +124,7 @@ defmodule Supavisor.HttpSql do
 
         case Postgrex.execute(conn, q, coerced, timeout: timeout) do
           {:ok, %Postgrex.Query{} = q2, %Postgrex.Result{} = r} ->
-            :ok = maybe_enforce_row_cap(r)
+            enforce_row_cap!(conn, r)
             {q2, r}
 
           {:error, %Postgrex.Error{} = e} ->
@@ -145,15 +158,36 @@ defmodule Supavisor.HttpSql do
   rescue
     e in [ArgumentError, Postgrex.Error] -> {:error, e}
   catch
+    :exit, {:noproc, _} -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
+    :exit, :noproc -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  defp maybe_enforce_row_cap(%Postgrex.Result{num_rows: n}) when is_integer(n) do
+  # MUST be called inside a `Postgrex.transaction` body — uses
+  # `Postgrex.rollback/2` to non-locally return `{:error, ...}` from
+  # the transaction. Replaces the previous `throw/1` which escaped the
+  # transaction and crashed the controller (bypassing ErrorMapper and
+  # dumping the conn — with the password header — into the crash log).
+  defp enforce_row_cap!(conn, %Postgrex.Result{num_rows: n}) when is_integer(n) do
     cap = max_response_rows()
-    if n > cap, do: throw({:row_limit_exceeded, cap}), else: :ok
+    if n > cap, do: Postgrex.rollback(conn, {:row_limit_exceeded, cap})
   end
 
-  defp maybe_enforce_row_cap(_), do: :ok
+  defp enforce_row_cap!(_, _), do: :ok
+
+  # When the failure looks like a credential rejection by the upstream
+  # Postgres, record a brute-force tick against the HTTP caller's IP
+  # (NOT the loopback peer of our Postgrex pool). Without this, the
+  # CircuitBreaker check in NeonAuth would never trip for HTTP traffic.
+  defp maybe_record_auth_failure(%Postgrex.Error{postgres: %{code: code}}, ctx)
+       when code in [:invalid_password, :invalid_authorization_specification] do
+    case Map.get(ctx, :remote_ip) do
+      nil -> :ok
+      ip -> CircuitBreaker.record_failure({ctx.tenant_external_id, ip}, :auth_error)
+    end
+  end
+
+  defp maybe_record_auth_failure(_term, _ctx), do: :ok
 
   defp request_timeout_ms do
     Application.get_env(:supavisor, :http_sql, [])

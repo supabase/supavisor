@@ -21,7 +21,8 @@ defmodule SupavisorWeb.SqlController do
         tenant: ctx.tenant_external_id,
         user: ctx.user,
         mode: mode(params),
-        batch_size: batch_size(params)
+        # Bucket the raw batch length so PromEx cardinality stays bounded.
+        batch_size: batch_size_bucket(batch_size(params))
       },
       fn -> dispatch(ctx, conn, params, array_mode) end
     )
@@ -78,4 +79,11 @@ defmodule SupavisorWeb.SqlController do
 
   defp batch_size(%{"queries" => q}) when is_list(q), do: length(q)
   defp batch_size(_), do: 1
+
+  # Static bucket labels keep PromEx label cardinality bounded.
+  defp batch_size_bucket(n) when n <= 1, do: "1"
+  defp batch_size_bucket(n) when n <= 10, do: "2-10"
+  defp batch_size_bucket(n) when n <= 100, do: "11-100"
+  defp batch_size_bucket(n) when n <= 1000, do: "101-1000"
+  defp batch_size_bucket(_), do: "1000+"
 end

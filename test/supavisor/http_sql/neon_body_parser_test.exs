@@ -134,6 +134,36 @@ defmodule Supavisor.HttpSql.NeonBodyParserTest do
       result = @subject.call(conn, init())
       assert result.body_params == %{"prearranged" => true}
     end
+
+    test "Plug.Parsers.RequestTooLargeError exception is credential-safe by design" do
+      # The exception itself only carries :message and :plug_status, never
+      # the conn or headers, so its inspect output cannot leak the password.
+      state = @subject.init(json_decoder: Jason, length: 4)
+      big_body = String.duplicate("x", 1000)
+
+      err =
+        try do
+          post(
+            "/sql",
+            big_body,
+            [
+              {"neon-connection-string", "postgres://user:SECRETPWD@h/db"},
+              {"authorization", "Bearer SECRETJWT"}
+            ]
+          )
+          |> @subject.call(state)
+
+          nil
+        rescue
+          e in Plug.Parsers.RequestTooLargeError -> e
+        end
+
+      refute is_nil(err), "expected RequestTooLargeError to be raised"
+      refute Map.has_key?(err, :conn)
+      rendered = inspect(err)
+      refute rendered =~ "SECRETPWD"
+      refute rendered =~ "SECRETJWT"
+    end
   end
 
   describe "init/1" do

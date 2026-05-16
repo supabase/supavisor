@@ -25,7 +25,11 @@ defmodule SupavisorWeb.Endpoint do
   # Plug.Parsers so that body_params is already populated by the time
   # Plug.Parsers gets the conn (Plug.Parsers short-circuits when it
   # sees a non-Unfetched body_params).
-  plug Supavisor.HttpSql.NeonBodyParser, json_decoder: Phoenix.json_library()
+  plug Supavisor.HttpSql.NeonBodyParser,
+    json_decoder: Phoenix.json_library(),
+    length: Application.compile_env(:supavisor, [:http_sql, :max_query_bytes], 1_048_576),
+    read_timeout:
+      Application.compile_env(:supavisor, [:http_sql, :request_timeout_ms], 30_000)
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],

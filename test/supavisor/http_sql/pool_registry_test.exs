@@ -159,4 +159,58 @@ defmodule Supavisor.HttpSql.PoolRegistryTest do
       assert {0, []} = PoolRegistry.stats()
     end
   end
+
+  describe "evict_tenant/1" do
+    test "evicts every pool for the given tenant_external_id" do
+      assert {:ok, _, :miss} = PoolRegistry.checkout(ctx(tenant_external_id: "a", user: "u1"))
+      assert {:ok, _, :miss} = PoolRegistry.checkout(ctx(tenant_external_id: "a", user: "u2"))
+      assert {:ok, _, :miss} = PoolRegistry.checkout(ctx(tenant_external_id: "b", user: "u1"))
+      assert {3, _} = PoolRegistry.stats()
+
+      PoolRegistry.evict_tenant("a")
+      Process.sleep(50)
+
+      assert {1, [{{"b", _, _}, _, _}]} = PoolRegistry.stats()
+    end
+
+    test "is a no-op for unknown tenant" do
+      assert {:ok, _, :miss} = PoolRegistry.checkout(ctx())
+      assert {1, _} = PoolRegistry.stats()
+
+      PoolRegistry.evict_tenant("nonexistent")
+      Process.sleep(20)
+
+      assert {1, _} = PoolRegistry.stats()
+    end
+
+    test "is safe when registry pid not registered (Process.whereis nil)" do
+      # Temporarily unregister so `Process.whereis(PoolRegistry)` returns nil,
+      # then restore. The supervisor will replace the registered name with
+      # whatever child it restarts later — for this test we simulate the
+      # "registry not yet started" path without bringing down the supervisor
+      # child (which would conflict with subsequent restarts).
+      pid = Process.whereis(PoolRegistry)
+      Process.unregister(PoolRegistry)
+      assert Process.whereis(PoolRegistry) == nil
+
+      assert :ok = PoolRegistry.evict_tenant("anything")
+
+      Process.register(pid, PoolRegistry)
+    end
+  end
+
+  describe "trap_exit" do
+    test "registry survives linked process exit" do
+      registry_pid = Process.whereis(PoolRegistry)
+      assert is_pid(registry_pid)
+
+      # Simulate a linked process going down with an abnormal reason.
+      send(registry_pid, {:EXIT, self(), :some_random_reason})
+      Process.sleep(20)
+
+      # Registry must still be alive and same pid.
+      assert Process.whereis(PoolRegistry) == registry_pid
+      assert Process.alive?(registry_pid)
+    end
+  end
 end

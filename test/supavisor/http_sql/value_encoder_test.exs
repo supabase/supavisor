@@ -200,6 +200,22 @@ defmodule Supavisor.HttpSql.ValueEncoderTest do
     end
   end
 
+  describe "encode/2 — interval (1186)" do
+    test "Postgrex.Interval struct produces canonical text" do
+      i = %Postgrex.Interval{months: 13, days: 5, secs: 30, microsecs: 0}
+      result = @subject.encode(i, 1186)
+      # Postgrex.Interval.to_string returns "1 year 1 mon 5 days 30 sec"-ish
+      assert is_binary(result)
+      assert result =~ "30"
+    end
+
+    test "plain map shape coerces into Postgrex.Interval" do
+      i = %{months: 1, days: 2, secs: 3, microsecs: 0}
+      result = @subject.encode(i, 1186)
+      assert is_binary(result)
+    end
+  end
+
   describe "encode/2 — unknown OID fallback" do
     test "binary value falls through" do
       assert @subject.encode("anything", 99_999_991) == "anything"

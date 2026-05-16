@@ -78,10 +78,28 @@ defmodule Supavisor.HttpSql.PoolRegistry do
     GenServer.call(__MODULE__, {:evict, key, :manual})
   end
 
+  @doc """
+  Evict every pool whose key's tenant_external_id matches. Used when a
+  tenant is updated/banned/has credentials rotated so that in-flight
+  HTTP-SQL pools don't continue serving with stale state.
+  """
+  @spec evict_tenant(String.t()) :: :ok
+  def evict_tenant(tenant_external_id) when is_binary(tenant_external_id) do
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      _pid -> GenServer.cast(__MODULE__, {:evict_tenant, tenant_external_id})
+    end
+  end
+
   # ------------------------------------------------------------------- Server
 
   @impl true
   def init(opts) do
+    # Trap exits: pool supervisors are linked to this process. Without
+    # trapping, any pool-tree termination would crash the registry and
+    # erase the entire ETS index of live pools.
+    Process.flag(:trap_exit, true)
+
     if :ets.whereis(@table) == :undefined do
       :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
     end
@@ -158,6 +176,18 @@ defmodule Supavisor.HttpSql.PoolRegistry do
   end
 
   @impl true
+  def handle_cast({:evict_tenant, tenant_external_id}, state) do
+    # Iterate ETS, match-spec on the first tuple element of the key
+    # (which is `tenant_external_id`).
+    for {{^tenant_external_id, _user, _pwd_hash} = key, _pid, _last} <-
+          :ets.tab2list(@table) do
+      do_evict(key, :tenant_invalidated, state)
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(:sweep, state) do
     now = System.monotonic_time(:millisecond)
 
@@ -167,6 +197,16 @@ defmodule Supavisor.HttpSql.PoolRegistry do
     end
 
     schedule_sweep(state.sweep_interval_ms)
+    {:noreply, state}
+  end
+
+  # Linked pool died. We still get a `:DOWN` from `Process.monitor/1` so
+  # the bookkeeping happens there; here we just log and stay alive.
+  def handle_info({:EXIT, _pid, reason}, state) do
+    unless reason in [:normal, :shutdown] do
+      Logger.debug("HttpSql.PoolRegistry: linked process exited: #{inspect(reason)}")
+    end
+
     {:noreply, state}
   end
 

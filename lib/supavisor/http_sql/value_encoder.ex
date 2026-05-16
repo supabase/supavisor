@@ -115,9 +115,13 @@ defmodule Supavisor.HttpSql.ValueEncoder do
     |> String.replace(~r/Z$/, "+00")
   end
 
-  # --- Interval: Postgrex.Interval already implements String.Chars
+  # --- Interval: Postgrex.Interval has `to_string/1` but no String.Chars
+  # protocol impl — `to_string(v)` (the kernel function) would raise
+  # `Protocol.UndefinedError`. Call the module function directly.
+  def encode(%Postgrex.Interval{} = v, @interval), do: Postgrex.Interval.to_string(v)
+
   def encode(%{months: _, days: _, secs: _, microsecs: _} = v, @interval),
-    do: to_string(v)
+    do: Postgrex.Interval.to_string(struct(Postgrex.Interval, v))
 
   # --- UUID: Postgrex hands back the 16-byte binary; format as canonical hex
   def encode(<<a::32, b::16, c::16, d::16, e::48>>, @uuid) do
