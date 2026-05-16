@@ -40,10 +40,12 @@ defmodule SupavisorWeb.Router do
   end
 
   pipeline :http_sql do
-    # Body parsing happens at the endpoint level (`SupavisorWeb.Endpoint`).
-    # `SupavisorWeb.Plugs.ForceJsonOnSql` mounted there injects
-    # Content-Type: application/json for the Neon JS driver, which omits
-    # it. Here we only run tenant/auth gating.
+    # Body parsing happens at the endpoint level by
+    # `Supavisor.HttpSql.NeonBodyParser`, which JSON-decodes the body
+    # regardless of Content-Type for requests carrying a
+    # `Neon-Connection-String` header (the @neondatabase/serverless
+    # driver omits Content-Type). The router pipeline only runs
+    # tenant/auth gating.
     plug(SupavisorWeb.Plugs.NeonAuth)
   end
 

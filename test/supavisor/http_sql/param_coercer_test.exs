@@ -92,6 +92,10 @@ defmodule Supavisor.HttpSql.ParamCoercerTest do
     test "passthrough for native float" do
       assert @subject.coerce(2.5, 701) == 2.5
     end
+
+    test "strict rejection of partial parse (3.14garbage)" do
+      assert_raise ArgumentError, fn -> @subject.coerce("3.14garbage", 701) end
+    end
   end
 
   describe "coerce/2 — numeric (1700)" do

@@ -24,18 +24,28 @@ defmodule Supavisor.HttpSql.TelemetryTest do
       :ok
     end
 
-    test "emits start and stop for an :ok body" do
-      meta = %{tenant: "t1", user: "u", mode: :single, batch_size: 1}
+    test "emits start and stop for an :ok Neon-shape body (rowCount → response_rows)" do
+      meta = %{tenant: "t1", user: "u", mode: :single, batch_size: "1"}
 
-      assert {:ok, %{rows: [["1"]], rows_count: 1, bytes: 42}} =
-               Telemetry.request_span(meta, fn ->
-                 {:ok, %{rows: [["1"]], rows_count: 1, bytes: 42}}
-               end)
+      neon_body = %{"command" => "SELECT", "rowCount" => 3, "rows" => [["1"], ["2"], ["3"]]}
+
+      assert {:ok, ^neon_body} = Telemetry.request_span(meta, fn -> {:ok, neon_body} end)
 
       assert_received {:telemetry, [:supavisor, :http_sql, :request, :start], _, %{tenant: "t1"}}
 
       assert_received {:telemetry, [:supavisor, :http_sql, :request, :stop], %{duration: _},
-                       %{status_code: 200, response_rows: 1, response_bytes: 42}}
+                       %{status_code: 200, response_rows: 3}}
+    end
+
+    test "batch body sums rowCount across results" do
+      meta = %{tenant: "t1", user: "u", mode: :batch, batch_size: "2-10"}
+
+      batch_body = %{"results" => [%{"rowCount" => 1}, %{"rowCount" => 4}, %{"rowCount" => 2}]}
+
+      assert {:ok, _} = Telemetry.request_span(meta, fn -> {:ok, batch_body} end)
+
+      assert_received {:telemetry, [:supavisor, :http_sql, :request, :stop], _,
+                       %{status_code: 200, response_rows: 7}}
     end
 
     test "emits stop with status 500 for an :error body" do

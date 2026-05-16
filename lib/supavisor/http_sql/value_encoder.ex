@@ -106,12 +106,12 @@ defmodule Supavisor.HttpSql.ValueEncoder do
     do: NaiveDateTime.to_iso8601(v) |> String.replace("T", " ")
 
   def encode(%DateTime{} = v, @timestamptz) do
-    # libpq emits e.g. "2026-05-15 14:30:00+00" (space, no T, abbreviated zone)
+    # libpq emits e.g. "2026-05-15 14:30:00+00" (space separator, no T,
+    # abbreviated zone). Postgrex always hands back UTC DateTime, so we
+    # skip the redundant shift_zone! and the previous no-op regex.
     v
-    |> DateTime.shift_zone!("Etc/UTC")
     |> DateTime.to_iso8601()
     |> String.replace("T", " ")
-    |> String.replace(~r/\.\d+/, fn frac -> frac end)
     |> String.replace(~r/Z$/, "+00")
   end
 

@@ -53,15 +53,17 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
          :ok <- check_circuit_breaker(tenant.external_id, ip),
          :ok <- check_feature_flag(tenant),
          :ok <- check_allow_list(tenant, ip) do
+      # Only the fields downstream code actually reads. `tenant` and
+      # `user_record` were unused dead data on every request.
+      _ = user
+
       assign(conn, :http_sql_ctx, %{
         tenant_external_id: tenant.external_id,
         user: parsed.user,
         password: parsed.password,
         database: parsed.database || tenant.db_database,
         remote_ip: ip,
-        request_id: get_req_header(conn, "x-request-id") |> List.first(),
-        tenant: tenant,
-        user_record: user
+        request_id: get_req_header(conn, "x-request-id") |> List.first()
       })
     else
       {:error, term} -> halt_with_error(conn, term)
@@ -118,13 +120,10 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
       {:ok, %{user: _, tenant: _}} = ok ->
         ok
 
-      {:error, %{__struct__: struct}} when struct == Supavisor.Errors.NoTenantIdentifierError ->
+      {:error, %Supavisor.Errors.NoTenantIdentifierError{}} ->
         {:error, {:malformed_request, "tenant identifier missing"}}
 
-      {:error, %{__struct__: _}} ->
-        {:error, {:unauthorized, "tenant or user not found"}}
-
-      _ ->
+      {:error, _} ->
         {:error, {:unauthorized, "tenant or user not found"}}
     end
   end

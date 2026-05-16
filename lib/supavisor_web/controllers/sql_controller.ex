@@ -8,6 +8,8 @@ defmodule SupavisorWeb.SqlController do
 
   use Phoenix.Controller, namespace: SupavisorWeb
 
+  require Logger
+
   alias Supavisor.HttpSql
   alias Supavisor.HttpSql.{ErrorMapper, Telemetry, Transaction}
 
@@ -71,11 +73,45 @@ defmodule SupavisorWeb.SqlController do
 
   defp render_result({:error, term}, conn) do
     {status, body} = ErrorMapper.to_neon_error(term)
+    audit_log(conn, status, term)
 
     conn
     |> put_resp_header("content-type", "application/json")
     |> send_resp(status, Jason.encode!(body))
   end
+
+  # Structured one-line log per failed request. Includes tenant, HTTP IP,
+  # and Postgres error code so SREs can spot brute-force / mass-error
+  # patterns. SQL is NOT logged; the audit log is for ops, not query
+  # surveillance.
+  defp audit_log(conn, status, term) do
+    ctx = Map.get(conn.assigns, :http_sql_ctx, %{})
+
+    metadata = [
+      project: Map.get(ctx, :tenant_external_id),
+      user: Map.get(ctx, :user),
+      remote_ip: Map.get(ctx, :remote_ip) |> ip_string(),
+      status: status,
+      reason: short_reason(term)
+    ]
+
+    if status == 401 do
+      Logger.warning("http_sql: auth failure", metadata)
+    else
+      Logger.info("http_sql: request error", metadata)
+    end
+  end
+
+  defp ip_string(nil), do: nil
+  defp ip_string(ip) when is_tuple(ip), do: :inet.ntoa(ip) |> to_string()
+  defp ip_string(other), do: inspect(other)
+
+  defp short_reason(%Postgrex.Error{postgres: %{code: code}}), do: to_string(code)
+  defp short_reason({:row_limit_exceeded, _}), do: "row_limit_exceeded"
+  defp short_reason({:response_too_large, _}), do: "response_too_large"
+  defp short_reason({tag, _}) when is_atom(tag), do: to_string(tag)
+  defp short_reason(atom) when is_atom(atom), do: to_string(atom)
+  defp short_reason(_), do: "unknown"
 
   defp array_mode?(conn) do
     case get_req_header(conn, "neon-array-mode") do

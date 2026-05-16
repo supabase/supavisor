@@ -77,10 +77,23 @@ defmodule Supavisor.HttpSql.ParamCoercer do
 
   def coerce(v, oid) when oid in [@float4, @float8] and is_binary(v) do
     case v do
-      "NaN" -> :nan
-      "Infinity" -> :infinity
-      "-Infinity" -> :negative_infinity
-      _ -> elem(Float.parse(v), 0)
+      "NaN" ->
+        :nan
+
+      "Infinity" ->
+        :infinity
+
+      "-Infinity" ->
+        :negative_infinity
+
+      _ ->
+        # Float.parse returns {n, rest} — a non-empty `rest` means the
+        # input wasn't a clean float (e.g. "3.14garbage" → {3.14, "garbage"}).
+        # Reject those instead of silently accepting partial parses.
+        case Float.parse(v) do
+          {n, ""} -> n
+          _ -> raise ArgumentError, "invalid float #{inspect(v)}"
+        end
     end
   end
 

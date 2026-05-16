@@ -54,15 +54,19 @@ defmodule Supavisor.HttpSql.Telemetry do
 
   # ---------------------------------------------------------------------------
 
-  defp result_metadata({:ok, %{rows: _} = resp}) do
-    %{
-      status_code: 200,
-      response_rows: Map.get(resp, :rows_count, 0),
-      response_bytes: Map.get(resp, :bytes, 0)
-    }
+  # The facade returns the Neon-shape body straight from
+  # `ResponseBuilder.build_single/2` or `build_batch/2`, which uses
+  # string keys (`"rowCount"`, `"rows"`, `"results"`). Read those.
+  defp result_metadata({:ok, %{"results" => list}}) when is_list(list) do
+    rows = Enum.reduce(list, 0, fn r, acc -> acc + Map.get(r, "rowCount", 0) end)
+    %{status_code: 200, response_rows: rows}
   end
 
-  defp result_metadata({:ok, _resp}), do: %{status_code: 200}
+  defp result_metadata({:ok, %{"rowCount" => n}}) when is_integer(n) do
+    %{status_code: 200, response_rows: n}
+  end
 
-  defp result_metadata({:error, _}), do: %{status_code: 500}
+  defp result_metadata({:ok, _resp}), do: %{status_code: 200, response_rows: 0}
+
+  defp result_metadata({:error, _}), do: %{status_code: 500, response_rows: 0}
 end
