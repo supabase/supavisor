@@ -119,9 +119,14 @@ defmodule Supavisor.HttpSql do
   rescue
     e in [ArgumentError, Postgrex.Error] -> {:error, e}
   catch
-    :exit, {:noproc, _} -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
-    :exit, :noproc -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
-    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, {:timeout, _} ->
+      {:error, :timeout}
+
+    :exit, reason ->
+      # Any other process-level exit (pool died normally, :noproc,
+      # :shutdown, linked supervisor down) maps to a Neon-shape 503
+      # connection_error rather than crashing the controller.
+      {:error, %DBConnection.ConnectionError{message: "pool exit: #{inspect(reason)}"}}
   end
 
   defp check_row_cap(%Postgrex.Result{num_rows: n}) when is_integer(n) do
@@ -172,9 +177,11 @@ defmodule Supavisor.HttpSql do
   rescue
     e in [ArgumentError, Postgrex.Error] -> {:error, e}
   catch
-    :exit, {:noproc, _} -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
-    :exit, :noproc -> {:error, %DBConnection.ConnectionError{message: "pool unavailable"}}
-    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, {:timeout, _} ->
+      {:error, :timeout}
+
+    :exit, reason ->
+      {:error, %DBConnection.ConnectionError{message: "pool exit: #{inspect(reason)}"}}
   end
 
   # MUST be called inside a `Postgrex.transaction` body — uses
@@ -193,15 +200,29 @@ defmodule Supavisor.HttpSql do
   # Postgres, record a brute-force tick against the HTTP caller's IP
   # (NOT the loopback peer of our Postgrex pool). Without this, the
   # CircuitBreaker check in NeonAuth would never trip for HTTP traffic.
-  defp maybe_record_auth_failure(%Postgrex.Error{postgres: %{code: code}}, ctx)
-       when code in [:invalid_password, :invalid_authorization_specification] do
-    case Map.get(ctx, :remote_ip) do
-      nil -> :ok
-      ip -> CircuitBreaker.record_failure({ctx.tenant_external_id, ip}, :auth_error)
+  defp maybe_record_auth_failure(term, ctx) do
+    if auth_failure?(term) do
+      case Map.get(ctx, :remote_ip) do
+        nil -> :ok
+        ip -> CircuitBreaker.record_failure({ctx.tenant_external_id, ip}, :auth_error)
+      end
+    else
+      :ok
     end
   end
 
-  defp maybe_record_auth_failure(_term, _ctx), do: :ok
+  defp auth_failure?(%Postgrex.Error{postgres: %{code: code}})
+       when code in [:invalid_password, :invalid_authorization_specification],
+       do: true
+
+  # When the upstream pool can't get a healthy connection because every
+  # backend attempt SCRAM-fails (backoff_type: :exp keeps trying), our
+  # facade sees a DBConnection.ConnectionError. Inspect its message for
+  # PG's auth-failure SQLSTATE so brute force still counts.
+  defp auth_failure?(%DBConnection.ConnectionError{message: msg}) when is_binary(msg),
+    do: msg =~ "28P01" or msg =~ "28000" or msg =~ "invalid_password"
+
+  defp auth_failure?(_), do: false
 
   defp request_timeout_ms do
     Application.get_env(:supavisor, :http_sql, [])
