@@ -101,7 +101,7 @@ defmodule Supavisor.HttpSql.NeonBodyParser do
       # accumulated — its `:length` cap only guards streaming-without-end
       # cases. Apply an explicit post-read cap so bodies with a valid
       # Content-Length larger than max_query_bytes are still rejected.
-      {:ok, body, conn} when is_integer(cap) and byte_size(body) > cap ->
+      {:ok, body, _conn} when is_integer(cap) and byte_size(body) > cap ->
         raise Plug.Parsers.RequestTooLargeError
 
       {:ok, body, conn} ->

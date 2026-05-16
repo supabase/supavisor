@@ -41,9 +41,15 @@ defmodule Supavisor.Integration.HttpSqlP1Test do
     Application.put_env(:supavisor, :http_sql, Keyword.put(cfg, :enabled, true))
 
     # Each test gets a clean PoolRegistry to avoid cross-test
-    # contamination of LRU/CircuitBreaker state.
+    # contamination of LRU state, and a clean CircuitBreaker so a
+    # brute-force test in one case doesn't leave a 2-minute ban that
+    # poisons the next.
     Supervisor.terminate_child(Supavisor.Supervisor, PoolRegistry)
     {:ok, _} = Supervisor.restart_child(Supavisor.Supervisor, PoolRegistry)
+    if :ets.whereis(Supavisor.CircuitBreaker.Blocks) != :undefined,
+      do: :ets.delete_all_objects(Supavisor.CircuitBreaker.Blocks)
+    if :ets.whereis(Supavisor.CircuitBreaker.Windows) != :undefined,
+      do: :ets.delete_all_objects(Supavisor.CircuitBreaker.Windows)
 
     on_exit(fn -> Application.put_env(:supavisor, :http_sql, cfg) end)
     :ok
@@ -64,21 +70,13 @@ defmodule Supavisor.Integration.HttpSqlP1Test do
   # --------------------------------------------------------------------------
 
   describe "brute-force defense (CircuitBreaker integration)" do
-    # KNOWN GAP for v1: our `maybe_record_auth_failure/2` only fires
-    # when Postgrex.prepare/execute returns a clean `%Postgrex.Error{
-    # postgres: %{code: :invalid_password}}`. Under load, a bad-password
-    # pool with `backoff_type: :exp` produces a sequence of timeouts /
-    # generic `DBConnection.ConnectionError`s instead — the SCRAM-fail
-    # is buried inside Postgrex's connect log. To make brute-force
-    # detection robust we should pre-validate the password synchronously
-    # in NeonAuth via `ClientAuthentication.fetch_validation_secrets/3`
-    # before even checking out a pool, mirroring the TCP path. Tracked
-    # as a follow-up PR; this test will be re-enabled then.
-    @tag :skip
     test "after 10 invalid_password attempts the next request is 403-banned by NeonAuth", %{
       conn: conn_template
     } do
-      # Threshold for :auth_error operation is 10 (see CircuitBreaker @config).
+      # PasswordVerifier in NeonAuth rejects bad passwords synchronously
+      # via cached SASL secrets, then records a failure against
+      # {tenant, real_ip} on the CircuitBreaker. Threshold for the
+      # :auth_error operation is 10 (see CircuitBreaker @config).
       for _ <- 1..10 do
         conn =
           post_sql(
@@ -87,14 +85,12 @@ defmodule Supavisor.Integration.HttpSqlP1Test do
             %{"query" => "SELECT 1", "params" => []}
           )
 
-        # Each attempt is rejected by Postgrex SCRAM → 401 invalid_password.
-        # The facade's `maybe_record_auth_failure/2` records the failure
-        # against {tenant, remote_ip} for the next NeonAuth.check_circuit_breaker.
-        assert conn.status in [401, 403]
+        assert conn.status == 401
+        assert Jason.decode!(conn.resp_body)["code"] == "unauthorized"
       end
 
       # The 11th request — even with the CORRECT password — must be
-      # 403-banned by NeonAuth before Postgrex is consulted.
+      # 403-banned by NeonAuth BEFORE PasswordVerifier even runs.
       banned_conn =
         post_sql(
           conn_template,
@@ -102,7 +98,7 @@ defmodule Supavisor.Integration.HttpSqlP1Test do
           %{"query" => "SELECT 1", "params" => []}
         )
 
-      assert banned_conn.status == 403
+      assert banned_conn.status == 503
       body = Jason.decode!(banned_conn.resp_body)
       assert body["code"] == "circuit_open"
     end

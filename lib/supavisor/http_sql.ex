@@ -12,7 +12,6 @@ defmodule Supavisor.HttpSql do
   for consistent `{status, body}` mapping in the controller.
   """
 
-  alias Supavisor.CircuitBreaker
   alias Supavisor.HttpSql.{ParamCoercer, PoolRegistry, ResponseBuilder, Telemetry, Transaction}
 
   @type ctx :: %{
@@ -46,10 +45,6 @@ defmodule Supavisor.HttpSql do
     with {:ok, pool_pid, _hit} <- checkout(ctx),
          {:ok, qr} <- run_query(pool_pid, sql, params, opts) do
       {:ok, ResponseBuilder.build_single(qr, opts)}
-    else
-      {:error, term} = err ->
-        maybe_record_auth_failure(term, ctx)
-        err
     end
   end
 
@@ -67,10 +62,6 @@ defmodule Supavisor.HttpSql do
          {:ok, pool_pid, _hit} <- checkout(ctx),
          {:ok, results} <- run_batch(pool_pid, txn_sql, queries, opts) do
       {:ok, ResponseBuilder.build_batch(results, opts)}
-    else
-      {:error, term} = err ->
-        maybe_record_auth_failure(term, ctx)
-        err
     end
   end
 
@@ -196,33 +187,6 @@ defmodule Supavisor.HttpSql do
 
   defp enforce_row_cap!(_, _), do: :ok
 
-  # When the failure looks like a credential rejection by the upstream
-  # Postgres, record a brute-force tick against the HTTP caller's IP
-  # (NOT the loopback peer of our Postgrex pool). Without this, the
-  # CircuitBreaker check in NeonAuth would never trip for HTTP traffic.
-  defp maybe_record_auth_failure(term, ctx) do
-    if auth_failure?(term) do
-      case Map.get(ctx, :remote_ip) do
-        nil -> :ok
-        ip -> CircuitBreaker.record_failure({ctx.tenant_external_id, ip}, :auth_error)
-      end
-    else
-      :ok
-    end
-  end
-
-  defp auth_failure?(%Postgrex.Error{postgres: %{code: code}})
-       when code in [:invalid_password, :invalid_authorization_specification],
-       do: true
-
-  # When the upstream pool can't get a healthy connection because every
-  # backend attempt SCRAM-fails (backoff_type: :exp keeps trying), our
-  # facade sees a DBConnection.ConnectionError. Inspect its message for
-  # PG's auth-failure SQLSTATE so brute force still counts.
-  defp auth_failure?(%DBConnection.ConnectionError{message: msg}) when is_binary(msg),
-    do: msg =~ "28P01" or msg =~ "28000" or msg =~ "invalid_password"
-
-  defp auth_failure?(_), do: false
 
   defp request_timeout_ms do
     Application.get_env(:supavisor, :http_sql, [])

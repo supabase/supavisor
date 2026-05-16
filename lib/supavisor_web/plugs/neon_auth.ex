@@ -34,7 +34,7 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
   alias Supavisor.CircuitBreaker
   alias Supavisor.FeatureFlag
   alias Supavisor.HandlerHelpers
-  alias Supavisor.HttpSql.{ConnString, ErrorMapper}
+  alias Supavisor.HttpSql.{ConnString, ErrorMapper, PasswordVerifier}
   alias Supavisor.Tenants
 
   @feature_flag_name "http_sql"
@@ -52,7 +52,8 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
          ip <- remote_ip(conn),
          :ok <- check_circuit_breaker(tenant.external_id, ip),
          :ok <- check_feature_flag(tenant),
-         :ok <- check_allow_list(tenant, ip) do
+         :ok <- check_allow_list(tenant, ip),
+         :ok <- verify_password(tenant, user, parsed.password, ip) do
       # Only the fields downstream code actually reads. `tenant` and
       # `user_record` were unused dead data on every request.
       _ = user
@@ -132,6 +133,34 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
     case CircuitBreaker.check({external_id, ip}, :auth_error) do
       :ok -> :ok
       {:error, %{__struct__: _} = e} -> {:error, e}
+    end
+  end
+
+  # Synchronously verify the password against cached SASL secrets BEFORE
+  # checking out a Postgrex pool. Two reasons this lives here and not in
+  # the facade:
+  #
+  #   1. Bad passwords never spin up a Postgrex pool — no churn, no
+  #      ConnectionError/timeout cascade that hides the auth-fail signal.
+  #   2. The CircuitBreaker tick is recorded against the real HTTP
+  #      caller IP, not the loopback peer of our Postgrex pool. Without
+  #      this, brute-force defense would have been unreliable (see
+  #      Agent #3 security review CRIT-8 on the original design).
+  defp verify_password(tenant, user, password, ip) do
+    case PasswordVerifier.verify(tenant, user, password) do
+      :ok ->
+        :ok
+
+      {:error, :invalid_password} ->
+        if ip, do: CircuitBreaker.record_failure({tenant.external_id, ip}, :auth_error)
+        {:error, {:unauthorized, "invalid password"}}
+
+      {:error, _reason} ->
+        # Validation secrets are temporarily unavailable (e.g. auth_query
+        # path with upstream Postgres unreachable). Do NOT record a
+        # CircuitBreaker tick — this isn't the client's fault. Fail open
+        # to a 503 so the operator can spot the upstream issue.
+        {:error, %DBConnection.ConnectionError{message: "auth secrets unavailable"}}
     end
   end
 
