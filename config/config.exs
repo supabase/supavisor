@@ -24,7 +24,13 @@ config :supavisor, :http_sql,
   pool_idle_ttl_seconds: 60,
   max_query_bytes: 1_048_576,
   max_response_rows: 10_000,
-  request_timeout_ms: 30_000
+  # Hard cap on the serialized JSON response size (bytes). Caps row-count
+  # alone is not enough — 10K rows × 1 MB bytea = 10 GB.
+  max_response_bytes: 16_777_216,
+  request_timeout_ms: 30_000,
+  # CIDR ranges from which X-Forwarded-For is trusted. Empty means no
+  # peer is trusted → conn.remote_ip is always used regardless of XFF.
+  trusted_proxies: []
 
 config :prom_ex, storage_adapter: Supavisor.Monitoring.PromEx.Store
 

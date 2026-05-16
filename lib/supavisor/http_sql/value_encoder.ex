@@ -191,19 +191,19 @@ defmodule Supavisor.HttpSql.ValueEncoder do
     |> String.replace("\"", "\\\"")
   end
 
+  # Sampled warning for unknown OIDs. The previous implementation used
+  # `:persistent_term.put/2` per OID, which (1) triggers a global GC
+  # across the BEAM on every insert — a slow-DoS vector if an attacker
+  # can pick column types — and (2) grew monotonically forever. Now we
+  # emit a single telemetry event per unknown OID per request batch;
+  # downstream handlers (PromEx, Logger) can sample as they wish.
   defp warn_unknown_oid(oid, sample) do
-    key = {__MODULE__, :unknown_oid, oid}
+    :telemetry.execute(
+      [:supavisor, :http_sql, :value_encoder, :unknown_oid],
+      %{count: 1},
+      %{oid: oid, sample: inspect(sample, limit: 50, printable_limit: 80)}
+    )
 
-    case :persistent_term.get(key, :unset) do
-      :unset ->
-        :persistent_term.put(key, :warned)
-
-        Logger.warning(
-          "ValueEncoder: no text encoder for OID #{oid}, falling back to to_string/inspect (sample: #{inspect(sample, limit: 50)})"
-        )
-
-      _ ->
-        :ok
-    end
+    :ok
   end
 end

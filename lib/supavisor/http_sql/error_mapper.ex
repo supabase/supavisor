@@ -85,6 +85,16 @@ defmodule Supavisor.HttpSql.ErrorMapper do
      }}
   end
 
+  def to_neon_error({:response_too_large, %{limit: limit, size: size}}) do
+    {413,
+     %{
+       "message" => "serialized response (#{size} bytes) exceeds size limit (#{limit})",
+       "code" => "response_too_large",
+       "limit" => limit,
+       "size" => size
+     }}
+  end
+
   def to_neon_error({:params_encoding, reason}) do
     {400,
      %{
@@ -112,13 +122,15 @@ defmodule Supavisor.HttpSql.ErrorMapper do
 
   # ---------------- Fallback ----------------
 
+  # IMPORTANT: never `inspect/2` an arbitrary term into the response body.
+  # Unknown error structs can carry conns, auth tokens, internal stack
+  # traces, or other sensitive payload. Emit a generic message and log
+  # the actual term with a `Logger.warning` for ops triage.
   def to_neon_error(other) do
-    {500,
-     %{
-       "message" => "internal error",
-       "code" => "internal_error",
-       "detail" => inspect(other, limit: 200)
-     }}
+    require Logger
+    Logger.warning("HttpSql: unmapped error: #{inspect(other, limit: :infinity, printable_limit: 500)}")
+
+    {500, %{"message" => "internal error", "code" => "internal_error"}}
   end
 
   # ---------------------------------------------------------------------------

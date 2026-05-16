@@ -98,4 +98,6 @@ config :supavisor, :http_sql,
   pool_idle_ttl_seconds: 30,
   max_query_bytes: 1_048_576,
   max_response_rows: 10_000,
-  request_timeout_ms: 30_000
+  max_response_bytes: 16_777_216,
+  request_timeout_ms: 30_000,
+  trusted_proxies: ["127.0.0.1/32", "::1/128"]

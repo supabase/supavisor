@@ -163,10 +163,22 @@ defmodule Supavisor.HttpSql.ErrorMapperTest do
   end
 
   describe "fallback" do
-    test "unknown error → 500" do
+    test "unknown error → 500 with generic message (no inspected term in body)" do
       assert {500, body} = @subject.to_neon_error(:some_unknown_thing)
       assert body["code"] == "internal_error"
-      assert body["detail"] =~ "some_unknown_thing"
+      assert body["message"] == "internal error"
+      # The fallback must NOT echo the unknown term back to the HTTP
+      # response — it could carry conns, secrets, or internal structs.
+      refute Map.has_key?(body, "detail")
+    end
+
+    test "secret-bearing struct doesn't leak into response body" do
+      fake_error_with_password =
+        {:weird_term, %{conn_string: "postgres://u:SUPERSECRET@h/d"}}
+
+      assert {500, body} = @subject.to_neon_error(fake_error_with_password)
+      refute body["message"] =~ "SUPERSECRET"
+      refute Map.has_key?(body, "detail")
     end
   end
 end

@@ -119,6 +119,16 @@ defmodule SupavisorWeb.Plugs.NeonAuthTest do
       assert conn.assigns.http_sql_ctx.remote_ip == {10, 0, 0, 5}
     end
 
+    test "Authorization: Bearer <jwt> → 401 (JWT unsupported in v1)" do
+      conn =
+        build(@conn_str_ok)
+        |> Plug.Conn.put_req_header("authorization", "Bearer SOMEJWT")
+        |> NeonAuth.call([])
+
+      assert conn.status == 401
+      assert Jason.decode!(conn.resp_body)["code"] == "unauthorized"
+    end
+
     test "ip not in tenant allow_list → 403" do
       update_allow_list(["10.0.0.0/8"])
 

@@ -243,6 +243,52 @@ defmodule Supavisor.HttpSql.ParamCoercerTest do
     end
   end
 
+  describe "coerce/2 — interval (1186)" do
+    test "simple unit text" do
+      assert %Postgrex.Interval{months: 12} = @subject.coerce("1 year", 1186)
+    end
+
+    test "multi-unit text" do
+      result = @subject.coerce("1 year 2 mons 3 days 4 hours", 1186)
+      assert %Postgrex.Interval{months: 14, days: 3, secs: 14_400} = result
+    end
+
+    test "seconds" do
+      assert %Postgrex.Interval{secs: 30} = @subject.coerce("30 sec", 1186)
+    end
+
+    test "negative components" do
+      assert %Postgrex.Interval{months: -3} = @subject.coerce("-3 mons", 1186)
+    end
+
+    test "garbage text → zero interval (best-effort)" do
+      assert %Postgrex.Interval{months: 0, days: 0, secs: 0} =
+               @subject.coerce("garbage", 1186)
+    end
+  end
+
+  describe "coerce/2 — array types" do
+    test "int4 array" do
+      assert [1, 2, 3] = @subject.coerce(["1", "2", "3"], 1007)
+    end
+
+    test "text array" do
+      assert ["hi", "world"] = @subject.coerce(["hi", "world"], 1009)
+    end
+
+    test "bool array" do
+      assert [true, false, true] = @subject.coerce(["t", "false", "1"], 1000)
+    end
+
+    test "array with NULLs preserves nil" do
+      assert [1, nil, 3] = @subject.coerce(["1", nil, "3"], 1007)
+    end
+
+    test "float8 array" do
+      assert [3.14, 2.5] = @subject.coerce(["3.14", "2.5"], 1022)
+    end
+  end
+
   describe "coerce/2 — unknown OIDs" do
     test "passes through binary" do
       assert @subject.coerce("anything", 99_999_991) == "anything"

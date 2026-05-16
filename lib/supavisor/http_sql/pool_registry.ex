@@ -121,7 +121,10 @@ defmodule Supavisor.HttpSql.PoolRegistry do
       max_total: Keyword.get(cfg, :pool_max_total, 1000),
       starter: starter,
       terminator: terminator,
-      sweep_interval_ms: Keyword.get(opts, :sweep_interval_ms, @sweep_interval_ms)
+      sweep_interval_ms: Keyword.get(opts, :sweep_interval_ms, @sweep_interval_ms),
+      # Reverse index pid → key. Maintained on insert/delete so the DOWN
+      # handler can look up the dead pool's key in O(1).
+      pid_to_key: %{}
     }
 
     schedule_sweep(state.sweep_interval_ms)
@@ -137,9 +140,10 @@ defmodule Supavisor.HttpSql.PoolRegistry do
         {:reply, {:ok, pid}, state}
 
       :error ->
-        if :ets.info(@table, :size) >= state.max_total do
-          evict_lru(state)
-        end
+        state =
+          if :ets.info(@table, :size) >= state.max_total,
+            do: evict_lru(state),
+            else: state
 
         opts = PoolSpec.build(ctx)
         t0 = System.monotonic_time(:microsecond)
@@ -153,16 +157,16 @@ defmodule Supavisor.HttpSql.PoolRegistry do
             :telemetry.execute(
               [:supavisor, :http_sql, :pool, :start, :stop],
               %{duration: System.monotonic_time(:microsecond) - t0},
-              %{key: key}
+              tenant_user_tags(key)
             )
 
-            {:reply, {:ok, pid}, state}
+            {:reply, {:ok, pid}, %{state | pid_to_key: Map.put(state.pid_to_key, pid, key)}}
 
           {:error, reason} = err ->
             :telemetry.execute(
               [:supavisor, :http_sql, :pool, :start, :exception],
               %{duration: System.monotonic_time(:microsecond) - t0},
-              %{key: key, reason: inspect(reason)}
+              Map.put(tenant_user_tags(key), :reason, inspect(reason))
             )
 
             {:reply, err, state}
@@ -171,33 +175,43 @@ defmodule Supavisor.HttpSql.PoolRegistry do
   end
 
   def handle_call({:evict, key, reason}, _from, state) do
-    do_evict(key, reason, state)
-    {:reply, :ok, state}
+    new_state = do_evict(key, reason, state)
+    {:reply, :ok, new_state}
   end
 
   @impl true
   def handle_cast({:evict_tenant, tenant_external_id}, state) do
     # Iterate ETS, match-spec on the first tuple element of the key
     # (which is `tenant_external_id`).
-    for {{^tenant_external_id, _user, _pwd_hash} = key, _pid, _last} <-
-          :ets.tab2list(@table) do
-      do_evict(key, :tenant_invalidated, state)
-    end
+    new_state =
+      :ets.tab2list(@table)
+      |> Enum.reduce(state, fn
+        {{^tenant_external_id, _user, _pwd_hash} = key, _pid, _last}, acc ->
+          do_evict(key, :tenant_invalidated, acc)
 
-    {:noreply, state}
+        _, acc ->
+          acc
+      end)
+
+    {:noreply, new_state}
   end
 
   @impl true
   def handle_info(:sweep, state) do
     now = System.monotonic_time(:millisecond)
 
-    for {key, _pid, last} <- :ets.tab2list(@table),
-        now - last > state.idle_ttl_ms do
-      do_evict(key, :ttl, state)
-    end
+    new_state =
+      :ets.tab2list(@table)
+      |> Enum.reduce(state, fn
+        {key, _pid, last}, acc when now - last > state.idle_ttl_ms ->
+          do_evict(key, :ttl, acc)
+
+        _, acc ->
+          acc
+      end)
 
     schedule_sweep(state.sweep_interval_ms)
-    {:noreply, state}
+    {:noreply, new_state}
   end
 
   # Linked pool died. We still get a `:DOWN` from `Process.monitor/1` so
@@ -211,22 +225,24 @@ defmodule Supavisor.HttpSql.PoolRegistry do
   end
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    # Pool died on its own (e.g. backoff_type: :stop after auth failure).
-    # Remove its registry entry so the next request retries fresh.
-    case :ets.match(@table, {:"$1", pid, :_}) do
-      [[key]] ->
+    # O(1) reverse lookup pid → key. Without this, the previous
+    # `:ets.match` on pid was O(table_size) per pool death — a hotspot
+    # when upstream Postgres restarts cause many pools to flap at once.
+    case Map.fetch(state.pid_to_key, pid) do
+      {:ok, key} ->
         :ets.delete(@table, key)
 
-        :telemetry.execute([:supavisor, :http_sql, :pool, :evict], %{count: 1}, %{
-          key: key,
-          reason: :down
-        })
+        :telemetry.execute(
+          [:supavisor, :http_sql, :pool, :evict],
+          %{count: 1},
+          Map.put(tenant_user_tags(key), :reason, :down)
+        )
 
-      _ ->
-        :ok
+        {:noreply, %{state | pid_to_key: Map.delete(state.pid_to_key, pid)}}
+
+      :error ->
+        {:noreply, state}
     end
-
-    {:noreply, state}
   end
 
   # ---------------------------------------------------------------- Internals
@@ -245,7 +261,7 @@ defmodule Supavisor.HttpSql.PoolRegistry do
   defp evict_lru(state) do
     case :ets.tab2list(@table) do
       [] ->
-        :ok
+        state
 
       rows ->
         {key, _pid, _last} = Enum.min_by(rows, fn {_k, _p, last} -> last end)
@@ -258,21 +274,39 @@ defmodule Supavisor.HttpSql.PoolRegistry do
       [{^key, pid, _}] ->
         :ets.delete(@table, key)
         state.terminator.(pid)
-        :telemetry.execute([:supavisor, :http_sql, :pool, :evict], %{count: 1}, %{
-          key: key,
-          reason: reason
-        })
+
+        :telemetry.execute(
+          [:supavisor, :http_sql, :pool, :evict],
+          %{count: 1},
+          Map.put(tenant_user_tags(key), :reason, reason)
+        )
+
+        %{state | pid_to_key: Map.delete(state.pid_to_key, pid)}
 
       _ ->
-        :ok
+        state
     end
   end
 
+  # Async terminate via the existing Task.Supervisor so the registry
+  # GenServer isn't blocked for up to 5s by a slow GenServer.stop.
+  # Tests inject a synchronous terminator via opts/Application env.
   defp default_terminate(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal, 5_000), else: :ok
+    Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
+      if Process.alive?(pid), do: GenServer.stop(pid, :normal, 5_000)
+    end)
+
+    :ok
   end
 
   defp schedule_sweep(interval_ms) do
     Process.send_after(self(), :sweep, interval_ms)
   end
+
+  # Telemetry metadata MUST NOT carry the password hash (third tuple
+  # element of the key). Even though SHA-256 is one-way, leaking a
+  # stable per-password fingerprint to every metrics handler creates a
+  # cross-request correlation vector and a pre-computation oracle.
+  defp tenant_user_tags({tenant, user, _pwd_hash}),
+    do: %{tenant: tenant, user: user}
 end

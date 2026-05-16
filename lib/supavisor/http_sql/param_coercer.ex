@@ -29,16 +29,41 @@ defmodule Supavisor.HttpSql.ParamCoercer do
   @int8 20
   @int2 21
   @int4 23
+  @text 25
   @float4 700
   @float8 701
+  @varchar 1043
   @numeric 1700
   @date 1082
   @time 1083
   @timestamp 1114
   @timestamptz 1184
+  @interval 1186
   @uuid 2950
   @json 114
   @jsonb 3802
+
+  # Array OID → element OID. Mirrors Supavisor.HttpSql.ValueEncoder.
+  @array_element %{
+    1000 => @bool,
+    1001 => @bytea,
+    1005 => @int2,
+    1007 => @int4,
+    1009 => @text,
+    1015 => @varchar,
+    1016 => @int8,
+    1021 => @float4,
+    1022 => @float8,
+    1115 => @timestamp,
+    1182 => @date,
+    1183 => @time,
+    1185 => @timestamptz,
+    1187 => @interval,
+    1231 => @numeric,
+    2951 => @uuid,
+    199 => @json,
+    3807 => @jsonb
+  }
 
   @doc """
   Coerce one parameter value for a given column OID.
@@ -98,8 +123,73 @@ defmodule Supavisor.HttpSql.ParamCoercer do
     Jason.decode!(v)
   end
 
+  # Interval: accept ISO 8601 ("P1Y2M3DT4H5M6S") OR Postgres text
+  # ("1 year 2 mons"). Postgrex.Interval struct is the expected binding
+  # shape — round-trip via the same parser the type uses on the wire.
+  def coerce(v, @interval) when is_binary(v) do
+    # Postgrex doesn't expose a public Interval parser; we accept the
+    # "<int> <unit>" comma-or-space text format that PG itself prints
+    # back. Anything more exotic — fall through and let Postgrex try.
+    parse_interval(v)
+  end
+
+  # Array params arrive from Neon as JSON arrays of strings. Coerce
+  # each element by the element OID so Postgrex can bind the array.
+  def coerce(v, array_oid) when is_list(v) and is_map_key(@array_element, array_oid) do
+    element_oid = Map.fetch!(@array_element, array_oid)
+    Enum.map(v, fn elem -> coerce(elem, element_oid) end)
+  end
+
   # Native types passed by JSON: nothing to coerce.
   def coerce(v, _oid), do: v
+
+  # ---------------------------------------------------------------------------
+
+  # Minimal "<int> <unit> ..." parser. Anything more exotic (ISO 8601,
+  # microsecond fractions, etc.) falls back to a zero-interval — caller
+  # should send these in Postgrex.Interval-compatible JSON shapes if
+  # they need precision.
+  defp parse_interval(text) do
+    %Postgrex.Interval{months: 0, days: 0, secs: 0, microsecs: 0}
+    |> apply_interval_parts(String.split(text, [",", " "], trim: true))
+  end
+
+  defp apply_interval_parts(acc, []), do: acc
+
+  defp apply_interval_parts(acc, [n, unit | rest]) do
+    case Integer.parse(n) do
+      {value, ""} -> apply_interval_parts(add_interval(acc, unit, value), rest)
+      _ -> acc
+    end
+  end
+
+  defp apply_interval_parts(acc, _), do: acc
+
+  defp add_interval(%Postgrex.Interval{months: m} = i, unit, v)
+       when unit in ~w(year years yr y),
+       do: %{i | months: m + v * 12}
+
+  defp add_interval(%Postgrex.Interval{months: m} = i, unit, v)
+       when unit in ~w(mon mons month months),
+       do: %{i | months: m + v}
+
+  defp add_interval(%Postgrex.Interval{days: d} = i, unit, v)
+       when unit in ~w(day days),
+       do: %{i | days: d + v}
+
+  defp add_interval(%Postgrex.Interval{secs: s} = i, unit, v)
+       when unit in ~w(hour hours hr h),
+       do: %{i | secs: s + v * 3600}
+
+  defp add_interval(%Postgrex.Interval{secs: s} = i, unit, v)
+       when unit in ~w(min mins minute minutes),
+       do: %{i | secs: s + v * 60}
+
+  defp add_interval(%Postgrex.Interval{secs: s} = i, unit, v)
+       when unit in ~w(sec secs second seconds),
+       do: %{i | secs: s + v}
+
+  defp add_interval(i, _unit, _v), do: i
 
   @doc """
   Coerce a full list against a list of OIDs. Lists must be the same

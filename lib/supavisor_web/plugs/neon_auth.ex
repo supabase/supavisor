@@ -45,6 +45,7 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
   @impl true
   def call(conn, _opts) do
     with :ok <- check_globally_enabled(),
+         :ok <- reject_jwt_auth(conn),
          {:ok, url} <- read_header(conn),
          {:ok, parsed} <- parse_url(url),
          {:ok, %{user: user, tenant: tenant}} <- resolve_tenant(parsed),
@@ -81,6 +82,19 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
     case get_req_header(conn, "neon-connection-string") do
       [url | _] when is_binary(url) and url != "" -> {:ok, url}
       _ -> {:error, {:malformed_request, "missing Neon-Connection-String header"}}
+    end
+  end
+
+  # The @neondatabase/serverless driver sets Authorization: Bearer <jwt>
+  # when the caller configured an authToken (Neon's RLS path). We do NOT
+  # support JWT auth in v1 — fail loudly rather than silently treat the
+  # password as sole authentication, otherwise a user expecting JWT
+  # verification would think their token is being checked.
+  defp reject_jwt_auth(conn) do
+    case get_req_header(conn, "authorization") do
+      ["Bearer " <> _ | _] ->
+        {:error, {:unauthorized, "JWT authentication is not supported on /sql; use Neon-Connection-String"}}
+      _ -> :ok
     end
   end
 
@@ -139,17 +153,38 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
     end
   end
 
+  # Trust X-Forwarded-For ONLY when the immediate peer (conn.remote_ip)
+  # is in the configured trusted-proxy CIDR list. Without this gate, any
+  # client can spoof their source IP via the XFF header and bypass
+  # tenant `allow_list` / CircuitBreaker IP-bans.
   defp remote_ip(conn) do
-    case get_req_header(conn, "x-forwarded-for") do
-      [chain | _] when is_binary(chain) ->
-        chain
-        |> String.split(",")
-        |> List.first()
-        |> String.trim()
-        |> parse_ip()
+    if trusted_peer?(conn.remote_ip) do
+      case get_req_header(conn, "x-forwarded-for") do
+        [chain | _] when is_binary(chain) ->
+          chain
+          |> String.split(",")
+          |> List.first()
+          |> String.trim()
+          |> parse_ip()
 
-      _ ->
-        conn.remote_ip
+        _ ->
+          conn.remote_ip
+      end
+    else
+      conn.remote_ip
+    end
+  end
+
+  defp trusted_peer?(nil), do: false
+
+  defp trusted_peer?(ip) do
+    cidrs =
+      Application.get_env(:supavisor, :http_sql, [])
+      |> Keyword.get(:trusted_proxies, [])
+
+    case cidrs do
+      [] -> false
+      list -> HandlerHelpers.filter_cidrs(list, ip) != []
     end
   end
 

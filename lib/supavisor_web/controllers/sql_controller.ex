@@ -54,9 +54,19 @@ defmodule SupavisorWeb.SqlController do
   end
 
   defp render_result({:ok, body}, conn) do
-    conn
-    |> put_resp_header("content-type", "application/json")
-    |> send_resp(200, Jason.encode!(body))
+    encoded = Jason.encode!(body)
+    cap = max_response_bytes()
+
+    if byte_size(encoded) > cap do
+      render_result(
+        {:error, {:response_too_large, %{limit: cap, size: byte_size(encoded)}}},
+        conn
+      )
+    else
+      conn
+      |> put_resp_header("content-type", "application/json")
+      |> send_resp(200, encoded)
+    end
   end
 
   defp render_result({:error, term}, conn) do
@@ -81,6 +91,11 @@ defmodule SupavisorWeb.SqlController do
   defp batch_size(_), do: 1
 
   # Static bucket labels keep PromEx label cardinality bounded.
+  defp max_response_bytes do
+    Application.get_env(:supavisor, :http_sql, [])
+    |> Keyword.get(:max_response_bytes, 16_777_216)
+  end
+
   defp batch_size_bucket(n) when n <= 1, do: "1"
   defp batch_size_bucket(n) when n <= 10, do: "2-10"
   defp batch_size_bucket(n) when n <= 100, do: "11-100"
