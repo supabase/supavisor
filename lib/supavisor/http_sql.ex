@@ -12,7 +12,7 @@ defmodule Supavisor.HttpSql do
   for consistent `{status, body}` mapping in the controller.
   """
 
-  alias Supavisor.HttpSql.{PoolRegistry, ResponseBuilder, Telemetry, Transaction}
+  alias Supavisor.HttpSql.{ParamCoercer, PoolRegistry, ResponseBuilder, Telemetry, Transaction}
 
   @type ctx :: %{
           required(:tenant_external_id) => String.t(),
@@ -88,18 +88,39 @@ defmodule Supavisor.HttpSql do
   defp run_query(pool, sql, params, opts) do
     timeout = Map.get(opts, :timeout) || request_timeout_ms()
 
-    case Postgrex.prepare_execute(pool, "", sql, params, timeout: timeout) do
-      {:ok, %Postgrex.Query{} = q, %Postgrex.Result{} = r} ->
-        :ok = maybe_enforce_row_cap(r)
-        {:ok, {q, r}}
-
-      {:error, %Postgrex.Error{}} = err ->
-        err
+    Postgrex.transaction(
+      pool,
+      fn conn -> prepare_and_execute(conn, sql, params, timeout) end,
+      timeout: timeout
+    )
+    |> case do
+      {:ok, qr} -> {:ok, qr}
+      {:error, %Postgrex.Error{}} = err -> err
+      {:error, reason} -> {:error, reason}
     end
   rescue
     e in [ArgumentError, Postgrex.Error] -> {:error, e}
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
+  end
+
+  defp prepare_and_execute(conn, sql, params, timeout) do
+    case Postgrex.prepare(conn, "", sql, timeout: timeout) do
+      {:ok, %Postgrex.Query{param_oids: oids} = q} ->
+        coerced = ParamCoercer.coerce_list(params, oids)
+
+        case Postgrex.execute(conn, q, coerced, timeout: timeout) do
+          {:ok, %Postgrex.Query{} = q2, %Postgrex.Result{} = r} ->
+            :ok = maybe_enforce_row_cap(r)
+            {q2, r}
+
+          {:error, %Postgrex.Error{} = e} ->
+            Postgrex.rollback(conn, e)
+        end
+
+      {:error, %Postgrex.Error{} = e} ->
+        Postgrex.rollback(conn, e)
+    end
   end
 
   defp run_batch(pool, txn_sql, queries, opts) do
@@ -111,14 +132,7 @@ defmodule Supavisor.HttpSql do
         if txn_sql, do: Postgrex.query!(conn, txn_sql, [])
 
         Enum.map(queries, fn %{sql: sql, params: params} ->
-          case Postgrex.prepare_execute(conn, "", sql, params, timeout: timeout) do
-            {:ok, %Postgrex.Query{} = q, %Postgrex.Result{} = r} ->
-              :ok = maybe_enforce_row_cap(r)
-              {q, r}
-
-            {:error, %Postgrex.Error{} = e} ->
-              Postgrex.rollback(conn, e)
-          end
+          prepare_and_execute(conn, sql, params, timeout)
         end)
       end,
       timeout: timeout
