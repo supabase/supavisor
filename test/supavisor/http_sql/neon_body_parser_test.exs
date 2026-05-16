@@ -135,6 +135,18 @@ defmodule Supavisor.HttpSql.NeonBodyParserTest do
       assert result.body_params == %{"prearranged" => true}
     end
 
+    test "body bigger than :length cap raises RequestTooLargeError (post-read check)" do
+      # Plug.Cowboy.Conn's :length only guards streaming-without-end. Our
+      # parser must reject any body whose decoded byte_size > cap.
+      state = @subject.init(json_decoder: Jason, length: 32)
+      big_body = ~s({"query":") <> String.duplicate("x", 1000) <> ~s("})
+
+      assert_raise Plug.Parsers.RequestTooLargeError, fn ->
+        post("/sql", big_body, [{"neon-connection-string", "postgres://u:p@h/d"}])
+        |> @subject.call(state)
+      end
+    end
+
     test "Plug.Parsers.RequestTooLargeError exception is credential-safe by design" do
       # The exception itself only carries :message and :plug_status, never
       # the conn or headers, so its inspect output cannot leak the password.

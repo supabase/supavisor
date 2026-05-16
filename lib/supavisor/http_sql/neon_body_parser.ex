@@ -90,9 +90,19 @@ defmodule Supavisor.HttpSql.NeonBodyParser do
   defp neon_sql_request?(_), do: false
 
   defp do_parse(conn, %{decoder: {mod, fun, args}, read_body_opts: opts}) do
+    cap = Keyword.get(opts, :length)
+
     case read_body(conn, opts) do
       {:ok, "", conn} ->
         put_body_params(conn, %{})
+
+      # `Plug.Cowboy.Conn.read_req_body/2` returns `{:ok, body, _}` once
+      # Cowboy signals end-of-stream, regardless of how much body has
+      # accumulated — its `:length` cap only guards streaming-without-end
+      # cases. Apply an explicit post-read cap so bodies with a valid
+      # Content-Length larger than max_query_bytes are still rejected.
+      {:ok, body, conn} when is_integer(cap) and byte_size(body) > cap ->
+        raise Plug.Parsers.RequestTooLargeError
 
       {:ok, body, conn} ->
         decoded =
