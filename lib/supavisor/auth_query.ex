@@ -31,7 +31,8 @@ defmodule Supavisor.AuthQuery do
       socket_options: [ip_version],
       queue_target: 1_000,
       queue_interval: 5_000,
-      ssl_opts: ssl_opts
+      ssl_opts: ssl_opts,
+      connection_listeners: {[Supavisor.ConnectionListener], start}
     ]
     |> Postgrex.start_link()
     |> case do
@@ -39,12 +40,13 @@ defmodule Supavisor.AuthQuery do
         {:ok, pid}
 
       :ignore ->
+        telemetry_connection_stop(start, :connection_failed)
         {:error, %AuthQueryError{reason: :connection_failed, details: "connection ignored"}}
 
       {:error, reason} ->
+        telemetry_connection_stop(start, :connection_failed)
         {:error, %AuthQueryError{reason: :connection_failed, details: inspect(reason)}}
     end
-    |> tap(&telemetry_connection_stop(start, &1))
   end
 
   @doc """
@@ -181,9 +183,8 @@ defmodule Supavisor.AuthQuery do
     [verify: :verify_none]
   end
 
-  defp telemetry_connection_stop(start, result),
-    do:
-      Telem.auth_query_connection_stop(System.monotonic_time() - start, telemetry_status(result))
+  defp telemetry_connection_stop(start, error),
+    do: Telem.auth_query_connection_stop(System.monotonic_time() - start, telemetry_status(error))
 
   defp telemetry_query_stop(start, result),
     do: Telem.auth_query_query_stop(System.monotonic_time() - start, telemetry_status(result))

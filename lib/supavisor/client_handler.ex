@@ -1009,6 +1009,7 @@ defmodule Supavisor.ClientHandler do
 
     error = %ClientSocketClosedError{mode: data.mode, client_state: state}
     context = if state in [:idle, :busy], do: :authenticated, else: :handshake
+
     Error.terminate_with_error(data, error, context)
   end
 end

@@ -118,12 +118,12 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
-  @spec auth_query_connection_stop(integer(), :ok | :error) :: :ok
-  def auth_query_connection_stop(duration, status) do
+  @spec auth_query_connection_stop(integer(), term()) :: :ok
+  def auth_query_connection_stop(duration, error_or_nil) do
     telemetry_execute(
       [:supavisor, :auth_query, :connection, :stop],
       %{duration: duration},
-      %{status: status}
+      %{error: error_or_nil}
     )
   end
 

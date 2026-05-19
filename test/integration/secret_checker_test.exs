@@ -169,7 +169,8 @@ defmodule Supavisor.Integration.SecretCheckerTest do
         )
 
       assert {:error, :not_started} = Supavisor.SecretChecker.get_secrets(id)
-      assert_receive {^ref, %{duration: _}, %{status: :error}}
+      assert_receive {^ref, %{duration: duration}, %{status: :error}}
+      assert is_integer(duration) and duration >= 0
     end
 
     @tag event: [:supavisor, :secret_checker, :get_secrets, :stop, :local]
@@ -205,7 +206,7 @@ defmodule Supavisor.Integration.SecretCheckerTest do
                Supavisor.SecretChecker.get_secrets(pool_id)
 
       assert_receive {^ref, %{duration: duration}, %{status: :ok}}
-      assert duration > 0
+      assert is_integer(duration) and duration > 0
     end
 
     @tag event: [:supavisor, :secret_checker, :update_credentials, :stop, :local]
