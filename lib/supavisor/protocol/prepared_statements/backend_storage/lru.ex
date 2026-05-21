@@ -5,7 +5,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRU do
   Tracks which prepared statements are currently registered on a single backend
   connection. Each statement is associated with a monotonically increasing
   sequence number representing its last use. When the backend is asked to make
-  room via `pop_oldest/2`, statements with the smallest sequence numbers are
+  room via `evict/2`, statements with the smallest sequence numbers are
   removed first.
 
   `put/2` (called on `Parse`) and `touch/2` (called on `Bind` for a statement
@@ -67,8 +67,8 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRU do
   Removes up to `n` least recently used statements and returns their names.
   """
   @impl true
-  @spec pop_oldest(t(), pos_integer()) :: {[PreparedStatements.statement_name()], t()}
-  def pop_oldest(%__MODULE__{seq_by_name: seq_by_name} = storage, n) when n > 0 do
+  @spec evict(t(), pos_integer()) :: {[PreparedStatements.statement_name()], t()}
+  def evict(%__MODULE__{seq_by_name: seq_by_name} = storage, n) when n > 0 do
     oldest =
       seq_by_name
       |> Enum.sort_by(fn {_name, seq} -> seq end)

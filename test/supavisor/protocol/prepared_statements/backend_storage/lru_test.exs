@@ -30,7 +30,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRUTest do
 
       assert LRU.size(storage) == 2
 
-      {[oldest], _} = LRU.pop_oldest(storage, 1)
+      {[oldest], _} = LRU.evict(storage, 1)
       assert oldest == "stmt_2"
     end
   end
@@ -43,7 +43,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRUTest do
         |> LRU.put("stmt_2")
         |> LRU.touch("stmt_1")
 
-      {[oldest], _} = LRU.pop_oldest(storage, 1)
+      {[oldest], _} = LRU.evict(storage, 1)
       assert oldest == "stmt_2"
     end
 
@@ -76,14 +76,14 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRUTest do
     end
   end
 
-  describe "pop_oldest/2" do
+  describe "evict/2" do
     test "returns oldest names in order of recency" do
       storage =
         Enum.reduce(1..5, LRU.new(), fn i, acc ->
           LRU.put(acc, "stmt_#{i}")
         end)
 
-      {evicted, remaining} = LRU.pop_oldest(storage, 2)
+      {evicted, remaining} = LRU.evict(storage, 2)
 
       assert evicted == ["stmt_1", "stmt_2"]
       assert LRU.size(remaining) == 3
@@ -100,7 +100,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRUTest do
         |> LRU.put("stmt_3")
         |> LRU.touch("stmt_1")
 
-      {evicted, _} = LRU.pop_oldest(storage, 1)
+      {evicted, _} = LRU.evict(storage, 1)
       assert evicted == ["stmt_2"]
     end
 
@@ -110,14 +110,14 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRUTest do
         |> LRU.put("stmt_1")
         |> LRU.put("stmt_2")
 
-      {evicted, remaining} = LRU.pop_oldest(storage, 10)
+      {evicted, remaining} = LRU.evict(storage, 10)
 
       assert evicted == ["stmt_1", "stmt_2"]
       assert LRU.size(remaining) == 0
     end
 
     test "returns empty list when storage is empty" do
-      {evicted, remaining} = LRU.pop_oldest(LRU.new(), 5)
+      {evicted, remaining} = LRU.evict(LRU.new(), 5)
 
       assert evicted == []
       assert LRU.size(remaining) == 0
@@ -127,7 +127,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRUTest do
   describe "LRU invariant" do
     @names ~w(stmt_a stmt_b stmt_c stmt_d stmt_e)
 
-    property "pop_oldest returns names ordered by last put/touch across arbitrary op sequences" do
+    property "evict returns names ordered by last put/touch across arbitrary op sequences" do
       check all ops <- list_of(operation(), max_length: 50) do
         {storage, expected_order} = simulate(ops)
         actual_order = pop_all_in_order(storage)
@@ -175,7 +175,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.LRUTest do
     defp pop_all_in_order(storage) do
       case LRU.size(storage) do
         0 -> []
-        size -> storage |> LRU.pop_oldest(size) |> elem(0)
+        size -> storage |> LRU.evict(size) |> elem(0)
       end
     end
   end

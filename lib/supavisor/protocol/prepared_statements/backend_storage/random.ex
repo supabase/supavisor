@@ -3,7 +3,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.Random do
   Backend-side prepared statement tracking with random eviction.
 
   Tracks which prepared statements are currently registered on a single backend
-  connection. When the backend is asked to make room via `pop_oldest/2`, an
+  connection. When the backend is asked to make room via `evict/2`, an
   arbitrary subset of `n` statements is evicted regardless of recency. This is
   the historical strategy preserved for side-by-side comparison with the LRU
   implementation.
@@ -46,8 +46,8 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.Random do
   end
 
   @impl true
-  @spec pop_oldest(t(), pos_integer()) :: {[PreparedStatements.statement_name()], t()}
-  def pop_oldest(%__MODULE__{set: set} = storage, n) when n > 0 do
+  @spec evict(t(), pos_integer()) :: {[PreparedStatements.statement_name()], t()}
+  def evict(%__MODULE__{set: set} = storage, n) when n > 0 do
     evicted = Enum.take_random(set, n)
     {evicted, %__MODULE__{storage | set: MapSet.difference(set, MapSet.new(evicted))}}
   end

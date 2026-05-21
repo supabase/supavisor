@@ -1011,7 +1011,7 @@ defmodule Supavisor.DbHandler do
 
     if storage_mod.size(prepared_statements) >= limit do
       count = div(limit, 5)
-      {evicted, prepared_statements} = storage_mod.pop_oldest(prepared_statements, count)
+      {evicted, prepared_statements} = storage_mod.evict(prepared_statements, count)
       close_pkts = Enum.map(evicted, &PreparedStatements.build_close_pkt/1)
       Telem.prepared_statements_evicted(length(evicted), id)
 

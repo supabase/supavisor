@@ -30,7 +30,7 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage do
   @callback put(t(), name()) :: t()
   @callback touch(t(), name()) :: t()
   @callback delete(t(), name()) :: t()
-  @callback pop_oldest(t(), pos_integer()) :: {[name()], t()}
+  @callback evict(t(), pos_integer()) :: {[name()], t()}
 
   @flag_key "backend_prepared_statements_storage"
 

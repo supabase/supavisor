@@ -67,14 +67,14 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.RandomTest do
     end
   end
 
-  describe "pop_oldest/2" do
+  describe "evict/2" do
     test "evicts n existing members and shrinks size by n" do
       storage =
         Enum.reduce(1..5, Random.new(), fn i, acc ->
           Random.put(acc, "stmt_#{i}")
         end)
 
-      {evicted, remaining} = Random.pop_oldest(storage, 2)
+      {evicted, remaining} = Random.evict(storage, 2)
 
       assert length(evicted) == 2
       assert Enum.all?(evicted, &Random.member?(storage, &1))
@@ -88,14 +88,14 @@ defmodule Supavisor.Protocol.PreparedStatements.BackendStorage.RandomTest do
         |> Random.put("stmt_1")
         |> Random.put("stmt_2")
 
-      {evicted, remaining} = Random.pop_oldest(storage, 10)
+      {evicted, remaining} = Random.evict(storage, 10)
 
       assert Enum.sort(evicted) == ["stmt_1", "stmt_2"]
       assert Random.size(remaining) == 0
     end
 
     test "returns empty list when storage is empty" do
-      {evicted, remaining} = Random.pop_oldest(Random.new(), 5)
+      {evicted, remaining} = Random.evict(Random.new(), 5)
 
       assert evicted == []
       assert Random.size(remaining) == 0
