@@ -4,6 +4,33 @@ on:
   push:
     branches:
       - release_stage
+  workflow_dispatch:
+    inputs:
+      upgrade_from:
+        description: 'Base version on VM (last hard deploy). Must match an existing v<tag>.'
+        required: true
+        type: string
+      upgrade_previous:
+        description: 'Current version on VM (includes prior soft deploys). Usually same as upgrade_from. Must match an existing v<tag>.'
+        required: true
+        type: string
+      upgrade_to:
+        description: 'Target version. Must match an existing v<tag>. Must differ from upgrade_previous for soft deploys.'
+        required: true
+        type: string
+      regions:
+        description: 'Comma-separated region list, or "all".'
+        required: true
+        type: string
+        default: 'all'
+      type:
+        description: 'Deploy type.'
+        required: true
+        type: choice
+        default: 'soft'
+        options:
+          - soft
+          - hard
 env:
   INCLUDE_ERTS: true
   MIX_ENV: prod
@@ -26,12 +53,32 @@ jobs:
           elixir-version: "1.18.2"
       - name: Set upgrade variables
         run: |
-          elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config
-          echo "RELEASE_BASE=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_previous ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "TYPE=$(elixir ./deploy/upgrade/handler.exs type ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            FROM="${{ inputs.upgrade_from }}"
+            PREVIOUS="${{ inputs.upgrade_previous }}"
+            TO="${{ inputs.upgrade_to }}"
+            TYPE_VAL="${{ inputs.type }}"
+            # Mirror handler.exs name format: supavisor_<type>_<regions joined by '&'>_<from>_<to>
+            REGIONS_SLUG="$(echo "${{ inputs.regions }}" | tr ',' '&' | tr -d ' ')"
+            NAME_VAL="supavisor_${TYPE_VAL}_${REGIONS_SLUG}_${FROM}_${TO}"
+            echo "Dispatched: from=$FROM previous=$PREVIOUS to=$TO type=$TYPE_VAL regions=${{ inputs.regions }}"
+          else
+            elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config
+            FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)
+            PREVIOUS=$(elixir ./deploy/upgrade/handler.exs upgrade_previous ./deploy/upgrade/staging.config)
+            TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)
+            TYPE_VAL=$(elixir ./deploy/upgrade/handler.exs type ./deploy/upgrade/staging.config)
+            NAME_VAL=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)
+          fi
+          if [ "$TYPE_VAL" = "soft" ] && [ "$PREVIOUS" = "$TO" ]; then
+            echo "::error::Soft deploy requires upgrade_previous ($PREVIOUS) to differ from upgrade_to ($TO)."
+            exit 1
+          fi
+          echo "RELEASE_BASE=$FROM"     >> $GITHUB_ENV
+          echo "RELEASE_FROM=$PREVIOUS" >> $GITHUB_ENV
+          echo "RELEASE_TO=$TO"         >> $GITHUB_ENV
+          echo "TYPE=$TYPE_VAL"         >> $GITHUB_ENV
+          echo "NAME=$NAME_VAL"         >> $GITHUB_ENV
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
