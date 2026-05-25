@@ -52,16 +52,25 @@ jobs:
           otp-version: "27.2.1"
           elixir-version: "1.18.2"
       - name: Set upgrade variables
+        env:
+          # Pass dispatch inputs via env (not direct ${{ }} interpolation) to
+          # avoid shell injection. See
+          # https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
+          INPUT_FROM: ${{ inputs.upgrade_from }}
+          INPUT_PREVIOUS: ${{ inputs.upgrade_previous }}
+          INPUT_TO: ${{ inputs.upgrade_to }}
+          INPUT_TYPE: ${{ inputs.type }}
+          INPUT_REGIONS: ${{ inputs.regions }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            FROM="${{ inputs.upgrade_from }}"
-            PREVIOUS="${{ inputs.upgrade_previous }}"
-            TO="${{ inputs.upgrade_to }}"
-            TYPE_VAL="${{ inputs.type }}"
+            FROM="$INPUT_FROM"
+            PREVIOUS="$INPUT_PREVIOUS"
+            TO="$INPUT_TO"
+            TYPE_VAL="$INPUT_TYPE"
             # Mirror handler.exs name format: supavisor_<type>_<regions joined by '&'>_<from>_<to>
-            REGIONS_SLUG="$(echo "${{ inputs.regions }}" | tr ',' '&' | tr -d ' ')"
+            REGIONS_SLUG="$(printf '%s' "$INPUT_REGIONS" | tr ',' '&' | tr -d ' ')"
             NAME_VAL="supavisor_${TYPE_VAL}_${REGIONS_SLUG}_${FROM}_${TO}"
-            echo "Dispatched: from=$FROM previous=$PREVIOUS to=$TO type=$TYPE_VAL regions=${{ inputs.regions }}"
+            echo "Dispatched: from=$FROM previous=$PREVIOUS to=$TO type=$TYPE_VAL regions=$INPUT_REGIONS"
           else
             elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config
             FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)
