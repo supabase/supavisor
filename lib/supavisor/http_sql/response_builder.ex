@@ -16,9 +16,20 @@ defmodule Supavisor.HttpSql.ResponseBuilder do
   Batch shape (one entry per query, server-side BEGIN..COMMIT):
 
       %{ "results" => [ <single>, <single>, ... ] }
-  """
 
-  alias Supavisor.HttpSql.ValueEncoder
+  ## On encoding
+
+  Because the wire path issues `Bind` with `Result-Format-Code = 0` for every
+  column (see `Supavisor.HttpSql.Wire.bind/3`), the backend has already
+  serialized every cell into PostgreSQL text format before it reaches
+  `WireDecoder`. That's exactly what the Neon driver consumes — `pg-types`
+  parses the textual representation on the client side using the column's
+  `dataTypeID` (OID).
+
+  So cell values pass through here unchanged. No per-OID encoder is needed,
+  and the previous `ValueEncoder` (which assumed Postgrex-decoded
+  Elixir-native inputs) is gone.
+  """
 
   @type column :: %{name: String.t(), oid: pos_integer()}
 
@@ -43,13 +54,12 @@ defmodule Supavisor.HttpSql.ResponseBuilder do
     array_mode = Map.get(opts, :array_mode, false)
     cols = result.columns || []
     names = Enum.map(cols, & &1.name)
-    oids = Enum.map(cols, & &1.oid)
 
     %{
       "command" => command(result.command),
       "rowCount" => result.num_rows || 0,
       "fields" => Enum.with_index(cols) |> Enum.map(&field_meta_from_column/1),
-      "rows" => encode_rows(rows, names, oids, array_mode)
+      "rows" => encode_rows(rows, names, array_mode)
     }
   end
 
@@ -77,26 +87,12 @@ defmodule Supavisor.HttpSql.ResponseBuilder do
     }
   end
 
-  defp encode_rows(rows, _columns, oids, true = _array_mode) do
-    Enum.map(rows, fn row -> ValueEncoder.encode_row(row, pad_oids(oids, row)) end)
-  end
+  # array_mode=true: each row is a positional list of PG text values (or nil).
+  # No encoding — backend already returned text format.
+  defp encode_rows(rows, _names, true), do: rows
 
-  defp encode_rows(rows, columns, oids, false = _array_mode) do
-    Enum.map(rows, fn row ->
-      cells = ValueEncoder.encode_row(row, pad_oids(oids, row))
-
-      columns
-      |> Enum.zip(cells)
-      |> Enum.into(%{})
-    end)
-  end
-
-  # Defensive: if Postgrex didn't give us result_oids (rare with prepare_execute,
-  # possible with raw simple-query), fall back to 0 (text-cat fallback in encoder).
-  defp pad_oids(oids, row) do
-    case length(oids) == length(row) do
-      true -> oids
-      false -> List.duplicate(0, length(row))
-    end
+  # array_mode=false: zip each row with its column names into a map.
+  defp encode_rows(rows, names, false) do
+    Enum.map(rows, fn row -> names |> Enum.zip(row) |> Map.new() end)
   end
 end
