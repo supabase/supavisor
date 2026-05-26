@@ -1,8 +1,7 @@
 defmodule Supavisor.HttpSql.PromExPlugin do
   @moduledoc """
-  Registers Prometheus metrics for the HTTP /sql endpoint's telemetry
-  events, mirroring the bucket conventions used by
-  `Supavisor.PromEx.Plugins.Tenant`.
+  Registers Prometheus metrics for the HTTP /sql endpoint's telemetry events,
+  mirroring the bucket conventions used by `Supavisor.PromEx.Plugins.Tenant`.
 
   Metrics emitted under `/metrics`:
 
@@ -10,8 +9,7 @@ defmodule Supavisor.HttpSql.PromExPlugin do
     * `supavisor_http_sql_requests_count` (counter)
     * `supavisor_http_sql_request_response_rows` (distribution)
     * `supavisor_http_sql_pool_checkout_duration` (distribution, ms)
-    * `supavisor_http_sql_pool_evict_count` (counter)
-    * `supavisor_http_sql_pool_start_duration` (distribution, ms)
+    * `supavisor_http_sql_max_clients_rejected_count` (counter)
   """
 
   use PromEx.Plugin
@@ -55,25 +53,20 @@ defmodule Supavisor.HttpSql.PromExPlugin do
           [:supavisor, :http_sql, :pool, :checkout, :duration],
           event_name: [:supavisor, :http_sql, :pool, :checkout],
           measurement: :duration,
-          description: "Latency of pool checkout for an HTTP /sql request.",
+          description:
+            "Latency of pool checkout: start_dist + Manager.subscribe + poolboy.checkout + DbHandler.checkout.",
           tags: [:tenant, :user, :hit?],
           unit: {:microsecond, :millisecond},
           reporter_options: [peep_bucket_calculator: Buckets]
         ),
+
+        # Saturation ---------------------------------------------------------
         counter(
-          [:supavisor, :http_sql, :pool, :evict, :count],
-          event_name: [:supavisor, :http_sql, :pool, :evict],
-          description: "Pool evictions (TTL, max-total, manual, or DOWN).",
-          tags: [:reason]
-        ),
-        distribution(
-          [:supavisor, :http_sql, :pool, :start, :duration],
-          event_name: [:supavisor, :http_sql, :pool, :start, :stop],
-          measurement: :duration,
-          description: "Latency of starting a new Postgrex pool for an HTTP /sql tenant/user.",
-          tags: [],
-          unit: {:microsecond, :millisecond},
-          reporter_options: [peep_bucket_calculator: Buckets]
+          [:supavisor, :http_sql, :max_clients_rejected, :count],
+          event_name: [:supavisor, :http_sql, :max_clients_rejected],
+          description:
+            "HTTP /sql requests rejected by the tenant's Manager max_clients cap.",
+          tags: [:tenant, :user, :limit_kind]
         )
       ]
     )

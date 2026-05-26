@@ -57,6 +57,17 @@ defmodule Supavisor.HttpSql.TelemetryTest do
                        %{status_code: 500}}
     end
 
+    test "emits stop with status 429 for MaxConnectionsError" do
+      meta = %{tenant: "t1", user: "u", mode: :single, batch_size: 1}
+
+      err = %Supavisor.Errors.MaxConnectionsError{}
+
+      assert {:error, ^err} = Telemetry.request_span(meta, fn -> {:error, err} end)
+
+      assert_received {:telemetry, [:supavisor, :http_sql, :request, :stop], _,
+                       %{status_code: 429}}
+    end
+
     test "emits exception when the body raises" do
       meta = %{tenant: "t1", user: "u", mode: :single, batch_size: 1}
 
@@ -93,6 +104,29 @@ defmodule Supavisor.HttpSql.TelemetryTest do
     test "tags miss?" do
       Telemetry.pool_checkout(999, :miss, %{tenant: "t", user: "u"})
       assert_received {:telemetry, %{duration: 999}, %{hit?: :miss}}
+    end
+  end
+
+  describe "max_clients_rejected/2" do
+    setup do
+      handler_id = make_ref()
+
+      :telemetry.attach(
+        handler_id,
+        [:supavisor, :http_sql, :max_clients_rejected],
+        fn _name, m, md, owner -> send(owner, {:telemetry, m, md}) end,
+        self()
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+      :ok
+    end
+
+    test "emits a counter with the limit_kind tag" do
+      Telemetry.max_clients_rejected(%{tenant: "t", user: "u"})
+
+      assert_received {:telemetry, %{count: 1},
+                       %{tenant: "t", user: "u", limit_kind: :max_clients}}
     end
   end
 end

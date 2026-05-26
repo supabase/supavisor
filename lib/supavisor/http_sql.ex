@@ -54,9 +54,6 @@ defmodule Supavisor.HttpSql do
       {:ok, result} ->
         Telemetry.pool_checkout(
           System.monotonic_time(:microsecond) - t0,
-          # Hit/miss semantics no longer map onto an ETS pool cache; report
-          # as `:hit` so existing dashboards keep parsing. A dedicated
-          # `start_dist` telemetry event is wired up in commit 32.
           :hit,
           %{tenant: ctx.tenant_external_id, user: ctx.user}
         )
@@ -64,6 +61,14 @@ defmodule Supavisor.HttpSql do
         with :ok <- check_row_cap(result) do
           {:ok, ResponseBuilder.build_single(result, opts)}
         end
+
+      {:error, %Supavisor.Errors.MaxConnectionsError{}} = err ->
+        Telemetry.max_clients_rejected(
+          %{tenant: ctx.tenant_external_id, user: ctx.user},
+          :max_clients
+        )
+
+        err
 
       {:error, _} = err ->
         err
@@ -94,6 +99,17 @@ defmodule Supavisor.HttpSql do
       with :ok <- check_batch_row_cap(results) do
         {:ok, ResponseBuilder.build_batch(results, opts)}
       end
+    else
+      {:error, %Supavisor.Errors.MaxConnectionsError{}} = err ->
+        Telemetry.max_clients_rejected(
+          %{tenant: ctx.tenant_external_id, user: ctx.user},
+          :max_clients
+        )
+
+        err
+
+      {:error, _} = err ->
+        err
     end
   end
 

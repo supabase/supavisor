@@ -1,24 +1,29 @@
 defmodule Supavisor.HttpSql.Telemetry do
   @moduledoc """
-  Thin telemetry wrappers for HTTP /sql events. Centralizes event names so
-  the controller, plug, and PromEx plugin agree.
+  Thin telemetry wrappers for HTTP /sql events. Centralizes event names so the
+  controller, plug, and PromEx plugin agree.
 
   Events:
 
     * `[:supavisor, :http_sql, :request, :start | :stop | :exception]`
-      Wraps a single HTTP /sql controller action. `:stop` measurements:
-      `duration, query_size_bytes, response_rows, response_bytes`.
-      Metadata: `tenant, user, status_code, batch_size, mode`.
+      Wraps a single HTTP /sql controller action. `:stop` measurements
+      `%{duration, query_size_bytes, response_rows, response_bytes}` with
+      metadata `%{tenant, user, status_code, batch_size, mode}`.
 
     * `[:supavisor, :http_sql, :pool, :checkout]`
-      `%{duration: us}` with `%{tenant, user, hit?: :hit | :miss}`.
+      Latency of `start_dist + subscribe + poolboy.checkout + DbHandler.checkout`
+      for one query. `%{duration: us}` with `%{tenant, user, hit?: :hit | :miss}`.
+      `hit?` is informational only — the new path does not maintain a separate
+      cache layer, so the value is always `:hit` for now and will become
+      meaningful again if a pre-checkout cache is introduced.
 
-    * `[:supavisor, :http_sql, :pool, :evict]`
-      `%{count: 1}` with `%{key, reason: :ttl | :max_total | :manual | :down}`.
-
-    * `[:supavisor, :http_sql, :pool, :start, :stop | :exception]`
-      `%{duration: us}`; lifecycle of pool startup.
+    * `[:supavisor, :http_sql, :max_clients_rejected]`
+      Emitted when `Supavisor.subscribe/2` returns `MaxConnectionsError`. Lets
+      operators alert on tenant-level saturation before users notice.
+      `%{count: 1}` with `%{tenant, user, limit_kind: :max_clients | :pool_size}`.
   """
+
+  alias Supavisor.Errors.MaxConnectionsError
 
   @doc """
   Wrap the body of a controller action in a `:telemetry.span` covering the
@@ -52,6 +57,20 @@ defmodule Supavisor.HttpSql.Telemetry do
     )
   end
 
+  @doc """
+  Emit a `:max_clients_rejected` event when the tenant's per-pool subscriber
+  cap is hit. Operators can alert on the rate of this counter to spot tenants
+  that need a raised `max_clients` config.
+  """
+  @spec max_clients_rejected(map, atom) :: :ok
+  def max_clients_rejected(metadata, limit_kind \\ :max_clients) when is_map(metadata) do
+    :telemetry.execute(
+      [:supavisor, :http_sql, :max_clients_rejected],
+      %{count: 1},
+      Map.put(metadata, :limit_kind, limit_kind)
+    )
+  end
+
   # ---------------------------------------------------------------------------
 
   # The facade returns the Neon-shape body straight from
@@ -67,6 +86,9 @@ defmodule Supavisor.HttpSql.Telemetry do
   end
 
   defp result_metadata({:ok, _resp}), do: %{status_code: 200, response_rows: 0}
+
+  defp result_metadata({:error, %MaxConnectionsError{}}),
+    do: %{status_code: 429, response_rows: 0}
 
   defp result_metadata({:error, _}), do: %{status_code: 500, response_rows: 0}
 end
