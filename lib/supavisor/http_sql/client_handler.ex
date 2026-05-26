@@ -34,7 +34,7 @@ defmodule Supavisor.HttpSql.ClientHandler do
   """
 
   alias Supavisor.HandlerHelpers
-  alias Supavisor.HttpSql.{Wire, WireDecoder}
+  alias Supavisor.HttpSql.{Params, Wire, WireDecoder}
   alias Supavisor.Secrets.PasswordSecrets
 
   require Supavisor
@@ -85,7 +85,7 @@ defmodule Supavisor.HttpSql.ClientHandler do
          {:ok, db_pid} <- pool_checkout(sub.workers.pool, timeout),
          {:ok, upstream_sock} <-
            db_checkout(db_pid, timeout),
-         :ok <- send_extended_query(upstream_sock, sql, stringify_params(params)),
+         :ok <- send_extended_query(upstream_sock, sql, Params.stringify_list(params)),
          {:ok, raw} <- recv_until_rfq(timeout),
          {:ok, result} <- WireDecoder.parse_execute_response(raw) do
       return_worker(sub.workers.pool, db_pid)
@@ -264,7 +264,7 @@ defmodule Supavisor.HttpSql.ClientHandler do
 
   defp run_batch_queries(upstream_sock, queries, timeout) do
     Enum.reduce_while(queries, {:ok, []}, fn %{sql: sql, params: params}, {:ok, acc} ->
-      stringified = stringify_params(params)
+      stringified = Params.stringify_list(params)
 
       with :ok <- send_extended_query(upstream_sock, sql, stringified),
            {:ok, raw} <- recv_until_rfq(timeout),
@@ -280,7 +280,13 @@ defmodule Supavisor.HttpSql.ClientHandler do
     end
   end
 
-  defp send_extended_query(upstream_sock, sql, params) do
+  @doc false
+  # Build and send Parse + Bind + Describe(P) + Execute + Sync over the upstream
+  # socket in a single write. Exposed (with @doc false) for tests that exercise
+  # the wire-format composition without booting a real DbHandler.
+  @spec send_extended_query(Supavisor.sock(), String.t(), [Params.param()]) ::
+          :ok | {:error, term()}
+  def send_extended_query(upstream_sock, sql, params) do
     msg = [
       Wire.parse("", sql),
       Wire.bind("", "", params),
@@ -292,11 +298,15 @@ defmodule Supavisor.HttpSql.ClientHandler do
     HandlerHelpers.sock_send(upstream_sock, msg)
   end
 
+  @doc false
   # Drain `{:db_bytes, _}` messages until we see ReadyForQuery in the
   # accumulated buffer. `{:db_status, _}` is signalling-only — it tells us
   # the backend's RFQ has fired, but the bytes containing RFQ still arrive
   # as `:db_bytes`, so we keep reading until the buffer contains them.
-  defp recv_until_rfq(timeout) do
+  # Exposed (with @doc false) so tests can drive the receive loop with
+  # synthetic backend messages without booting a real DbHandler.
+  @spec recv_until_rfq(timeout()) :: {:ok, binary()} | {:error, term()}
+  def recv_until_rfq(timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
     recv_until_rfq(<<>>, deadline)
   end
@@ -335,11 +345,14 @@ defmodule Supavisor.HttpSql.ClientHandler do
     end
   end
 
+  @doc false
   # After we've returned the worker, more `:db_bytes` should not arrive,
   # but if the timeline overlapped (e.g. on error paths) we drain whatever
   # is left so subsequent requests handled by this same Plug process do
-  # not see stale signal.
-  defp flush_db_mailbox do
+  # not see stale signal. Exposed (with @doc false) so tests can assert
+  # mailbox cleanup directly.
+  @spec flush_db_mailbox() :: :ok
+  def flush_db_mailbox do
     receive do
       {:db_bytes, _} -> flush_db_mailbox()
       {:db_status, _} -> flush_db_mailbox()
@@ -348,23 +361,4 @@ defmodule Supavisor.HttpSql.ClientHandler do
     end
   end
 
-  defp stringify_params(params), do: Enum.map(params, &stringify/1)
-
-  defp stringify(nil), do: nil
-  defp stringify(bin) when is_binary(bin), do: bin
-  defp stringify(true), do: "t"
-  defp stringify(false), do: "f"
-  defp stringify(n) when is_integer(n), do: Integer.to_string(n)
-
-  defp stringify(n) when is_float(n) do
-    case n do
-      :nan -> "NaN"
-      :infinity -> "Infinity"
-      :negative_infinity -> "-Infinity"
-      _ -> Float.to_string(n)
-    end
-  end
-
-  defp stringify(a) when is_atom(a), do: Atom.to_string(a)
-  defp stringify(other), do: Jason.encode!(other)
 end
