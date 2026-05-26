@@ -12,9 +12,10 @@ defmodule Supavisor do
 
   require Record
 
-  @type sock :: tcp_sock() | ssl_sock()
+  @type sock :: tcp_sock() | ssl_sock() | proc_sock()
   @type ssl_sock :: {:ssl, :ssl.sslsocket()}
   @type tcp_sock :: {:gen_tcp, :gen_tcp.socket()}
+  @type proc_sock :: {:proc, pid()}
   @type workers :: %{manager: pid, pool: pid}
   @type secrets :: map()
   @type mode :: :transaction | :session | :native | :proxy
