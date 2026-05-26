@@ -55,6 +55,8 @@ defmodule Supavisor.HttpSql.ClientHandler do
           num_rows: non_neg_integer()
         }
 
+  @type batch_query :: %{required(:sql) => String.t(), required(:params) => [term()]}
+
   @default_timeout 30_000
 
   # --------------------------------------------------------------------- API
@@ -93,6 +95,39 @@ defmodule Supavisor.HttpSql.ClientHandler do
         # Best-effort cleanup. We do not know which step failed so we try
         # every release path; each one is a no-op when there's nothing to
         # release.
+        flush_db_mailbox()
+        err
+    end
+  end
+
+  @doc """
+  Execute a batch of queries inside a single server-side transaction.
+
+  `txn_sql` is a `SET TRANSACTION ...` statement (or `nil`) produced by
+  `Supavisor.HttpSql.Transaction.build/1` from the `Neon-Batch-*` request
+  headers. The whole batch shares one Manager subscription and one DbHandler
+  worker; the first error aborts and rolls back.
+  """
+  @spec run_batch(ctx(), String.t() | nil, [batch_query()], keyword()) ::
+          {:ok, [query_result()]} | {:error, term()}
+  def run_batch(ctx, txn_sql, queries, opts \\ []) when is_list(queries) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+
+    Process.flag(:trap_exit, true)
+
+    id = build_id(ctx)
+    secrets = build_secrets(ctx)
+
+    with {:ok, _sup} <- Supavisor.start_dist(id, secrets, log_level: nil),
+         {:ok, sub} <- Supavisor.subscribe(id),
+         {:ok, db_pid} <- pool_checkout(sub.workers.pool, timeout),
+         {:ok, upstream_sock} <- db_checkout(db_pid, timeout) do
+      result = run_batch_body(upstream_sock, txn_sql, queries, timeout)
+      return_worker(sub.workers.pool, db_pid)
+      flush_db_mailbox()
+      result
+    else
+      {:error, _} = err ->
         flush_db_mailbox()
         err
     end
@@ -146,6 +181,56 @@ defmodule Supavisor.HttpSql.ClientHandler do
       timeout: timeout,
       caller_module: __MODULE__
     )
+  end
+
+  # Drive the whole batch over a single checked-out worker. BEGIN and
+  # COMMIT/ROLLBACK are sent as simple Query messages; each user query is
+  # an independent extended-query round-trip.
+  defp run_batch_body(upstream_sock, txn_sql, queries, timeout) do
+    with :ok <- simple_query(upstream_sock, "BEGIN", timeout),
+         :ok <- maybe_simple_query(upstream_sock, txn_sql, timeout),
+         {:ok, results} <- run_batch_queries(upstream_sock, queries, timeout) do
+      case simple_query(upstream_sock, "COMMIT", timeout) do
+        :ok -> {:ok, results}
+        {:error, _} = err -> err
+      end
+    else
+      {:error, _} = err ->
+        # Best-effort rollback. If the connection is gone, ROLLBACK will
+        # fail too — that's fine, the connection's transaction will be
+        # discarded by the backend on socket close.
+        _ = simple_query(upstream_sock, "ROLLBACK", timeout)
+        err
+    end
+  end
+
+  defp maybe_simple_query(_sock, nil, _timeout), do: :ok
+  defp maybe_simple_query(sock, sql, timeout), do: simple_query(sock, sql, timeout)
+
+  defp simple_query(upstream_sock, sql, timeout) do
+    with :ok <- HandlerHelpers.sock_send(upstream_sock, Wire.query(sql)),
+         {:ok, raw} <- recv_until_rfq(timeout),
+         {:ok, _result} <- WireDecoder.parse_execute_response(raw) do
+      :ok
+    end
+  end
+
+  defp run_batch_queries(upstream_sock, queries, timeout) do
+    Enum.reduce_while(queries, {:ok, []}, fn %{sql: sql, params: params}, {:ok, acc} ->
+      stringified = stringify_params(params)
+
+      with :ok <- send_extended_query(upstream_sock, sql, stringified),
+           {:ok, raw} <- recv_until_rfq(timeout),
+           {:ok, result} <- WireDecoder.parse_execute_response(raw) do
+        {:cont, {:ok, [result | acc]}}
+      else
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, list} -> {:ok, Enum.reverse(list)}
+      {:error, _} = err -> err
+    end
   end
 
   defp send_extended_query(upstream_sock, sql, params) do

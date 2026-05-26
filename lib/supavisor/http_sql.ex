@@ -14,8 +14,6 @@ defmodule Supavisor.HttpSql do
 
   alias Supavisor.HttpSql.{
     ClientHandler,
-    ParamCoercer,
-    PoolRegistry,
     ResponseBuilder,
     Telemetry,
     Transaction
@@ -82,37 +80,24 @@ defmodule Supavisor.HttpSql do
         ) ::
           {:ok, map} | result_err
   def execute_batch(ctx, queries, batch_opts \\ %{}, opts \\ %{}) when is_list(queries) do
+    timeout = request_timeout_ms()
+    t0 = System.monotonic_time(:microsecond)
+
     with {:ok, txn_sql} <- Transaction.build(batch_opts),
-         {:ok, pool_pid, _hit} <- checkout(ctx),
-         {:ok, results} <- run_batch(pool_pid, txn_sql, queries, opts) do
-      {:ok, ResponseBuilder.build_batch(results, opts)}
+         {:ok, results} <- ClientHandler.run_batch(ctx, txn_sql, queries, timeout: timeout) do
+      Telemetry.pool_checkout(
+        System.monotonic_time(:microsecond) - t0,
+        :hit,
+        %{tenant: ctx.tenant_external_id, user: ctx.user}
+      )
+
+      with :ok <- check_batch_row_cap(results) do
+        {:ok, ResponseBuilder.build_batch(results, opts)}
+      end
     end
   end
 
   # ---------------------------------------------------------------- Internals
-
-  defp checkout(ctx) do
-    t0 = System.monotonic_time(:microsecond)
-
-    case PoolRegistry.checkout(ctx) do
-      {:ok, pid, hit?} ->
-        Telemetry.pool_checkout(
-          System.monotonic_time(:microsecond) - t0,
-          hit?,
-          %{tenant: ctx.tenant_external_id, user: ctx.user}
-        )
-
-        {:ok, pid, hit?}
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
-  defp check_row_cap(%Postgrex.Result{num_rows: n}) when is_integer(n) do
-    cap = max_response_rows()
-    if n > cap, do: {:error, {:row_limit_exceeded, cap}}, else: :ok
-  end
 
   defp check_row_cap(%{num_rows: n}) when is_integer(n) do
     cap = max_response_rows()
@@ -121,66 +106,11 @@ defmodule Supavisor.HttpSql do
 
   defp check_row_cap(_), do: :ok
 
-  defp prepare_and_execute(conn, sql, params, timeout) do
-    case Postgrex.prepare(conn, "", sql, timeout: timeout) do
-      {:ok, %Postgrex.Query{param_oids: oids} = q} ->
-        coerced = ParamCoercer.coerce_list(params, oids)
-
-        case Postgrex.execute(conn, q, coerced, timeout: timeout) do
-          {:ok, %Postgrex.Query{} = q2, %Postgrex.Result{} = r} ->
-            enforce_row_cap!(conn, r)
-            {q2, r}
-
-          {:error, %Postgrex.Error{} = e} ->
-            Postgrex.rollback(conn, e)
-        end
-
-      {:error, %Postgrex.Error{} = e} ->
-        Postgrex.rollback(conn, e)
-    end
-  end
-
-  defp run_batch(pool, txn_sql, queries, opts) do
-    timeout = Map.get(opts, :timeout) || request_timeout_ms()
-
-    Postgrex.transaction(
-      pool,
-      fn conn ->
-        if txn_sql, do: Postgrex.query!(conn, txn_sql, [])
-
-        Enum.map(queries, fn %{sql: sql, params: params} ->
-          prepare_and_execute(conn, sql, params, timeout)
-        end)
-      end,
-      timeout: timeout
-    )
-    |> case do
-      {:ok, results} -> {:ok, results}
-      {:error, %Postgrex.Error{}} = err -> err
-      {:error, reason} -> {:error, reason}
-    end
-  rescue
-    e in [ArgumentError, Postgrex.Error] -> {:error, e}
-  catch
-    :exit, {:timeout, _} ->
-      {:error, :timeout}
-
-    :exit, reason ->
-      {:error, %DBConnection.ConnectionError{message: "pool exit: #{inspect(reason)}"}}
-  end
-
-  # MUST be called inside a `Postgrex.transaction` body — uses
-  # `Postgrex.rollback/2` to non-locally return `{:error, ...}` from
-  # the transaction. Replaces the previous `throw/1` which escaped the
-  # transaction and crashed the controller (bypassing ErrorMapper and
-  # dumping the conn — with the password header — into the crash log).
-  defp enforce_row_cap!(conn, %Postgrex.Result{num_rows: n}) when is_integer(n) do
+  defp check_batch_row_cap(results) when is_list(results) do
     cap = max_response_rows()
-    if n > cap, do: Postgrex.rollback(conn, {:row_limit_exceeded, cap})
+    total = Enum.reduce(results, 0, fn r, acc -> acc + (r.num_rows || 0) end)
+    if total > cap, do: {:error, {:row_limit_exceeded, cap}}, else: :ok
   end
-
-  defp enforce_row_cap!(_, _), do: :ok
-
 
   defp request_timeout_ms do
     Application.get_env(:supavisor, :http_sql, [])
