@@ -106,6 +106,44 @@ const rows = await sql`SELECT id, email FROM users WHERE id = ${userId}`
 
 `@vercel/postgres` and `drizzle-orm/neon-http` work the same way.
 
+## What doesn't work (transaction-mode caveats)
+
+HTTP `/sql` shares the tenant's existing pool with TCP clients. The pool
+runs in **transaction mode**: each request gets a worker for the duration
+of its query (single or batch) and the worker returns to the pool when the
+backend's `ReadyForQuery` arrives. Anything that needs session-scoped
+server-side state breaks because the next request may land on a different
+worker, or — worse — on the same worker now serving a different client.
+
+Things that **don't work** for the same reason they don't work for TCP
+transaction-mode clients:
+
+- **`LISTEN` / `NOTIFY`** — no persistent server-side subscription.
+- **Server-side prepared statements** — `PREPARE foo AS ...` then
+  `EXECUTE foo ...` in a later request may hit a different worker and
+  raise `prepared statement does not exist`. Worse, the prepared name
+  may persist on whichever worker handled the first request and be
+  visible to subsequent unrelated requests on that worker — treat it as
+  a cross-request state leak, not a feature.
+- **Session-level `SET`** (`SET timezone = ...` without `LOCAL`) — the
+  setting persists on the worker and silently leaks into the next user.
+  Inside a batch, use `SET LOCAL`.
+- **Temporary tables** (`CREATE TEMP TABLE ...`) — same leak shape;
+  visible to future requests on the same worker.
+- **Advisory locks held across requests** — `pg_advisory_lock(...)`
+  followed by a later `pg_advisory_unlock(...)` won't reach the same
+  session. Use the `_xact_lock` variants (transaction-scoped) inside a
+  batch, or move the work to a TCP session-mode connection.
+- **`COPY` (in either direction)** — the wire protocol returns
+  `CopyInResponse` / `CopyOutResponse` which `/sql` does not stream. The
+  request will receive an empty result; use a session-mode TCP client.
+- **Multi-statement queries inside one `query` field** — only the first
+  statement runs (extended-query protocol limitation, independent of
+  Supavisor). Use the `queries` batch shape instead.
+
+If your client needs any of the above, connect over TCP with session
+pooling rather than `/sql`.
+
 ## Authentication
 
 Password from the `Neon-Connection-String` header is checked

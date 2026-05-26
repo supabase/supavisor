@@ -99,9 +99,8 @@ defmodule Supavisor.HttpSql.ClientHandler do
          {:ok, upstream_sock} <- db_checkout(db_pid, timeout) do
       result =
         with :ok <- send_extended_query(upstream_sock, sql, Params.stringify_list(params)),
-             {:ok, raw} <- recv_until_rfq(timeout, db_pid),
-             {:ok, decoded} <- WireDecoder.parse_execute_response(raw) do
-          {:ok, decoded}
+             {:ok, raw} <- recv_until_rfq(timeout, db_pid) do
+          WireDecoder.parse_execute_response(raw)
         end
 
       maybe_return_worker(workers.pool, db_pid, result)
@@ -274,7 +273,9 @@ defmodule Supavisor.HttpSql.ClientHandler do
   end
 
   defp maybe_simple_query(_sock, nil, _timeout, _db_pid), do: :ok
-  defp maybe_simple_query(sock, sql, timeout, db_pid), do: simple_query(sock, sql, timeout, db_pid)
+
+  defp maybe_simple_query(sock, sql, timeout, db_pid),
+    do: simple_query(sock, sql, timeout, db_pid)
 
   defp simple_query(upstream_sock, sql, timeout, db_pid) do
     with :ok <- HandlerHelpers.sock_send(upstream_sock, Wire.query(sql)),
