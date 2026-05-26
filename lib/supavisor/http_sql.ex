@@ -12,7 +12,14 @@ defmodule Supavisor.HttpSql do
   for consistent `{status, body}` mapping in the controller.
   """
 
-  alias Supavisor.HttpSql.{ParamCoercer, PoolRegistry, ResponseBuilder, Telemetry, Transaction}
+  alias Supavisor.HttpSql.{
+    ClientHandler,
+    ParamCoercer,
+    PoolRegistry,
+    ResponseBuilder,
+    Telemetry,
+    Transaction
+  }
 
   @type ctx :: %{
           required(:tenant_external_id) => String.t(),
@@ -42,9 +49,26 @@ defmodule Supavisor.HttpSql do
   @spec execute(ctx, String.t(), list, response_opts) ::
           {:ok, map} | result_err
   def execute(ctx, sql, params, opts \\ %{}) do
-    with {:ok, pool_pid, _hit} <- checkout(ctx),
-         {:ok, qr} <- run_query(pool_pid, sql, params, opts) do
-      {:ok, ResponseBuilder.build_single(qr, opts)}
+    timeout = request_timeout_ms()
+    t0 = System.monotonic_time(:microsecond)
+
+    case ClientHandler.run_query(ctx, sql, params, timeout: timeout) do
+      {:ok, result} ->
+        Telemetry.pool_checkout(
+          System.monotonic_time(:microsecond) - t0,
+          # Hit/miss semantics no longer map onto an ETS pool cache; report
+          # as `:hit` so existing dashboards keep parsing. A dedicated
+          # `start_dist` telemetry event is wired up in commit 32.
+          :hit,
+          %{tenant: ctx.tenant_external_id, user: ctx.user}
+        )
+
+        with :ok <- check_row_cap(result) do
+          {:ok, ResponseBuilder.build_single(result, opts)}
+        end
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -85,42 +109,12 @@ defmodule Supavisor.HttpSql do
     end
   end
 
-  # Single-query path: NO Postgrex.transaction wrapper. The previous
-  # implementation wrapped this in `Postgrex.transaction` so that
-  # `prepare_and_execute` could call `Postgrex.rollback` for the row-cap
-  # path — but for a single SELECT that costs an extra BEGIN+COMMIT
-  # round-trip (~2x latency on small queries). Now we prepare+execute
-  # against the pool directly and enforce the row cap by counting rows
-  # after Execute returns (no rollback needed; there's no open txn).
-  defp run_query(pool, sql, params, opts) do
-    timeout = Map.get(opts, :timeout) || request_timeout_ms()
-
-    with {:ok, %Postgrex.Query{param_oids: oids} = q} <-
-           Postgrex.prepare(pool, "", sql, timeout: timeout),
-         coerced = ParamCoercer.coerce_list(params, oids),
-         {:ok, %Postgrex.Query{} = q2, %Postgrex.Result{} = r} <-
-           Postgrex.execute(pool, q, coerced, timeout: timeout),
-         :ok <- check_row_cap(r) do
-      {:ok, {q2, r}}
-    else
-      {:error, %Postgrex.Error{}} = err -> err
-      {:error, %DBConnection.ConnectionError{}} = err -> err
-      {:error, reason} -> {:error, reason}
-    end
-  rescue
-    e in [ArgumentError, Postgrex.Error] -> {:error, e}
-  catch
-    :exit, {:timeout, _} ->
-      {:error, :timeout}
-
-    :exit, reason ->
-      # Any other process-level exit (pool died normally, :noproc,
-      # :shutdown, linked supervisor down) maps to a Neon-shape 503
-      # connection_error rather than crashing the controller.
-      {:error, %DBConnection.ConnectionError{message: "pool exit: #{inspect(reason)}"}}
+  defp check_row_cap(%Postgrex.Result{num_rows: n}) when is_integer(n) do
+    cap = max_response_rows()
+    if n > cap, do: {:error, {:row_limit_exceeded, cap}}, else: :ok
   end
 
-  defp check_row_cap(%Postgrex.Result{num_rows: n}) when is_integer(n) do
+  defp check_row_cap(%{num_rows: n}) when is_integer(n) do
     cap = max_response_rows()
     if n > cap, do: {:error, {:row_limit_exceeded, cap}}, else: :ok
   end
