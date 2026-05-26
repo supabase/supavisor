@@ -62,32 +62,64 @@ jobs:
           INPUT_TYPE: ${{ inputs.type }}
           INPUT_REGIONS: ${{ inputs.regions }}
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            FROM="$INPUT_FROM"
-            PREVIOUS="$INPUT_PREVIOUS"
-            TO="$INPUT_TO"
-            TYPE_VAL="$INPUT_TYPE"
-            # Mirror handler.exs name format: supavisor_<type>_<regions joined by '&'>_<from>_<to>
-            REGIONS_SLUG="$(printf '%s' "$INPUT_REGIONS" | tr ',' '&' | tr -d ' ')"
-            NAME_VAL="supavisor_${TYPE_VAL}_${REGIONS_SLUG}_${FROM}_${TO}"
-            echo "Dispatched: from=$FROM previous=$PREVIOUS to=$TO type=$TYPE_VAL regions=$INPUT_REGIONS"
+            # Validate user-controlled inputs against an allowlist before they
+            # land in $GITHUB_ENV or downstream filenames.
+            VER_RE='^[0-9A-Za-z._+-]+$'
+            REG_RE='^[0-9a-z-]+$'
+            for pair in "upgrade_from=$INPUT_FROM" "upgrade_previous=$INPUT_PREVIOUS" "upgrade_to=$INPUT_TO"; do
+              name="${pair%%=*}"
+              val="${pair#*=}"
+              if ! [[ "$val" =~ $VER_RE ]]; then
+                echo "::error::input $name='$val' fails allowlist $VER_RE"
+                exit 1
+              fi
+            done
+            case "$INPUT_TYPE" in
+              soft|hard) ;;
+              *) echo "::error::input type='$INPUT_TYPE' must be soft|hard"; exit 1 ;;
+            esac
+            # Build the Erlang regions list for staging.config: [<<"r1">>, <<"r2">>]
+            REGIONS_ERL=""
+            IFS=',' read -ra RS <<< "$INPUT_REGIONS"
+            for r in "${RS[@]}"; do
+              r="${r// /}"
+              if ! [[ "$r" =~ $REG_RE ]]; then
+                echo "::error::input regions entry '$r' fails allowlist $REG_RE"
+                exit 1
+              fi
+              REGIONS_ERL+="<<\"$r\">>, "
+            done
+            REGIONS_ERL="${REGIONS_ERL%, }"
+            CONFIG=/tmp/dispatch.config
+            cat > "$CONFIG" <<EOF
+          [
+              {upgrade_from, "$INPUT_FROM"},
+              {upgrade_previous, "$INPUT_PREVIOUS"},
+              {upgrade_to, "$INPUT_TO"},
+              {regions, [$REGIONS_ERL]},
+              {type, $INPUT_TYPE}
+          ].
+          EOF
           else
-            elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config
-            FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)
-            PREVIOUS=$(elixir ./deploy/upgrade/handler.exs upgrade_previous ./deploy/upgrade/staging.config)
-            TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)
-            TYPE_VAL=$(elixir ./deploy/upgrade/handler.exs type ./deploy/upgrade/staging.config)
-            NAME_VAL=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)
+            CONFIG=./deploy/upgrade/staging.config
           fi
+          elixir ./deploy/upgrade/handler.exs all_keys "$CONFIG"
+          FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from "$CONFIG")
+          PREVIOUS=$(elixir ./deploy/upgrade/handler.exs upgrade_previous "$CONFIG")
+          TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to "$CONFIG")
+          TYPE_VAL=$(elixir ./deploy/upgrade/handler.exs type "$CONFIG")
+          NAME_VAL=$(elixir ./deploy/upgrade/handler.exs name "$CONFIG")
           if [ "$TYPE_VAL" = "soft" ] && [ "$PREVIOUS" = "$TO" ]; then
             echo "::error::Soft deploy requires upgrade_previous ($PREVIOUS) to differ from upgrade_to ($TO)."
             exit 1
           fi
-          echo "RELEASE_BASE=$FROM"     >> $GITHUB_ENV
-          echo "RELEASE_FROM=$PREVIOUS" >> $GITHUB_ENV
-          echo "RELEASE_TO=$TO"         >> $GITHUB_ENV
-          echo "TYPE=$TYPE_VAL"         >> $GITHUB_ENV
-          echo "NAME=$NAME_VAL"         >> $GITHUB_ENV
+          printf 'RELEASE_BASE=%s\n' "$FROM"     >> "$GITHUB_ENV"
+          printf 'RELEASE_FROM=%s\n' "$PREVIOUS" >> "$GITHUB_ENV"
+          printf 'RELEASE_TO=%s\n'   "$TO"       >> "$GITHUB_ENV"
+          printf 'TYPE=%s\n'         "$TYPE_VAL" >> "$GITHUB_ENV"
+          printf 'NAME=%s\n'         "$NAME_VAL" >> "$GITHUB_ENV"
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
