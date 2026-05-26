@@ -221,12 +221,10 @@ defmodule Supavisor.HttpSql.ClientHandler do
   end
 
   defp pool_checkout(pool, timeout) do
-    try do
-      {:ok, :poolboy.checkout(pool, true, timeout)}
-    catch
-      :exit, {:timeout, _} -> {:error, :pool_checkout_timeout}
-      :exit, reason -> {:error, {:pool_checkout_exit, reason}}
-    end
+    {:ok, :poolboy.checkout(pool, true, timeout)}
+  catch
+    :exit, {:timeout, _} -> {:error, :pool_checkout_timeout}
+    :exit, reason -> {:error, {:pool_checkout_exit, reason}}
   end
 
   defp db_checkout(db_pid, timeout) do
@@ -348,11 +346,9 @@ defmodule Supavisor.HttpSql.ClientHandler do
   # In transaction mode DbHandler clears `client_sock` and goes :idle on
   # RFQ; poolboy then sees the worker as free again.
   defp return_worker(pool, db_pid) do
-    try do
-      :poolboy.checkin(pool, db_pid)
-    catch
-      :exit, _ -> :ok
-    end
+    :poolboy.checkin(pool, db_pid)
+  catch
+    :exit, _ -> :ok
   end
 
   @doc false
@@ -370,5 +366,4 @@ defmodule Supavisor.HttpSql.ClientHandler do
       0 -> :ok
     end
   end
-
 end

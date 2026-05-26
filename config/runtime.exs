@@ -226,8 +226,7 @@ if config_env() != :test do
 
   config :supavisor, :http_sql,
     enabled: System.get_env("HTTP_SQL_ENABLED", "false") == "true",
-    max_query_bytes:
-      System.get_env("HTTP_SQL_MAX_QUERY_BYTES", "1048576") |> String.to_integer(),
+    max_query_bytes: System.get_env("HTTP_SQL_MAX_QUERY_BYTES", "1048576") |> String.to_integer(),
     max_response_rows:
       System.get_env("HTTP_SQL_MAX_RESPONSE_ROWS", "10000") |> String.to_integer(),
     max_response_bytes:

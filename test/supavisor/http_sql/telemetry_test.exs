@@ -97,8 +97,7 @@ defmodule Supavisor.HttpSql.TelemetryTest do
     test "tags hit?" do
       Telemetry.pool_checkout(123, :hit, %{tenant: "t", user: "u"})
 
-      assert_received {:telemetry, %{duration: 123},
-                       %{hit?: :hit, tenant: "t", user: "u"}}
+      assert_received {:telemetry, %{duration: 123}, %{hit?: :hit, tenant: "t", user: "u"}}
     end
 
     test "tags miss?" do

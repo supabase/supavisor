@@ -4,20 +4,12 @@ defmodule Supavisor.HttpSql.WireDecoder do
   connection (via `{:proc, pid}` `:db_bytes` messages) into structured results
   consumable by the HTTP /sql response builder.
 
-  Two public entry points:
-
-    * `parse_prepare_response/1` — consumes ParseComplete + ParameterDescription
-      + (RowDescription | NoData) + ReadyForQuery and returns the parameter
-      OIDs. Used after the first round-trip (Parse + Describe(S) + Sync).
-
-    * `parse_execute_response/1` — consumes BindComplete + (RowDescription)? +
-      DataRow* + CommandComplete + ReadyForQuery and returns the row set. Used
-      after the second round-trip (Bind + Execute + Sync), or in batches where
-      RowDescription appeared in the prepare phase already.
-
-  Both stop on an `ErrorResponse`, returning `{:error, %PgError{}}`. `Notice`
-  responses are ignored. Reuses `Supavisor.Protocol.Server.decode/1` for
-  framing and tag mapping.
+  The single public entry point `parse_execute_response/1` consumes
+  ParseComplete + BindComplete + (RowDescription)? + DataRow* +
+  CommandComplete + ReadyForQuery and returns the row set. It stops on an
+  `ErrorResponse`, returning `{:error, %PgError{}}`. `Notice` responses are
+  ignored. Reuses `Supavisor.Protocol.Server.decode/1` for framing and tag
+  mapping.
   """
 
   alias Supavisor.HttpSql.PgError
@@ -27,25 +19,12 @@ defmodule Supavisor.HttpSql.WireDecoder do
   @type column :: %{name: String.t(), oid: oid()}
   @type row :: [binary() | nil]
 
-  @type prepare_result :: %{
-          required(:param_oids) => [oid()],
-          required(:columns) => [column()] | nil
-        }
-
   @type execute_result :: %{
           required(:columns) => [column()] | nil,
           required(:rows) => [row()],
           required(:command) => String.t() | nil,
           required(:num_rows) => non_neg_integer()
         }
-
-  @spec parse_prepare_response(binary()) ::
-          {:ok, prepare_result()} | {:error, PgError.t() | :incomplete | :unexpected}
-  def parse_prepare_response(bin) when is_binary(bin) do
-    with {:ok, pkts, _rest} <- decode(bin) do
-      walk_prepare(pkts, %{param_oids: [], columns: nil})
-    end
-  end
 
   @spec parse_execute_response(binary()) ::
           {:ok, execute_result()} | {:error, PgError.t() | :incomplete | :unexpected}
@@ -83,28 +62,6 @@ defmodule Supavisor.HttpSql.WireDecoder do
       {:error, :incomplete}
     end
   end
-
-  defp walk_prepare([], acc), do: {:ok, acc}
-
-  defp walk_prepare([%{tag: :parse_complete} | rest], acc), do: walk_prepare(rest, acc)
-
-  defp walk_prepare([%{tag: :parameter_description, payload: {_count, oids}} | rest], acc),
-    do: walk_prepare(rest, %{acc | param_oids: oids})
-
-  defp walk_prepare([%{tag: :row_description, payload: fields} | rest], acc) when is_list(fields),
-    do: walk_prepare(rest, %{acc | columns: to_columns(fields)})
-
-  defp walk_prepare([%{tag: :no_data} | rest], acc),
-    do: walk_prepare(rest, %{acc | columns: nil})
-
-  defp walk_prepare([%{tag: :notice_response} | rest], acc), do: walk_prepare(rest, acc)
-
-  defp walk_prepare([%{tag: :ready_for_query} | _], acc), do: {:ok, acc}
-
-  defp walk_prepare([%{tag: :error_response, payload: fields} | _], _acc) when is_map(fields),
-    do: {:error, PgError.exception(fields)}
-
-  defp walk_prepare([_unexpected | rest], acc), do: walk_prepare(rest, acc)
 
   defp walk_execute([], acc), do: {:ok, acc}
 

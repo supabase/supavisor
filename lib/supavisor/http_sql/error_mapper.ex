@@ -119,7 +119,10 @@ defmodule Supavisor.HttpSql.ErrorMapper do
   # the actual term with a `Logger.warning` for ops triage.
   def to_neon_error(other) do
     require Logger
-    Logger.warning("HttpSql: unmapped error: #{inspect(other, limit: :infinity, printable_limit: 500)}")
+
+    Logger.warning(
+      "HttpSql: unmapped error: #{inspect(other, limit: :infinity, printable_limit: 500)}"
+    )
 
     {500, %{"message" => "internal error", "code" => "internal_error"}}
   end

@@ -8,6 +8,7 @@ defmodule Supavisor.HttpSql.ErrorMapperTest do
   describe "DBConnection / timeout" do
     test "ConnectionError → 503" do
       err = %DBConnection.ConnectionError{message: "could not connect"}
+
       assert {503, %{"code" => "connection_error", "message" => "could not connect"}} =
                @subject.to_neon_error(err)
     end

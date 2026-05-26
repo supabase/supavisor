@@ -57,41 +57,6 @@ defmodule Supavisor.HttpSql.WireDecoderTest do
     <<?E, byte_size(payload) + 4::32>> <> payload
   end
 
-  describe "parse_prepare_response/1" do
-    test "extracts param OIDs and column names" do
-      bin =
-        parse_complete() <>
-          parameter_description([23, 25]) <>
-          row_description([{"id", 23}, {"name", 25}]) <>
-          ready_for_query()
-
-      assert {:ok, %{param_oids: [23, 25], columns: cols}} =
-               WireDecoder.parse_prepare_response(bin)
-
-      assert cols == [%{name: "id", oid: 23}, %{name: "name", oid: 25}]
-    end
-
-    test "no_data sets columns to nil (statement returns no rows)" do
-      bin =
-        parse_complete() <>
-          parameter_description([]) <>
-          no_data() <>
-          ready_for_query()
-
-      assert {:ok, %{param_oids: [], columns: nil}} = WireDecoder.parse_prepare_response(bin)
-    end
-
-    test "ErrorResponse surfaces as a PgError" do
-      bin =
-        parse_complete() <>
-          error_response(%{?S => "ERROR", ?C => "42601", ?M => "syntax error"}) <>
-          ready_for_query(?E)
-
-      assert {:error, %PgError{code: "42601", severity: "ERROR"}} =
-               WireDecoder.parse_prepare_response(bin)
-    end
-  end
-
   describe "parse_execute_response/1" do
     test "simple SELECT with two rows" do
       bin =

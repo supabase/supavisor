@@ -27,6 +27,7 @@ defmodule Supavisor.Integration.HttpSqlFacadeTest do
     %{
       tenant_external_id: "dev_tenant",
       user: db_conf[:username] <> ".dev_tenant",
+      db_user: db_conf[:username],
       password: db_conf[:password],
       database: db_conf[:database] || "supavisor_test"
     }

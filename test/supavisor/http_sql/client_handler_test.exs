@@ -88,6 +88,7 @@ defmodule Supavisor.HttpSql.ClientHandlerTest do
       send(self(), {:db_bytes, command_complete("SELECT 1") <> ready_for_query()})
 
       assert {:ok, bin} = ClientHandler.recv_until_rfq(1_000)
+
       assert {:ok, %{rows: [["1"]], command: "SELECT", num_rows: 1}} =
                WireDecoder.parse_execute_response(bin)
     end
@@ -295,6 +296,7 @@ defmodule Supavisor.HttpSql.ClientHandlerTest do
       ]
 
       assert {:ok, raw} = run_against_fake(script, "SELECT 1 WHERE false", [])
+
       assert {:ok, %{rows: [], num_rows: 0, command: "SELECT"}} =
                WireDecoder.parse_execute_response(raw)
     end
@@ -314,6 +316,7 @@ defmodule Supavisor.HttpSql.ClientHandlerTest do
       ]
 
       assert {:ok, raw} = run_against_fake(script, "SELECT * FROM generate_series(1,3)", [])
+
       assert {:ok, %{rows: [["1"], ["2"], ["3"]], num_rows: 3}} =
                WireDecoder.parse_execute_response(raw)
     end

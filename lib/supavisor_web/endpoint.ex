@@ -28,8 +28,7 @@ defmodule SupavisorWeb.Endpoint do
   plug Supavisor.HttpSql.NeonBodyParser,
     json_decoder: Phoenix.json_library(),
     length: Application.compile_env(:supavisor, [:http_sql, :max_query_bytes], 1_048_576),
-    read_timeout:
-      Application.compile_env(:supavisor, [:http_sql, :request_timeout_ms], 30_000)
+    read_timeout: Application.compile_env(:supavisor, [:http_sql, :request_timeout_ms], 30_000)
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],

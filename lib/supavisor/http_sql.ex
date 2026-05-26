@@ -80,7 +80,10 @@ defmodule Supavisor.HttpSql do
   given `Neon-Batch-*` options. Returns a Neon batch response (`results`
   key wraps per-query bodies).
   """
-  @spec execute_batch(ctx, [%{sql: String.t(), params: list}], Transaction.batch_opts(),
+  @spec execute_batch(
+          ctx,
+          [%{sql: String.t(), params: list}],
+          Transaction.batch_opts(),
           response_opts
         ) ::
           {:ok, map} | result_err

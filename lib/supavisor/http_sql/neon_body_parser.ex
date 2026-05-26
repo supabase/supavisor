@@ -143,6 +143,7 @@ defmodule Supavisor.HttpSql.NeonBodyParser do
   end
 
   defp merge_into_params(%Plug.Conn.Unfetched{}, body_params), do: body_params
+
   defp merge_into_params(existing, body_params) when is_map(existing),
     do: Map.merge(existing, body_params)
 

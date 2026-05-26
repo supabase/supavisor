@@ -64,8 +64,7 @@ defmodule Supavisor.HttpSql.PromExPlugin do
         counter(
           [:supavisor, :http_sql, :max_clients_rejected, :count],
           event_name: [:supavisor, :http_sql, :max_clients_rejected],
-          description:
-            "HTTP /sql requests rejected by the tenant's Manager max_clients cap.",
+          description: "HTTP /sql requests rejected by the tenant's Manager max_clients cap.",
           tags: [:tenant, :user, :limit_kind]
         )
       ]

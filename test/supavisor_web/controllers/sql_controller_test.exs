@@ -14,12 +14,6 @@ defmodule SupavisorWeb.SqlControllerTest do
     cfg = Application.get_env(:supavisor, :http_sql, [])
     Application.put_env(:supavisor, :http_sql, Keyword.put(cfg, :enabled, true))
 
-    # `update_tenant` above terminates supavisor's upstream pool. Any
-    # leftover HTTP-SQL Postgrex pool from a prior test still references
-    # the now-dropped connection; evict so each test starts fresh.
-    Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.HttpSql.PoolRegistry)
-    {:ok, _} = Supervisor.restart_child(Supavisor.Supervisor, Supavisor.HttpSql.PoolRegistry)
-
     on_exit(fn -> Application.put_env(:supavisor, :http_sql, cfg) end)
     :ok
   end
@@ -49,9 +43,9 @@ defmodule SupavisorWeb.SqlControllerTest do
     @tag :integration
     test "Neon-Array-Mode true → row arrays", %{conn: conn} do
       conn =
-        post_sql(conn, %{"query" => "SELECT 1::int AS n", "params" => []},
-          [{"neon-array-mode", "true"}]
-        )
+        post_sql(conn, %{"query" => "SELECT 1::int AS n", "params" => []}, [
+          {"neon-array-mode", "true"}
+        ])
 
       assert conn.status == 200
       assert %{"rows" => [["1"]]} = Jason.decode!(conn.resp_body)

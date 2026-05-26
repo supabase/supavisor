@@ -51,8 +51,7 @@ defmodule SupavisorWeb.SqlController do
   end
 
   defp dispatch(_ctx, _conn, _other, _array_mode) do
-    {:error,
-     {:malformed_request, "body must contain either 'query'+'params' or 'queries'"}}
+    {:error, {:malformed_request, "body must contain either 'query'+'params' or 'queries'"}}
   end
 
   defp render_result({:ok, body}, conn) do
@@ -106,7 +105,8 @@ defmodule SupavisorWeb.SqlController do
   defp ip_string(ip) when is_tuple(ip), do: :inet.ntoa(ip) |> to_string()
   defp ip_string(other), do: inspect(other)
 
-  defp short_reason(%Postgrex.Error{postgres: %{code: code}}), do: to_string(code)
+  defp short_reason(%Supavisor.HttpSql.PgError{code: code}) when is_binary(code), do: code
+  defp short_reason(%Supavisor.HttpSql.PgError{}), do: "pg_error"
   defp short_reason({:row_limit_exceeded, _}), do: "row_limit_exceeded"
   defp short_reason({:response_too_large, _}), do: "response_too_large"
   defp short_reason({tag, _}) when is_atom(tag), do: to_string(tag)

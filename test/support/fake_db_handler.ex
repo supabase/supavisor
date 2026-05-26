@@ -76,6 +76,7 @@ defmodule Supavisor.HttpSql.FakeDbHandler do
   # Real DbHandler.checkout uses this exact call shape; mirror it.
   def handle_event({:call, from}, {:checkout, sock, caller, _caller_module}, _state, data) do
     upstream = {:proc, self()}
+
     {:next_state, :busy, %{data | client_sock: sock, caller: caller},
      {:reply, from, {:ok, upstream}}}
   end

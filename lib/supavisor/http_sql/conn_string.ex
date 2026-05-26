@@ -20,7 +20,8 @@ defmodule Supavisor.HttpSql.ConnString do
           external_id: String.t() | nil
         }
 
-  @type error :: :missing_url | :malformed | :unsupported_scheme | :missing_user | :missing_password
+  @type error ::
+          :missing_url | :malformed | :unsupported_scheme | :missing_user | :missing_password
 
   @doc """
   Parse a Neon-style Postgres connection URL.

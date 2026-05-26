@@ -28,6 +28,7 @@ defmodule SupavisorWeb.Plugs.NeonAuthTest do
 
   defp enable_tenant_flag(flag \\ true) do
     tenant = Supavisor.Tenants.get_tenant_by_external_id("dev_tenant")
+
     {:ok, _t} =
       Supavisor.Tenants.update_tenant(tenant, %{feature_flags: %{"http_sql" => flag}})
   end
@@ -101,9 +102,7 @@ defmodule SupavisorWeb.Plugs.NeonAuthTest do
     test "tenant not found → 401" do
       conn =
         NeonAuth.call(
-          build(
-            "postgres://postgres.does_not_exist:postgres@localhost:6543/postgres"
-          ),
+          build("postgres://postgres.does_not_exist:postgres@localhost:6543/postgres"),
           []
         )
 

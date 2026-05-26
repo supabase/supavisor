@@ -111,7 +111,8 @@ defmodule Supavisor.DbHandler do
           | {:error, CheckoutTimeoutError.t()}
   def checkout(pid, sock, caller, mode, opts \\ [])
 
-  def checkout(pid, sock, caller, mode, timeout) when is_integer(timeout) or timeout == :infinity do
+  def checkout(pid, sock, caller, mode, timeout)
+      when is_integer(timeout) or timeout == :infinity do
     checkout(pid, sock, caller, mode, timeout: timeout)
   end
 

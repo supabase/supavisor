@@ -67,8 +67,7 @@ defmodule Supavisor.DbHandlerCheckoutApiTest do
                  caller_module: Supavisor.HttpSql.ClientHandler
                )
 
-      assert_receive {:got_checkout,
-                      {:checkout, ^sock, _caller, Supavisor.HttpSql.ClientHandler}}
+      assert_receive {:got_checkout, {:checkout, ^sock, _caller, Supavisor.HttpSql.ClientHandler}}
     end
 
     test "keyword opts with :timeout only (no caller_module) still defaults the module" do

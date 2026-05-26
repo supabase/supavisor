@@ -202,12 +202,13 @@ defmodule Supavisor.HttpSql.NeonBodyParserTest do
 
   describe "params merging" do
     test "preserves existing query-string params" do
-      conn = %{
-        conn(:post, "/sql?a=1", ~s({"b":"2"}))
-        | params: %{"a" => "1"}
-      }
-      |> put_req_header("neon-connection-string", "postgres://u:p@h/d")
-      |> @subject.call(init())
+      conn =
+        %{
+          conn(:post, "/sql?a=1", ~s({"b":"2"}))
+          | params: %{"a" => "1"}
+        }
+        |> put_req_header("neon-connection-string", "postgres://u:p@h/d")
+        |> @subject.call(init())
 
       assert conn.params == %{"a" => "1", "b" => "2"}
       assert conn.body_params == %{"b" => "2"}

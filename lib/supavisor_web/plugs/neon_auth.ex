@@ -92,8 +92,12 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
   defp reject_jwt_auth(conn) do
     case get_req_header(conn, "authorization") do
       ["Bearer " <> _ | _] ->
-        {:error, {:unauthorized, "JWT authentication is not supported on /sql; use Neon-Connection-String"}}
-      _ -> :ok
+        {:error,
+         {:unauthorized,
+          "JWT authentication is not supported on /sql; use Neon-Connection-String"}}
+
+      _ ->
+        :ok
     end
   end
 
