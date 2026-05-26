@@ -19,9 +19,6 @@ config :supavisor,
 # per-environment via runtime.exs / dev.exs / test.exs.
 config :supavisor, :http_sql,
   enabled: false,
-  pool_size: 5,
-  pool_max_total: 1000,
-  pool_idle_ttl_seconds: 60,
   max_query_bytes: 1_048_576,
   max_response_rows: 10_000,
   # Hard cap on the serialized JSON response size (bytes). Caps row-count

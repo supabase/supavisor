@@ -226,11 +226,6 @@ if config_env() != :test do
 
   config :supavisor, :http_sql,
     enabled: System.get_env("HTTP_SQL_ENABLED", "false") == "true",
-    pool_size: System.get_env("HTTP_SQL_POOL_SIZE", "5") |> String.to_integer(),
-    pool_max_total:
-      System.get_env("HTTP_SQL_POOL_MAX_TOTAL", "1000") |> String.to_integer(),
-    pool_idle_ttl_seconds:
-      System.get_env("HTTP_SQL_POOL_IDLE_TTL_SECONDS", "60") |> String.to_integer(),
     max_query_bytes:
       System.get_env("HTTP_SQL_MAX_QUERY_BYTES", "1048576") |> String.to_integer(),
     max_response_rows:

@@ -64,9 +64,6 @@ config :supavisor, Supavisor.FeatureFlag, %{
 
 config :supavisor, :http_sql,
   enabled: true,
-  pool_size: 2,
-  pool_max_total: 10,
-  pool_idle_ttl_seconds: 5,
   max_query_bytes: 65_536,
   max_response_rows: 1_000,
   max_response_bytes: 1_048_576,
