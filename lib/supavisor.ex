@@ -248,11 +248,6 @@ defmodule Supavisor do
   def del_all_cache(tenant) do
     Logger.info("Deleting all cache for tenant #{tenant}")
 
-    # Also evict any HTTP-SQL Postgrex pools held for this tenant.
-    # Otherwise admin actions (credential rotation, ban, feature-flag
-    # toggle) would still see up to idle-TTL of stale-pool service.
-    Supavisor.HttpSql.PoolRegistry.evict_tenant(tenant)
-
     del = fn key, acc ->
       result = Cachex.del(Supavisor.Cache, key)
       [%{inspect(key) => inspect(result)} | acc]

@@ -13,9 +13,9 @@ defmodule Supavisor.HttpSql.ErrorMapper do
 
   | Term                                                      | HTTP | code              |
   |-----------------------------------------------------------|------|-------------------|
-  | `%Postgrex.Error{postgres: %{code: :invalid_password}}`   | 401  | `"28P01"`         |
-  | `%Postgrex.Error{postgres: %{code: <auth-spec>}}`         | 401  | upstream code     |
-  | `%Postgrex.Error{postgres: <other>}`                      | 400  | upstream code     |
+  | `%PgError{code: "28P01"\|"28000"}`                        | 401  | upstream SQLSTATE |
+  | `%PgError{code: "42501"}`                                 | 403  | `"42501"`         |
+  | `%PgError{code: _}`                                       | 400  | upstream SQLSTATE |
   | `%DBConnection.ConnectionError{}` / `:timeout`            | 503  | `"connection_error"` |
   | `%Supavisor.Errors.CircuitBreakerError{}`                 | 503  | `"circuit_open"`  |
   | `{:row_limit_exceeded, n}`                                | 413  | `"row_limit_exceeded"` |
@@ -41,23 +41,6 @@ defmodule Supavisor.HttpSql.ErrorMapper do
   def to_neon_error(%PgError{} = err) do
     status = pg_status_from_code(err.code)
     {status, pg_error_to_body(err)}
-  end
-
-  # ---------------- Postgrex ----------------
-
-  def to_neon_error(%Postgrex.Error{postgres: %{code: code} = pg}) when is_map(pg) do
-    status =
-      cond do
-        code in [:invalid_password, :invalid_authorization_specification] -> 401
-        code == :insufficient_privilege -> 403
-        true -> 400
-      end
-
-    {status, pg_to_body(pg)}
-  end
-
-  def to_neon_error(%Postgrex.Error{message: message}) do
-    {500, %{"message" => message || "database error", "code" => "internal_error"}}
   end
 
   # ---------------- DBConnection / timeouts ----------------
@@ -175,33 +158,6 @@ defmodule Supavisor.HttpSql.ErrorMapper do
     }
     |> drop_nils()
   end
-
-  defp pg_to_body(pg) do
-    %{
-      "message" => Map.get(pg, :message, "database error"),
-      "code" => Map.get(pg, :pg_code) || atom_or_string(Map.get(pg, :code)),
-      "severity" => Map.get(pg, :severity),
-      "detail" => Map.get(pg, :detail),
-      "hint" => Map.get(pg, :hint),
-      "position" => Map.get(pg, :position),
-      "internalPosition" => Map.get(pg, :internal_position),
-      "internalQuery" => Map.get(pg, :internal_query),
-      "where" => Map.get(pg, :where),
-      "schema" => Map.get(pg, :schema),
-      "table" => Map.get(pg, :table),
-      "column" => Map.get(pg, :column),
-      "dataType" => Map.get(pg, :data_type),
-      "constraint" => Map.get(pg, :constraint),
-      "file" => Map.get(pg, :file),
-      "line" => Map.get(pg, :line),
-      "routine" => Map.get(pg, :routine)
-    }
-    |> drop_nils()
-  end
-
-  defp atom_or_string(nil), do: nil
-  defp atom_or_string(a) when is_atom(a), do: Atom.to_string(a)
-  defp atom_or_string(s) when is_binary(s), do: s
 
   defp format_blocked_until(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp format_blocked_until(other), do: to_string(other)

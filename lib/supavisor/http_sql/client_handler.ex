@@ -21,7 +21,8 @@ defmodule Supavisor.HttpSql.ClientHandler do
   and let `Supavisor.HttpSql.WireDecoder` turn the backend reply into a
   structured `%{columns, rows, command, num_rows}` map for the response
   builder. There is no `Postgrex.transaction` wrapper, no prepare round-trip,
-  no second loopback hop — exactly what we agreed with @v0idpwn for #152.
+  no second loopback hop, and no per-OID parameter coercion — exactly what
+  we agreed with @v0idpwn for #152.
 
   ## Callback contract
 

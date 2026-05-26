@@ -1,6 +1,7 @@
 defmodule Supavisor.HttpSql.ResponseBuilder do
   @moduledoc """
-  Builds the Neon `/sql` JSON response body.
+  Builds the Neon `/sql` JSON response body from the structured result
+  produced by `Supavisor.HttpSql.WireDecoder`.
 
   Single shape:
 
@@ -15,33 +16,18 @@ defmodule Supavisor.HttpSql.ResponseBuilder do
   Batch shape (one entry per query, server-side BEGIN..COMMIT):
 
       %{ "results" => [ <single>, <single>, ... ] }
-
-  Two input shapes are accepted while the migration off the old Postgrex pool
-  is in flight:
-
-    * `{%Postgrex.Query{}, %Postgrex.Result{}}` — produced by the legacy
-      executor (`Supavisor.HttpSql` facade backed by Postgrex).
-    * `%{columns, rows, command, num_rows}` — produced by
-      `Supavisor.HttpSql.ClientHandler` via `WireDecoder`, where `columns`
-      is `[%{name, oid}] | nil` (nil for statements that yield no rows).
-
-  The legacy clause will be removed once Postgrex is gone (issue #152).
   """
 
   alias Supavisor.HttpSql.ValueEncoder
 
-  @type postgrex_result :: {Postgrex.Query.t(), Postgrex.Result.t()}
-
   @type column :: %{name: String.t(), oid: pos_integer()}
 
-  @type wire_result :: %{
+  @type query_result :: %{
           required(:columns) => [column()] | nil,
           required(:rows) => [[binary() | nil]],
           required(:command) => String.t() | nil,
           required(:num_rows) => non_neg_integer()
         }
-
-  @type query_result :: postgrex_result() | wire_result()
 
   @type opts :: %{
           optional(:array_mode) => boolean
@@ -51,20 +37,7 @@ defmodule Supavisor.HttpSql.ResponseBuilder do
   Build a single-query response body.
   """
   @spec build_single(query_result, opts) :: map
-  def build_single(input, opts \\ %{})
-
-  def build_single({%Postgrex.Query{} = q, %Postgrex.Result{} = r}, opts) do
-    array_mode = Map.get(opts, :array_mode, false)
-    oids = q.result_oids || []
-    columns = q.columns || r.columns || []
-
-    %{
-      "command" => command(r.command),
-      "rowCount" => r.num_rows || 0,
-      "fields" => Enum.with_index(columns) |> Enum.map(&field_meta(&1, oids)),
-      "rows" => encode_rows(r.rows || [], columns, oids, array_mode)
-    }
-  end
+  def build_single(result, opts \\ %{})
 
   def build_single(%{rows: rows} = result, opts) when is_list(rows) do
     array_mode = Map.get(opts, :array_mode, false)
@@ -93,16 +66,6 @@ defmodule Supavisor.HttpSql.ResponseBuilder do
   defp command(nil), do: "UNKNOWN"
   defp command(atom) when is_atom(atom), do: atom |> Atom.to_string() |> String.upcase()
   defp command(binary) when is_binary(binary), do: String.upcase(binary)
-
-  defp field_meta({name, idx}, oids) do
-    %{
-      "name" => to_string(name),
-      "dataTypeID" => Enum.at(oids, idx) || 0,
-      "dataTypeSize" => -1,
-      "dataTypeModifier" => -1,
-      "format" => "text"
-    }
-  end
 
   defp field_meta_from_column({%{name: name, oid: oid}, _idx}) do
     %{

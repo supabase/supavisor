@@ -71,8 +71,8 @@ defmodule Supavisor.Integration.HttpSqlFacadeTest do
       assert [[nil]] = body["rows"]
     end
 
-    test "syntax error returns Postgrex.Error" do
-      assert {:error, %Postgrex.Error{postgres: %{code: :syntax_error}}} =
+    test "syntax error returns %PgError{}" do
+      assert {:error, %Supavisor.HttpSql.PgError{code: "42601"}} =
                HttpSql.execute(ctx(), "SELECT FORM 1", [])
     end
   end
@@ -110,7 +110,7 @@ defmodule Supavisor.Integration.HttpSqlFacadeTest do
     end
 
     test "rolls back on error inside the batch" do
-      assert {:error, %Postgrex.Error{postgres: %{code: code}}} =
+      assert {:error, %Supavisor.HttpSql.PgError{code: code}} =
                HttpSql.execute_batch(
                  ctx(),
                  [
@@ -121,7 +121,7 @@ defmodule Supavisor.Integration.HttpSqlFacadeTest do
                  %{}
                )
 
-      assert code in [:syntax_error, :undefined_column]
+      assert code in ["42601", "42703"]
     end
 
     test "invalid isolation header returns error before opening tx" do

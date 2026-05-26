@@ -31,9 +31,6 @@ defmodule Supavisor.Integration.HttpSqlE2ETest do
     cfg = Application.get_env(:supavisor, :http_sql, [])
     Application.put_env(:supavisor, :http_sql, Keyword.put(cfg, :enabled, true))
 
-    Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.HttpSql.PoolRegistry)
-    {:ok, _} = Supervisor.restart_child(Supavisor.Supervisor, Supavisor.HttpSql.PoolRegistry)
-
     on_exit(fn -> Application.put_env(:supavisor, :http_sql, cfg) end)
     :ok
   end
