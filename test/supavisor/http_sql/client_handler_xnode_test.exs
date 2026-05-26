@@ -42,18 +42,16 @@ defmodule Supavisor.HttpSql.ClientHandlerXnodeTest do
       assert {:error, {:remote_workers_unreachable, _reason}} = result
     end
 
-    test "remote get_local_workers raise propagates as unreachable" do
-      # `:erpc.call/4` on a local call also raises if the target function
-      # raises. We wrap any rescued exception as unreachable so the HTTP
-      # request gets a clean 503-mappable tuple instead of crashing the
-      # Plug task.
-      #
-      # In a real cluster the same code path is the one that catches
-      # `{:erpc, :noconnection}` when the peer dies mid-call. Both
-      # surfaces share the rescue.
+    test "remote get_local_workers returning {:error, _} is forwarded verbatim" do
+      # With the Supavisor application running, `:erpc.call(node(),
+      # Supavisor, :get_local_workers, [id])` executes locally and returns
+      # `{:error, %WorkerNotFoundError{}}` for an unknown tenant — no
+      # raise. `subscribe_remote/2` forwards that tuple as-is, so the HTTP
+      # caller sees the precise reason rather than the generic
+      # `:remote_workers_unreachable` wrapper used for raise/exit paths.
       result = ClientHandler.subscribe_remote(node(), test_id())
 
-      assert {:error, {:remote_workers_unreachable, _}} = result
+      assert {:error, %Supavisor.Errors.WorkerNotFoundError{}} = result
     end
   end
 
