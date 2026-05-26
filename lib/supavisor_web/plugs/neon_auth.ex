@@ -14,13 +14,12 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
 
       conn.assigns.http_sql_ctx = %{
         tenant_external_id: external_id,
-        user: db_user_alias,
+        user: full_user_with_external_id,    # e.g. "postgres.acme"
+        db_user: db_role,                    # e.g. "postgres"  (the role on Postgres side)
         password: plaintext_password,
         database: database,
         remote_ip: ip,
-        request_id: request_id_or_nil,
-        tenant: %Tenant{},
-        user_record: %User{}
+        request_id: request_id_or_nil
       }
 
   On failure: short-circuits with a Neon-shaped JSON error body via
@@ -54,13 +53,10 @@ defmodule SupavisorWeb.Plugs.NeonAuth do
          :ok <- check_feature_flag(tenant),
          :ok <- check_allow_list(tenant, ip),
          :ok <- verify_password(tenant, user, parsed.password, ip) do
-      # Only the fields downstream code actually reads. `tenant` and
-      # `user_record` were unused dead data on every request.
-      _ = user
-
       assign(conn, :http_sql_ctx, %{
         tenant_external_id: tenant.external_id,
         user: parsed.user,
+        db_user: user.db_user,
         password: parsed.password,
         database: parsed.database || tenant.db_database,
         remote_ip: ip,

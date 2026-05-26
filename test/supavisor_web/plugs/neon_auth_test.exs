@@ -78,6 +78,7 @@ defmodule SupavisorWeb.Plugs.NeonAuthTest do
       ctx = conn.assigns.http_sql_ctx
       assert ctx.tenant_external_id == "dev_tenant"
       assert ctx.user == "postgres.dev_tenant"
+      assert ctx.db_user == "postgres"
       assert ctx.password == "postgres"
       assert ctx.database == "supavisor_test"
       assert ctx.remote_ip == {127, 0, 0, 1}
