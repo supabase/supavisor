@@ -16,6 +16,16 @@ defmodule Supavisor.HttpSql.ResponseBuilderTest do
     }
   end
 
+  # The wire-shape input is produced by Supavisor.HttpSql.WireDecoder.
+  defp wire(cols, rows, command, num_rows \\ nil) do
+    %{
+      columns: Enum.map(cols, fn {name, oid} -> %{name: name, oid: oid} end),
+      rows: rows,
+      command: command,
+      num_rows: num_rows || length(rows)
+    }
+  end
+
   describe "build_single/2 array_mode=true" do
     test "encodes a simple SELECT" do
       assert %{
@@ -128,6 +138,66 @@ defmodule Supavisor.HttpSql.ResponseBuilderTest do
 
     test "empty batch" do
       assert %{"results" => []} = @subject.build_batch([])
+    end
+  end
+
+  describe "build_single/2 with wire-format input (Postgrex-free)" do
+    test "array_mode=true, simple SELECT" do
+      input = wire([{"n", 23}], [["42"]], "SELECT", 1)
+
+      assert %{
+               "command" => "SELECT",
+               "rowCount" => 1,
+               "fields" => [
+                 %{"name" => "n", "dataTypeID" => 23, "format" => "text", "dataTypeSize" => -1}
+               ],
+               "rows" => [["42"]]
+             } = @subject.build_single(input, %{array_mode: true})
+    end
+
+    test "array_mode=false maps columns to keyed objects" do
+      input = wire([{"id", 23}, {"name", 25}], [["1", "alice"]], "SELECT", 1)
+
+      assert %{"rows" => [%{"id" => "1", "name" => "alice"}]} =
+               @subject.build_single(input, %{array_mode: false})
+    end
+
+    test "preserves NULL columns as nil" do
+      input = wire([{"v", 25}], [[nil]], "SELECT", 1)
+      assert %{"rows" => [[nil]]} = @subject.build_single(input, %{array_mode: true})
+    end
+
+    test "non-row commands (UPDATE n) yield empty fields/rows" do
+      input = %{columns: nil, rows: [], command: "UPDATE", num_rows: 7}
+
+      assert %{
+               "command" => "UPDATE",
+               "rowCount" => 7,
+               "fields" => [],
+               "rows" => []
+             } = @subject.build_single(input)
+    end
+
+    test "build_batch wraps wire-format results" do
+      r1 = wire([{"a", 23}], [["1"]], "SELECT", 1)
+      r2 = wire([{"b", 25}], [["x"]], "SELECT", 1)
+
+      assert %{"results" => [first, second]} =
+               @subject.build_batch([r1, r2], %{array_mode: true})
+
+      assert first["rows"] == [["1"]]
+      assert second["rows"] == [["x"]]
+    end
+
+    test "mixed batch (postgrex + wire) still works during migration" do
+      legacy = {q(["a"], [23]), r(:select, [[1]], 1)}
+      new = wire([{"b", 25}], [["x"]], "SELECT", 1)
+
+      assert %{"results" => [first, second]} =
+               @subject.build_batch([legacy, new], %{array_mode: true})
+
+      assert first["rows"] == [["1"]]
+      assert second["rows"] == [["x"]]
     end
   end
 end
