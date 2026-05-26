@@ -68,7 +68,7 @@ db_rebuild:
 	docker-compose -f ./docker-compose.db.yml build
 	make db_start
 
-PGBENCH_USER ?= postgres.sys
+PGBENCH_USER ?= postgres.dev_tenant
 PGBENCH_PORT ?= 6543
 PGBENCH_RATE ?= 5000
 PGBENCH_DURATION ?= 60

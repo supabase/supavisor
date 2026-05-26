@@ -87,6 +87,16 @@ info "Building base release (v${FROM})"
 mix deps.get --only prod
 mix release supavisor --overwrite
 
+# On macOS, BEAM rejects +JPperf (Linux-only). Older releases hard-coded it                   
+# in vm.args before it was moved behind a Linux guard in env.sh.eex.                          
+if [ "$(uname -s)" = "Darwin" ]; then                                                         
+  VM_ARGS="_build/prod/rel/supavisor/releases/${FROM}/vm.args"                                
+  if [ -f "$VM_ARGS" ] && grep -q '+JPperf true' "$VM_ARGS"; then                             
+    info "Stripping +JPperf from ${VM_ARGS} (unsupported on macOS)"                           
+    sed -i '' '/+JPperf true/d' "$VM_ARGS"                                                    
+  fi                                                                                          
+fi  
+
 # ── 3. Start release & create tenant ────────────────────────────────
 info "Starting release in background"
 $REL_BIN start > /tmp/supavisor_upgrade_test.log 2>&1 &
