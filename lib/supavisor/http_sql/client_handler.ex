@@ -80,8 +80,8 @@ defmodule Supavisor.HttpSql.ClientHandler do
     id = build_id(ctx)
     secrets = build_secrets(ctx)
 
-    with {:ok, _sup} <- Supavisor.start_dist(id, secrets, log_level: nil),
-         {:ok, sub} <- Supavisor.subscribe(id),
+    with {:ok, sup} <- Supavisor.start_dist(id, secrets, log_level: nil),
+         {:ok, sub} <- subscribe(id, sup),
          {:ok, db_pid} <- pool_checkout(sub.workers.pool, timeout),
          {:ok, upstream_sock} <-
            db_checkout(db_pid, timeout),
@@ -119,8 +119,8 @@ defmodule Supavisor.HttpSql.ClientHandler do
     id = build_id(ctx)
     secrets = build_secrets(ctx)
 
-    with {:ok, _sup} <- Supavisor.start_dist(id, secrets, log_level: nil),
-         {:ok, sub} <- Supavisor.subscribe(id),
+    with {:ok, sup} <- Supavisor.start_dist(id, secrets, log_level: nil),
+         {:ok, sub} <- subscribe(id, sup),
          {:ok, db_pid} <- pool_checkout(sub.workers.pool, timeout),
          {:ok, upstream_sock} <- db_checkout(db_pid, timeout) do
       result = run_batch_body(upstream_sock, txn_sql, queries, timeout)
@@ -162,6 +162,52 @@ defmodule Supavisor.HttpSql.ClientHandler do
 
   defp build_secrets(ctx) do
     %PasswordSecrets{user: ctx.db_user, password: ctx.password}
+  end
+
+  # Subscribe this HTTP-request process to the tenant's pool Manager.
+  #
+  # If the TenantSupervisor (`sup`) lives on the local node we can use
+  # `Supavisor.subscribe/1` directly. Otherwise we fetch the remote node's
+  # workers via `:erpc.call` and subscribe through a raw GenServer.call —
+  # `Manager.subscribe/2` has a `node(manager) == node()` guard for safety,
+  # but the underlying GenServer.call works fine cross-node, and
+  # `Process.monitor/1` (which Manager uses to clean up DOWN subscribers)
+  # also monitors remote pids correctly.
+  #
+  # The TCP client_handler falls back to `:proxy` mode in this case because
+  # it expects to write/read raw PG bytes against a peer socket. The HTTP
+  # path doesn't have a peer socket to proxy to — backend bytes come back
+  # as Erlang messages over node-to-node distribution, which works for any
+  # node in the cluster.
+  defp subscribe(id, sup) do
+    if node(sup) == node() do
+      Supavisor.subscribe(id)
+    else
+      subscribe_remote(node(sup), id)
+    end
+  end
+
+  defp subscribe_remote(pool_node, id) do
+    case :erpc.call(pool_node, Supavisor, :get_local_workers, [id]) do
+      {:ok, workers} ->
+        case GenServer.call(workers.manager, {:subscribe, self()}) do
+          {:ok, ps, idle_timeout} ->
+            {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
+
+          {:error, _} = err ->
+            err
+        end
+
+      {:error, _} = err ->
+        err
+
+      other ->
+        {:error, {:remote_workers_unexpected, other}}
+    end
+  rescue
+    e in [ArgumentError] -> {:error, {:remote_workers_unreachable, e}}
+  catch
+    :exit, reason -> {:error, {:remote_workers_unreachable, reason}}
   end
 
   defp pool_checkout(pool, timeout) do
