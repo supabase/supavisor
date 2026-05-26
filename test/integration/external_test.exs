@@ -42,19 +42,20 @@ defmodule Supavisor.Integration.ExternalTest do
   describe "neondatabase/serverless.js — HTTP /sql" do
     @describetag library: "serverless.js (http)", suite: "js"
 
-    setup do
-      # The HTTP /sql endpoint is gated behind a global flag plus a
-      # per-tenant feature flag; flip both for the duration of the test.
-      previous = Application.get_env(:supavisor, :http_sql, [])
+    setup ctx do
+      # HTTP /sql is gated behind a global flag plus a per-tenant feature
+      # flag. The module-level `setup` already ran `create_instance/1`, so
+      # `ctx.external_id` is the just-created test tenant. Enable both for
+      # the duration of the test and restore on exit.
+      previous_global = Application.get_env(:supavisor, :http_sql, [])
 
       Application.put_env(
         :supavisor,
         :http_sql,
-        Keyword.put(previous, :enabled, true)
+        Keyword.put(previous_global, :enabled, true)
       )
 
-      tenant = Supavisor.Tenants.get_tenant_by_external_id("dev_tenant")
-
+      tenant = Supavisor.Tenants.get_tenant_by_external_id(ctx.external_id)
       previous_flags = tenant.feature_flags || %{}
 
       {:ok, _} =
@@ -63,9 +64,7 @@ defmodule Supavisor.Integration.ExternalTest do
         })
 
       on_exit(fn ->
-        Application.put_env(:supavisor, :http_sql, previous)
-
-        Supavisor.Tenants.update_tenant(tenant, %{feature_flags: previous_flags})
+        Application.put_env(:supavisor, :http_sql, previous_global)
       end)
 
       :ok
