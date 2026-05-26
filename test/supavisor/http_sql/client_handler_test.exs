@@ -101,9 +101,32 @@ defmodule Supavisor.HttpSql.ClientHandlerTest do
       assert {:ok, _} = ClientHandler.recv_until_rfq(1_000)
     end
 
-    test "surfaces :EXIT messages as db_handler_exit error" do
+    test "EXIT from the tracked db_pid → :db_handler_exit" do
+      fake_db = spawn(fn -> :ok end)
+      send(self(), {:EXIT, fake_db, :crashed})
+
+      assert {:error, {:db_handler_exit, :crashed}} =
+               ClientHandler.recv_until_rfq(1_000, fake_db)
+    end
+
+    test "EXIT from a non-tracked pid → :shutdown_signal" do
+      cowboy_supervisor = spawn(fn -> :ok end)
+      send(self(), {:EXIT, cowboy_supervisor, :shutdown})
+
+      # We pass our_db_pid as the tracked worker; the EXIT is from someone
+      # else (e.g. Cowboy during graceful node stop).
+      our_db_pid = spawn(fn -> :ok end)
+
+      assert {:error, {:shutdown_signal, :shutdown}} =
+               ClientHandler.recv_until_rfq(1_000, our_db_pid)
+    end
+
+    test "arity-1 form (no db_pid) classifies any EXIT as shutdown_signal" do
       send(self(), {:EXIT, self(), :shutdown})
-      assert {:error, {:db_handler_exit, :shutdown}} = ClientHandler.recv_until_rfq(1_000)
+
+      # nil db_pid means "we don't know which is ours" — any EXIT is treated
+      # as a shutdown signal so we don't blame DbHandler unfairly.
+      assert {:error, {:shutdown_signal, :shutdown}} = ClientHandler.recv_until_rfq(1_000)
     end
 
     test "returns :timeout if no chunks contain RFQ within deadline" do

@@ -135,10 +135,20 @@ defmodule Supavisor.HttpSql.WireDecoder do
   defp decode_data_row_cols(n, <<size::32-signed, val::binary-size(size), rest::binary>>, acc),
     do: decode_data_row_cols(n - 1, rest, [val | acc])
 
-  # CommandComplete payload is a null-terminated string. The tag word is the
-  # SQL command verb; for INSERT/UPDATE/DELETE/SELECT/COPY/MERGE/FETCH/MOVE the
-  # trailing number is the affected/returned row count. INSERT additionally
-  # carries the legacy OID before the count (`INSERT 0 5`).
+  # CommandComplete payload is a null-terminated string. Row-count-bearing
+  # commands carry the count as the last token; multi-word DDL commands
+  # like `CREATE TABLE` or `ALTER INDEX` don't.
+  #
+  # Shape per PG protocol docs:
+  #
+  #   * `INSERT 0 <n>`            — INSERT (legacy OID + row count)
+  #   * `MERGE 0 0 0 <n>`         — MERGE (PG17+)
+  #   * `<VERB> <n>`              — SELECT, UPDATE, DELETE, COPY, FETCH, MOVE
+  #   * `<VERB>`                  — BEGIN, COMMIT, ROLLBACK, SET, ...
+  #   * `<VERB> <NOUN>...`        — CREATE TABLE, DROP INDEX, ALTER VIEW, ...
+  #
+  # The two-token case is ambiguous (`UPDATE 5` vs `CREATE TABLE`); we
+  # disambiguate by trying to parse the last token as an integer.
   defp parse_command_complete(<<?C, _len::32, payload::binary>>) do
     string =
       case :binary.split(payload, <<0>>) do
@@ -147,10 +157,28 @@ defmodule Supavisor.HttpSql.WireDecoder do
       end
 
     case String.split(string, " ", trim: true) do
-      ["INSERT", _oid, n] -> {"INSERT", parse_int(n)}
-      [tag, n] -> {tag, parse_int(n)}
-      [tag] -> {tag, 0}
-      _ -> {string, 0}
+      ["INSERT", _oid, n] ->
+        {"INSERT", parse_int(n)}
+
+      ["MERGE", _ins, _upd, _del, n] ->
+        {"MERGE", parse_int(n)}
+
+      [tag] ->
+        {tag, 0}
+
+      tokens ->
+        # If the last token parses as an integer, the rest is the verb
+        # phrase. Otherwise the whole string is the verb (multi-word DDL).
+        last = List.last(tokens)
+
+        case Integer.parse(last) do
+          {n, ""} ->
+            verb = tokens |> Enum.drop(-1) |> Enum.join(" ")
+            {verb, n}
+
+          _ ->
+            {Enum.join(tokens, " "), 0}
+        end
     end
   end
 

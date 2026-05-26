@@ -94,6 +94,29 @@ defmodule Supavisor.HttpSql.WireDecoderTest do
       assert {:ok, %{command: "INSERT", num_rows: 5}} = WireDecoder.parse_execute_response(bin)
     end
 
+    test "MERGE command tag (PG17+) extracts trailing row count" do
+      bin =
+        bind_complete() <>
+          command_complete("MERGE 0 0 0 7") <>
+          ready_for_query()
+
+      assert {:ok, %{command: "MERGE", num_rows: 7}} = WireDecoder.parse_execute_response(bin)
+    end
+
+    test "multi-word DDL preserves the full verb phrase, count = 0" do
+      for {tag, expected_verb} <- [
+            {"CREATE TABLE", "CREATE TABLE"},
+            {"DROP INDEX", "DROP INDEX"},
+            {"ALTER TABLE", "ALTER TABLE"},
+            {"CREATE INDEX CONCURRENTLY", "CREATE INDEX CONCURRENTLY"}
+          ] do
+        bin = bind_complete() <> command_complete(tag) <> ready_for_query()
+        {:ok, result} = WireDecoder.parse_execute_response(bin)
+        assert result.command == expected_verb
+        assert result.num_rows == 0
+      end
+    end
+
     test "UPDATE / DELETE row count" do
       for tag <- ["UPDATE 7", "DELETE 3"] do
         bin =

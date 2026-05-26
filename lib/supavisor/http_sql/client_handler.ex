@@ -99,7 +99,7 @@ defmodule Supavisor.HttpSql.ClientHandler do
          {:ok, upstream_sock} <- db_checkout(db_pid, timeout) do
       result =
         with :ok <- send_extended_query(upstream_sock, sql, Params.stringify_list(params)),
-             {:ok, raw} <- recv_until_rfq(timeout),
+             {:ok, raw} <- recv_until_rfq(timeout, db_pid),
              {:ok, decoded} <- WireDecoder.parse_execute_response(raw) do
           {:ok, decoded}
         end
@@ -142,7 +142,7 @@ defmodule Supavisor.HttpSql.ClientHandler do
   defp do_run_batch(workers, txn_sql, queries, timeout) do
     with {:ok, db_pid} <- pool_checkout(workers.pool, timeout),
          {:ok, upstream_sock} <- db_checkout(db_pid, timeout) do
-      result = run_batch_body(upstream_sock, txn_sql, queries, timeout)
+      result = run_batch_body(upstream_sock, txn_sql, queries, timeout, db_pid)
       maybe_return_worker(workers.pool, db_pid, result)
       result
     end
@@ -255,11 +255,11 @@ defmodule Supavisor.HttpSql.ClientHandler do
   # Drive the whole batch over a single checked-out worker. BEGIN and
   # COMMIT/ROLLBACK are sent as simple Query messages; each user query is
   # an independent extended-query round-trip.
-  defp run_batch_body(upstream_sock, txn_sql, queries, timeout) do
-    with :ok <- simple_query(upstream_sock, "BEGIN", timeout),
-         :ok <- maybe_simple_query(upstream_sock, txn_sql, timeout),
-         {:ok, results} <- run_batch_queries(upstream_sock, queries, timeout) do
-      case simple_query(upstream_sock, "COMMIT", timeout) do
+  defp run_batch_body(upstream_sock, txn_sql, queries, timeout, db_pid) do
+    with :ok <- simple_query(upstream_sock, "BEGIN", timeout, db_pid),
+         :ok <- maybe_simple_query(upstream_sock, txn_sql, timeout, db_pid),
+         {:ok, results} <- run_batch_queries(upstream_sock, queries, timeout, db_pid) do
+      case simple_query(upstream_sock, "COMMIT", timeout, db_pid) do
         :ok -> {:ok, results}
         {:error, _} = err -> err
       end
@@ -268,28 +268,28 @@ defmodule Supavisor.HttpSql.ClientHandler do
         # Best-effort rollback. If the connection is gone, ROLLBACK will
         # fail too — that's fine, the connection's transaction will be
         # discarded by the backend on socket close.
-        _ = simple_query(upstream_sock, "ROLLBACK", timeout)
+        _ = simple_query(upstream_sock, "ROLLBACK", timeout, db_pid)
         err
     end
   end
 
-  defp maybe_simple_query(_sock, nil, _timeout), do: :ok
-  defp maybe_simple_query(sock, sql, timeout), do: simple_query(sock, sql, timeout)
+  defp maybe_simple_query(_sock, nil, _timeout, _db_pid), do: :ok
+  defp maybe_simple_query(sock, sql, timeout, db_pid), do: simple_query(sock, sql, timeout, db_pid)
 
-  defp simple_query(upstream_sock, sql, timeout) do
+  defp simple_query(upstream_sock, sql, timeout, db_pid) do
     with :ok <- HandlerHelpers.sock_send(upstream_sock, Wire.query(sql)),
-         {:ok, raw} <- recv_until_rfq(timeout),
+         {:ok, raw} <- recv_until_rfq(timeout, db_pid),
          {:ok, _result} <- WireDecoder.parse_execute_response(raw) do
       :ok
     end
   end
 
-  defp run_batch_queries(upstream_sock, queries, timeout) do
+  defp run_batch_queries(upstream_sock, queries, timeout, db_pid) do
     Enum.reduce_while(queries, {:ok, []}, fn %{sql: sql, params: params}, {:ok, acc} ->
       stringified = Params.stringify_list(params)
 
       with :ok <- send_extended_query(upstream_sock, sql, stringified),
-           {:ok, raw} <- recv_until_rfq(timeout),
+           {:ok, raw} <- recv_until_rfq(timeout, db_pid),
            {:ok, result} <- WireDecoder.parse_execute_response(raw) do
         {:cont, {:ok, [result | acc]}}
       else
@@ -325,15 +325,23 @@ defmodule Supavisor.HttpSql.ClientHandler do
   # accumulated buffer. `{:db_status, _}` is signalling-only — it tells us
   # the backend's RFQ has fired, but the bytes containing RFQ still arrive
   # as `:db_bytes`, so we keep reading until the buffer contains them.
+  #
+  # `db_pid`, when provided, lets us pattern-match EXIT signals from that
+  # specific worker. Other EXIT signals (e.g. Cowboy's :shutdown during
+  # graceful node-stop, our linked supervisor going down) get classified
+  # as `:shutdown_signal` rather than mis-labelled as a DbHandler crash.
+  # The arity-1 form passes `nil` for back-compat with tests that drive
+  # the loop with synthetic messages and don't have a real worker pid.
+  #
   # Exposed (with @doc false) so tests can drive the receive loop with
   # synthetic backend messages without booting a real DbHandler.
-  @spec recv_until_rfq(timeout()) :: {:ok, binary()} | {:error, term()}
-  def recv_until_rfq(timeout) do
+  @spec recv_until_rfq(timeout(), pid() | nil) :: {:ok, binary()} | {:error, term()}
+  def recv_until_rfq(timeout, db_pid \\ nil) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    recv_until_rfq(<<>>, deadline)
+    recv_until_rfq(<<>>, deadline, db_pid)
   end
 
-  defp recv_until_rfq(acc, deadline) do
+  defp recv_until_rfq(acc, deadline, db_pid) do
     remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
     receive do
@@ -343,14 +351,20 @@ defmodule Supavisor.HttpSql.ClientHandler do
         if WireDecoder.ready_for_query?(acc2) do
           {:ok, acc2}
         else
-          recv_until_rfq(acc2, deadline)
+          recv_until_rfq(acc2, deadline, db_pid)
         end
 
       {:db_status, _status} ->
-        recv_until_rfq(acc, deadline)
+        recv_until_rfq(acc, deadline, db_pid)
 
-      {:EXIT, _pid, reason} ->
+      {:EXIT, pid, reason} when pid == db_pid ->
         {:error, {:db_handler_exit, reason}}
+
+      {:EXIT, _other, reason} ->
+        # An EXIT from something other than our DbHandler worker — most
+        # commonly Cowboy's :shutdown during graceful node stop, or a
+        # supervisor cascading down. Don't blame DbHandler for it.
+        {:error, {:shutdown_signal, reason}}
     after
       remaining ->
         {:error, :timeout}
