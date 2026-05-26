@@ -2,6 +2,7 @@ defmodule Supavisor.HttpSql.ErrorMapperTest do
   use ExUnit.Case, async: true
 
   alias Supavisor.Errors.CircuitBreakerError
+  alias Supavisor.HttpSql.PgError
   @subject Supavisor.HttpSql.ErrorMapper
 
   describe "Postgrex.Error → Neon body" do
@@ -179,6 +180,65 @@ defmodule Supavisor.HttpSql.ErrorMapperTest do
       assert {500, body} = @subject.to_neon_error(fake_error_with_password)
       refute body["message"] =~ "SUPERSECRET"
       refute Map.has_key?(body, "detail")
+    end
+  end
+
+  describe "PgError → Neon body (wire-decoder source)" do
+    test "invalid_password (28P01) → 401" do
+      err =
+        PgError.exception(%{
+          "S" => "FATAL",
+          "C" => "28P01",
+          "M" => "password authentication failed for user \"u\""
+        })
+
+      assert {401, body} = @subject.to_neon_error(err)
+      assert body["code"] == "28P01"
+      assert body["severity"] == "FATAL"
+      assert body["message"] =~ "password authentication failed"
+    end
+
+    test "invalid_authorization_specification (28000) → 401" do
+      err = PgError.exception(%{"C" => "28000", "M" => "no auth"})
+      assert {401, _} = @subject.to_neon_error(err)
+    end
+
+    test "insufficient_privilege (42501) → 403" do
+      err = PgError.exception(%{"C" => "42501", "M" => "permission denied"})
+      assert {403, _} = @subject.to_neon_error(err)
+    end
+
+    test "syntax error (42601) → 400 with full field mapping" do
+      err =
+        PgError.exception(%{
+          "S" => "ERROR",
+          "C" => "42601",
+          "M" => "syntax error at or near \"FROM\"",
+          "P" => "8",
+          "F" => "scan.l",
+          "L" => "1158",
+          "R" => "scanner_yyerror"
+        })
+
+      assert {400, body} = @subject.to_neon_error(err)
+      assert body["code"] == "42601"
+      assert body["position"] == "8"
+      assert body["file"] == "scan.l"
+      assert body["line"] == "1158"
+      assert body["routine"] == "scanner_yyerror"
+    end
+
+    test "drops nil fields from body" do
+      err = PgError.exception(%{"C" => "23505", "M" => "duplicate key"})
+      {_, body} = @subject.to_neon_error(err)
+      refute Map.has_key?(body, "detail")
+      refute Map.has_key?(body, "hint")
+      assert body["message"] == "duplicate key"
+    end
+
+    test "unknown SQLSTATE → 400 (default)" do
+      err = PgError.exception(%{"C" => "XX001", "M" => "internal"})
+      assert {400, _} = @subject.to_neon_error(err)
     end
   end
 end

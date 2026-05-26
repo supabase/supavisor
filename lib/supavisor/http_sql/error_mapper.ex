@@ -25,6 +25,7 @@ defmodule Supavisor.HttpSql.ErrorMapper do
   """
 
   alias Supavisor.Errors.CircuitBreakerError
+  alias Supavisor.HttpSql.PgError
 
   @type body :: %{optional(String.t()) => term()}
   @type result :: {status :: pos_integer, body}
@@ -34,6 +35,13 @@ defmodule Supavisor.HttpSql.ErrorMapper do
   """
   @spec to_neon_error(term) :: result
   def to_neon_error(error)
+
+  # ---------------- PgError (Supavisor wire decoder) ----------------
+
+  def to_neon_error(%PgError{} = err) do
+    status = pg_status_from_code(err.code)
+    {status, pg_error_to_body(err)}
+  end
 
   # ---------------- Postgrex ----------------
 
@@ -134,6 +142,39 @@ defmodule Supavisor.HttpSql.ErrorMapper do
   end
 
   # ---------------------------------------------------------------------------
+
+  # Map a 5-character SQLSTATE to an HTTP status. Mirrors the Postgrex.Error
+  # branch above but works on raw strings from the wire.
+  defp pg_status_from_code("28P01"), do: 401
+  defp pg_status_from_code("28000"), do: 401
+  defp pg_status_from_code("42501"), do: 403
+  defp pg_status_from_code(_), do: 400
+
+  # Translate the single-letter ErrorResponse field codes into the camelCase
+  # keys the @neondatabase/serverless driver expects. See:
+  # https://www.postgresql.org/docs/current/protocol-error-fields.html
+  defp pg_error_to_body(%PgError{fields: fields}) do
+    %{
+      "message" => Map.get(fields, "M", "database error"),
+      "code" => Map.get(fields, "C"),
+      "severity" => Map.get(fields, "S") || Map.get(fields, "V"),
+      "detail" => Map.get(fields, "D"),
+      "hint" => Map.get(fields, "H"),
+      "position" => Map.get(fields, "P"),
+      "internalPosition" => Map.get(fields, "p"),
+      "internalQuery" => Map.get(fields, "q"),
+      "where" => Map.get(fields, "W"),
+      "schema" => Map.get(fields, "s"),
+      "table" => Map.get(fields, "t"),
+      "column" => Map.get(fields, "c"),
+      "dataType" => Map.get(fields, "d"),
+      "constraint" => Map.get(fields, "n"),
+      "file" => Map.get(fields, "F"),
+      "line" => Map.get(fields, "L"),
+      "routine" => Map.get(fields, "R")
+    }
+    |> drop_nils()
+  end
 
   defp pg_to_body(pg) do
     %{
