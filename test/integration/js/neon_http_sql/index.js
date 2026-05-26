@@ -1,17 +1,10 @@
 /**
- * Manual smoke test: runs `@neondatabase/serverless` against a live
- * Supavisor /sql endpoint.
+ * Drives @neondatabase/serverless against Supavisor's HTTP /sql endpoint as
+ * a smoke test for issue #152. Invoked from `external_test.exs` under the
+ * "neondatabase/serverless.js — HTTP /sql" describe block; the test sets
+ * `HTTP_SQL_ENDPOINT` and the `PG*` env vars for us.
  *
- * Prereqs (one-time, against a `make dev` instance):
- *
- *   HTTP_SQL_ENABLED=true make dev
- *
- *   curl -X PATCH http://localhost:4000/api/tenants/dev_tenant \
- *     -H "Authorization: Bearer dev" \
- *     -H 'Content-Type: application/json' \
- *     -d '{"tenant": {"feature_flags": {"http_sql": true}}}'
- *
- * Run:
+ * Can also be run manually:
  *
  *   cd test/integration/js && npm install   # once
  *
