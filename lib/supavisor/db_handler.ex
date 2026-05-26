@@ -40,7 +40,6 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
 
   alias Supavisor.{
-    ClientHandler,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
@@ -96,17 +95,33 @@ defmodule Supavisor.DbHandler do
   client socket when possible.
 
   Returns the server socket, which the client may write messages directly to.
+
+  Options:
+    * `:timeout` — gen_statem call timeout, default 15_000 ms.
+    * `:caller_module` — module whose `db_status/2` function the DbHandler will
+      call to signal `:ready_for_query` back to `caller`. Defaults to
+      `Supavisor.ClientHandler`. The HTTP /sql path passes its own module so
+      that DbHandler does not need to know about every kind of client.
   """
-  @spec checkout(pid(), Supavisor.sock(), pid(), Supavisor.mode(), timeout()) ::
+  @type checkout_opts :: [timeout: timeout(), caller_module: module()]
+  @spec checkout(pid(), Supavisor.sock(), pid(), Supavisor.mode(), checkout_opts() | timeout()) ::
           {:ok, Supavisor.sock()}
           | {:error, DbHandlerExitedError.t()}
           | {:error, CheckoutError.t()}
           | {:error, CheckoutTimeoutError.t()}
-  def checkout(pid, sock, caller, mode, timeout \\ 15_000) do
-    :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  def checkout(pid, sock, caller, mode, opts \\ [])
+
+  def checkout(pid, sock, caller, mode, timeout) when is_integer(timeout) or timeout == :infinity do
+    checkout(pid, sock, caller, mode, timeout: timeout)
+  end
+
+  def checkout(pid, sock, caller, mode, opts) when is_list(opts) do
+    timeout = Keyword.get(opts, :timeout, 15_000)
+    caller_module = Keyword.get(opts, :caller_module, Supavisor.ClientHandler)
+    :gen_statem.call(pid, {:checkout, sock, caller, caller_module}, timeout)
   catch
     :exit, {:timeout, _} ->
-      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: Keyword.get(opts, :timeout, 15_000)}}
 
     :exit, {reason, _} ->
       {:error, %DbHandlerExitedError{pid: pid, reason: reason}}
@@ -193,6 +208,7 @@ defmodule Supavisor.DbHandler do
       mode: config.mode,
       replica_type: config.replica_type,
       caller: nil,
+      caller_module: Supavisor.ClientHandler,
       client_sock: nil,
       terminating_error: nil,
       manager_ref: nil,
@@ -407,13 +423,21 @@ defmodule Supavisor.DbHandler do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
     if String.ends_with?(bin, Server.ready_for_query()) do
-      ClientHandler.db_status(data.caller, :ready_for_query)
+      data.caller_module.db_status(data.caller, :ready_for_query)
       data = handle_server_messages(bin, data)
 
       case data.mode do
         :transaction ->
           {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-          {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+
+          {:next_state, :idle,
+           %{
+             data
+             | stats: stats,
+               caller: nil,
+               client_sock: nil,
+               caller_module: Supavisor.ClientHandler
+           }}
 
         :proxy ->
           {:keep_state, data}
@@ -471,13 +495,13 @@ defmodule Supavisor.DbHandler do
     {:keep_state, data, {:reply, from, :ok}}
   end
 
-  def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
+  def handle_event({:call, from}, {:checkout, _sock, _caller, _cm}, :terminating_with_error, data) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
     error = %Supavisor.Errors.CheckoutError{pid: self(), postgres_error: data.terminating_error}
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
-  def handle_event({:call, from}, {:checkout, _sock, _caller}, :waiting_for_secrets, _data) do
+  def handle_event({:call, from}, {:checkout, _sock, _caller, _cm}, :waiting_for_secrets, _data) do
     Logger.debug("DbHandler: checkout call during waiting_for_secrets, replying with error")
 
     postgres_error = %{
@@ -491,7 +515,7 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
-  def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
+  def handle_event({:call, from}, {:checkout, sock, caller, caller_module}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     if state in [:idle, :busy] do
@@ -502,8 +526,8 @@ defmodule Supavisor.DbHandler do
         send(caller, {:parameter_status, bin_ps})
       end
 
-      {:next_state, :busy, %{data | client_sock: sock, caller: caller},
-       {:reply, from, {:ok, data.sock}}}
+      new_data = %{data | client_sock: sock, caller: caller, caller_module: caller_module}
+      {:next_state, :busy, new_data, {:reply, from, {:ok, data.sock}}}
     else
       {:keep_state_and_data, :postpone}
     end
