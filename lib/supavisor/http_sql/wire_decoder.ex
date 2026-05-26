@@ -35,32 +35,49 @@ defmodule Supavisor.HttpSql.WireDecoder do
   end
 
   @doc """
-  Returns `true` when the buffer contains at least one full `ReadyForQuery`
-  packet at its tail. Used by the receive loop to know when to stop reading
-  more `:db_bytes` chunks.
+  Returns `true` when the buffer ends with a complete `ReadyForQuery`
+  packet. The receive loop calls this after each `:db_bytes` chunk to
+  decide whether to stop accumulating.
+
+  ## Why we don't just substring-match on `<<?Z, 5::32>>`
+
+  A `DataRow` column whose text value happens to contain the byte
+  sequence `Z\\x00\\x00\\x00\\x05` (BYTEA hex dumps, certain text
+  payloads, JSON containing `Z` + 4 zero bytes + `0x05`) would false-
+  positive a substring scan and make the receive loop return a
+  truncated buffer. Instead we frame the buffer with
+  `Supavisor.Protocol.Server.decode/1` and check whether the last fully
+  decoded packet is `ready_for_query`.
   """
   @spec ready_for_query?(binary()) :: boolean()
   def ready_for_query?(bin) when is_binary(bin) do
-    case :binary.match(bin, <<?Z, 5::32>>) do
-      :nomatch ->
-        false
+    case safe_decode(bin) do
+      {:ok, pkts, <<>>} ->
+        match?(%{tag: :ready_for_query}, List.last(pkts))
 
-      {pos, len} ->
-        # ReadyForQuery is the 5-byte header (matched) + 1-byte status.
-        byte_size(bin) >= pos + len + 1
+      _ ->
+        false
     end
   end
 
   # ---------------------------------------------------------------------------
 
   defp decode(bin) do
-    {:ok, pkts, rest} = Server.decode(bin)
-
-    if rest == <<>> do
-      {:ok, pkts, rest}
-    else
-      {:error, :incomplete}
+    case safe_decode(bin) do
+      {:ok, pkts, <<>>} -> {:ok, pkts, <<>>}
+      {:ok, _pkts, _rest} -> {:error, :incomplete}
+      {:error, _} = err -> err
     end
+  end
+
+  # `Supavisor.Protocol.Server.decode/1` may raise on malformed input
+  # (e.g. a packet header whose declared length is < 4, producing a
+  # negative `binary-size`). Wrap it so callers always get a tagged tuple.
+  defp safe_decode(bin) do
+    {:ok, pkts, rest} = Server.decode(bin)
+    {:ok, pkts, rest}
+  rescue
+    e -> {:error, {:bad_packet, e}}
   end
 
   defp walk_execute([], acc), do: {:ok, acc}

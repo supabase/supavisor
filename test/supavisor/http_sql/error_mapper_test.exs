@@ -143,4 +143,16 @@ defmodule Supavisor.HttpSql.ErrorMapperTest do
       assert {400, _} = @subject.to_neon_error(err)
     end
   end
+
+  describe "wire-decoder protocol errors" do
+    test "{:bad_packet, _} → 502" do
+      assert {502, body} = @subject.to_neon_error({:bad_packet, %ArgumentError{}})
+      assert body["code"] == "bad_backend_packet"
+    end
+
+    test ":incomplete → 502" do
+      assert {502, body} = @subject.to_neon_error(:incomplete)
+      assert body["code"] == "incomplete_backend_packet"
+    end
+  end
 end

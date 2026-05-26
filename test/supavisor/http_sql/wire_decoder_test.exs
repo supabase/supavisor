@@ -134,13 +134,73 @@ defmodule Supavisor.HttpSql.WireDecoderTest do
   end
 
   describe "ready_for_query?/1" do
-    test "true once the suffix appears" do
+    test "true once a complete buffer ending in RFQ is received" do
       assert WireDecoder.ready_for_query?(<<?2, 4::32>> <> ready_for_query())
     end
 
     test "false when buffer ends mid-packet" do
       refute WireDecoder.ready_for_query?(<<?2, 4::32>>)
       refute WireDecoder.ready_for_query?(<<?Z, 5::32>>)
+    end
+
+    # CRIT-3 regression: a DataRow column whose text value contains the byte
+    # sequence `Z\x00\x00\x00\x05` used to false-positive a substring scan
+    # for `<<?Z, 5::32>>`, making the receive loop return a truncated buffer
+    # mid-query. The framed-decode replacement walks complete packets and
+    # only returns true when the LAST decoded packet is :ready_for_query.
+    test "false when a DataRow column embeds the RFQ byte sequence" do
+      # A 5-byte column value `Z\x00\x00\x00\x05` — would have triggered
+      # the old substring match at offset (header + value-length). Wrap it
+      # in a fully-framed DataRow followed by NOTHING (no RFQ).
+      poison = <<?Z, 0, 0, 0, 5>>
+
+      bin =
+        bind_complete() <>
+          row_description([{"col", 25}]) <>
+          data_row([poison])
+
+      # No RFQ at the tail → must NOT be considered ready.
+      refute WireDecoder.ready_for_query?(bin)
+    end
+
+    test "true even after a poison-bearing DataRow when RFQ does arrive" do
+      poison = <<?Z, 0, 0, 0, 5, "more">>
+
+      bin =
+        bind_complete() <>
+          row_description([{"col", 25}]) <>
+          data_row([poison]) <>
+          command_complete("SELECT 1") <>
+          ready_for_query()
+
+      assert WireDecoder.ready_for_query?(bin)
+
+      # And the full decode round-trips the value correctly.
+      assert {:ok, %{rows: [[^poison]]}} = WireDecoder.parse_execute_response(bin)
+    end
+
+    test "malformed packet header surfaces safely (no raise)" do
+      # Packet `Z` with length 1 — payload_len would be -3, causing a
+      # negative binary-size match on the raw stream. safe_decode catches
+      # the raise and we return false.
+      refute WireDecoder.ready_for_query?(<<?Z, 1::32, ?I>>)
+    end
+  end
+
+  describe "parse_execute_response/1 robustness" do
+    # A `Z` header claiming length 1 (payload_len = -3) — Server.decode_pkt's
+    # binary-size match fails (rather than raises) on modern OTP, so the
+    # outer decode returns the input as `rest` and we surface :incomplete.
+    test "malformed length header surfaces as :incomplete (no raise)" do
+      assert {:error, :incomplete} =
+               WireDecoder.parse_execute_response(<<?Z, 1::32, ?I>>)
+    end
+
+    # Defensive: any input that gets through framing but isn't a real
+    # response stream must not crash the request process. The fallback
+    # path is exercised by feeding partial-frame bytes.
+    test "partial header (4 bytes) returns :incomplete" do
+      assert {:error, :incomplete} = WireDecoder.parse_execute_response(<<?Z, 0, 0, 0>>)
     end
   end
 end

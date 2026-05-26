@@ -21,6 +21,7 @@ defmodule Supavisor.HttpSql.ErrorMapper do
   | `{:row_limit_exceeded, n}`                                | 413  | `"row_limit_exceeded"` |
   | `{:params_encoding, reason}`                              | 400  | `"params_encoding"` |
   | `{:malformed_request, reason}`                            | 400  | `"malformed_request"` |
+  | `{:bad_packet, _}` / `:incomplete`                        | 502  | `"bad_backend_packet"` |
   | other / unknown                                           | 500  | `"internal_error"` |
   """
 
@@ -109,6 +110,25 @@ defmodule Supavisor.HttpSql.ErrorMapper do
 
   def to_neon_error({:feature_disabled, _}) do
     {404, %{"message" => "endpoint not enabled", "code" => "feature_disabled"}}
+  end
+
+  # ---------------- Wire decoder protocol errors ----------------
+  #
+  # `:bad_packet` is what `WireDecoder.safe_decode/1` returns when
+  # `Supavisor.Protocol.Server.decode/1` raises on a malformed backend
+  # header (e.g. a declared payload length < 0). `:incomplete` is the
+  # symmetric case where the buffer has trailing bytes that don't form a
+  # full packet — should be rare since the receive loop only stops when
+  # ready_for_query?/1 says the buffer is well-framed.
+  #
+  # Both indicate something upstream of us misbehaved; surface as 502.
+
+  def to_neon_error({:bad_packet, _}) do
+    {502, %{"message" => "malformed backend response", "code" => "bad_backend_packet"}}
+  end
+
+  def to_neon_error(:incomplete) do
+    {502, %{"message" => "truncated backend response", "code" => "incomplete_backend_packet"}}
   end
 
   # ---------------- Fallback ----------------
