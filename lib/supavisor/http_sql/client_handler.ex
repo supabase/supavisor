@@ -187,7 +187,17 @@ defmodule Supavisor.HttpSql.ClientHandler do
     end
   end
 
-  defp subscribe_remote(pool_node, id) do
+  @doc false
+  # Public-with-`@doc false` so tests can exercise the rescue/catch
+  # branches without staging a real second-node deployment.
+  #
+  # `:erpc.call/4` raises `ErlangError` (or `:exit`) on every failure path
+  # we care about — `{:erpc, :noconnection}` for unreachable nodes,
+  # `{:erpc, :badarg}` for malformed node names, and `{:exception, e, _}`
+  # for raises on the remote side. Catch the whole shape so the HTTP
+  # request always gets a tagged error tuple instead of an uncaught
+  # exception that would crash the Plug task and dump conn state.
+  def subscribe_remote(pool_node, id) do
     case :erpc.call(pool_node, Supavisor, :get_local_workers, [id]) do
       {:ok, workers} ->
         case GenServer.call(workers.manager, {:subscribe, self()}) do
@@ -205,7 +215,7 @@ defmodule Supavisor.HttpSql.ClientHandler do
         {:error, {:remote_workers_unexpected, other}}
     end
   rescue
-    e in [ArgumentError] -> {:error, {:remote_workers_unreachable, e}}
+    e -> {:error, {:remote_workers_unreachable, e}}
   catch
     :exit, reason -> {:error, {:remote_workers_unreachable, reason}}
   end
