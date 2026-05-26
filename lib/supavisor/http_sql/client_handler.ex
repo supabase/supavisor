@@ -34,7 +34,7 @@ defmodule Supavisor.HttpSql.ClientHandler do
   """
 
   alias Supavisor.HandlerHelpers
-  alias Supavisor.HttpSql.{Params, Wire, WireDecoder}
+  alias Supavisor.HttpSql.{Params, PgError, Wire, WireDecoder}
   alias Supavisor.Secrets.PasswordSecrets
 
   require Supavisor
@@ -75,29 +75,37 @@ defmodule Supavisor.HttpSql.ClientHandler do
   def run_query(ctx, sql, params, opts \\ []) when is_binary(sql) and is_list(params) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
 
+    # DbHandler.checkout/5 process-links the calling process. Without
+    # trap_exit, a DbHandler crash mid-query would kill the Plug task
+    # before ErrorMapper could turn the failure into a 5xx response.
     Process.flag(:trap_exit, true)
 
     id = build_id(ctx)
     secrets = build_secrets(ctx)
 
     with {:ok, sup} <- Supavisor.start_dist(id, secrets, log_level: nil),
-         {:ok, sub} <- subscribe(id, sup),
-         {:ok, db_pid} <- pool_checkout(sub.workers.pool, timeout),
-         {:ok, upstream_sock} <-
-           db_checkout(db_pid, timeout),
-         :ok <- send_extended_query(upstream_sock, sql, Params.stringify_list(params)),
-         {:ok, raw} <- recv_until_rfq(timeout),
-         {:ok, result} <- WireDecoder.parse_execute_response(raw) do
-      return_worker(sub.workers.pool, db_pid)
-      flush_db_mailbox()
-      {:ok, result}
-    else
-      {:error, _} = err ->
-        # Best-effort cleanup. We do not know which step failed so we try
-        # every release path; each one is a no-op when there's nothing to
-        # release.
+         {:ok, sub} <- subscribe(id, sup) do
+      try do
+        do_run_query(sub.workers, sql, params, timeout)
+      after
+        unsubscribe(sub.workers.manager)
         flush_db_mailbox()
-        err
+      end
+    end
+  end
+
+  defp do_run_query(workers, sql, params, timeout) do
+    with {:ok, db_pid} <- pool_checkout(workers.pool, timeout),
+         {:ok, upstream_sock} <- db_checkout(db_pid, timeout) do
+      result =
+        with :ok <- send_extended_query(upstream_sock, sql, Params.stringify_list(params)),
+             {:ok, raw} <- recv_until_rfq(timeout),
+             {:ok, decoded} <- WireDecoder.parse_execute_response(raw) do
+          {:ok, decoded}
+        end
+
+      maybe_return_worker(workers.pool, db_pid, result)
+      result
     end
   end
 
@@ -114,23 +122,29 @@ defmodule Supavisor.HttpSql.ClientHandler do
   def run_batch(ctx, txn_sql, queries, opts \\ []) when is_list(queries) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
 
+    # See `run_query/4` — trap_exit is required because DbHandler links us.
     Process.flag(:trap_exit, true)
 
     id = build_id(ctx)
     secrets = build_secrets(ctx)
 
     with {:ok, sup} <- Supavisor.start_dist(id, secrets, log_level: nil),
-         {:ok, sub} <- subscribe(id, sup),
-         {:ok, db_pid} <- pool_checkout(sub.workers.pool, timeout),
+         {:ok, sub} <- subscribe(id, sup) do
+      try do
+        do_run_batch(sub.workers, txn_sql, queries, timeout)
+      after
+        unsubscribe(sub.workers.manager)
+        flush_db_mailbox()
+      end
+    end
+  end
+
+  defp do_run_batch(workers, txn_sql, queries, timeout) do
+    with {:ok, db_pid} <- pool_checkout(workers.pool, timeout),
          {:ok, upstream_sock} <- db_checkout(db_pid, timeout) do
       result = run_batch_body(upstream_sock, txn_sql, queries, timeout)
-      return_worker(sub.workers.pool, db_pid)
-      flush_db_mailbox()
+      maybe_return_worker(workers.pool, db_pid, result)
       result
-    else
-      {:error, _} = err ->
-        flush_db_mailbox()
-        err
     end
   end
 
@@ -347,6 +361,32 @@ defmodule Supavisor.HttpSql.ClientHandler do
   # RFQ; poolboy then sees the worker as free again.
   defp return_worker(pool, db_pid) do
     :poolboy.checkin(pool, db_pid)
+  catch
+    :exit, _ -> :ok
+  end
+
+  # The DbHandler worker is only safe to return to the pool when we've
+  # received a `ReadyForQuery` from the backend (so DbHandler is back in
+  # `:idle` and `client_sock` is cleared). Two paths satisfy that:
+  #
+  #   * `{:ok, _}` — happy path, RFQ arrived.
+  #   * `{:error, %PgError{}}` — backend returned ErrorResponse + RFQ;
+  #     the protocol is back to idle even though our query failed.
+  #
+  # For every other failure (timeout, dropped connection, malformed
+  # backend frames) we DON'T checkin — leave the worker in whatever
+  # broken state it's in and let `Process.link` from DbHandler propagate
+  # the EXIT so poolboy spawns a fresh worker.
+  defp maybe_return_worker(pool, db_pid, {:ok, _}), do: return_worker(pool, db_pid)
+  defp maybe_return_worker(pool, db_pid, {:error, %PgError{}}), do: return_worker(pool, db_pid)
+  defp maybe_return_worker(_pool, _db_pid, _other), do: :ok
+
+  # Best-effort: the Manager may already be dead (supervisor restart, or
+  # we may be inside a graceful-shutdown cascade). The Manager's :DOWN
+  # handler cleans up its own ETS entries; we just stop counting against
+  # the live subscriber set early so warm-pool idle-shutdown is responsive.
+  defp unsubscribe(manager) do
+    Supavisor.Manager.unsubscribe(manager)
   catch
     :exit, _ -> :ok
   end
