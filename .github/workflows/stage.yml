@@ -7,24 +7,24 @@ on:
   workflow_dispatch:
     inputs:
       upgrade_from:
-        description: 'Base version on VM (last hard deploy). Must match an existing v<tag>.'
+        description: 'Mirrors {upgrade_from, ...} in staging.config. Last hard-deployed staging version (must match an existing v<tag>). e.g. 2.9.4'
         required: true
         type: string
       upgrade_previous:
-        description: 'Current version on VM (includes prior soft deploys). Usually same as upgrade_from. Must match an existing v<tag>.'
+        description: 'Mirrors {upgrade_previous, ...} in staging.config. Version currently running on staging, including any prior soft deploys. e.g. 2.9.5'
         required: true
         type: string
       upgrade_to:
-        description: 'Target version. Must match an existing v<tag>. Must differ from upgrade_previous for soft deploys.'
+        description: 'Mirrors {upgrade_to, ...} in staging.config. Target version to deploy (must match an existing v<tag>, and differ from upgrade_previous for soft deploys). e.g. 2.9.6-rc.0'
         required: true
         type: string
       regions:
-        description: 'Comma-separated region list, or "all".'
+        description: 'Mirrors {regions, [...]} in staging.config. Comma-separated region list, or "all". e.g. all | us-east-1 | us-east-1,eu-west-2'
         required: true
         type: string
         default: 'all'
       type:
-        description: 'Deploy type.'
+        description: 'Mirrors {type, ...} in staging.config. soft = release upgrade, hard = full restart.'
         required: true
         type: choice
         default: 'soft'
