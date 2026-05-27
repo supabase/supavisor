@@ -4,6 +4,33 @@ on:
   push:
     branches:
       - release_stage
+  workflow_dispatch:
+    inputs:
+      upgrade_from:
+        description: 'Base version on VM (last hard deploy). Must match an existing v<tag>.'
+        required: true
+        type: string
+      upgrade_previous:
+        description: 'Current version on VM (includes prior soft deploys). Usually same as upgrade_from. Must match an existing v<tag>.'
+        required: true
+        type: string
+      upgrade_to:
+        description: 'Target version. Must match an existing v<tag>. Must differ from upgrade_previous for soft deploys.'
+        required: true
+        type: string
+      regions:
+        description: 'Comma-separated region list, or "all".'
+        required: true
+        type: string
+        default: 'all'
+      type:
+        description: 'Deploy type.'
+        required: true
+        type: choice
+        default: 'soft'
+        options:
+          - soft
+          - hard
 env:
   INCLUDE_ERTS: true
   MIX_ENV: prod
@@ -16,6 +43,12 @@ jobs:
       packages: write
       id-token: write
     steps:
+      - name: Guard - dispatch must target release_stage
+        if: github.event_name == 'workflow_dispatch' && github.ref_name != 'release_stage'
+        run: |
+          echo "::error::This workflow must be dispatched against the 'release_stage' branch."
+          echo "::error::On the Actions page, open 'Run workflow' and pick 'release_stage' in the 'Use workflow from' dropdown."
+          exit 1
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set upgrade variables

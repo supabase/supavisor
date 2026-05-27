@@ -64,6 +64,7 @@ defmodule Supavisor.DbHandler do
   @cleanup_buffer_limit 65_536
   @connect_cooldown_ms 2_500
   @authentication_timeout_ms 15_000
+  @tls_send_chunk_size 8192
 
   @auth_error_actions %{
     "28P01" => {:keep_pool, :invalidate_secrets},
@@ -678,10 +679,7 @@ defmodule Supavisor.DbHandler do
   defp encode_and_forward_error(message, data) do
     case data do
       %{client_sock: sock} when not is_nil(sock) ->
-        HandlerHelpers.sock_send(
-          sock,
-          Server.encode_error_message(message)
-        )
+        client_send(data, Server.encode_error_message(message))
 
       _other ->
         :noop
@@ -919,7 +917,7 @@ defmodule Supavisor.DbHandler do
     {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
 
     if to_send != [] do
-      HandlerHelpers.sock_send(data.client_sock, to_send)
+      client_send(data, to_send)
     end
 
     updated_data
@@ -927,9 +925,44 @@ defmodule Supavisor.DbHandler do
 
   # hot code reload compat: remove after full rollout
   defp handle_server_messages(bin, data) do
-    HandlerHelpers.sock_send(data.client_sock, bin)
+    client_send(data, bin)
     data
   end
+
+  # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's
+  # buffer that pqReadData doesn't drain; the client then polls the socket
+  # for data that's already arrived. Keeping records within libpq's 8KB
+  # input buffer avoids it.
+  # https://www.postgresql.org/message-id/flat/57d1e8b1-d016-4cea-9b60-63cbdb40eb81%40iki.fi
+  defp client_send(%{client_sock: {:ssl, _} = sock}, payload) do
+    chunk_send(:erlang.iolist_to_iovec(payload), sock)
+  end
+
+  defp client_send(%{client_sock: sock}, payload) do
+    HandlerHelpers.sock_send(sock, payload)
+  end
+
+  defp chunk_send([], _sock), do: :ok
+
+  defp chunk_send(iovec, sock) do
+    {chunk, rest} = take_chunk(iovec, @tls_send_chunk_size, [])
+
+    case HandlerHelpers.sock_send(sock, chunk) do
+      :ok -> chunk_send(rest, sock)
+      err -> err
+    end
+  end
+
+  defp take_chunk([bin | rest], remaining, acc) when byte_size(bin) <= remaining do
+    take_chunk(rest, remaining - byte_size(bin), [bin | acc])
+  end
+
+  defp take_chunk([bin | rest], remaining, acc) do
+    <<head::binary-size(remaining), tail::binary>> = bin
+    {:lists.reverse([head | acc]), [tail | rest]}
+  end
+
+  defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
   # bind to the socket. If it doesn't, we must send the parse pkt first.
