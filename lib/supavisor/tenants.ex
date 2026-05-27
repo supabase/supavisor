@@ -247,6 +247,10 @@ defmodule Supavisor.Tenants do
         )
         |> Repo.all()
         |> Enum.reduce_while({nil, []}, &process_cluster/2)
+        |> case do
+          {_, replicas} when is_list(replicas) -> replicas
+          err -> err
+        end
 
       _ ->
         {:error, :not_found}
