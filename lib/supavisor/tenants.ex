@@ -236,24 +236,25 @@ defmodule Supavisor.Tenants do
 
   @spec get_cluster_config(String.t(), String.t()) :: [ClusterTenants.t()] | {:error, any()}
   def get_cluster_config(external_id, user) do
-    case Repo.all(ClusterTenants, cluster_alias: external_id) do
-      [%{cluster_alias: cluster_alias, active: true} | _] ->
-        user = from(u in User, where: u.db_user == ^user)
-        tenant = from(t in Tenant, preload: [users: ^user])
+    user = from(u in User, where: u.db_user == ^user)
+    tenant = from(t in Tenant, preload: [users: ^user])
 
-        from(ct in ClusterTenants,
-          where: ct.cluster_alias == ^cluster_alias and ct.active == true,
-          preload: [tenant: ^tenant]
-        )
-        |> Repo.all()
+    from(ct in ClusterTenants,
+      where: ct.cluster_alias == ^external_id and ct.active == true,
+      preload: [tenant: ^tenant]
+    )
+    |> Repo.all()
+    |> case do
+      [] ->
+        {:error, :not_found}
+
+      rows ->
+        rows
         |> Enum.reduce_while({nil, []}, &process_cluster/2)
         |> case do
           {_, replicas} when is_list(replicas) -> replicas
           err -> err
         end
-
-      _ ->
-        {:error, :not_found}
     end
   end
 
@@ -263,6 +264,7 @@ defmodule Supavisor.Tenants do
     case cluster.tenant.users do
       [_user] when type == cluster.tenant.require_user -> {:cont, {type, [cluster | acc]}}
       [_user] -> {:halt, {:error, {:config, :different_users, cluster.tenant.external_id}}}
+      [] -> {:halt, {:error, {:config, :no_users, cluster.tenant.external_id}}}
       _ -> {:halt, {:error, {:config, :multiple_users, cluster.tenant.external_id}}}
     end
   end
