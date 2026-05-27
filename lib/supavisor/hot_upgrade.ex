@@ -44,9 +44,10 @@ defmodule Supavisor.HotUpgrade do
     [
       {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}},
       {:apply, {Supavisor.HotUpgrade, :cleanup_connect_backoff, []}},
+      {:apply, {Supavisor.HotUpgrade, :restart_prom_ex, []}},
       {:delete_module, Supavisor.ConnectBackoff.Janitor},
       {:delete_module, Supavisor.ConnectBackoff}
-    ] ++ appup ++ [{:apply, {__MODULE__, :restart_prom_ex, []}}]
+    ] ++ appup
   end
 
   def remove_access_log_handler do
