@@ -69,8 +69,8 @@ jobs:
             VER_RE='^[0-9A-Za-z._+-]+$'
             REG_RE='^[0-9a-z-]+$'
             for pair in "upgrade_from=$INPUT_FROM" "upgrade_previous=$INPUT_PREVIOUS" "upgrade_to=$INPUT_TO"; do
-              name="${pair%%=*}"
-              val="${pair#*=}"
+              name="${pair%%=*}"  # everything before the first '='
+              val="${pair#*=}"    # everything after the first '='
               if ! [[ "$val" =~ $VER_RE ]]; then
                 echo "::error::input $name='$val' fails allowlist $VER_RE"
                 exit 1
