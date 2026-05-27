@@ -64,15 +64,17 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Validate user-controlled inputs against an allowlist before they
-            # land in $GITHUB_ENV or downstream filenames.
-            VER_RE='^[0-9A-Za-z._+-]+$'
+            # Validate user-controlled inputs before they land in $GITHUB_ENV
+            # or downstream filenames. Versions must point at an existing tag;
+            # regions are checked against an allowlist.
             REG_RE='^[0-9a-z-]+$'
+            # actions/checkout is shallow by default and skips tags.
+            git fetch --tags origin --quiet
             for pair in "upgrade_from=$INPUT_FROM" "upgrade_previous=$INPUT_PREVIOUS" "upgrade_to=$INPUT_TO"; do
               name="${pair%%=*}"  # everything before the first '='
               val="${pair#*=}"    # everything after the first '='
-              if ! [[ "$val" =~ $VER_RE ]]; then
-                echo "::error::input $name='$val' fails allowlist $VER_RE"
+              if ! git rev-parse --verify --quiet "refs/tags/v$val" >/dev/null; then
+                echo "::error::input $name='$val' has no matching git tag v$val"
                 exit 1
               fi
             done
