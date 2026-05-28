@@ -4,6 +4,33 @@ on:
   push:
     branches:
       - release_stage
+  workflow_dispatch:
+    inputs:
+      upgrade_from:
+        description: 'Mirrors {upgrade_from, ...} in staging.config. Last hard-deployed staging version (must match an existing v<tag>). e.g. 2.9.4'
+        required: true
+        type: string
+      upgrade_previous:
+        description: 'Mirrors {upgrade_previous, ...} in staging.config. Version currently running on staging, including any prior soft deploys. e.g. 2.9.5'
+        required: true
+        type: string
+      upgrade_to:
+        description: 'Mirrors {upgrade_to, ...} in staging.config. Target version to deploy (must match an existing v<tag>, and differ from upgrade_previous for soft deploys). e.g. 2.9.6-rc.0'
+        required: true
+        type: string
+      regions:
+        description: 'Mirrors {regions, [...]} in staging.config. Comma-separated region list, or "all". e.g. all | us-east-1 | us-east-1,eu-west-2'
+        required: true
+        type: string
+        default: 'all'
+      type:
+        description: 'Mirrors {type, ...} in staging.config. soft = release upgrade, hard = full restart.'
+        required: true
+        type: choice
+        default: 'soft'
+        options:
+          - soft
+          - hard
 env:
   INCLUDE_ERTS: true
   MIX_ENV: prod
@@ -25,13 +52,76 @@ jobs:
           otp-version: "27.2.1"
           elixir-version: "1.18.2"
       - name: Set upgrade variables
+        env:
+          # Pass dispatch inputs via env (not direct ${{ }} interpolation) to
+          # avoid shell injection. See
+          # https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
+          INPUT_FROM: ${{ inputs.upgrade_from }}
+          INPUT_PREVIOUS: ${{ inputs.upgrade_previous }}
+          INPUT_TO: ${{ inputs.upgrade_to }}
+          INPUT_TYPE: ${{ inputs.type }}
+          INPUT_REGIONS: ${{ inputs.regions }}
         run: |
-          elixir ./deploy/upgrade/handler.exs all_keys ./deploy/upgrade/staging.config
-          echo "RELEASE_BASE=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_previous ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
-          echo "TYPE=$(elixir ./deploy/upgrade/handler.exs type ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Validate user-controlled inputs before they land in $GITHUB_ENV
+            # or downstream filenames. Versions must point at an existing tag;
+            # regions are checked against an allowlist.
+            REG_RE='^[0-9a-z-]+$'
+            # actions/checkout is shallow by default and skips tags.
+            git fetch --tags origin --quiet
+            for pair in "upgrade_from=$INPUT_FROM" "upgrade_previous=$INPUT_PREVIOUS" "upgrade_to=$INPUT_TO"; do
+              name="${pair%%=*}"  # everything before the first '='
+              val="${pair#*=}"    # everything after the first '='
+              if ! git rev-parse --verify --quiet "refs/tags/v$val" >/dev/null; then
+                echo "::error::input $name='$val' has no matching git tag v$val"
+                exit 1
+              fi
+            done
+            case "$INPUT_TYPE" in
+              soft|hard) ;;
+              *) echo "::error::input type='$INPUT_TYPE' must be soft|hard"; exit 1 ;;
+            esac
+            # Build the Erlang regions list for staging.config: [<<"r1">>, <<"r2">>]
+            REGIONS_ERL=""
+            IFS=',' read -ra RS <<< "$INPUT_REGIONS"
+            for r in "${RS[@]}"; do
+              r="${r// /}"
+              if ! [[ "$r" =~ $REG_RE ]]; then
+                echo "::error::input regions entry '$r' fails allowlist $REG_RE"
+                exit 1
+              fi
+              REGIONS_ERL+="<<\"$r\">>, "
+            done
+            REGIONS_ERL="${REGIONS_ERL%, }"
+            CONFIG=/tmp/dispatch.config
+            cat > "$CONFIG" <<EOF
+          [
+              {upgrade_from, "$INPUT_FROM"},
+              {upgrade_previous, "$INPUT_PREVIOUS"},
+              {upgrade_to, "$INPUT_TO"},
+              {regions, [$REGIONS_ERL]},
+              {type, $INPUT_TYPE}
+          ].
+          EOF
+          else
+            CONFIG=./deploy/upgrade/staging.config
+          fi
+          elixir ./deploy/upgrade/handler.exs all_keys "$CONFIG"
+          FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from "$CONFIG")
+          PREVIOUS=$(elixir ./deploy/upgrade/handler.exs upgrade_previous "$CONFIG")
+          TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to "$CONFIG")
+          TYPE_VAL=$(elixir ./deploy/upgrade/handler.exs type "$CONFIG")
+          NAME_VAL=$(elixir ./deploy/upgrade/handler.exs name "$CONFIG")
+          if [ "$TYPE_VAL" = "soft" ] && [ "$PREVIOUS" = "$TO" ]; then
+            echo "::error::Soft deploy requires upgrade_previous ($PREVIOUS) to differ from upgrade_to ($TO)."
+            exit 1
+          fi
+          printf 'RELEASE_BASE=%s\n' "$FROM"     >> "$GITHUB_ENV"
+          printf 'RELEASE_FROM=%s\n' "$PREVIOUS" >> "$GITHUB_ENV"
+          printf 'RELEASE_TO=%s\n'   "$TO"       >> "$GITHUB_ENV"
+          printf 'TYPE=%s\n'         "$TYPE_VAL" >> "$GITHUB_ENV"
+          printf 'NAME=%s\n'         "$NAME_VAL" >> "$GITHUB_ENV"
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@v1
         with:
