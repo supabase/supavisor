@@ -318,7 +318,6 @@ defmodule Supavisor do
   def select_pool(pool, _) when is_map(pool) do
     case pool do
       %{write: [_ | _] = writes} -> Enum.random(writes)
-      %{read: [_ | _] = reads} -> Enum.random(reads)  # fallback
     end
   end
 
