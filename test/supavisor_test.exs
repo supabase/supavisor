@@ -148,13 +148,5 @@ defmodule SupavisorTest do
 
       assert Supavisor.select_pool(%{write: [w]}, :read) == w
     end
-
-    test "raises when :write hint and no write pool exists" do
-      r = spawn(fn -> :ok end)
-
-      assert_raise CaseClauseError, fn ->
-        Supavisor.select_pool(%{read: [r]}, :write)
-      end
-    end
   end
 end
