@@ -9,7 +9,7 @@ defmodule Supavisor.ReadSafe do
   alias Supavisor.PgParser
 
   @doc """
-  Returns `true` if the SQL query is guaranteed to be read-only.
+  Returns `true` if the SQL query is read-safe.
   """
   @spec read_safe?(String.t()) :: boolean()
   def read_safe?(sql) do
