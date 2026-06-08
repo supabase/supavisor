@@ -91,7 +91,7 @@ This document provides a categorized list of all environment variables used in S
 | ------------------------- | ------------------------------------- | -------------------------------------------------- | -------- |
 | `DATABASE_URL`            | Connection URL                        | `ecto://postgres:postgres@localhost:6432/postgres` | No       |
 | `DB_POOL_SIZE`            | Connection pool size                  | `25`                                               | No       |
-| `SUPAVISOR_DB_IP_VERSION` | IP version for connection (ipv4/ipv6) | `ipv4`                                             | No       |
+| `SUPAVISOR_DB_IP_VERSION` | IP version for connection (ipv4/ipv6) | auto-detects from `DATABASE_URL`                   | No       |
 
 ---
 
