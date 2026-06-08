@@ -153,7 +153,7 @@ defmodule Supavisor.MixProject do
             [app, version] =
               appup
               |> String.trim_trailing(".appup")
-              |> String.split("-")
+              |> String.split("-", parts: 2)
 
             file_path = Path.join(appups_path, appup)
 

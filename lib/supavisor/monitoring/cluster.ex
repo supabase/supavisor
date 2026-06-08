@@ -37,6 +37,21 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
             unit: {:native, :millisecond}
           )
         ]
+      ),
+      Polling.build(
+        :supavisor_app_version_events,
+        poll_rate,
+        {__MODULE__, :emit_app_version, []},
+        [
+          last_value(
+            [:supavisor, :prom_ex, :application, :version, :info],
+            event_name: [:supavisor, :prom_ex, :application, :version],
+            measurement: :status,
+            description:
+              "The currently running version of the Supavisor application along with upgrade history.",
+            tags: [:current, :permanent, :base, :previous]
+          )
+        ]
       )
     ]
   end
@@ -46,6 +61,33 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
     connected_nodes = Node.list()
     cluster_size = length(connected_nodes) + 1
     :telemetry.execute([:supavisor, :prom_ex, :cluster], %{size: cluster_size})
+  end
+
+  @spec emit_app_version() :: :ok
+  def emit_app_version do
+    current = Application.spec(:supavisor, :vsn) |> to_string()
+    releases = :release_handler.which_releases()
+
+    permanent =
+      case Enum.find(releases, fn {_, _, _, status} -> status == :permanent end) do
+        {_, vsn, _, _} -> to_string(vsn)
+        nil -> ""
+      end
+
+    old_versions =
+      releases
+      |> Enum.filter(fn {_, _, _, status} -> status == :old end)
+      |> Enum.map(fn {_, vsn, _, _} -> to_string(vsn) end)
+      |> Enum.sort({:asc, Version})
+
+    base = List.first(old_versions, "")
+    previous = List.last(old_versions, "")
+
+    :telemetry.execute(
+      [:supavisor, :prom_ex, :application, :version],
+      %{status: 1},
+      %{current: current, permanent: permanent, base: base, previous: previous}
+    )
   end
 
   @spec emit_erpc_latency() :: :ok
