@@ -21,8 +21,13 @@ export FLY_ALLOC_ID=111e4567-e89b-12d3-a456-426614174000
 export SECRET_KEY_BASE="dev"
 export CLUSTER_POSTGRES="true"
 export DB_POOL_SIZE="5"
-export METRICS_DISABLED="true"
 export RELEASE_COOKIE="upgrade_test_cookie"
+
+CERTS_DIR="$(git rev-parse --show-toplevel)/priv/test/certs"
+export GLOBAL_DOWNSTREAM_CERT_PATH="${CERTS_DIR}/server_rsa.crt"
+export GLOBAL_DOWNSTREAM_KEY_PATH="${CERTS_DIR}/server_rsa.key"
+export DOWNSTREAM_SERVER_ECDSA_CERT="${CERTS_DIR}/server_ecdsa.crt"
+export DOWNSTREAM_SERVER_ECDSA_KEY="${CERTS_DIR}/server_ecdsa.key"
 
 # ── Helpers ──────────────────────────────────────────────────────────
 info()  { echo "==> $*"; }
@@ -88,11 +93,20 @@ info "Building base release (v${FROM})"
 mix deps.get --only prod
 mix release supavisor --overwrite
 
-# ── 3. Start release & create tenant ────────────────────────────────
-info "Starting release as daemon"
-$REL_BIN daemon
+# On macOS, BEAM rejects +JPperf (Linux-only). Older releases hard-coded it                   
+# in vm.args before it was moved behind a Linux guard in env.sh.eex.                          
+if [ "$(uname -s)" = "Darwin" ]; then                                                         
+  VM_ARGS="_build/prod/rel/supavisor/releases/${FROM}/vm.args"                                
+  if [ -f "$VM_ARGS" ] && grep -q '+JPperf true' "$VM_ARGS"; then                             
+    info "Stripping +JPperf from ${VM_ARGS} (unsupported on macOS)"                           
+    sed -i '' '/+JPperf true/d' "$VM_ARGS"                                                    
+  fi                                                                                          
+fi  
 
-BEAM_PID=$(pgrep -f "supavisor.*node1@127.0.0.1")
+# ── 3. Start release & create tenant ────────────────────────────────
+info "Starting release in background"
+$REL_BIN start > /tmp/supavisor_upgrade_test.log 2>&1 &
+BEAM_PID=$!
 info "BEAM PID: ${BEAM_PID}"
 
 wait_for_api

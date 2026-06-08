@@ -9,9 +9,26 @@ parse_integer_list = fn numbers when is_binary(numbers) ->
 end
 
 db_socket_options =
-  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
-    do: [:inet6],
-    else: [:inet]
+  case System.get_env("SUPAVISOR_DB_IP_VERSION") do
+    "ipv6" ->
+      [:inet6]
+
+    "ipv4" ->
+      [:inet]
+
+    _ ->
+      # Auto-detect IP version from DATABASE_URL hostname:
+      database_url =
+        System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres")
+
+      case URI.parse(database_url) do
+        %URI{host: host} when is_binary(host) ->
+          [Supavisor.Helpers.detect_ip_version(host)]
+
+        _ ->
+          [:inet]
+      end
+  end
 
 secret_key_base =
   if config_env() in [:dev, :test] do
