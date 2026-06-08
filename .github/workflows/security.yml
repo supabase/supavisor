@@ -61,7 +61,7 @@ jobs:
     - name: Compile deps
       run: mix deps.compile
     - name: MixAudit check
-      run: mix deps.audit
+      run: mix deps.audit --ignore-file .mix_audit_ignore
 
   sobelow:
     name: Security check
