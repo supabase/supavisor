@@ -75,7 +75,8 @@ config :logger, :console,
     :app_name,
     :peer_ip,
     :local,
-    :proxy
+    :proxy,
+    :backend_pid
   ]
 
 # Set a higher stacktrace during development. Avoid configuring such
