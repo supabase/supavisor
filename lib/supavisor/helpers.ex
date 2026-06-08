@@ -215,6 +215,23 @@ defmodule Supavisor.Helpers do
   end
 
   @doc """
+  Builds the SCRAM client-final message and returns `{client_final, server_signature}`.
+
+  This is the legacy two-element return shape. It is kept so that during a hot upgrade,
+  an older DbHandler that pattern-matches a two-element tuple keeps working when only
+  this module has been reloaded. New code should use `get_client_final_v2/5`, which also
+  returns the derived secrets so they can be cached.
+  """
+  @spec get_client_final(map(), map(), binary(), binary(), binary()) ::
+          {iolist(), binary()}
+  def get_client_final(secrets, srv_first, client_nonce, user_name, channel) do
+    {client_final, server_signature, _derived_secrets} =
+      get_client_final_v2(secrets, srv_first, client_nonce, user_name, channel)
+
+    {client_final, server_signature}
+  end
+
+  @doc """
   Builds the SCRAM client-final message and returns `{client_final, server_signature, derived_secrets}`.
 
   When called with `PasswordSecrets`, the expensive PBKDF2 derivation runs once and the
@@ -222,9 +239,9 @@ defmodule Supavisor.Helpers do
   for future connections. When called with already-derived `SASLSecrets`, the third element
   is `nil` (nothing new to cache).
   """
-  @spec get_client_final(map(), map(), binary(), binary(), binary()) ::
+  @spec get_client_final_v2(map(), map(), binary(), binary(), binary()) ::
           {iolist(), binary(), Supavisor.Secrets.SASLSecrets.t() | nil}
-  def get_client_final(
+  def get_client_final_v2(
         %Supavisor.Secrets.PasswordSecrets{} = secrets,
         srv_first,
         client_nonce,
@@ -264,7 +281,7 @@ defmodule Supavisor.Helpers do
      derived_secrets}
   end
 
-  def get_client_final(
+  def get_client_final_v2(
         %Supavisor.Secrets.SASLSecrets{} = secrets,
         srv_first,
         client_nonce,
