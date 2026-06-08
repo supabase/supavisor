@@ -23,6 +23,12 @@ export CLUSTER_POSTGRES="true"
 export DB_POOL_SIZE="5"
 export RELEASE_COOKIE="upgrade_test_cookie"
 
+CERTS_DIR="$(git rev-parse --show-toplevel)/priv/test/certs"
+export GLOBAL_DOWNSTREAM_CERT_PATH="${CERTS_DIR}/server_rsa.crt"
+export GLOBAL_DOWNSTREAM_KEY_PATH="${CERTS_DIR}/server_rsa.key"
+export DOWNSTREAM_SERVER_ECDSA_CERT="${CERTS_DIR}/server_ecdsa.crt"
+export DOWNSTREAM_SERVER_ECDSA_KEY="${CERTS_DIR}/server_ecdsa.key"
+
 # ── Helpers ──────────────────────────────────────────────────────────
 info()  { echo "==> $*"; }
 
