@@ -295,7 +295,7 @@ defmodule Supavisor.Helpers do
 
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
-    stored_key == secrets.stored_key
+    Plug.Crypto.secure_compare(stored_key, secrets.stored_key)
   end
 
   def signatures(stored_key, server_key, srv_first, client_nonce, user_name, channel) do

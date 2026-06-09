@@ -134,7 +134,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
   defp validate_scram_proof(context, client_proof) do
     client_key = :crypto.exor(Base.decode64!(client_proof), context.signatures.client)
 
-    if Helpers.hash(client_key) == context.secret.stored_key do
+    if Plug.Crypto.secure_compare(Helpers.hash(client_key), context.secret.stored_key) do
       {:ok, client_key}
     else
       {:error, %Supavisor.Errors.WrongPasswordError{user: context.db_user}}
