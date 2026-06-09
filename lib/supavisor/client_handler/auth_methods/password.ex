@@ -73,7 +73,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
   end
 
   defp validate_password(password, %{tenant: %{require_user: true}} = context) do
-    if password == context.user.db_password do
+    if Plug.Crypto.secure_compare(password, context.user.db_password) do
       :ok
     else
       {:error, %Supavisor.Errors.WrongPasswordError{user: context.db_user}}
