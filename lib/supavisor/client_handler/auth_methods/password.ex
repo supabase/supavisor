@@ -96,7 +96,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
         client_key = :pgo_scram.hmac(salted_password, "Client Key")
         computed_stored_key = :pgo_scram.h(client_key)
 
-        if Plug.Crypto.secure_compare(computed_stored_key, sasl_secrets.stored_key) do
+        if computed_stored_key == sasl_secrets.stored_key do
           :ok
         else
           {:error, %Supavisor.Errors.WrongPasswordError{user: ctx.db_user}}
