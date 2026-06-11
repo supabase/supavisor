@@ -60,12 +60,14 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
-  @spec client_query_time(integer(), Supavisor.id(), boolean()) :: :ok | nil
-  def client_query_time(start, Supavisor.id() = id, proxy) do
+  @spec client_query_time(integer(), Supavisor.id(), boolean(), :read | :write) :: :ok | nil
+  def client_query_time(start, Supavisor.id() = id, proxy, query_type) do
     telemetry_execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
-      Map.put(id_to_tags(id), :proxy, proxy)
+      id_to_tags(id)
+      |> Map.put(:proxy, proxy)
+      |> Map.put(:query_type, query_type)
     )
   end
 
