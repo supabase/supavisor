@@ -842,16 +842,23 @@ defmodule Supavisor.ClientHandler do
     timeout = data.timeout |> div(attempt + 1)
     start = System.monotonic_time(:microsecond)
 
-    pool =
+    {pool, replica_type} =
       case Supavisor.id(data.id, :type) do
-        :single -> data.pool
+        :single -> {data.pool, :write}
         :cluster -> Supavisor.select_pool(data.pool, data.query_type)
       end
 
     with {:ok, db_pid} <- pool_checkout(pool, timeout, data.mode),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
-      Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
+
+      Telem.pool_checkout_time(
+        System.monotonic_time(:microsecond) - start,
+        data.id,
+        same_box,
+        replica_type
+      )
+
       {:ok, {pool, db_pid, db_sock}}
     else
       {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->

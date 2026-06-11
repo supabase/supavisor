@@ -93,7 +93,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :pool, :checkout, :stop, :local],
           measurement: :duration,
           description: "Duration of the checkout local process in the tenant db pool.",
-          tags: @tags,
+          tags: @tags ++ [:replica_type],
           unit: {:microsecond, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
@@ -104,7 +104,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :pool, :checkout, :stop, :remote],
           measurement: :duration,
           description: "Duration of the checkout remote process in the tenant db pool.",
-          tags: @tags,
+          tags: @tags ++ [:replica_type],
           unit: {:microsecond, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets

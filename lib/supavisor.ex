@@ -307,17 +307,17 @@ defmodule Supavisor do
   end
 
   @doc "Picks a single pool pid from a cluster's multi-pool map."
-  @spec select_pool(%{atom() => [pid()]}, :read | :write | nil) :: pid()
+  @spec select_pool(%{atom() => [pid()]}, :read | :write | nil) :: {pid(), :read | :write}
   def select_pool(pool, :read) when is_map(pool) do
     case pool do
-      %{read: [_ | _] = reads} -> Enum.random(reads)
-      %{write: [_ | _] = writes} -> Enum.random(writes)  # fallback
+      %{read: [_ | _] = reads} -> {Enum.random(reads), :read}
+      %{write: [_ | _] = writes} -> {Enum.random(writes), :write}
     end
   end
 
   def select_pool(pool, _) when is_map(pool) do
     case pool do
-      %{write: [_ | _] = writes} -> Enum.random(writes)
+      %{write: [_ | _] = writes} -> {Enum.random(writes), :write}
     end
   end
 
