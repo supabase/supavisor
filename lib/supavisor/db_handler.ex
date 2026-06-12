@@ -38,6 +38,7 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.Errors.DbHandlerExitedError
   alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
+  alias Supavisor.Protocol.PreparedStatements.BackendStorage
 
   alias Supavisor.{
     ClientHandler,
@@ -173,6 +174,8 @@ defmodule Supavisor.DbHandler do
 
     Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
 
+    storage_mod = BackendStorage.select(config.tenant_feature_flags)
+
     data = %{
       id: id,
       sock: nil,
@@ -185,7 +188,8 @@ defmodule Supavisor.DbHandler do
       nonce: nil,
       server_proof: nil,
       stats: %{},
-      prepared_statements: MapSet.new(),
+      prepared_statements_storage: storage_mod,
+      prepared_statements: storage_mod.new(),
       proxy: Map.get(config, :proxy, false),
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
@@ -946,8 +950,11 @@ defmodule Supavisor.DbHandler do
   # If we received a bind without a parse, we need to intercept the parse response, otherwise,
   # the client will receive an unexpected message.
   defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
-    if stmt_name in data.prepared_statements do
-      {[pkt | iodata], data}
+    storage_mod = data.prepared_statements_storage
+
+    if storage_mod.member?(data.prepared_statements, stmt_name) do
+      {[pkt | iodata],
+       %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
     else
       new_data = %{
         data
@@ -960,7 +967,7 @@ defmodule Supavisor.DbHandler do
                 )
               end
             ),
-          prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
+          prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)
       }
 
       {[[parse_pkt, pkt] | iodata], new_data}
@@ -968,10 +975,12 @@ defmodule Supavisor.DbHandler do
   end
 
   defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, {iodata, data}) do
+    storage_mod = data.prepared_statements_storage
+
     {[pkt | iodata],
      %{
        data
-       | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name),
+       | prepared_statements: storage_mod.delete(data.prepared_statements, stmt_name),
          stream_state:
            MessageStreamer.update_state(data.stream_state, fn BackendMessageHandler.handler_state(
                                                                 action_queue: queue
@@ -990,11 +999,14 @@ defmodule Supavisor.DbHandler do
   # If we stop generating unique id per statement, and instead do deterministic ids,
   # we need to potentially drop parse pkts and return a parse response
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
-    if stmt_name in data.prepared_statements do
+    storage_mod = data.prepared_statements_storage
+
+    if storage_mod.member?(data.prepared_statements, stmt_name) do
       {iodata,
        %{
          data
-         | stream_state:
+         | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name),
+           stream_state:
              MessageStreamer.update_state(
                data.stream_state,
                fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
@@ -1005,7 +1017,7 @@ defmodule Supavisor.DbHandler do
              )
        }}
     else
-      prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
+      prepared_statements = storage_mod.put(data.prepared_statements, stmt_name)
 
       {[pkt | iodata],
        %{
@@ -1024,15 +1036,18 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  defp evict_exceeding(%{prepared_statements: prepared_statements, id: id}) do
+  defp evict_exceeding(%{
+         prepared_statements: prepared_statements,
+         prepared_statements_storage: storage_mod,
+         id: id
+       }) do
     limit = PreparedStatements.backend_limit()
 
-    if MapSet.size(prepared_statements) >= limit do
+    if storage_mod.size(prepared_statements) >= limit do
       count = div(limit, 5)
-      to_remove = Enum.take_random(prepared_statements, count) |> MapSet.new()
-      close_pkts = Enum.map(to_remove, &PreparedStatements.build_close_pkt/1)
-      prepared_statements = MapSet.difference(prepared_statements, to_remove)
-      Telem.prepared_statements_evicted(count, id)
+      {evicted, prepared_statements} = storage_mod.evict(prepared_statements, count)
+      close_pkts = Enum.map(evicted, &PreparedStatements.build_close_pkt/1)
+      Telem.prepared_statements_evicted(length(evicted), id)
 
       {close_pkts, prepared_statements}
     else
