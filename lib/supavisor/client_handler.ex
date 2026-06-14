@@ -984,7 +984,7 @@ defmodule Supavisor.ClientHandler do
   # Classify a frontend packet for read/write routing.
   # Only Simple Query (Q) frames are inspected, everything else routes to write.
   @spec classify_packet(binary()) :: :read | :write
-  defp classify_packet(<<?Q, _len::32, payload::binary>>) do
+  defp classify_packet(<<?Q, len::32, payload::binary-size(len - 4), _rest::binary>>) do
     sql = String.trim_trailing(payload, <<0>>)
     if ReadSafe.read_safe?(sql), do: :read, else: :write
   end
