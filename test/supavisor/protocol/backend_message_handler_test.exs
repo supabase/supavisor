@@ -55,7 +55,7 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       assert IO.iodata_to_binary(result) == original_bin
     end
 
-    test "ready for query message with no actions passes through unchanged", %{
+    test "ready for query message is forwarded and its status is observed", %{
       stream_state: stream_state
     } do
       original_bin = <<?Z, 5::32, ?I>>
@@ -63,8 +63,15 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       {:ok, new_stream_state, result} =
         MessageStreamer.handle_packets(stream_state, original_bin)
 
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               MessageStreamer.stream_state(stream_state, :handler_state)
+      new_state = MessageStreamer.stream_state(new_stream_state, :handler_state)
+
+      assert BackendMessageHandler.handler_state(new_state, :ready_for_query) == ?I
+
+      assert BackendMessageHandler.handler_state(new_state, :action_queue) ==
+               BackendMessageHandler.handler_state(
+                 MessageStreamer.stream_state(stream_state, :handler_state),
+                 :action_queue
+               )
 
       assert IO.iodata_to_binary(result) == original_bin
     end
