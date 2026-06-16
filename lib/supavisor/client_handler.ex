@@ -320,7 +320,8 @@ defmodule Supavisor.ClientHandler do
          {:ok, opts} <- Supavisor.subscribe(data.id),
          manager_ref = Process.monitor(opts.workers.manager),
          data = Map.merge(data, opts.workers),
-         {:ok, db_connection} <- maybe_checkout(:on_connect, data) do
+         {:ok, db_connection} <- maybe_checkout(:on_connect, data),
+         :ok <- maybe_set_application_name(data, db_connection) do
       data = %{
         data
         | manager: manager_ref,
@@ -716,6 +717,20 @@ defmodule Supavisor.ClientHandler do
 
     Logger.log(level, "ClientHandler: terminating with reason #{inspect(reason)}")
   end
+
+  defp maybe_set_application_name(%{mode: :session, app_name: app_name}, {_pool, db_pid, _sock})
+       when is_binary(app_name) and app_name != "" and app_name != "Supavisor" do
+    case DbHandler.set_application_name(db_pid, app_name) do
+      :ok ->
+        :ok
+
+      error ->
+        Logger.warning("ClientHandler: failed to set application_name: #{inspect(error)}")
+        :ok
+    end
+  end
+
+  defp maybe_set_application_name(_data, _db_connection), do: :ok
 
   defp maybe_cleanup_db_handler(state, data) do
     if state == :idle and data.mode == :session and data.db_connection != nil and
