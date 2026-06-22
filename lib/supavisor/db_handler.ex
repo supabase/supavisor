@@ -452,8 +452,11 @@ defmodule Supavisor.DbHandler do
       # Only when checked out to this client (:busy).
       state == :busy ->
         Logger.debug("DbHandler: Setting application_name to #{inspect(name)}")
-        query = "SET application_name = #{quote_literal(name)}"
-        :ok = HandlerHelpers.sock_send(data.sock, :pgo_protocol.encode_query_message(query))
+
+        query =
+          Server.extended_query("SELECT set_config('application_name', $1, false)", [name])
+
+        :ok = HandlerHelpers.sock_send(data.sock, query)
 
         {:next_state, :setting_application_name,
          Map.merge(data, %{set_app_name_from: from, pending_bin: <<>>}),
@@ -930,9 +933,6 @@ defmodule Supavisor.DbHandler do
       data
     end
   end
-
-  # Quote a value as a SQL string literal.
-  defp quote_literal(value), do: "'" <> String.replace(value, "'", "''") <> "'"
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
   # bind to the socket. If it doesn't, we must send the parse pkt first.

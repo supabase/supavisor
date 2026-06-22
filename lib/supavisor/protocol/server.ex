@@ -207,7 +207,39 @@ defmodule Supavisor.Protocol.Server do
   @spec ssl_request :: binary()
   def ssl_request, do: @ssl_request
 
+  @spec extended_query(iodata(), [binary()]) :: binary()
+  def extended_query(statement, params \\ []) do
+    IO.iodata_to_binary([
+      :pgo_protocol.encode_parse_message("", statement, []),
+      encode_bind(params),
+      :pgo_protocol.encode_execute_message("", 0),
+      :pgo_protocol.encode_sync_message()
+    ])
+  end
+
   # Internal functions
+
+  defp encode_bind(params) do
+    encoded_params =
+      Enum.map(params, fn value ->
+        value = IO.iodata_to_binary(value)
+        [<<byte_size(value)::32>>, value]
+      end)
+
+    body = [
+      # unnamed portal and prepared statement
+      <<0>>,
+      <<0>>,
+      # text params only
+      <<0::16>>,
+      <<length(params)::16>>,
+      encoded_params,
+      # results are text too
+      <<0::16>>
+    ]
+
+    [<<?B, IO.iodata_length(body) + 4::32>>, body]
+  end
 
   @spec decode(binary(), list()) :: {:ok, [Pkt.t()], rest :: binary()}
   defp decode(data, acc) when byte_size(data) >= @pkt_header_size do

@@ -216,6 +216,18 @@ defmodule Supavisor.Protocol.ServerTest do
     assert Server.ready_for_query() == <<90, 0, 0, 0, 5, 73>>
   end
 
+  test "extended_query/2" do
+    statement = "SELECT set_config('application_name', $1, false)"
+    bin = Server.extended_query(statement, ["my app's name"])
+
+    assert <<?P, _::binary>> = bin
+
+    assert bin =~ statement
+    assert bin =~ "my app's name"
+
+    assert String.ends_with?(bin, Server.sync())
+  end
+
   test "decode_pkt/1 correctly maps all message tags" do
     tag_tests = [
       {82, :authentication, <<0, 0, 0, 0>>},

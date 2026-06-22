@@ -905,7 +905,7 @@ defmodule Supavisor.DbHandlerTest do
                )
     end
 
-    test "sends a SET application_name query" do
+    test "sends a parameterized set_config query" do
       {send, recv} = sockpair()
       from = {self(), make_ref()}
 
@@ -924,7 +924,8 @@ defmodule Supavisor.DbHandlerTest do
       assert new_data.pending_bin == <<>>
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
-      assert message =~ "SET application_name = 'my app''s name'"
+      assert message =~ "SELECT set_config('application_name', $1, false)"
+      assert message =~ "my app's name"
 
       :gen_tcp.close(send)
       :gen_tcp.close(recv)
