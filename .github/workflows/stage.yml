@@ -57,21 +57,43 @@ jobs:
             echo "RELEASE_FROM=$(elixir ./deploy/upgrade/handler.exs upgrade_from ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
             echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
             echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/staging.config)" >> $GITHUB_ENV
+      - name: configure aws credentials - staging
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE }}
+          aws-region: "us-east-1"
+      - name: Fetch prebuilt artifact
+        shell: bash
+        run: |
+          mkdir -p ./_build/${{ env.MIX_ENV }}
+          ARTIFACT="supavisor_soft_${{ env.RELEASE_FROM }}_${{ env.RELEASE_TO }}.tar.gz"
+          if aws s3 cp "${{ secrets.PREBUILT_TARBALLS_PATH_STAGE }}/$ARTIFACT" "./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_TO }}.tar.gz"; then
+            echo "Using prebuilt artifact $ARTIFACT"
+            echo "PREBUILT=true" >> $GITHUB_ENV
+          else
+            echo "No prebuilt artifact $ARTIFACT, will build from source"
+            echo "PREBUILT=false" >> $GITHUB_ENV
+          fi
       - name: Setup Elixir
+        if: env.PREBUILT != 'true'
         id: beam
         uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
         with:
           otp-version: '27.2.1'
           elixir-version: '1.18.2'
       - name: Set up Rust
+        if: env.PREBUILT != 'true'
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
       - name: Get git tags
+        if: env.PREBUILT != 'true'
         run: git fetch --tags origin
       - name: Checkout RELEASE_FROM
+        if: env.PREBUILT != 'true'
         run: git checkout v${{ env.RELEASE_FROM }}
       - name: Cache Mix
+        if: env.PREBUILT != 'true'
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: deps
@@ -79,15 +101,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
       - name: Install dependencies
+        if: env.PREBUILT != 'true'
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
       - name: Make old release
+        if: env.PREBUILT != 'true'
         run: mix release supavisor
       - name: Checkout RELEASE_TO
+        if: env.PREBUILT != 'true'
         run: git checkout v${{ env.RELEASE_TO }}
       - name: Cache Mix
+        if: env.PREBUILT != 'true'
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: deps
@@ -95,24 +121,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
       - name: Install dependencies
+        if: env.PREBUILT != 'true'
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
       - name: Clean up old release
+        if: env.PREBUILT != 'true'
         run: |
           rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
           rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
           rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
       - name: Make upgrade release
+        if: env.PREBUILT != 'true'
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Create tarball
         run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
-      - name: configure aws credentials - staging
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
-        with:
-          role-to-assume: ${{ secrets.DEV_AWS_ROLE }}
-          aws-region: "us-east-1"
       - name: Deploy to S3
         shell: bash
         run: aws s3 sync ./_build/${{ env.MIX_ENV }} ${{ secrets.TARBALLS_PATH_STAGE }} --exclude '*' --include '*tar.gz'
