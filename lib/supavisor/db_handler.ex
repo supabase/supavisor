@@ -465,7 +465,6 @@ defmodule Supavisor.DbHandler do
   end
 
   # Swallow the SET application_name response so it never reaches the client.
-  # Setting application name should feel like an implicit feature.
   def handle_event(:info, {proto, _, bin}, :setting_application_name, data)
       when proto in @proto do
     buffered_bin = data.pending_bin <> bin
