@@ -136,8 +136,14 @@ jobs:
           else
             ARTIFACT="supavisor_soft_${{ env.RELEASE_FROM }}_${{ env.RELEASE_TO }}.tar.gz"
           fi
-          if aws s3 cp "${{ secrets.PREBUILT_TARBALLS_PATH_STAGE }}/$ARTIFACT" "./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_TO }}.tar.gz"; then
-            echo "Using prebuilt artifact $ARTIFACT"
+          SRC="${{ secrets.PREBUILT_TARBALLS_PATH_STAGE }}/$ARTIFACT"
+          DEST="${{ secrets.TARBALLS_PATH_STAGE }}/${{ env.NAME }}_$(date "+%s").tar.gz"
+          # If a prebuilt tarball exists, the only transformation we apply is the
+          # rename to the timestamped deploy name. Do it as a server-side S3 copy
+          # so the bytes never round-trip through the runner. The cp is also the
+          # existence check: an exact-key copy that fails falls through to build.
+          if aws s3 cp "$SRC" "$DEST"; then
+            echo "Using prebuilt artifact $ARTIFACT (server-side copy to $DEST)"
             echo "PREBUILT=true" >> $GITHUB_ENV
           else
             echo "No prebuilt artifact $ARTIFACT, will build from source"
@@ -202,7 +208,9 @@ jobs:
         if: env.PREBUILT != 'true' && env.TYPE == 'hard'
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_STAGE }} mix release supavisor
       - name: Create tarball
+        if: env.PREBUILT != 'true'
         run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
       - name: Deploy to S3
+        if: env.PREBUILT != 'true'
         shell: bash
         run: aws s3 sync ./_build/${{ env.MIX_ENV }} ${{ secrets.TARBALLS_PATH_STAGE }} --exclude '*' --include '*tar.gz'
