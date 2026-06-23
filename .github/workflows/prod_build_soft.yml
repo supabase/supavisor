@@ -1,0 +1,106 @@
+name: Build soft artifact for production
+
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade_from:
+        description: 'Base version to upgrade from. Must match an existing v<tag>. e.g. 2.9.0'
+        required: true
+        type: string
+      upgrade_to:
+        description: 'Target version. Must match an existing v<tag>, and differ from upgrade_from. e.g. 2.9.6-rc.0'
+        required: true
+        type: string
+env:
+  INCLUDE_ERTS: true
+  MIX_ENV: prod
+jobs:
+  build:
+    runs-on: u22-arm-runner
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27.3.4"
+          elixir-version: "1.18.2"
+      - name: Set build variables
+        env:
+          INPUT_FROM: ${{ inputs.upgrade_from }}
+          INPUT_TO: ${{ inputs.upgrade_to }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin --quiet
+          for pair in "upgrade_from=$INPUT_FROM" "upgrade_to=$INPUT_TO"; do
+            name="${pair%%=*}"
+            val="${pair#*=}"
+            if ! git rev-parse --verify --quiet "refs/tags/v$val" >/dev/null; then
+              echo "::error::input $name='$val' has no matching git tag v$val"
+              exit 1
+            fi
+          done
+          if [ "$INPUT_FROM" = "$INPUT_TO" ]; then
+            echo "::error::Soft build requires upgrade_from ($INPUT_FROM) to differ from upgrade_to ($INPUT_TO)."
+            exit 1
+          fi
+          printf 'RELEASE_FROM=%s\n' "$INPUT_FROM" >> "$GITHUB_ENV"
+          printf 'RELEASE_TO=%s\n'   "$INPUT_TO"   >> "$GITHUB_ENV"
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Checkout RELEASE_FROM
+        run: git checkout v${{ env.RELEASE_FROM }}
+      - name: Cache Mix
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+      - name: Make old release
+        run: mix release supavisor
+      - name: Checkout RELEASE_TO
+        run: git checkout v${{ env.RELEASE_TO }}
+      - name: Clean up old release(s)
+        run: |
+          rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
+          rm -rf ./deps
+          rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
+          rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
+      - name: Cache Mix
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+      - name: Make upgrade release
+        run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
+      - name: Name artifact
+        run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "supavisor_soft_${{ env.RELEASE_FROM }}_${{ env.RELEASE_TO }}.tar.gz"
+      - name: configure aws credentials - production
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: "us-east-1"
+      - name: Upload artifact to S3
+        shell: bash
+        run: aws s3 cp ./_build/${{ env.MIX_ENV }}/supavisor_soft_${{ env.RELEASE_FROM }}_${{ env.RELEASE_TO }}.tar.gz ${{ secrets.PREBUILT_TARBALLS_PATH_PROD }}/supavisor_soft_${{ env.RELEASE_FROM }}_${{ env.RELEASE_TO }}.tar.gz
