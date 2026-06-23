@@ -142,7 +142,9 @@ jobs:
           # rename to the timestamped deploy name. Do it as a server-side S3 copy
           # so the bytes never round-trip through the runner. The cp is also the
           # existence check: an exact-key copy that fails falls through to build.
-          if aws s3 cp "$SRC" "$DEST"; then
+          # --copy-props none skips the GetObjectTagging/metadata calls (the role
+          # lacks s3:GetObjectTagging) — we don't need the source's tags anyway.
+          if aws s3 cp --copy-props none "$SRC" "$DEST"; then
             echo "Using prebuilt artifact $ARTIFACT (server-side copy to $DEST)"
             echo "PREBUILT=true" >> $GITHUB_ENV
           else
