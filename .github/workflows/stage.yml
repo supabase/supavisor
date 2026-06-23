@@ -136,8 +136,11 @@ jobs:
           else
             ARTIFACT="supavisor_soft_${{ env.RELEASE_FROM }}_${{ env.RELEASE_TO }}.tar.gz"
           fi
-          SRC="${{ secrets.PREBUILT_TARBALLS_PATH_STAGE }}/$ARTIFACT"
-          DEST="${{ secrets.TARBALLS_PATH_STAGE }}/${{ env.NAME }}_$(date "+%s").tar.gz"
+          # Normalized prefixes; consumers join with a single "/".
+          SRC_PREFIX="${{ secrets.PREBUILT_TARBALLS_PATH_STAGE }}"; SRC_PREFIX="${SRC_PREFIX%/}"
+          DEST_PREFIX="${{ secrets.TARBALLS_PATH_STAGE }}"; DEST_PREFIX="${DEST_PREFIX%/}"
+          SRC="$SRC_PREFIX/$ARTIFACT"
+          DEST="$DEST_PREFIX/${{ env.NAME }}_$(date "+%s").tar.gz"
           # If a prebuilt tarball exists, the only transformation we apply is the
           # rename to the timestamped deploy name. Do it as a server-side S3 copy
           # so the bytes never round-trip through the runner. The cp is also the
