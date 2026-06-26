@@ -22,7 +22,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@v1
         with:
-          otp-version: "27.2.1"
+          otp-version: "27.3.4"
           elixir-version: "1.18.2"
       - name: Set upgrade variables
         run: |
@@ -32,17 +32,51 @@ jobs:
           echo "RELEASE_TO=$(elixir ./deploy/upgrade/handler.exs upgrade_to ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
           echo "NAME=$(elixir ./deploy/upgrade/handler.exs name ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
           echo "TYPE=$(elixir ./deploy/upgrade/handler.exs type ./deploy/upgrade/prod.config)" >> $GITHUB_ENV
+      - name: configure aws credentials - production
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: "us-east-1"
+      - name: Fetch prebuilt artifact
+        shell: bash
+        run: |
+          mkdir -p ./_build/${{ env.MIX_ENV }}
+          if [ "${{ env.TYPE }}" = "hard" ]; then
+            ARTIFACT="supavisor_hard_${{ env.RELEASE_TO }}.tar.gz"
+          else
+            ARTIFACT="supavisor_soft_${{ env.RELEASE_FROM }}_${{ env.RELEASE_TO }}.tar.gz"
+          fi
+          # Normalized prefixes; consumers join with a single "/".
+          SRC_PREFIX="${{ secrets.PREBUILT_TARBALLS_PATH_PROD }}"; SRC_PREFIX="${SRC_PREFIX%/}"
+          DEST_PREFIX="${{ secrets.TARBALLS_PATH_PROD }}"; DEST_PREFIX="${DEST_PREFIX%/}"
+          SRC="$SRC_PREFIX/$ARTIFACT"
+          DEST="$DEST_PREFIX/${{ env.NAME }}_$(date "+%s").tar.gz"
+          # If a prebuilt tarball exists, the only transformation we apply is the
+          # rename to the timestamped deploy name. Do it as a server-side S3 copy
+          # so the bytes never round-trip through the runner. The cp is also the
+          # existence check: an exact-key copy that fails falls through to build.
+          # --copy-props none skips the GetObjectTagging/metadata calls (the role
+          # lacks s3:GetObjectTagging) — we don't need the source's tags anyway.
+          if aws s3 cp --copy-props none "$SRC" "$DEST"; then
+            echo "Using prebuilt artifact $ARTIFACT (server-side copy to $DEST)"
+            echo "PREBUILT=true" >> $GITHUB_ENV
+          else
+            echo "No prebuilt artifact $ARTIFACT, will build from source"
+            echo "PREBUILT=false" >> $GITHUB_ENV
+          fi
       - name: Set up Rust
+        if: env.PREBUILT != 'true'
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
       - name: Get git tags
+        if: env.PREBUILT != 'true'
         run: git fetch --tags origin
       - name: Checkout RELEASE_FROM
-        if: env.TYPE == 'soft'
+        if: env.PREBUILT != 'true' && env.TYPE == 'soft'
         run: git checkout v${{ env.RELEASE_FROM }}
       - name: Cache Mix
-        if: env.TYPE == 'soft'
+        if: env.PREBUILT != 'true' && env.TYPE == 'soft'
         uses: actions/cache@v3
         with:
           path: deps
@@ -50,17 +84,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
       - name: Install dependencies
-        if: env.TYPE == 'soft'
+        if: env.PREBUILT != 'true' && env.TYPE == 'soft'
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
       - name: Make old release
-        if: env.TYPE == 'soft'
+        if: env.PREBUILT != 'true' && env.TYPE == 'soft'
         run: mix release supavisor
       - name: Checkout RELEASE_TO
+        if: env.PREBUILT != 'true'
         run: git checkout v${{ env.RELEASE_TO }}
       - name: Cache Mix
+        if: env.PREBUILT != 'true'
         uses: actions/cache@v3
         with:
           path: deps
@@ -68,29 +104,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
       - name: Clean up old release(s)
-        if: env.TYPE == 'soft'
+        if: env.PREBUILT != 'true' && env.TYPE == 'soft'
         run: |
           rm -rf ./_build/${{ env.MIX_ENV }}/lib/supavisor
           rm ./_build/${{ env.MIX_ENV }}/rel/supavisor/releases/COOKIE
           rm ./_build/${{ env.MIX_ENV }}/supavisor-${{ env.RELEASE_FROM }}.tar.gz
       - name: Install dependencies
+        if: env.PREBUILT != 'true'
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
       - name: Make upgrade release
-        if: env.TYPE == 'soft'
+        if: env.PREBUILT != 'true' && env.TYPE == 'soft'
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} UPGRADE_FROM=${{ env.RELEASE_FROM }} mix release supavisor
       - name: Make hard ${{ env.RELEASE_TO }} release
-        if: env.TYPE == 'hard'
+        if: env.PREBUILT != 'true' && env.TYPE == 'hard'
         run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} mix release supavisor
       - name: Create tarball
+        if: env.PREBUILT != 'true'
         run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "${{ env.NAME }}_$(date "+%s").tar.gz"
-      - name: configure aws credentials - production
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
-          aws-region: "us-east-1"
       - name: Deploy to S3
+        if: env.PREBUILT != 'true'
         shell: bash
         run: aws s3 sync ./_build/${{ env.MIX_ENV }} ${{ secrets.TARBALLS_PATH_PROD }} --exclude '*' --include '*tar.gz'
