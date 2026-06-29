@@ -1,0 +1,70 @@
+name: Build hard artifact for production
+
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade_to:
+        description: 'Target version. Must match an existing v<tag>. e.g. 2.9.6-rc.0'
+        required: true
+        type: string
+env:
+  INCLUDE_ERTS: true
+  MIX_ENV: prod
+jobs:
+  build:
+    runs-on: u22-arm-runner
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27.3.4"
+          elixir-version: "1.18.2"
+      - name: Set build variables
+        env:
+          INPUT_TO: ${{ inputs.upgrade_to }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin --quiet
+          if ! git rev-parse --verify --quiet "refs/tags/v$INPUT_TO" >/dev/null; then
+            echo "::error::input upgrade_to='$INPUT_TO' has no matching git tag v$INPUT_TO"
+            exit 1
+          fi
+          printf 'RELEASE_TO=%s\n' "$INPUT_TO" >> "$GITHUB_ENV"
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Checkout RELEASE_TO
+        run: git checkout v${{ env.RELEASE_TO }}
+      - name: Cache Mix
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+      - name: Make hard ${{ env.RELEASE_TO }} release
+        run: RELEASE_COOKIE=${{ secrets.RELEASE_COOKIE_PROD }} mix release supavisor
+      - name: Name artifact
+        run: cd _build/${{ env.MIX_ENV }} && mv supavisor-${{ env.RELEASE_TO }}.tar.gz "supavisor_hard_${{ env.RELEASE_TO }}.tar.gz"
+      - name: configure aws credentials - production
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: "us-east-1"
+      - name: Upload artifact to S3
+        shell: bash
+        run: aws s3 cp ./_build/${{ env.MIX_ENV }}/supavisor_hard_${{ env.RELEASE_TO }}.tar.gz ${{ secrets.PREBUILT_TARBALLS_PATH_PROD }}/supavisor_hard_${{ env.RELEASE_TO }}.tar.gz
