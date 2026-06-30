@@ -39,6 +39,21 @@ defmodule SupavisorWeb.Router do
     get("/", SupavisorWeb.WsProxy, [])
   end
 
+  pipeline :http_sql do
+    # Body parsing happens at the endpoint level by
+    # `Supavisor.HttpSql.NeonBodyParser`, which JSON-decodes the body
+    # regardless of Content-Type for requests carrying a
+    # `Neon-Connection-String` header (the @neondatabase/serverless
+    # driver omits Content-Type). The router pipeline only runs
+    # tenant/auth gating.
+    plug(SupavisorWeb.Plugs.NeonAuth)
+  end
+
+  scope "/", SupavisorWeb do
+    pipe_through(:http_sql)
+    post("/sql", SqlController, :execute)
+  end
+
   scope "/api", SupavisorWeb do
     pipe_through(:api)
 

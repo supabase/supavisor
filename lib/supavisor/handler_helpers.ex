@@ -4,6 +4,11 @@ defmodule Supavisor.HandlerHelpers do
   require Supavisor.Protocol.Server, as: Server
 
   @spec sock_send(Supavisor.sock(), iodata()) :: :ok | {:error, term()}
+  def sock_send({:proc, pid}, data) when is_pid(pid) do
+    send(pid, {:db_bytes, IO.iodata_to_binary(data)})
+    :ok
+  end
+
   def sock_send({mod, sock}, data) do
     mod.send(sock, data)
   end
@@ -11,10 +16,13 @@ defmodule Supavisor.HandlerHelpers do
   @spec sock_close(Supavisor.sock() | nil | {any(), nil}) :: :ok | {:error, term()}
   def sock_close(nil), do: :ok
   def sock_close({_, nil}), do: :ok
+  def sock_close({:proc, _pid}), do: :ok
 
   def sock_close({mod, sock}), do: mod.close(sock)
 
   @spec setopts(Supavisor.sock(), term()) :: :ok | {:error, term()}
+  def setopts({:proc, _pid}, _opts), do: :ok
+
   def setopts({mod, sock}, opts) do
     mod = if mod == :gen_tcp, do: :inet, else: mod
     mod.setopts(sock, opts)

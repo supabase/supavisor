@@ -67,7 +67,8 @@ defmodule Supavisor.Monitoring.PromEx do
       # Custom PromEx metrics plugins
       {OsMon, poll_rate: poll_rate},
       {Tenant, poll_rate: poll_rate},
-      {Cluster, poll_rate: poll_rate}
+      {Cluster, poll_rate: poll_rate},
+      Supavisor.HttpSql.PromExPlugin
     ]
   end
 

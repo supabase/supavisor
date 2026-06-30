@@ -17,6 +17,7 @@ nav:
   - Connecting:
       - Overview: "connecting/overview.md"
       - Authentication: "connecting/authentication.md"
+      - HTTP /sql: "connecting/http_sql.md"
   - Configuration:
       - Environment Variables: "configuration/env.md"
       - Tenants: "configuration/tenants.md"
