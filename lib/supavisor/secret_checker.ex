@@ -9,6 +9,7 @@ defmodule Supavisor.SecretChecker do
   alias Supavisor.ClientAuthentication
   alias Supavisor.ClientAuthentication.ValidationSecrets
   alias Supavisor.Errors.AuthQueryError
+  alias Supavisor.Monitoring.Telem
 
   @interval :timer.seconds(15)
 
@@ -40,7 +41,10 @@ defmodule Supavisor.SecretChecker do
             {:error, %AuthQueryError{reason: :timeout}}
 
           :exit, reason ->
-            Logger.error("SecretChecker: get_secrets call exited: #{inspect(reason)}")
+            Logger.error("SecretChecker: get_secrets call exited: #{inspect(reason)}",
+              project: Supavisor.id(id, :tenant)
+            )
+
             {:error, :not_started}
         end
     end
@@ -161,9 +165,12 @@ defmodule Supavisor.SecretChecker do
   defp jitter, do: :rand.uniform(div(@interval, 10))
 
   defp erpc_call_node(id, mod, fun, args) do
+    start = System.monotonic_time()
+
     case Supavisor.get_global_sup(id) do
       nil ->
         {:error, :not_started}
+        |> tap(&telemetry_stop(fun, start, &1, :local))
 
       pid ->
         try do
@@ -173,6 +180,27 @@ defmodule Supavisor.SecretChecker do
             Logger.error("SecretChecker: erpc call exited: #{inspect(reason)}")
             {:error, :not_started}
         end
+        |> tap(&telemetry_stop(fun, start, &1, (node(pid) == node() && :local) || :remote))
     end
   end
+
+  defp telemetry_stop(:do_get_secrets, start, result, locality) do
+    Telem.secret_checker_get_secrets_stop(
+      System.monotonic_time() - start,
+      telemetry_status(result),
+      locality
+    )
+  end
+
+  defp telemetry_stop(:do_update_credentials, start, result, locality) do
+    Telem.secret_checker_update_credentials_stop(
+      System.monotonic_time() - start,
+      telemetry_status(result),
+      locality
+    )
+  end
+
+  defp telemetry_status({:error, _}), do: :error
+  defp telemetry_status({:ok, _}), do: :ok
+  defp telemetry_status(:ok), do: :ok
 end
