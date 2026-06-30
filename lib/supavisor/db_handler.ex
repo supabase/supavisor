@@ -407,6 +407,41 @@ defmodule Supavisor.DbHandler do
   end
 
   # forward the message to the client
+  def handle_event(
+        :info,
+        {proto, _, bin},
+        :busy,
+        %{backend_message_streaming: true, caller: caller} = data
+      )
+      when is_pid(caller) and proto in @proto do
+    Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
+
+    data = reset_ready_for_query(data)
+    {:ok, data, to_send} = process_backend_streaming(bin, data)
+
+    if ready_for_query_idle?(data) do
+      ClientHandler.db_status(data.caller, :ready_for_query)
+      if to_send != [], do: client_send(data, to_send)
+
+      case data.mode do
+        :transaction ->
+          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+          {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+
+        :proxy ->
+          {:keep_state, data}
+
+        :session ->
+          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+          {:keep_state, %{data | stats: stats}}
+      end
+    else
+      if to_send != [], do: client_send(data, to_send)
+      {:keep_state, data}
+    end
+  end
+
+  # hot code reload compat: remove after full rollout
   def handle_event(:info, {proto, _, bin}, :busy, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
@@ -892,18 +927,9 @@ defmodule Supavisor.DbHandler do
     Supavisor.UpstreamAuthentication.delete_upstream_auth_secrets(data.id)
   end
 
+  # hot code reload compat: remove after full rollout. The streaming path now
+  # inlines process_backend_streaming + client_send in the :busy handler.
   @spec handle_server_messages(binary(), map()) :: map()
-  defp handle_server_messages(bin, %{backend_message_streaming: true} = data) do
-    {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
-
-    if to_send != [] do
-      client_send(data, to_send)
-    end
-
-    updated_data
-  end
-
-  # hot code reload compat: remove after full rollout
   defp handle_server_messages(bin, data) do
     client_send(data, bin)
     data
@@ -1063,6 +1089,24 @@ defmodule Supavisor.DbHandler do
       err ->
         err
     end
+  end
+
+  # Clears previously recorded ReadyForQuery status before processing a bin.
+  defp reset_ready_for_query(data) do
+    %{
+      data
+      | stream_state:
+          MessageStreamer.update_state(data.stream_state, fn state ->
+            BackendMessageHandler.handler_state(state, ready_for_query: nil)
+          end)
+    }
+  end
+
+  defp ready_for_query_idle?(data) do
+    BackendMessageHandler.handler_state(
+      MessageStreamer.stream_state(data.stream_state, :handler_state),
+      :ready_for_query
+    ) == ?I
   end
 
   defp last_fatal_error(%{backend_message_streaming: true} = data) do

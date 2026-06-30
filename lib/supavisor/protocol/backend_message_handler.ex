@@ -16,7 +16,11 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   require Record
   require Supavisor.Protocol.Server, as: Server
 
-  Record.defrecord(:handler_state, action_queue: :queue.new(), fatal_error: nil)
+  Record.defrecord(:handler_state,
+    action_queue: :queue.new(),
+    fatal_error: nil,
+    ready_for_query: nil
+  )
 
   @impl true
   def handled_message_types do
@@ -38,6 +42,7 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   end
 
   def handle_message(state, tag, len, payload) do
+    state = maybe_record_ready_for_query(state, tag, payload)
     action_queue = handler_state(state, :action_queue)
     message_type = message_type(tag)
     {injected_pkts, action_queue} = maybe_inject(action_queue)
@@ -55,6 +60,12 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
          [injected_pkts, <<tag, len::32, payload::binary>>]}
     end
   end
+
+  # ReadyForQuery's payload is the 1-byte transaction status (I/T/E).
+  defp maybe_record_ready_for_query(state, ?Z, <<status::8>>),
+    do: handler_state(state, ready_for_query: status)
+
+  defp maybe_record_ready_for_query(state, _tag, _payload), do: state
 
   defp maybe_inject(action_queue) do
     case :queue.out(action_queue) do
