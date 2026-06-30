@@ -868,4 +868,146 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, data)
     end
   end
+
+  describe "set_application_name/2" do
+    test "returns error when called on transaction mode" do
+      {send, recv} = sockpair()
+
+      data = %{sock: {:gen_tcp, send}, mode: :transaction}
+
+      assert {:keep_state_and_data,
+              {:reply, _from, {:error, :set_application_name_not_supported_in_transaction_mode}}} =
+               Db.handle_event(
+                 {:call, {self(), make_ref()}},
+                 {:set_application_name, "app"},
+                 :idle,
+                 data
+               )
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "skips when called in invalid state" do
+      from = {self(), make_ref()}
+
+      data = %{mode: :session}
+
+      assert {:keep_state_and_data, {:reply, ^from, :ok}} =
+               Db.handle_event({:call, from}, {:set_application_name, "app"}, :idle, data)
+
+      assert {:keep_state_and_data, {:reply, ^from, :ok}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:set_application_name, "app"},
+                 :authentication,
+                 data
+               )
+    end
+
+    test "sends a parameterized set_config query" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{sock: {:gen_tcp, send}, mode: :session}
+
+      assert {:next_state, :setting_application_name, new_data,
+              {:state_timeout, 5_000, :set_application_name_timeout}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:set_application_name, "my app's name"},
+                 :busy,
+                 data
+               )
+
+      assert new_data.set_app_name_from == from
+      assert new_data.pending_bin == <<>>
+
+      assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
+      assert message =~ "SELECT set_config('application_name', $1, false)"
+      assert message =~ "my app's name"
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "swallows the response and replies :ok, returning to :busy" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        set_app_name_from: from,
+        pending_bin: <<>>
+      }
+
+      content = {:tcp, recv, Server.ready_for_query()}
+
+      assert {:next_state, :busy, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event(:info, content, :setting_application_name, data)
+
+      assert new_data.pending_bin == nil
+      assert new_data.set_app_name_from == nil
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "buffers incomplete messages while waiting for ReadyForQuery" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        set_app_name_from: from,
+        pending_bin: <<>>
+      }
+
+      partial_message = <<"partial">>
+      content = {:tcp, recv, partial_message}
+
+      assert {:keep_state, new_data} =
+               Db.handle_event(:info, content, :setting_application_name, data)
+
+      assert new_data.pending_bin == partial_message
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "stops when buffer limit exceeded" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        set_app_name_from: from,
+        pending_bin: <<>>
+      }
+
+      large_message = :binary.copy(<<1>>, 70_000)
+      content = {:tcp, recv, large_message}
+
+      assert {:stop, :normal} =
+               Db.handle_event(:info, content, :setting_application_name, data)
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "stops on set application_name timeout" do
+      data = %{mode: :session}
+
+      assert {:stop, :normal} =
+               Db.handle_event(
+                 :state_timeout,
+                 :set_application_name_timeout,
+                 :setting_application_name,
+                 data
+               )
+    end
+  end
 end

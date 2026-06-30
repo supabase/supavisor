@@ -871,7 +871,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "cleanup resets session state in session mode" do
-    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+    %{db_conf: db_conf, origin: origin} = setup_tenant_connections(List.first(@tenants))
 
     connection_opts = [
       hostname: db_conf[:hostname],
@@ -883,10 +883,21 @@ defmodule Supavisor.Integration.ProxyTest do
 
     test_timeout = "12345ms"
 
-    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+    conn1_opts = Keyword.put(connection_opts, :parameters, application_name: "app_one")
+    conn2_opts = Keyword.put(connection_opts, :parameters, application_name: "app_two")
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, conn1_opts}, id: :conn1)
 
     assert [%P.Result{rows: [[backend_pid_1]]}] =
              P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    # conn1's application_name reached the backend
+    assert [%P.Result{rows: [["app_one"]]}] =
+             P.SimpleConnection.call(
+               conn1,
+               {:query,
+                "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid();"}
+             )
 
     assert [%P.Result{}] =
              P.SimpleConnection.call(
@@ -900,12 +911,28 @@ defmodule Supavisor.Integration.ProxyTest do
     stop_supervised(:conn1)
     Process.sleep(100)
 
-    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+    # Check if application_name was reset
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(
+               origin,
+               "SELECT application_name FROM pg_stat_activity WHERE pid = $1",
+               [String.to_integer(backend_pid_1)]
+             )
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, conn2_opts}, id: :conn2)
 
     assert [%P.Result{rows: [[backend_pid_2]]}] =
              P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
 
     assert backend_pid_1 == backend_pid_2
+
+    # conn2's application_name reached the backend
+    assert [%P.Result{rows: [["app_two"]]}] =
+             P.SimpleConnection.call(
+               conn2,
+               {:query,
+                "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid();"}
+             )
 
     assert [%P.Result{rows: [[timeout]]}] =
              P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})

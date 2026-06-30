@@ -58,6 +58,7 @@ defmodule Supavisor.DbHandler do
           | :busy
           | :terminating_with_error
           | :waiting_for_secrets
+          | :setting_application_name
 
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
@@ -122,6 +123,17 @@ defmodule Supavisor.DbHandler do
   @spec attempt_cleanup(pid()) :: :ok | {:error, term()}
   def attempt_cleanup(db_handler_pid) do
     :gen_statem.call(db_handler_pid, :cleanup, 5_000)
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
+  end
+
+  @doc """
+  Sets `application_name` on the backend connection.
+  """
+  @spec set_application_name(pid(), String.t()) :: :ok | {:error, term()}
+  def set_application_name(db_handler_pid, name) do
+    :gen_statem.call(db_handler_pid, {:set_application_name, name}, 5_000)
   catch
     :exit, reason ->
       {:error, {:exit, reason}}
@@ -425,6 +437,63 @@ defmodule Supavisor.DbHandler do
       true ->
         {:keep_state, %{data | pending_bin: buffered_bin}}
     end
+  end
+
+  def handle_event({:call, from}, {:set_application_name, name}, state, data) do
+    cond do
+      data.mode == :transaction ->
+        Logger.error(
+          "DbHandler: set_application_name called on transaction mode - only supported in session mode"
+        )
+
+        {:keep_state_and_data,
+         {:reply, from, {:error, :set_application_name_not_supported_in_transaction_mode}}}
+
+      # Only when checked out to this client (:busy).
+      state == :busy ->
+        Logger.debug("DbHandler: Setting application_name to #{inspect(name)}")
+
+        query =
+          Server.extended_query("SELECT set_config('application_name', $1, false)", [name])
+
+        :ok = HandlerHelpers.sock_send(data.sock, query)
+
+        {:next_state, :setting_application_name,
+         Map.merge(data, %{set_app_name_from: from, pending_bin: <<>>}),
+         {:state_timeout, 5_000, :set_application_name_timeout}}
+
+      true ->
+        {:keep_state_and_data, {:reply, from, :ok}}
+    end
+  end
+
+  # Swallow the SET application_name response so it never reaches the client.
+  def handle_event(:info, {proto, _, bin}, :setting_application_name, data)
+      when proto in @proto do
+    buffered_bin = data.pending_bin <> bin
+
+    cond do
+      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
+        {:next_state, :busy, %{data | pending_bin: nil, set_app_name_from: nil},
+         {:reply, data.set_app_name_from, :ok}}
+
+      byte_size(buffered_bin) > @cleanup_buffer_limit ->
+        Logger.error("DbHandler: application_name buffer limit exceeded, shutting down")
+        {:stop, :normal}
+
+      true ->
+        {:keep_state, %{data | pending_bin: buffered_bin}}
+    end
+  end
+
+  def handle_event(
+        :state_timeout,
+        :set_application_name_timeout,
+        :setting_application_name,
+        _data
+      ) do
+    Logger.error("DbHandler: set application_name timeout, shutting down")
+    {:stop, :normal}
   end
 
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
