@@ -25,7 +25,6 @@ defmodule Supavisor.Error do
   * `log_level/1`, which by default returns `:error`.
   * `postgres_error/1`, which by default wraps `error_message/1` in a fatal postgres
     error with code `"XX000"`.
-  * `is_auth_error/1`, which by default returns `false`.
   """
 
   @typedoc """
@@ -44,11 +43,6 @@ defmodule Supavisor.Error do
   If `nil`, no message is logged.
   """
   @callback log_message(error :: t()) :: iodata() | nil
-
-  @doc """
-  If this error should be considered for user banning when happening in ClientHandler
-  """
-  @callback is_auth_error(error :: t()) :: boolean()
 
   @doc """
   Message to be returned when printing the exception (without error code prefix)
@@ -91,12 +85,9 @@ defmodule Supavisor.Error do
       end
 
       @impl Supavisor.Error
-      def is_auth_error(_), do: false
-
-      @impl Supavisor.Error
       def log_level(_), do: :error
 
-      defoverridable log_level: 1, log_message: 1, is_auth_error: 1, postgres_error: 1
+      defoverridable log_level: 1, log_message: 1, postgres_error: 1
     end
   end
 

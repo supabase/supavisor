@@ -2,47 +2,57 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   @moduledoc """
   Message handler for PostgreSQL backend messages.
 
-  This handler processes only the messages that need special handling for prepared
-  statements, namely `ParseComplete`, `CloseComplete`, and `ParameterDescription`.
+  Handles messages that need special processing:
 
-  `ParseComplete` sometimes need to be intercepted (when the prepared statement was prepared
-  from client's perspective, but not from ours). The same goes for `CloseComplete`. Additionally,
-  `ParameterDescription` is handled because we need to inject a `ParseComplete` response
-  before it when the prepared statement wasn't prepared from the client's perspective, but
-  was from the server's.
-
-  We use a queue to manage the actions that need to be performed on the messages, and actions
-  may be inserted through `Supavisor.Protocol.MessageHandler.update_state/2`.
+  - `ParseComplete`, `CloseComplete`, `ParameterDescription`: prepared statement management.
+    We use a queue to manage the actions that need to be performed on these messages, and
+    actions may be inserted through `Supavisor.Protocol.MessageHandler.update_state/2`.
+  - `ErrorResponse`: FATAL/PANIC errors are detected and stored in the handler state so the
+    DbHandler can read the error reason before the connection closes.
   """
 
   @behaviour Supavisor.Protocol.MessageHandler
 
+  require Record
   require Supavisor.Protocol.Server, as: Server
+
+  Record.defrecord(:handler_state, action_queue: :queue.new(), fatal_error: nil)
 
   @impl true
   def handled_message_types do
-    [?1, ?3, ?t, ?Z]
+    [?1, ?3, ?t, ?Z, ?E]
   end
 
   @impl true
   def init_state do
-    :queue.new()
+    handler_state()
   end
 
   @impl true
-  def handle_message(action_queue, tag, len, payload) do
+  def handle_message(state, ?E, len, payload) do
+    pkt = <<?E, len::32, payload::binary>>
+    error = Server.decode_error_response(payload)
+
+    fatal = if error["S"] in ["FATAL", "PANIC"], do: error
+    {:ok, handler_state(state, fatal_error: fatal), pkt}
+  end
+
+  def handle_message(state, tag, len, payload) do
+    action_queue = handler_state(state, :action_queue)
     message_type = message_type(tag)
     {injected_pkts, action_queue} = maybe_inject(action_queue)
 
     case :queue.out(action_queue) do
       {{:value, {:intercept, ^message_type}}, updated_queue} ->
-        {:ok, updated_queue, injected_pkts}
+        {:ok, handler_state(state, action_queue: updated_queue), injected_pkts}
 
       {{:value, {:forward, ^message_type}}, updated_queue} ->
-        {:ok, updated_queue, [injected_pkts, <<tag, len::32, payload::binary>>]}
+        {:ok, handler_state(state, action_queue: updated_queue),
+         [injected_pkts, <<tag, len::32, payload::binary>>]}
 
       _other ->
-        {:ok, action_queue, [injected_pkts, <<tag, len::32, payload::binary>>]}
+        {:ok, handler_state(state, action_queue: action_queue),
+         [injected_pkts, <<tag, len::32, payload::binary>>]}
     end
   end
 

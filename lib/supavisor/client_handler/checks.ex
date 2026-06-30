@@ -8,18 +8,23 @@ defmodule Supavisor.ClientHandler.Checks do
 
   alias Supavisor.Errors.{AddressNotAllowedError, SslRequiredError, TenantBannedError}
 
-  def check_tenant_not_banned(%{tenant: %{banned_at: nil}}), do: :ok
+  def check_tenant_not_banned(data, now \\ DateTime.utc_now())
 
-  def check_tenant_not_banned(%{tenant: %{banned_until: banned_until, ban_reason: reason}})
+  def check_tenant_not_banned(%{tenant: %{banned_at: nil}}, _now), do: :ok
+
+  def check_tenant_not_banned(
+        %{tenant: %{banned_until: banned_until, ban_reason: reason}},
+        now
+      )
       when not is_nil(banned_until) do
-    if DateTime.compare(banned_until, DateTime.utc_now()) == :lt do
+    if DateTime.compare(now, banned_until) == :gt do
       :ok
     else
       {:error, %TenantBannedError{ban_reason: reason}}
     end
   end
 
-  def check_tenant_not_banned(%{tenant: %{ban_reason: reason}}) do
+  def check_tenant_not_banned(%{tenant: %{ban_reason: reason}}, _now) do
     {:error, %TenantBannedError{ban_reason: reason}}
   end
 

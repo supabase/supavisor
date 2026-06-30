@@ -9,9 +9,26 @@ parse_integer_list = fn numbers when is_binary(numbers) ->
 end
 
 db_socket_options =
-  if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
-    do: [:inet6],
-    else: [:inet]
+  case System.get_env("SUPAVISOR_DB_IP_VERSION") do
+    "ipv6" ->
+      [:inet6]
+
+    "ipv4" ->
+      [:inet]
+
+    _ ->
+      # Auto-detect IP version from DATABASE_URL hostname:
+      database_url =
+        System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres")
+
+      case URI.parse(database_url) do
+        %URI{host: host} when is_binary(host) ->
+          [Supavisor.Helpers.detect_ip_version(host)]
+
+        _ ->
+          [:inet]
+      end
+  end
 
 secret_key_base =
   if config_env() in [:dev, :test] do
@@ -265,31 +282,6 @@ if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
          top_level: [:project],
          context: []
        }}
-end
-
-if path = System.get_env("SUPAVISOR_ACCESS_LOG_FILE_PATH") do
-  config :supavisor, :logger, [
-    {:handler, :access_log, :logger_std_h,
-     %{
-       level: :error,
-       formatter:
-         Logger.Formatter.new(
-           format: "$dateT$timeZ $metadata[$level] $message\n",
-           color: false,
-           metadata: [:peer_ip],
-           utc_log: true
-         ),
-       filter_default: :stop,
-       filters: [
-         exchange: {&Supavisor.Logger.Filters.filter_auth_error/2, nil}
-       ],
-       config: %{
-         file: to_charlist(path),
-         # Keep the file clean on each startup
-         modes: [:write]
-       }
-     }}
-  ]
 end
 
 config :logger,

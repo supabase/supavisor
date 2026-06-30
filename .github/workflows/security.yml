@@ -4,12 +4,9 @@ on:
   push:
     branches:
       - main
-  pull_request_target:
+  pull_request:
     branches:
       - main
-  schedule:
-    # Every day at midnight UTC
-    - cron: "0 0 * * *"
 
 jobs:
   deps:
@@ -22,7 +19,7 @@ jobs:
       id: beam
       uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
       with:
-        otp-version: '27.2.1'
+        otp-version: '27.3.4'
         elixir-version: '1.18.2'
     - name: Cache Mix
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
@@ -34,6 +31,7 @@ jobs:
     - name: Install dependencies
       run: mix deps.get --check-locked
     - name: Submit dependencies to GitHub
+      if: github.ref == 'refs/heads/main'
       uses: erlef/mix-dependency-submission@fa3e8f349d00a32bf14eec1c7577d6564abe08d2 # v1.3.1
 
   audit:
@@ -47,7 +45,7 @@ jobs:
       id: beam
       uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
       with:
-        otp-version: '27.2.1'
+        otp-version: '27.3.4'
         elixir-version: '1.18.2'
     - name: Cache Mix
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
@@ -56,10 +54,12 @@ jobs:
         key: ${{ runner.os }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
         restore-keys: |
           ${{ runner.os }}-mix-
+    - name: Install dependencies
+      run: mix deps.get --check-locked
     - name: Compile deps
       run: mix deps.compile
     - name: MixAudit check
-      run: mix deps.audit
+      run: mix deps.audit --ignore-file .mix_audit_ignore
 
   sobelow:
     name: Security check
@@ -72,7 +72,7 @@ jobs:
       id: beam
       uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
       with:
-        otp-version: '27.2.1'
+        otp-version: '27.3.4'
         elixir-version: '1.18.2'
     - name: Cache Mix
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4

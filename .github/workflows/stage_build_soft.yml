@@ -1,0 +1,29 @@
+name: Build soft artifact for staging
+
+# Registration-only on main: GitHub renders the "Run workflow" button only
+# when a workflow on the default branch declares workflow_dispatch. The actual
+# build logic lives on release_stage; dispatch this workflow with release_stage
+# selected in the "Use workflow from" dropdown. The guard below aborts any run
+# that reaches the main-side file.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade_from:
+        description: 'Base version to upgrade from. Must match an existing v<tag>. e.g. 2.9.0'
+        required: true
+        type: string
+      upgrade_to:
+        description: 'Target version. Must match an existing v<tag>, and differ from upgrade_from. e.g. 2.9.6-rc.0'
+        required: true
+        type: string
+jobs:
+  build:
+    runs-on: u22-arm-runner
+    steps:
+      - name: Guard - dispatch must target release_stage
+        if: github.ref_name != 'release_stage'
+        run: |
+          echo "::error::This workflow must be dispatched against the 'release_stage' branch."
+          echo "::error::On the Actions page, open 'Run workflow' and pick 'release_stage' in the 'Use workflow from' dropdown."
+          exit 1

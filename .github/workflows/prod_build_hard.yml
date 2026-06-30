@@ -1,0 +1,25 @@
+name: Build hard artifact for production
+
+# Registration-only on main: GitHub renders the "Run workflow" button only
+# when a workflow on the default branch declares workflow_dispatch. The actual
+# build logic lives on release; dispatch this workflow with release selected in
+# the "Use workflow from" dropdown. The guard below aborts any run that reaches
+# the main-side file.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade_to:
+        description: 'Target version. Must match an existing v<tag>. e.g. 2.9.6-rc.0'
+        required: true
+        type: string
+jobs:
+  build:
+    runs-on: u22-arm-runner
+    steps:
+      - name: Guard - dispatch must target release
+        if: github.ref_name != 'release'
+        run: |
+          echo "::error::This workflow must be dispatched against the 'release' branch."
+          echo "::error::On the Actions page, open 'Run workflow' and pick 'release' in the 'Use workflow from' dropdown."
+          exit 1

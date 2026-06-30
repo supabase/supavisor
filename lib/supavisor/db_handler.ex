@@ -28,6 +28,7 @@ defmodule Supavisor.DbHandler do
 
   require Logger
   require Supavisor
+  require Supavisor.Protocol.BackendMessageHandler, as: BackendMessageHandler
   require Supavisor.Protocol.Server, as: Server
   require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
@@ -37,10 +38,10 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.Errors.DbHandlerExitedError
   alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
+  alias Supavisor.Protocol.PreparedStatements.BackendStorage
 
   alias Supavisor.{
     ClientHandler,
-    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
@@ -65,6 +66,8 @@ defmodule Supavisor.DbHandler do
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @cleanup_buffer_limit 65_536
   @connect_cooldown_ms 2_500
+  @authentication_timeout_ms 15_000
+  @tls_send_chunk_size 8192
 
   @auth_error_actions %{
     "28P01" => {:keep_pool, :invalidate_secrets},
@@ -191,6 +194,8 @@ defmodule Supavisor.DbHandler do
         %ConnectionParameters{config.connection_params | application_name: "Supavisor"}
       end
 
+     storage_mod = BackendStorage.select(config.tenant_feature_flags)
+
     data = %{
       id: id,
       sock: nil,
@@ -203,17 +208,20 @@ defmodule Supavisor.DbHandler do
       nonce: nil,
       server_proof: nil,
       stats: %{},
-      prepared_statements: MapSet.new(),
+      prepared_statements_storage: storage_mod,
+      prepared_statements: storage_mod.new(),
       proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
+      backend_message_streaming: true,
       mode: config.mode,
       replica_type: config.replica_type,
       caller: nil,
       client_sock: nil,
       terminating_error: nil,
-      manager_ref: nil
+      manager_ref: nil,
+      derived_secrets: nil
     }
 
     Telem.handler_action(:db_handler, :started, id)
@@ -253,7 +261,9 @@ defmodule Supavisor.DbHandler do
 
     Telem.handler_action(:db_handler, :db_connection, data.id)
 
-    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts) do
+    connect_timeout = if data.proxy, do: 1_000, else: 5_000
+
+    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts, connect_timeout) do
       {:ok, sock} ->
         # Ensure buffer >= recbuf to avoid unnecessary copying
         # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
@@ -275,7 +285,9 @@ defmodule Supavisor.DbHandler do
             case send_startup(sock, conn_params, tenant, options) do
               :ok ->
                 :ok = activate(sock)
-                {:next_state, :authentication, %{data | sock: sock}}
+
+                {:next_state, :authentication, %{data | sock: sock},
+                 {:state_timeout, @authentication_timeout_ms, :authentication_timeout}}
 
               {:error, reason} ->
                 Logger.error("DbHandler: Send startup error #{inspect(reason)}")
@@ -332,6 +344,11 @@ defmodule Supavisor.DbHandler do
     {:stop, :normal}
   end
 
+  def handle_event(:state_timeout, :authentication_timeout, :authentication, data) do
+    Logger.error("DbHandler: Authentication timeout after #{@authentication_timeout_ms}ms")
+    handle_connection_failure({:error, :authentication_timeout}, data)
+  end
+
   def handle_event(:info, {proto, _, bin}, :authentication, data) when proto in @proto do
     {:ok, dec_pkt, _} = Server.decode(bin)
     Logger.debug("DbHandler: dec_pkt, #{inspect(dec_pkt, pretty: true)}")
@@ -342,13 +359,17 @@ defmodule Supavisor.DbHandler do
       {:authentication_sasl, nonce} ->
         {:keep_state, %{data | nonce: nonce}}
 
-      {:authentication_server_first_message, server_proof} ->
-        {:keep_state, %{data | server_proof: server_proof}}
+      {:authentication_server_first_message, server_proof, derived_secrets} ->
+        {:keep_state,
+         Map.merge(data, %{server_proof: server_proof, derived_secrets: derived_secrets})}
 
       %{authentication_server_final_message: _server_final} ->
         :keep_state_and_data
 
       %{authentication_ok: true} ->
+        :keep_state_and_data
+
+      resp when resp == %{} ->
         :keep_state_and_data
 
       :authentication_md5 ->
@@ -372,15 +393,16 @@ defmodule Supavisor.DbHandler do
       {:ready_for_query, acc} ->
         ps = acc.ps
 
-        Logger.debug(
-          "DbHandler: DB ready_for_query: #{inspect(acc.db_state)} #{inspect(ps, pretty: true)}"
+        Logger.info(
+          "DbHandler: Backend authenticated, backend_pid: #{inspect(acc[:backend_key_data][:pid])}"
         )
 
         if data.mode != :proxy do
           Supavisor.set_parameter_status(data.id, ps)
+          cache_derived_secrets(data)
         end
 
-        {:next_state, :idle, %{data | parameter_status: ps}}
+        {:next_state, :idle, Map.merge(data, %{parameter_status: ps, derived_secrets: nil})}
 
       other ->
         Logger.error("DbHandler: Undefined auth response #{inspect(other)}")
@@ -389,8 +411,18 @@ defmodule Supavisor.DbHandler do
   end
 
   # the process received message from db while idle
-  def handle_event(:info, {proto, _, bin}, :idle, _data) when proto in @proto do
-    Logger.debug("DbHandler: Got db response #{inspect(bin)} when idle")
+  def handle_event(:info, {proto, _, bin}, :idle, %{backend_message_streaming: true} = data)
+      when proto in @proto do
+    Logger.debug("DbHandler: Got db response when idle")
+
+    {:ok, updated_data, _packets} = process_backend_streaming(bin, data)
+
+    {:keep_state, updated_data}
+  end
+
+  # hot code reload compat: remove after full rollout
+  def handle_event(:info, {proto, _, _bin}, :idle, _data) when proto in @proto do
+    Logger.debug("DbHandler: Got db response when idle")
     :keep_state_and_data
   end
 
@@ -507,8 +539,12 @@ defmodule Supavisor.DbHandler do
       data
       | stream_state:
           Enum.reduce(close_pkts, data.stream_state, fn _, stream_state ->
-            MessageStreamer.update_state(stream_state, fn queue ->
-              :queue.in({:intercept, :close}, queue)
+            MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
+                                                            action_queue: queue
+                                                          ) = s ->
+              BackendMessageHandler.handler_state(s,
+                action_queue: :queue.in({:intercept, :close}, queue)
+              )
             end)
           end),
         prepared_statements: prepared_statements
@@ -587,22 +623,27 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event(_, {closed, _}, :busy, data) when closed in @sock_closed do
-    {:stop, {:shutdown, :db_termination}, data}
-  end
-
   def handle_event(_, {closed, _}, :authentication, data) when closed in @sock_closed do
-    Logger.error("DbHandler: Db connection closed when state was authentication")
+    Logger.error("DbHandler: Connection closed unexpectedly during authentication")
 
     handle_connection_failure({:error, :db_connection_closed_in_auth}, data)
   end
 
   def handle_event(_, {closed, _}, state, data) when closed in @sock_closed do
-    if state != :terminating_with_error do
-      Logger.error("DbHandler: Db connection closed when state was #{state}")
-    end
+    case last_fatal_error(data) do
+      %{"M" => msg, "C" => code} ->
+        status = if state == :busy, do: "checked out by a client", else: "idle in the pool"
+        Logger.error("DbHandler: Session terminated by server while #{status}: #{msg} (#{code})")
+        {:stop, :normal, data}
 
-    {:stop, {:shutdown, :db_termination}, data}
+      _ ->
+        if state != :terminating_with_error do
+          status = if state == :busy, do: "checked out by a client", else: "idle in the pool"
+          Logger.error("DbHandler: Connection closed unexpectedly while #{status}")
+        end
+
+        {:stop, {:shutdown, :db_termination}, data}
+    end
   end
 
   # linked client_handler went down
@@ -694,10 +735,7 @@ defmodule Supavisor.DbHandler do
   defp encode_and_forward_error(message, data) do
     case data do
       %{client_sock: sock} when not is_nil(sock) ->
-        HandlerHelpers.sock_send(
-          sock,
-          Server.encode_error_message(message)
-        )
+        client_send(data, Server.encode_error_message(message))
 
       _other ->
         :noop
@@ -736,11 +774,12 @@ defmodule Supavisor.DbHandler do
             cacerts: [conn_params.upstream_tls_ca],
             # unclear behavior on pg14
             server_name_indication: conn_params.sni_hostname || conn_params.host,
-            customize_hostname_check: [{:match_fun, fn _, _ -> true end}]
+            customize_hostname_check: [{:match_fun, fn _, _ -> true end}],
+            receiver_spawn_opts: [min_heap_size: 2048]
           ]
 
         :none ->
-          [verify: :verify_none]
+          [verify: :verify_none, receiver_spawn_opts: [min_heap_size: 2048]]
       end
 
     case :ssl.connect(sock, opts, timeout) do
@@ -851,19 +890,20 @@ defmodule Supavisor.DbHandler do
 
     secrets = data.connection_params.secrets
 
-    {client_final_message, server_proof} =
-      Helpers.get_client_final(
-        secrets,
-        server_first_parts,
-        nonce,
-        secrets.user,
-        "biws"
-      )
+    {client_final_message, server_proof, derived_secrets} =
+      case Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws") do
+        {client_final_message, server_proof, derived_secrets} ->
+          {client_final_message, server_proof, derived_secrets}
+
+        # TODO: drop once v2.9.7 is everywhere
+        {client_final_message, server_proof} ->
+          {client_final_message, server_proof, nil}
+      end
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
     :ok = HandlerHelpers.sock_send(data.sock, bin)
 
-    {:authentication_server_first_message, server_proof}
+    {:authentication_server_first_message, server_proof, derived_secrets}
   end
 
   defp handle_auth_pkts(
@@ -906,7 +946,19 @@ defmodule Supavisor.DbHandler do
   defp handle_auth_pkts(%{tag: :error_response, payload: error}, _acc, _data),
     do: {:error_response, error}
 
-  defp handle_auth_pkts(_e, acc, _data), do: acc
+  defp handle_auth_pkts(%{tag: :notice_response, payload: notice}, acc, _data) do
+    Logger.notice("DbHandler: Notice during authentication: #{inspect(notice)}")
+    acc
+  end
+
+  defp handle_auth_pkts(pkt, _acc, _data), do: {:unexpected_packet, pkt}
+
+  defp cache_derived_secrets(%{id: id, derived_secrets: derived_secrets})
+       when not is_nil(derived_secrets) do
+    Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, derived_secrets)
+  end
+
+  defp cache_derived_secrets(_data), do: :ok
 
   @spec handle_authentication_error(map(), String.t()) :: any()
   defp handle_authentication_error(%{mode: :proxy}, _reason), do: :ok
@@ -918,21 +970,56 @@ defmodule Supavisor.DbHandler do
   end
 
   @spec handle_server_messages(binary(), map()) :: map()
+  defp handle_server_messages(bin, %{backend_message_streaming: true} = data) do
+    {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
+
+    if to_send != [] do
+      client_send(data, to_send)
+    end
+
+    updated_data
+  end
+
+  # hot code reload compat: remove after full rollout
   defp handle_server_messages(bin, data) do
-    if FeatureFlag.enabled?(data.tenant_feature_flags, "named_prepared_statements") do
-      {:ok, updated_data, packets_to_send} = process_backend_streaming(bin, data)
+    client_send(data, bin)
+    data
+  end
 
-      if packets_to_send != [] do
-        HandlerHelpers.sock_send(data.client_sock, packets_to_send)
-      end
+  # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's
+  # buffer that pqReadData doesn't drain; the client then polls the socket
+  # for data that's already arrived. Keeping records within libpq's 8KB
+  # input buffer avoids it.
+  # https://www.postgresql.org/message-id/flat/57d1e8b1-d016-4cea-9b60-63cbdb40eb81%40iki.fi
+  defp client_send(%{client_sock: {:ssl, _} = sock}, payload) do
+    chunk_send(:erlang.iolist_to_iovec(payload), sock)
+  end
 
-      updated_data
-    else
-      HandlerHelpers.sock_send(data.client_sock, bin)
+  defp client_send(%{client_sock: sock}, payload) do
+    HandlerHelpers.sock_send(sock, payload)
+  end
 
-      data
+  defp chunk_send([], _sock), do: :ok
+
+  defp chunk_send(iovec, sock) do
+    {chunk, rest} = take_chunk(iovec, @tls_send_chunk_size, [])
+
+    case HandlerHelpers.sock_send(sock, chunk) do
+      :ok -> chunk_send(rest, sock)
+      err -> err
     end
   end
+
+  defp take_chunk([bin | rest], remaining, acc) when byte_size(bin) <= remaining do
+    take_chunk(rest, remaining - byte_size(bin), [bin | acc])
+  end
+
+  defp take_chunk([bin | rest], remaining, acc) do
+    <<head::binary-size(remaining), tail::binary>> = bin
+    {:lists.reverse([head | acc]), [tail | rest]}
+  end
+
+  defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
   # bind to the socket. If it doesn't, we must send the parse pkt first.
@@ -940,16 +1027,24 @@ defmodule Supavisor.DbHandler do
   # If we received a bind without a parse, we need to intercept the parse response, otherwise,
   # the client will receive an unexpected message.
   defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
-    if stmt_name in data.prepared_statements do
-      {[pkt | iodata], data}
+    storage_mod = data.prepared_statements_storage
+
+    if storage_mod.member?(data.prepared_statements, stmt_name) do
+      {[pkt | iodata],
+       %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
     else
       new_data = %{
         data
         | stream_state:
-            MessageStreamer.update_state(data.stream_state, fn queue ->
-              :queue.in({:intercept, :parse}, queue)
-            end),
-          prepared_statements: MapSet.put(data.prepared_statements, stmt_name)
+            MessageStreamer.update_state(
+              data.stream_state,
+              fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
+                BackendMessageHandler.handler_state(s,
+                  action_queue: :queue.in({:intercept, :parse}, queue)
+                )
+              end
+            ),
+          prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)
       }
 
       {[[parse_pkt, pkt] | iodata], new_data}
@@ -957,13 +1052,19 @@ defmodule Supavisor.DbHandler do
   end
 
   defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, {iodata, data}) do
+    storage_mod = data.prepared_statements_storage
+
     {[pkt | iodata],
      %{
        data
-       | prepared_statements: MapSet.delete(data.prepared_statements, stmt_name),
+       | prepared_statements: storage_mod.delete(data.prepared_statements, stmt_name),
          stream_state:
-           MessageStreamer.update_state(data.stream_state, fn queue ->
-             :queue.in({:forward, :close}, queue)
+           MessageStreamer.update_state(data.stream_state, fn BackendMessageHandler.handler_state(
+                                                                action_queue: queue
+                                                              ) = s ->
+             BackendMessageHandler.handler_state(s,
+               action_queue: :queue.in({:forward, :close}, queue)
+             )
            end)
      }}
   end
@@ -975,39 +1076,55 @@ defmodule Supavisor.DbHandler do
   # If we stop generating unique id per statement, and instead do deterministic ids,
   # we need to potentially drop parse pkts and return a parse response
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
-    if stmt_name in data.prepared_statements do
+    storage_mod = data.prepared_statements_storage
+
+    if storage_mod.member?(data.prepared_statements, stmt_name) do
       {iodata,
        %{
          data
-         | stream_state:
-             MessageStreamer.update_state(data.stream_state, fn queue ->
-               :queue.in({:inject, :parse}, queue)
-             end)
+         | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name),
+           stream_state:
+             MessageStreamer.update_state(
+               data.stream_state,
+               fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
+                 BackendMessageHandler.handler_state(s,
+                   action_queue: :queue.in({:inject, :parse}, queue)
+                 )
+               end
+             )
        }}
     else
-      prepared_statements = MapSet.put(data.prepared_statements, stmt_name)
+      prepared_statements = storage_mod.put(data.prepared_statements, stmt_name)
 
       {[pkt | iodata],
        %{
          data
          | prepared_statements: prepared_statements,
            stream_state:
-             MessageStreamer.update_state(data.stream_state, fn queue ->
-               :queue.in({:forward, :parse}, queue)
-             end)
+             MessageStreamer.update_state(
+               data.stream_state,
+               fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
+                 BackendMessageHandler.handler_state(s,
+                   action_queue: :queue.in({:forward, :parse}, queue)
+                 )
+               end
+             )
        }}
     end
   end
 
-  defp evict_exceeding(%{prepared_statements: prepared_statements, id: id}) do
+  defp evict_exceeding(%{
+         prepared_statements: prepared_statements,
+         prepared_statements_storage: storage_mod,
+         id: id
+       }) do
     limit = PreparedStatements.backend_limit()
 
-    if MapSet.size(prepared_statements) >= limit do
+    if storage_mod.size(prepared_statements) >= limit do
       count = div(limit, 5)
-      to_remove = Enum.take_random(prepared_statements, count) |> MapSet.new()
-      close_pkts = Enum.map(to_remove, &PreparedStatements.build_close_pkt/1)
-      prepared_statements = MapSet.difference(prepared_statements, to_remove)
-      Telem.prepared_statements_evicted(count, id)
+      {evicted, prepared_statements} = storage_mod.evict(prepared_statements, count)
+      close_pkts = Enum.map(evicted, &PreparedStatements.build_close_pkt/1)
+      Telem.prepared_statements_evicted(length(evicted), id)
 
       {close_pkts, prepared_statements}
     else
@@ -1018,13 +1135,22 @@ defmodule Supavisor.DbHandler do
   defp process_backend_streaming(bin, data) do
     case MessageStreamer.handle_packets(data.stream_state, bin) do
       {:ok, new_stream_state, packets} ->
-        updated_data = %{data | stream_state: new_stream_state}
-        {:ok, updated_data, packets}
+        {:ok, %{data | stream_state: new_stream_state}, packets}
 
       err ->
         err
     end
   end
+
+  defp last_fatal_error(%{backend_message_streaming: true} = data) do
+    BackendMessageHandler.handler_state(
+      MessageStreamer.stream_state(data.stream_state, :handler_state),
+      :fatal_error
+    )
+  end
+
+  # hot code reload compat: remove after full rollout
+  defp last_fatal_error(_data), do: nil
 
   defp get_connection_params_with_secrets(conn_params, id) do
     case Supavisor.UpstreamAuthentication.get_upstream_auth_secrets(id) do
@@ -1039,17 +1165,22 @@ defmodule Supavisor.DbHandler do
   defp handle_connection_failure(reason, data) do
     if not data.proxy do
       Supavisor.CircuitBreaker.record_failure(data.tenant, :db_connection)
-      Supavisor.TenantCache.put_last_connect_failure(data.id, System.monotonic_time(:millisecond))
+      Supavisor.ConnectBackoff.record_failure(data.id, System.monotonic_time(:millisecond))
     end
 
     error = %{
       "S" => "FATAL",
       "C" => "08006",
-      "M" => "Failed to connect to database: #{inspect(reason)}"
+      "M" => "Failed to connect to database: #{format_reason(reason)}"
     }
 
     {:keep_state_and_data, {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}}
   end
+
+  defp format_reason({:error, :authentication_timeout}),
+    do: "authentication did not complete within #{@authentication_timeout_ms}ms"
+
+  defp format_reason(reason), do: inspect(reason)
 
   defp resolve_secrets(data) do
     if data.proxy do
@@ -1071,7 +1202,7 @@ defmodule Supavisor.DbHandler do
   end
 
   defp connect_cooldown_remaining(id) do
-    case Supavisor.TenantCache.get_last_connect_failure(id) do
+    case Supavisor.ConnectBackoff.last_failure(id) do
       nil ->
         0
 

@@ -288,6 +288,18 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
+  @spec decode_error_response(binary()) :: %{String.t() => String.t()}
+  def decode_error_response(payload) do
+    fields = String.split(payload, <<0>>, trim: true)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      case field do
+        <<char::binary-1, content::binary>> -> Map.put(acc, char, content)
+        _ -> acc
+      end
+    end)
+  end
+
   @spec decode_payload(:authentication, binary()) ::
           atom() | {atom(), binary()} | {:undefined, any()}
   defp decode_payload(:authentication, payload) do
@@ -366,17 +378,10 @@ defmodule Supavisor.Protocol.Server do
   defp decode_payload(:data_row, _payload), do: nil
 
   # https://www.postgresql.org/docs/current/protocol-error-fields.html
-  @spec decode_payload(:error_response, binary()) :: %{String.t() => String.t()}
-  defp decode_payload(:error_response, payload) do
-    fields = String.split(payload, <<0>>, trim: true)
-
-    Enum.reduce(fields, %{}, fn field, acc ->
-      case field do
-        <<char::binary-1, content::binary>> -> Map.put(acc, char, content)
-        _ -> acc
-      end
-    end)
-  end
+  @spec decode_payload(:error_response | :notice_response, binary()) ::
+          %{String.t() => String.t()}
+  defp decode_payload(tag, payload) when tag in [:error_response, :notice_response],
+    do: decode_error_response(payload)
 
   @spec decode_payload(:password_message, binary()) ::
           {:scram_sha_256, map()} | {:md5, binary()} | :undefined

@@ -29,8 +29,18 @@ defmodule Supavisor.Protocol.Client do
         fields
         |> Enum.chunk_every(2)
         |> Enum.map(fn
-          ["options" = k, v] -> {k, Supavisor.Protocol.StartupOptions.parse(v)}
-          [k, v] -> {k, v}
+          ["options" = k, v] ->
+            parsed = Supavisor.Protocol.StartupOptions.parse(v)
+
+            # Compatibility: options are not following the standard format, try query_decoding them
+            if map_size(parsed) > 0 do
+              {k, parsed}
+            else
+              {k, URI.decode_query(v, %{}, :rfc3986)}
+            end
+
+          [k, v] ->
+            {k, v}
         end)
         |> Map.new()
 

@@ -213,12 +213,11 @@ defmodule Supavisor.TenantsTest do
       assert error.code == "ENOTFOUND"
     end
 
-    test "get_user_cache/4 returns TenantOrUserNotFoundError with sni_hostname as tenant_or_alias" do
-      assert {:error, %TenantOrUserNotFoundError{} = error} =
+    test "get_user_cache/4 returns NoTenantIdentifierError when external_id is nil and SNI doesn't match" do
+      assert {:error, %NoTenantIdentifierError{}} =
                result = Tenants.get_user_cache(:single, "no_user", nil, "no_host.example.com")
 
       assert_valid_error(result)
-      assert error.tenant_or_alias == "no_host.example.com"
     end
 
     test "get_user_cache/4 returns NoTenantIdentifierError when both identifiers are nil" do

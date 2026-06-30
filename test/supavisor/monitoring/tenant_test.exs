@@ -126,7 +126,10 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       tls_id = Supavisor.id(base_id, upstream_tls: true)
 
       # Register 3 clients without TLS and 2 with TLS
-      for {id, i} <- Enum.with_index([base_id, base_id, base_id, tls_id, tls_id]) do
+      test_pid = self()
+      ids = [base_id, base_id, base_id, tls_id, tls_id]
+
+      for {id, i} <- Enum.with_index(ids) do
         start_supervised!(
           {Task,
            fn ->
@@ -135,11 +138,14 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                include_app_name: true
              )
 
+             send(test_pid, :registered)
              Process.sleep(:infinity)
            end},
           id: :"client_#{i}"
         )
       end
+
+      for _ <- 1..length(ids), do: assert_receive(:registered, 1_000)
 
       ref = attach_handler([:supavisor, :connections])
       Tenant.execute_tenant_metrics()
@@ -263,7 +269,10 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
 
       tls_id = Supavisor.id(base_id, upstream_tls: true)
 
-      for {id, i} <- Enum.with_index([base_id, base_id, tls_id]) do
+      test_pid = self()
+      ids = [base_id, base_id, tls_id]
+
+      for {id, i} <- Enum.with_index(ids) do
         start_supervised!(
           {Task,
            fn ->
@@ -272,11 +281,14 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
                include_app_name: true
              )
 
+             send(test_pid, :registered)
              Process.sleep(:infinity)
            end},
           id: :"proxy_client_#{i}"
         )
       end
+
+      for _ <- 1..length(ids), do: assert_receive(:registered, 1_000)
 
       ref = attach_handler([:supavisor, :proxy, :connections])
       Tenant.execute_tenant_proxy_metrics()

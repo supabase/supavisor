@@ -146,14 +146,6 @@ defmodule Supavisor.Asserts do
               "expected #{inspect(module)}.postgres_error/1 to return nil or a map with \"S\", \"C\", \"M\" string keys, got: #{inspect(other)}"
       end
 
-      is_auth_error = module.is_auth_error(error_struct)
-
-      if not is_boolean(is_auth_error) do
-        raise ExUnit.AssertionError,
-          message:
-            "expected #{inspect(module)}.is_auth_error/1 to return a boolean, got: #{inspect(is_auth_error)}"
-      end
-
       {:error, error_struct}
     end
   end

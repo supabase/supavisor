@@ -25,9 +25,6 @@ defmodule Supavisor.Errors.AuthTimeoutError do
     Supavisor.Error.protocol_error("FATAL", "08006", message(error))
   end
 
-  @impl Supavisor.Error
-  def is_auth_error(_), do: true
-
   defp context_description(:auth_md5_wait), do: "MD5"
   defp context_description(:auth_scram_first_wait), do: "SCRAM first"
   defp context_description(:auth_scram_final_wait), do: "SCRAM final"

@@ -2,43 +2,133 @@ defmodule Supavisor.HotUpgrade do
   @moduledoc false
   require Logger
 
-  @type app :: atom
   @type version_str :: String.t()
-  @type path_str :: String.t()
-  @type change :: :soft | {:advanced, [term]}
-  @type dep_mods :: [module]
-  @type appup_ver :: charlist | binary
-  @type instruction ::
-          {:add_module, module}
-          | {:delete_module, module}
-          | {:update, module, :supervisor | change}
-          | {:update, module, change, dep_mods}
-          | {:load_module, module}
-          | {:load_module, module, dep_mods}
-          | {:apply, {module, atom, [term]}}
-          | {:add_application, atom}
-          | {:remove_application, atom}
-          | {:restart_application, atom}
-          | :restart_new_emulator
-          | :restart_emulator
-  @type upgrade_instructions :: [{appup_ver, instruction}]
-  @type downgrade_instructions :: [{appup_ver, instruction}]
-  @type appup :: {appup_ver, upgrade_instructions, downgrade_instructions}
 
-  @spec up(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
   def up(_app, _from_vsn, to_vsn, appup, _transform) do
+    appup =
+      Enum.reject(appup, fn
+        {:load_module, __MODULE__} -> true
+        {:load_module, __MODULE__, _} -> true
+        {:add_module, Supavisor.ConnectBackoff} -> true
+        {:add_module, Supavisor.ConnectBackoff, _} -> true
+        {:add_module, Supavisor.ConnectBackoff.Janitor} -> true
+        {:add_module, Supavisor.ConnectBackoff.Janitor, _} -> true
+        # Owned by db_connection.appup, which load_modules it before its own apply.
+        {:add_module, Supavisor.HotUpgrade.DbConnectionMigration} -> true
+        {:add_module, Supavisor.HotUpgrade.DbConnectionMigration, _} -> true
+        _ -> false
+      end)
+
     [
+      {:load_module, __MODULE__},
       {:apply, {__MODULE__, :apply_runtime_config, [to_vsn]}},
-      {:apply, {__MODULE__, :reint_funs, []}}
+      {:apply, {__MODULE__, :remove_access_log_handler, []}},
+      {:add_module, Supavisor.ConnectBackoff},
+      {:add_module, Supavisor.ConnectBackoff.Janitor},
+      {:apply, {__MODULE__, :prepare_connect_backoff, []}}
+    ] ++ appup ++ [{:apply, {__MODULE__, :restart_prom_ex, []}}]
+  end
+
+  def down(_app, from_vsn, _to_vsn, appup, _transform) do
+    appup =
+      Enum.reject(appup, fn
+        {:delete_module, Supavisor.ConnectBackoff} -> true
+        {:delete_module, Supavisor.ConnectBackoff, _} -> true
+        {:delete_module, Supavisor.ConnectBackoff.Janitor} -> true
+        {:delete_module, Supavisor.ConnectBackoff.Janitor, _} -> true
+        {:delete_module, Supavisor.HotUpgrade.DbConnectionMigration} -> true
+        {:delete_module, Supavisor.HotUpgrade.DbConnectionMigration, _} -> true
+        _ -> false
+      end)
+
+    [
+      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}},
+      {:apply, {Supavisor.HotUpgrade, :cleanup_connect_backoff, []}},
+      {:apply, {Supavisor.HotUpgrade, :restart_prom_ex, []}},
+      {:delete_module, Supavisor.ConnectBackoff.Janitor},
+      {:delete_module, Supavisor.ConnectBackoff}
     ] ++ appup
   end
 
-  @spec down(app(), version_str(), version_str(), [appup()], any()) :: [appup()]
-  def down(_app, from_vsn, _to_vsn, appup, _transform) do
-    [
-      {:apply, {Supavisor.HotUpgrade, :apply_runtime_config, [from_vsn]}},
-      {:apply, {__MODULE__, :reint_funs, []}}
-    ] ++ appup
+  def remove_access_log_handler do
+    :logger.remove_handler(:access_log)
+  end
+
+  @doc """
+  Creates the `Supavisor.ConnectBackoff` named ETS table and starts the
+  `Supavisor.ConnectBackoff.Janitor` child. Both are normally set up in
+  `Supavisor.Application.start/2`, which does not re-run on a hot upgrade —
+  so we wire them up explicitly here. Both steps are idempotent in case the
+  upgrade is re-applied.
+  """
+  def prepare_connect_backoff do
+    if :ets.whereis(Supavisor.ConnectBackoff) == :undefined do
+      Supavisor.ConnectBackoff.init()
+    end
+
+    case Supervisor.start_child(Supavisor.Supervisor, Supavisor.ConnectBackoff.Janitor) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, :already_present} -> :ok
+    end
+  end
+
+  @doc """
+  Reverses `prepare_connect_backoff/0` for downgrades to a version that does
+  not know about `Supavisor.ConnectBackoff`.
+  """
+  def cleanup_connect_backoff do
+    _ = Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.ConnectBackoff.Janitor)
+    _ = Supervisor.delete_child(Supavisor.Supervisor, Supavisor.ConnectBackoff.Janitor)
+
+    if :ets.whereis(Supavisor.ConnectBackoff) != :undefined do
+      :ets.delete(Supavisor.ConnectBackoff)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Restarts `Supavisor.Monitoring.PromEx` within the top-level supervisor so
+  that any new polling metrics introduced by an upgrade (or removed by a
+  downgrade) take effect immediately. Must run after all appup instructions
+  so that `Application.spec(:supavisor, :vsn)` already reflects the new
+  version on the first poll.
+
+  No-ops when PromEx is not present in the supervision tree.
+
+  The :terminate measurement captures the persistent_term.erase GC sweep (sweep 1) since that runs synchronously
+   inside Peep's terminate/2 before terminate_child returns. The :restart measurement captures the
+  persistent_term.store GC sweep (sweep 2) from Peep's init/1. Both times include whatever else those supervisor
+   calls do, but the GC is the dominant cost under load.
+  """
+  def restart_prom_ex do
+    case timed(:terminate, fn ->
+           Supervisor.terminate_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx)
+         end) do
+      :ok ->
+        case timed(:restart, fn ->
+               Supervisor.restart_child(Supavisor.Supervisor, Supavisor.Monitoring.PromEx)
+             end) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.error("PromEx failed to restart after upgrade: #{inspect(reason)}")
+            :ok
+        end
+
+      {:error, :not_found} ->
+        :ok
+    end
+  end
+
+  defp timed(label, fun) do
+    t0 = System.monotonic_time(:millisecond)
+    result = fun.()
+    elapsed = System.monotonic_time(:millisecond) - t0
+    Logger.info("restart_prom_ex #{label} took #{elapsed}ms")
+    result
   end
 
   @spec apply_runtime_config(version_str()) :: any()

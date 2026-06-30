@@ -8,6 +8,12 @@ defmodule Supavisor.ClientHandler.Error do
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
   require Logger
 
+  # TODO: make response delay configurable per error via the Supavisor.Error behaviour
+  @delayed_response_errors [
+    Supavisor.Errors.TenantOrUserNotFoundError,
+    Supavisor.Errors.WrongPasswordError
+  ]
+
   @type context :: :handshake | :authenticated
 
   @doc """
@@ -27,10 +33,13 @@ defmodule Supavisor.ClientHandler.Error do
     log_message = Map.get(error_actions, :log_message)
     log_level = Map.get(error_actions, :log_level, :error)
     send_ready_for_query = Map.get(error_actions, :send_ready_for_query, false)
-    auth_error = Map.get(error_actions, :auth_error, false)
 
     if log_message do
-      Logger.log(log_level, "ClientHandler: #{log_message}", auth_error: auth_error)
+      Logger.log(log_level, "ClientHandler: #{log_message}")
+    end
+
+    if is_struct(exception) and exception.__struct__ in @delayed_response_errors do
+      Process.sleep(500)
     end
 
     # Only send message if one exists (some errors like socket closed can't send)
@@ -69,8 +78,7 @@ defmodule Supavisor.ClientHandler.Error do
       # close without sending ReadyForQuery
       send_ready_for_query:
         stage == :authenticated &&
-          postgres_error && postgres_error["S"] not in ["PANIC", "FATAL"],
-      auth_error: e.__struct__.is_auth_error(e)
+          postgres_error && postgres_error["S"] not in ["PANIC", "FATAL"]
     }
   end
 

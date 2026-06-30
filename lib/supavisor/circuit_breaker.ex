@@ -20,7 +20,7 @@ defmodule Supavisor.CircuitBreaker do
     get_secrets: %{
       max_failures: 5,
       sliding_window_seconds: 300,
-      block_seconds: 600,
+      block_seconds: 30,
       explanation:
         "failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked",
       propagate?: false
@@ -28,7 +28,7 @@ defmodule Supavisor.CircuitBreaker do
     db_connection: %{
       max_failures: 100,
       sliding_window_seconds: 150,
-      block_seconds: 600,
+      block_seconds: 30,
       explanation:
         "too many failed attempts to connect to the database, new connections are temporarily blocked",
       propagate?: false
@@ -36,7 +36,7 @@ defmodule Supavisor.CircuitBreaker do
     auth_error: %{
       max_failures: 10,
       sliding_window_seconds: 150,
-      block_seconds: 600,
+      block_seconds: 120,
       explanation: "too many authentication failures, new connections are temporarily blocked",
       propagate?: true
     },
@@ -306,11 +306,7 @@ defmodule Supavisor.CircuitBreaker do
       Enum.reduce(entries, 0, fn {{key, operation} = ets_key, sw}, acc ->
         pre_delete_window = SlidingWindow.window_index(sw)
 
-        blocked =
-          case :ets.lookup(@blocks_table, ets_key) do
-            [{^ets_key, b}] -> b
-            [] -> 0
-          end
+        blocked = :ets.lookup_element(@blocks_table, ets_key, 2, 0)
 
         not_blocked = blocked == 0 or blocked < now
 

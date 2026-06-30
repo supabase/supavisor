@@ -80,7 +80,6 @@ This document provides a categorized list of all environment variables used in S
 | -------------------------------- | ----------------------- | ------------- | ----------------------- |
 | `SUPAVISOR_LOG_FILE_PATH`        | Path to log file        | -             | No                      |
 | `SUPAVISOR_LOG_FORMAT`           | Log format (json/text)  | `text`        | No                      |
-| `SUPAVISOR_ACCESS_LOG_FILE_PATH` | Path to access log file | -             | No                      |
 | `LOGS_ENGINE`                    | Logging engine to use   | -             | No                      |
 | `LOGFLARE_API_KEY`               | Logflare API key        | -             | Yes (if using Logflare) |
 | `LOGFLARE_SOURCE_ID`             | Logflare source ID      | -             | Yes (if using Logflare) |
@@ -93,7 +92,7 @@ This document provides a categorized list of all environment variables used in S
 | ------------------------- | ------------------------------------- | -------------------------------------------------- | -------- |
 | `DATABASE_URL`            | Connection URL                        | `ecto://postgres:postgres@localhost:6432/postgres` | No       |
 | `DB_POOL_SIZE`            | Connection pool size                  | `25`                                               | No       |
-| `SUPAVISOR_DB_IP_VERSION` | IP version for connection (ipv4/ipv6) | `ipv4`                                             | No       |
+| `SUPAVISOR_DB_IP_VERSION` | IP version for connection (ipv4/ipv6) | auto-detects from `DATABASE_URL`                   | No       |
 
 ---
 
