@@ -3,6 +3,8 @@ defmodule Supavisor.Integration.ProxyTest do
 
   require Logger
   require Supavisor
+
+  alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
   alias Supavisor.Support.{Cluster, SSLHelper}
 
@@ -132,6 +134,177 @@ defmodule Supavisor.Integration.ProxyTest do
                  15_000
                )
     end
+  end
+
+  @tag cluster: true
+  test "app_name is set correctly for the proxy connection" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    username = db_conf[:username]
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "app_name_test_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            availability_zone: "ap-southeast-1c",
+            users: [
+              %{
+                "db_user" => db_conf[:username],
+                "db_password" => db_conf[:password],
+                "pool_size" => 3,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: username,
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: "#{username}.#{tenant}",
+        parameters: [application_name: "my_test_app"]
+      )
+
+    # Upstream DB connection should always identify as "Supavisor"
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(conn, "SELECT current_setting('application_name')", [])
+
+    # node2 is the pool node
+    :ok =
+      wait_until(fn ->
+        :rpc.call(node2, Registry, :lookup, [
+          Supavisor.Registry.TenantClients,
+          id
+        ]) != []
+      end)
+
+    [{_pid, proxy_meta}] =
+      :rpc.call(node2, Registry, :lookup, [
+        Supavisor.Registry.TenantClients,
+        id
+      ])
+
+    assert proxy_meta[:app_name] == "my_test_app"
+
+    # our node is the proxy node
+    :ok =
+      wait_until(fn ->
+        Registry.lookup(Supavisor.Registry.TenantProxyClients, id) != []
+      end)
+
+    [{_pid, pool_meta}] = Registry.lookup(Supavisor.Registry.TenantProxyClients, id)
+    assert pool_meta[:app_name] == "my_test_app"
+  end
+
+  @tag cluster: true
+  test "app_name defaults to empty string when not provided" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    username = db_conf[:username]
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "app_name_empty_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            availability_zone: "ap-southeast-1c",
+            users: [
+              %{
+                "db_user" => db_conf[:username],
+                "db_password" => db_conf[:password],
+                "pool_size" => 3,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: username,
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: "#{username}.#{tenant}"
+      )
+
+    # Upstream DB connection should always identify as "Supavisor"
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(conn, "SELECT current_setting('application_name')", [])
+
+    # node2 is the pool node
+    :ok =
+      wait_until(fn ->
+        :rpc.call(node2, Registry, :lookup, [
+          Supavisor.Registry.TenantClients,
+          id
+        ]) != []
+      end)
+
+    [{_pid, proxy_meta}] =
+      :rpc.call(node2, Registry, :lookup, [
+        Supavisor.Registry.TenantClients,
+        id
+      ])
+
+    assert proxy_meta[:app_name] == ""
+
+    # our node is the proxy node
+    :ok =
+      wait_until(fn ->
+        Registry.lookup(Supavisor.Registry.TenantProxyClients, id) != []
+      end)
+
+    [{_pid, pool_meta}] = Registry.lookup(Supavisor.Registry.TenantProxyClients, id)
+    assert pool_meta[:app_name] == ""
   end
 
   for tenant <- @tenants do
@@ -699,7 +872,7 @@ defmodule Supavisor.Integration.ProxyTest do
   end
 
   test "cleanup resets session state in session mode" do
-    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+    %{db_conf: db_conf, origin: origin} = setup_tenant_connections(List.first(@tenants))
 
     connection_opts = [
       hostname: db_conf[:hostname],
@@ -711,10 +884,21 @@ defmodule Supavisor.Integration.ProxyTest do
 
     test_timeout = "12345ms"
 
-    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+    conn1_opts = Keyword.put(connection_opts, :parameters, application_name: "app_one")
+    conn2_opts = Keyword.put(connection_opts, :parameters, application_name: "app_two")
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, conn1_opts}, id: :conn1)
 
     assert [%P.Result{rows: [[backend_pid_1]]}] =
              P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    # conn1's application_name reached the backend
+    assert [%P.Result{rows: [["app_one"]]}] =
+             P.SimpleConnection.call(
+               conn1,
+               {:query,
+                "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid();"}
+             )
 
     assert [%P.Result{}] =
              P.SimpleConnection.call(
@@ -728,12 +912,28 @@ defmodule Supavisor.Integration.ProxyTest do
     stop_supervised(:conn1)
     Process.sleep(100)
 
-    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+    # Check if application_name was reset
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(
+               origin,
+               "SELECT application_name FROM pg_stat_activity WHERE pid = $1",
+               [String.to_integer(backend_pid_1)]
+             )
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, conn2_opts}, id: :conn2)
 
     assert [%P.Result{rows: [[backend_pid_2]]}] =
              P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
 
     assert backend_pid_1 == backend_pid_2
+
+    # conn2's application_name reached the backend
+    assert [%P.Result{rows: [["app_two"]]}] =
+             P.SimpleConnection.call(
+               conn2,
+               {:query,
+                "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid();"}
+             )
 
     assert [%P.Result{rows: [[timeout]]}] =
              P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})
