@@ -24,6 +24,7 @@ defmodule Supavisor.ClientHandler do
 
   alias Supavisor.{
     DbHandler,
+    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Manager,
@@ -331,7 +332,8 @@ defmodule Supavisor.ClientHandler do
 
       Registry.register(@clients_registry, data.id,
         started_at: System.monotonic_time(),
-        app_name: data.app_name
+        app_name: data.app_name,
+        include_app_name: include_app_name?(data)
       )
 
       cond do
@@ -358,7 +360,11 @@ defmodule Supavisor.ClientHandler do
         case Supavisor.get_pool_ranch(data.id) do
           {:ok, pool_ranch} ->
             Logger.metadata(proxy: true)
-            Registry.register(@proxy_clients_registry, data.id, app_name: data.app_name)
+
+            Registry.register(@proxy_clients_registry, data.id,
+              app_name: data.app_name,
+              include_app_name: include_app_name?(data)
+            )
 
             {:keep_state, %{data | pool_ranch: pool_ranch}, {:next_event, :internal, :connect_db}}
 
@@ -731,6 +737,10 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp maybe_set_application_name(_data, _db_connection), do: :ok
+
+  defp include_app_name?(data) do
+    FeatureFlag.enabled?(data.tenant_feature_flags, "app_name_metric")
+  end
 
   defp maybe_cleanup_db_handler(state, data) do
     if state == :idle and data.mode == :session and data.db_connection != nil and

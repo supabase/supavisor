@@ -9,6 +9,10 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
 
   @tags [:tenant, :user, :mode, :type, :db_name, :search_path]
 
+  defp published_app_name(meta) do
+    if meta[:include_app_name], do: meta[:app_name] || "", else: ""
+  end
+
   @impl true
   def polling_metrics(opts) do
     poll_rate = Keyword.get(opts, :poll_rate, 5_000)
@@ -258,7 +262,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     Supavisor.Registry.TenantClients
     |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
     |> Enum.frequencies_by(fn {id, meta} ->
-      {Supavisor.id(id, upstream_tls: false), meta[:app_name] || ""}
+      {Supavisor.id(id, upstream_tls: false), published_app_name(meta)}
     end)
     |> Enum.each(fn {{id, app_name}, count} ->
       emit_telemetry_for_tenant(id, count, app_name)
@@ -351,7 +355,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
             type: type,
             db_name: db_name,
             search_path: search_path,
-            app_name: meta[:app_name] || ""
+            app_name: published_app_name(meta)
           }
         )
     end
@@ -378,7 +382,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
     Supavisor.Registry.TenantProxyClients
     |> Registry.select([{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
     |> Enum.frequencies_by(fn {id, meta} ->
-      {Supavisor.id(id, upstream_tls: false), meta[:app_name] || ""}
+      {Supavisor.id(id, upstream_tls: false), published_app_name(meta)}
     end)
     |> Enum.each(fn {{id, app_name}, count} ->
       emit_proxy_telemetry_for_tenant(id, count, app_name)

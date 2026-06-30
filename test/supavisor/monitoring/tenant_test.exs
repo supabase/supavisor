@@ -130,7 +130,11 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
         start_supervised!(
           {Task,
            fn ->
-             Registry.register(Supavisor.Registry.TenantClients, id, app_name: "myapp")
+             Registry.register(Supavisor.Registry.TenantClients, id,
+               app_name: "myapp",
+               include_app_name: true
+             )
+
              Process.sleep(:infinity)
            end},
           id: :"client_#{i}"
@@ -169,10 +173,10 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
         )
 
       clients = [
-        {id, [app_name: "webapp"]},
-        {id, [app_name: "webapp"]},
-        {id, [app_name: "worker"]},
-        {id, [app_name: ""]}
+        {id, [app_name: "webapp", include_app_name: true]},
+        {id, [app_name: "webapp", include_app_name: true]},
+        {id, [app_name: "worker", include_app_name: true]},
+        {id, [app_name: "", include_app_name: true]}
       ]
 
       for {{reg_id, meta}, i} <- Enum.with_index(clients) do
@@ -206,6 +210,42 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       assert by_app["worker"] == 1
       assert by_app[""] == 1
     end
+
+    test "does not publish app_name when include_app_name is false or absent" do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: "metrics_app_name_off_test",
+          user: "test_user",
+          mode: :transaction,
+          db: "test_db",
+          search_path: nil,
+          upstream_tls: false
+        )
+
+      clients = [
+        {id, [app_name: "webapp", include_app_name: false]},
+        {id, [app_name: "worker"]}
+      ]
+
+      for {{reg_id, meta}, i} <- Enum.with_index(clients) do
+        start_supervised!(
+          {Task,
+           fn ->
+             Registry.register(Supavisor.Registry.TenantClients, reg_id, meta)
+             Process.sleep(:infinity)
+           end},
+          id: :"app_name_off_client_#{i}"
+        )
+      end
+
+      ref = attach_handler([:supavisor, :connections])
+      Tenant.execute_tenant_metrics()
+
+      assert_receive {^ref, {[:supavisor, :connections], %{active: 2}, %{app_name: ""}}}
+      refute_receive {^ref, {[:supavisor, :connections], _, %{app_name: "webapp"}}}
+      refute_receive {^ref, {[:supavisor, :connections], _, %{app_name: "worker"}}}
+    end
   end
 
   describe "execute_tenant_proxy_metrics/0" do
@@ -227,7 +267,11 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
         start_supervised!(
           {Task,
            fn ->
-             Registry.register(Supavisor.Registry.TenantProxyClients, id, app_name: "proxyapp")
+             Registry.register(Supavisor.Registry.TenantProxyClients, id,
+               app_name: "proxyapp",
+               include_app_name: true
+             )
+
              Process.sleep(:infinity)
            end},
           id: :"proxy_client_#{i}"
