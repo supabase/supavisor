@@ -222,8 +222,7 @@ defmodule Supavisor.Protocol.Server do
   defp encode_bind(params) do
     encoded_params =
       Enum.map(params, fn value ->
-        value = IO.iodata_to_binary(value)
-        [<<byte_size(value)::32>>, value]
+        [<<IO.iodata_length(value)::32>>, value]
       end)
 
     body = [
