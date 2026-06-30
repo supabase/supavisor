@@ -194,7 +194,7 @@ defmodule Supavisor.DbHandler do
         %ConnectionParameters{config.connection_params | application_name: "Supavisor"}
       end
 
-     storage_mod = BackendStorage.select(config.tenant_feature_flags)
+    storage_mod = BackendStorage.select(config.tenant_feature_flags)
 
     data = %{
       id: id,
