@@ -488,10 +488,11 @@ defmodule Supavisor.DbHandler do
 
       # Only when checked out to this client (:busy).
       state == :busy ->
-        Logger.debug("DbHandler: Setting application_name to #{inspect(name)}")
+        app_name = "Supavisor - #{name}"
+        Logger.debug("DbHandler: Setting application_name to #{inspect(app_name)}")
 
         query =
-          Server.extended_query("SELECT set_config('application_name', $1, false)", [name])
+          Server.extended_query("SELECT set_config('application_name', $1, false)", [app_name])
 
         :ok = HandlerHelpers.sock_send(data.sock, query)
 

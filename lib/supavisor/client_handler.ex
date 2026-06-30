@@ -758,7 +758,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp maybe_set_application_name(%{mode: :session, app_name: app_name}, {_pool, db_pid, _sock})
-       when is_binary(app_name) and app_name != "" and app_name != "Supavisor" do
+       when is_binary(app_name) and app_name != "" do
     case DbHandler.set_application_name(db_pid, app_name) do
       :ok ->
         :ok
