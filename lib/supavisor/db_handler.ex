@@ -133,6 +133,11 @@ defmodule Supavisor.DbHandler do
 
   @doc """
   Sets `application_name` on the backend connection.
+
+  Intended to be called while the DbHandler is checked out (`:busy`), which is
+  how the only caller uses it — right after checkout during connection setup.
+  In any other state it is a best-effort no-op that replies `:ok` without
+  touching the backend. Only supported in session mode.
   """
   @spec set_application_name(pid(), String.t()) :: :ok | {:error, term()}
   def set_application_name(db_handler_pid, name) do
