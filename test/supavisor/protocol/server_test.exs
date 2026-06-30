@@ -220,12 +220,16 @@ defmodule Supavisor.Protocol.ServerTest do
     statement = "SELECT set_config('application_name', $1, false)"
     bin = Server.extended_query(statement, ["my app's name"])
 
-    assert <<?P, _::binary>> = bin
-
-    assert bin =~ statement
-    assert bin =~ "my app's name"
-
-    assert String.ends_with?(bin, Server.sync())
+    assert bin == <<
+             # Parse: empty statement name, the query text, no parameter type oids
+             ?P, 56::32, 0, statement::binary, 0, 0::16,
+             # Bind: unnamed portal + statement, no format codes, one text param, no result formats
+             ?B, 29::32, 0, 0, 0::16, 1::16, 13::32, "my app's name", 0::16,
+             # Execute: unnamed portal, no row limit
+             ?E, 9::32, 0, 0::32,
+             # Sync
+             ?S, 4::32
+           >>
   end
 
   test "decode_pkt/1 correctly maps all message tags" do
