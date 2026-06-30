@@ -93,7 +93,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :pool, :checkout, :stop, :local],
           measurement: :duration,
           description: "Duration of the checkout local process in the tenant db pool.",
-          tags: @tags,
+          tags: @tags ++ [:replica_type],
           unit: {:microsecond, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
@@ -104,7 +104,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :pool, :checkout, :stop, :remote],
           measurement: :duration,
           description: "Duration of the checkout remote process in the tenant db pool.",
-          tags: @tags,
+          tags: @tags ++ [:replica_type],
           unit: {:microsecond, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
@@ -115,7 +115,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client, :query, :stop],
           measurement: :duration,
           description: "Duration of processing the query.",
-          tags: @tags ++ [:proxy],
+          tags: @tags ++ [:proxy, :query_type],
           unit: {:native, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
@@ -150,7 +150,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           [:supavisor, :client, :queries, :count],
           event_name: [:supavisor, :client, :query, :stop],
           description: "The total number of queries received by clients.",
-          tags: @tags ++ [:proxy]
+          tags: @tags ++ [:proxy, :query_type]
         ),
         counter(
           [:supavisor, :client, :joins, :ok],

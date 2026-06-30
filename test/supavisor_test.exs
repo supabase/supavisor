@@ -118,4 +118,37 @@ defmodule SupavisorTest do
       assert_valid_error(result)
     end
   end
+
+  describe "select_pool/2" do
+    test "returns a read pid when hint is :read" do
+      r1 = spawn(fn -> :ok end)
+      r2 = spawn(fn -> :ok end)
+      w = spawn(fn -> :ok end)
+
+      assert {pid, :read} = Supavisor.select_pool(%{read: [r1, r2], write: [w]}, :read)
+      assert pid in [r1, r2]
+    end
+
+    test "returns a write pid when hint is :write" do
+      r = spawn(fn -> :ok end)
+      w1 = spawn(fn -> :ok end)
+      w2 = spawn(fn -> :ok end)
+
+      assert {pid, :write} = Supavisor.select_pool(%{read: [r], write: [w1, w2]}, :write)
+      assert pid in [w1, w2]
+    end
+
+    test "treats nil hint as :write" do
+      r = spawn(fn -> :ok end)
+      w = spawn(fn -> :ok end)
+
+      assert {^w, :write} = Supavisor.select_pool(%{read: [r], write: [w]}, nil)
+    end
+
+    test "falls back to write pool when :read hint and no read pool exists" do
+      w = spawn(fn -> :ok end)
+
+      assert {^w, :write} = Supavisor.select_pool(%{write: [w]}, :read)
+    end
+  end
 end

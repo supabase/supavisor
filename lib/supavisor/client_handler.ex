@@ -30,6 +30,7 @@ defmodule Supavisor.ClientHandler do
     Manager,
     Monitoring.Telem,
     Protocol.Debug,
+    ReadSafe,
     Tenants
   }
 
@@ -515,14 +516,14 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:cast, {:db_status, :ready_for_query}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
-    db_connection = maybe_checkin(data.mode, data.pool, data.db_connection)
+    db_connection = maybe_checkin(data.mode, data.db_connection)
 
     {_, stats} =
       if data.local,
         do: {nil, data.stats},
         else: Telem.network_usage(:client, data.sock, data.id, data.stats)
 
-    Telem.client_query_time(data.query_start, data.id, data.mode == :proxy)
+    Telem.client_query_time(data.query_start, data.id, data.mode == :proxy, data.query_type)
 
     {:next_state, :idle, %{data | db_connection: db_connection, stats: stats},
      handle_actions(data)}
@@ -695,6 +696,8 @@ defmodule Supavisor.ClientHandler do
 
   # Any message when idle - checkout and send to db
   def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
+    data = %{data | query_type: classify_packet(msg)}
+
     case maybe_checkout(:on_query, data) do
       {:ok, db_connection} ->
         {:next_state, :busy,
@@ -839,11 +842,24 @@ defmodule Supavisor.ClientHandler do
     timeout = data.timeout |> div(attempt + 1)
     start = System.monotonic_time(:microsecond)
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, timeout, data.mode),
+    {pool, replica_type} =
+      case Supavisor.id(data.id, :type) do
+        :single -> {data.pool, :write}
+        :cluster -> Supavisor.select_pool(data.pool, data.query_type)
+      end
+
+    with {:ok, db_pid} <- pool_checkout(pool, timeout, data.mode),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
-      Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
-      {:ok, {data.pool, db_pid, db_sock}}
+
+      Telem.pool_checkout_time(
+        System.monotonic_time(:microsecond) - start,
+        data.id,
+        same_box,
+        replica_type
+      )
+
+      {:ok, {pool, db_pid, db_sock}}
     else
       {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->
         if attempt < @max_checkout_retries do
@@ -861,17 +877,18 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec maybe_checkin(:proxy, pool_pid :: pid(), Data.db_connection()) :: Data.db_connection()
-  defp maybe_checkin(:transaction, _pool, nil), do: nil
+  @spec maybe_checkin(:transaction | :session | :proxy, Data.db_connection()) ::
+          Data.db_connection()
+  defp maybe_checkin(:transaction, nil), do: nil
 
-  defp maybe_checkin(:transaction, pool, {_, db_pid, _}) do
+  defp maybe_checkin(:transaction, {pool, db_pid, _}) do
     Process.unlink(db_pid)
     :poolboy.checkin(pool, db_pid)
     nil
   end
 
-  defp maybe_checkin(:session, _, db_connection), do: db_connection
-  defp maybe_checkin(:proxy, _, db_connection), do: db_connection
+  defp maybe_checkin(:session, db_connection), do: db_connection
+  defp maybe_checkin(:proxy, db_connection), do: db_connection
 
   @spec handle_data(binary(), map()) :: {:ok, map()} | {:error, Exception.t()}
   defp handle_data(data_to_send, data) do
@@ -963,6 +980,16 @@ defmodule Supavisor.ClientHandler do
     :exit, reason ->
       {:error, %PoolCheckoutError{reason: reason}}
   end
+
+  # Classify a frontend packet for read/write routing.
+  # Only Simple Query (Q) frames are inspected, everything else routes to write.
+  @spec classify_packet(binary()) :: :read | :write
+  defp classify_packet(<<?Q, len::32, payload::binary-size(len - 4), _rest::binary>>) do
+    sql = String.trim_trailing(payload, <<0>>)
+    if ReadSafe.read_safe?(sql), do: :read, else: :write
+  end
+
+  defp classify_packet(_), do: :write
 
   defp set_tenant_info(data, info, user, id, db_name, client_jit) do
     proxy_type =
