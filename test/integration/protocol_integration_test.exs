@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
   use Supavisor.DataCase, async: false
 
   alias Supavisor.Protocol.Server
+  alias Supavisor.Support.ProtocolClient
   require Server
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
@@ -90,7 +91,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
         Supavisor.Protocol.split_pkts(auth_data)
 
       {:ok, ^server_proof} = :pgo_scram.parse_server_final(server_final)
-      recv_until_ready_for_query(sock, auth_data)
+      ProtocolClient.recv_until_ready_for_query(sock, auth_data)
 
       # Verify the connection defaults to the correct database
       :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT current_database()"))
@@ -213,16 +214,5 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     #   # 3 = AuthenticationCleartextPassword
     #   assert auth_type == 3
     # end
-  end
-
-  defp recv_until_ready_for_query(sock, buf) do
-    {pkts, ""} = Supavisor.Protocol.split_pkts(buf)
-
-    if Enum.any?(pkts, &match?(<<?Z, _::binary>>, &1)) do
-      :ok
-    else
-      {:ok, more} = :gen_tcp.recv(sock, 0, 5000)
-      recv_until_ready_for_query(sock, more)
-    end
   end
 end
