@@ -48,15 +48,9 @@ defmodule Supavisor.Integration.DeadClientPortTest do
 
   defp wait_for_client_handler_pid(id) do
     wait_until_present(fn ->
-      manager = Supavisor.get_local_manager(id)
-
-      if manager do
-        tid = Access.get(:sys.get_state(manager), :tid)
-
-        case :ets.tab2list(tid) do
-          [{_, client_pid, _}] -> client_pid
-          _ -> nil
-        end
+      case Registry.lookup(Supavisor.Registry.TenantClients, id) do
+        [{client_pid, _}] -> client_pid
+        _ -> nil
       end
     end)
   end
