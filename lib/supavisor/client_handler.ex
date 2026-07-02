@@ -515,7 +515,9 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:cast, {:db_status, :ready_for_query}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
-    db_connection = maybe_checkin(data.mode, data.pool, data.db_connection)
+    # In transaction mode the DbHandler checks itself back into the pool once
+    # it finishes forwarding the response; we only drop our reference to it.
+    db_connection = if data.mode == :transaction, do: nil, else: data.db_connection
 
     {_, stats} =
       if data.local,
@@ -860,18 +862,6 @@ defmodule Supavisor.ClientHandler do
         other
     end
   end
-
-  @spec maybe_checkin(:proxy, pool_pid :: pid(), Data.db_connection()) :: Data.db_connection()
-  defp maybe_checkin(:transaction, _pool, nil), do: nil
-
-  defp maybe_checkin(:transaction, pool, {_, db_pid, _}) do
-    Process.unlink(db_pid)
-    :poolboy.checkin(pool, db_pid)
-    nil
-  end
-
-  defp maybe_checkin(:session, _, db_connection), do: db_connection
-  defp maybe_checkin(:proxy, _, db_connection), do: db_connection
 
   @spec handle_data(binary(), map()) :: {:ok, map()} | {:error, Exception.t()}
   defp handle_data(data_to_send, data) do

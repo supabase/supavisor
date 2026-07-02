@@ -176,6 +176,8 @@ defmodule Supavisor.DbHandler do
 
     storage_mod = BackendStorage.select(config.tenant_feature_flags)
 
+    pool = if pool_name = Map.get(args, :pool), do: GenServer.whereis(pool_name)
+
     data = %{
       id: id,
       sock: nil,
@@ -199,6 +201,7 @@ defmodule Supavisor.DbHandler do
       replica_type: config.replica_type,
       caller: nil,
       client_sock: nil,
+      pool: pool,
       terminating_error: nil,
       manager_ref: nil,
       derived_secrets: nil
@@ -411,18 +414,28 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
+    ready_for_query? = String.ends_with?(bin, Server.ready_for_query())
+
+    # db_status must be enqueued in the ClientHandler's mailbox before
+    # ReadyForQuery reaches the client socket: the client sends its next query
+    # as soon as it reads ReadyForQuery, and if that query arrives while the
+    # ClientHandler is still :busy it gets forwarded to a connection the client
+    # no longer owns.
+    if ready_for_query?, do: ClientHandler.db_status(data.caller, :ready_for_query)
+
     case handle_server_messages(bin, data) do
       {:error, reason} ->
+        # Still linked to the ClientHandler (checkin is what unlinks), so
+        # stopping tears the client connection down with us.
         Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
         {:stop, :normal}
 
       {:ok, data} ->
-        if String.ends_with?(bin, Server.ready_for_query()) do
-          ClientHandler.db_status(data.caller, :ready_for_query)
-
+        if ready_for_query? do
           case data.mode do
             :transaction ->
               {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+              checkin(data)
               {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
 
             :proxy ->
@@ -895,6 +908,22 @@ defmodule Supavisor.DbHandler do
     tenant = Supavisor.id(data.id, :tenant)
     Supavisor.ClientAuthentication.invalidate_global(tenant, data.user)
     Supavisor.UpstreamAuthentication.delete_upstream_auth_secrets(data.id)
+  end
+
+  # Returning to the pool only after the response is fully forwarded keeps
+  # workers flushing to slow clients out of circulation. If the caller died
+  # mid-send (link gone), poolboy's owner monitor already reclaimed the worker
+  # and may have handed it out, so checking in again would corrupt the pool.
+  @spec checkin(map()) :: :ok
+  defp checkin(%{caller: caller, pool: pool}) do
+    {:links, links} = Process.info(self(), :links)
+
+    if caller in links do
+      Process.unlink(caller)
+      :poolboy.checkin(pool, self())
+    end
+
+    :ok
   end
 
   @spec handle_server_messages(binary(), map()) :: {:ok, map()} | {:error, term()}
