@@ -1,7 +1,6 @@
 defmodule Supavisor.DeadPortSweeper do
   @moduledoc """
-  Periodically closes zombie TCP ports: connected sockets whose peer already
-  disconnected but whose port was never closed.
+  Periodically closes zombie TCP ports: ports for which the socket is closed
   """
 
   use GenServer

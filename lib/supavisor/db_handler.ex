@@ -832,14 +832,7 @@ defmodule Supavisor.DbHandler do
     secrets = data.connection_params.secrets
 
     {client_final_message, server_proof, derived_secrets} =
-      case Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws") do
-        {client_final_message, server_proof, derived_secrets} ->
-          {client_final_message, server_proof, derived_secrets}
-
-        # TODO: drop once v2.9.7 is everywhere
-        {client_final_message, server_proof} ->
-          {client_final_message, server_proof, nil}
-      end
+      Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws")
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
     :ok = HandlerHelpers.sock_send(data.sock, bin)

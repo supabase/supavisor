@@ -32,8 +32,8 @@ defmodule Supavisor.Integration.DeadClientPortTest do
     {_state, %{sock: {:gen_tcp, client_port}}} = :sys.get_state(client_pid)
 
     # This query returns >50MB. Since we aren't reading the output at all, this will
-    # eventually fill the buffers on DbHandler and cause a send timeout, which causes
-    # the socket to be killed
+    # eventually fill the tcp stack buffers and cause a send timeout, which causes
+    # the socket to be killed by the send_timeout_close option
     query = "SELECT repeat('a', 1000000) FROM generate_series(1, 50)"
     :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message(query))
 
@@ -48,15 +48,9 @@ defmodule Supavisor.Integration.DeadClientPortTest do
 
   defp wait_for_client_handler_pid(id) do
     wait_until_present(fn ->
-      manager = Supavisor.get_local_manager(id)
-
-      if manager do
-        tid = Access.get(:sys.get_state(manager), :tid)
-
-        case :ets.tab2list(tid) do
-          [{_, client_pid, _}] -> client_pid
-          _ -> nil
-        end
+      case Registry.lookup(Supavisor.Registry.TenantClients, id) do
+        [{client_pid, _}] -> client_pid
+        _ -> nil
       end
     end)
   end
