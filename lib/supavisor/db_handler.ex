@@ -411,25 +411,37 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
-    if String.ends_with?(bin, Server.ready_for_query()) do
-      ClientHandler.db_status(data.caller, :ready_for_query)
-      data = handle_server_messages(bin, data)
+    ready_for_query? = String.ends_with?(bin, Server.ready_for_query())
 
-      case data.mode do
-        :transaction ->
-          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-          {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+    # db_status must be enqueued in the ClientHandler's mailbox before
+    # ReadyForQuery reaches the client socket: the client sends its next query
+    # as soon as it reads ReadyForQuery, and if that query arrives while the
+    # ClientHandler is still :busy it gets forwarded to a connection that is
+    # about to be checked back into the pool.
+    if ready_for_query?, do: ClientHandler.db_status(data.caller, :ready_for_query)
 
-        :proxy ->
+    case handle_server_messages(bin, data) do
+      {:error, reason} ->
+        Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
+        {:stop, :normal}
+
+      {:ok, data} ->
+        if ready_for_query? do
+          case data.mode do
+            :transaction ->
+              {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+              {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+
+            :proxy ->
+              {:keep_state, data}
+
+            :session ->
+              {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+              {:keep_state, %{data | stats: stats}}
+          end
+        else
           {:keep_state, data}
-
-        :session ->
-          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-          {:keep_state, %{data | stats: stats}}
-      end
-    else
-      data = handle_server_messages(bin, data)
-      {:keep_state, data}
+        end
     end
   end
 
@@ -892,21 +904,26 @@ defmodule Supavisor.DbHandler do
     Supavisor.UpstreamAuthentication.delete_upstream_auth_secrets(data.id)
   end
 
-  @spec handle_server_messages(binary(), map()) :: map()
+  @spec handle_server_messages(binary(), map()) :: {:ok, map()} | {:error, term()}
   defp handle_server_messages(bin, %{backend_message_streaming: true} = data) do
     {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
 
     if to_send != [] do
-      client_send(data, to_send)
+      case client_send(data, to_send) do
+        :ok -> {:ok, updated_data}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:ok, updated_data}
     end
-
-    updated_data
   end
 
   # hot code reload compat: remove after full rollout
   defp handle_server_messages(bin, data) do
-    client_send(data, bin)
-    data
+    case client_send(data, bin) do
+      :ok -> {:ok, data}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's

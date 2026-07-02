@@ -107,6 +107,7 @@ defmodule Supavisor.Application do
         Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,
         Supavisor.ConnectBackoff.Janitor,
+        Supavisor.DeadPortSweeper,
         {Task.Supervisor, name: Supavisor.PoolTerminator},
         {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
         {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
