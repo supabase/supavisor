@@ -411,15 +411,22 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
+    ready_for_query? = String.ends_with?(bin, Server.ready_for_query())
+
+    # db_status must be enqueued in the ClientHandler's mailbox before
+    # ReadyForQuery reaches the client socket: the client sends its next query
+    # as soon as it reads ReadyForQuery, and if that query arrives while the
+    # ClientHandler is still :busy it gets forwarded to a connection that is
+    # about to be checked back into the pool.
+    if ready_for_query?, do: ClientHandler.db_status(data.caller, :ready_for_query)
+
     case handle_server_messages(bin, data) do
       {:error, reason} ->
         Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
         {:stop, :normal}
 
       {:ok, data} ->
-        if String.ends_with?(bin, Server.ready_for_query()) do
-          ClientHandler.db_status(data.caller, :ready_for_query)
-
+        if ready_for_query? do
           case data.mode do
             :transaction ->
               {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
