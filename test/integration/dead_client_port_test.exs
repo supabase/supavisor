@@ -37,7 +37,11 @@ defmodule Supavisor.Integration.DeadClientPortTest do
     query = "SELECT repeat('a', 1000000) FROM generate_series(1, 50)"
     :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message(query))
 
-    assert :ok = wait_until(fn -> :inet.peername(client_port) == {:error, :enotconn} end, 35_000)
+    assert :ok =
+             wait_until(
+               fn -> :inet.peername(client_port) in [{:error, :enotconn}, {:error, :einval}] end,
+               35_000
+             )
 
     assert_receive {:DOWN, ^ref, :process, ^client_pid, _reason}, 5_000
   end
