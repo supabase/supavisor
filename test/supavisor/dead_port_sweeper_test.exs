@@ -62,7 +62,7 @@ defmodule Supavisor.DeadPortSweeperTest do
     end
   end
 
-  # Reproduces the documented Erlang bug this sweeper works around: a TCP
+  # Reproduces the documented Erlang behaviour this sweeper works around: a TCP
   # socket configured with send_timeout + send_timeout_close closes its
   # underlying connection on a send timeout, but the port itself is left
   # open, so :inet.peername/1 reports :enotconn forever after.
