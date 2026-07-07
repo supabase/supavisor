@@ -52,6 +52,20 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
             tags: [:current, :permanent, :base, :previous]
           )
         ]
+      ),
+      Polling.build(
+        :supavisor_ami_version_events,
+        poll_rate,
+        {__MODULE__, :emit_ami_version, []},
+        [
+          last_value(
+            [:supavisor, :prom_ex, :ami, :version, :info],
+            event_name: [:supavisor, :prom_ex, :ami, :version],
+            measurement: :status,
+            description: "The AMI version the node is running on.",
+            tags: [:version]
+          )
+        ]
       )
     ]
   end
@@ -87,6 +101,17 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
       [:supavisor, :prom_ex, :application, :version],
       %{status: 1},
       %{current: current, permanent: permanent, base: base, previous: previous}
+    )
+  end
+
+  @spec emit_ami_version() :: :ok
+  def emit_ami_version do
+    version = System.get_env("AMI_VERSION") || ""
+
+    :telemetry.execute(
+      [:supavisor, :prom_ex, :ami, :version],
+      %{status: 1},
+      %{version: version}
     )
   end
 

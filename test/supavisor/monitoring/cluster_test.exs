@@ -69,6 +69,35 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
     end
   end
 
+  describe "emit_ami_version/0" do
+    test "emits AMI version event from AMI_VERSION env var" do
+      ref = attach_handler([:supavisor, :prom_ex, :ami, :version])
+
+      System.put_env("AMI_VERSION", "2024.01.01")
+      on_exit(fn -> System.delete_env("AMI_VERSION") end)
+
+      assert :ok = Cluster.emit_ami_version()
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :ami, :version], measurement, meta}}
+
+      assert %{status: 1} = measurement
+      assert %{version: "2024.01.01"} = meta
+    end
+
+    test "defaults to empty version when AMI_VERSION is unset" do
+      ref = attach_handler([:supavisor, :prom_ex, :ami, :version])
+
+      System.delete_env("AMI_VERSION")
+
+      assert :ok = Cluster.emit_ami_version()
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :ami, :version], measurement, meta}}
+
+      assert %{status: 1} = measurement
+      assert %{version: ""} = meta
+    end
+  end
+
   describe "emit_erpc_latency/0" do
     test "emits ERPC latency events for all nodes" do
       ref = attach_handler([:supavisor, :prom_ex, :cluster, :erpc_ping, :stop])
