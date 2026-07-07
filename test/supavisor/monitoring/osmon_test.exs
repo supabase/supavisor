@@ -5,6 +5,13 @@ defmodule Supavisor.PromEx.Plugins.OsMonTest do
 
   @moduletag telemetry: true
 
+  @netstat_fixture """
+  TcpExt: SyncookiesSent SyncookiesRecv SyncookiesFailed EmbryonicRsts PruneCalled RcvPruned OfoPruned OutOfWindowIcmps LockDroppedIcmps ArpFilter TW TWRecycled TWKilled PAWSActive PAWSEstab DelayedACKs DelayedACKLocked DelayedACKLost ListenOverflows ListenDrops TCPPrequeued TCPDirectCopyFromBacklog TCPDirectCopyFromPrequeue TCPPrequeueDropped TCPHPHits TCPPureAcks TCPHPAcks TCPRenoRecovery TCPSackRecovery TCPSchedulerFailed TCPRcvCollapsed TCPBacklogCoalesce TCPDSACKOldSent TCPDSACKOfoSent TCPDSACKRecv TCPDSACKOfoRecv TCPAbortOnData TCPAbortOnClose TCPAbortOnMemory TCPAbortOnTimeout TCPAbortOnLinger TCPAbortFailed TCPMemoryPressures TCPMemoryPressuresChrono TCPSACKDiscard TCPDSACKIgnoredOld TCPDSACKIgnoredNoUndo TCPSpuriousRTOs TCPMD5NotFound TCPMD5Unexpected TCPMD5Failure TCPSackShifted TCPSackMerged TCPSackShiftFallback TCPBacklogDrop TCPMinTTLDrop TCPDeferAcceptDrop IPReversePathFilter TCPTimeWaitOverflow TCPReqQFullDoCookies TCPReqQFullDrop TCPRetransFail TCPSchedulerFailed2
+  TcpExt: 0 0 0 0 0 0 0 0 0 0 1234 0 0 0 567 89012 345 678 42 17 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  IpExt: InNoRoutes InTruncatedPkts InMcastPkts OutMcastPkts InBcastPkts OutBcastPkts InOctets OutOctets InMcastOctets OutMcastOctets InBcastOctets OutBcastOctets InCsumErrors InNoECTPkts InECT1Pkts InECT0Pkts InCEPkts ReasmOverlaps
+  IpExt: 0 0 0 0 0 0 123456789 987654321 0 0 0 0 0 0 0 0 0 0
+  """
+
   describe "polling_metrics/1" do
     test "properly exports metrics" do
       for polling_metric <- OsMon.polling_metrics([]) do
@@ -90,6 +97,67 @@ defmodule Supavisor.PromEx.Plugins.OsMonTest do
       expected = MapSet.new(OsMon.disk(), fn {mountpoint, _} -> mountpoint end)
       assert MapSet.subset?(expected, received)
     end
+  end
+
+  describe "parse_net_stat/1" do
+    test "extracts ListenDrops and ListenOverflows" do
+      assert {:ok, %{listen_drops: 17, listen_overflows: 42}} =
+               OsMon.parse_net_stat(@netstat_fixture)
+    end
+
+    test "defaults missing counters to 0" do
+      content = """
+      TcpExt: SyncookiesSent
+      TcpExt: 0
+      """
+
+      assert {:ok, %{listen_drops: 0, listen_overflows: 0}} = OsMon.parse_net_stat(content)
+    end
+
+    test "returns error for empty content" do
+      assert :error = OsMon.parse_net_stat("")
+    end
+
+    test "returns error when TcpExt section is missing" do
+      content = """
+      IpExt: InNoRoutes InTruncatedPkts
+      IpExt: 0 0
+      """
+
+      assert :error = OsMon.parse_net_stat(content)
+    end
+  end
+
+  describe "net_stat/1" do
+    @tag :linux
+    test "reads real /proc/net/netstat on linux" do
+      assert {:ok, %{listen_drops: drops, listen_overflows: overflows}} = OsMon.net_stat()
+      assert is_integer(drops)
+      assert is_integer(overflows)
+    end
+  end
+
+  describe "execute_net_stat_metrics/1" do
+    test "emits net_stat telemetry event when file exists" do
+      path = write_netstat_fixture(@netstat_fixture)
+      ref = attach_handler([:supavisor, :prom_ex, :osmon, :net_stat])
+
+      assert :ok = OsMon.execute_net_stat_metrics(path)
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :osmon, :net_stat], measurement, %{}}}
+      assert %{listen_drops: 17, listen_overflows: 42} = measurement
+    end
+
+    test "returns ok and emits nothing when file does not exist" do
+      assert :ok = OsMon.execute_net_stat_metrics("/nonexistent/path")
+    end
+  end
+
+  defp write_netstat_fixture(content) do
+    path = Path.join(System.tmp_dir!(), "netstat_#{:erlang.unique_integer([:positive])}")
+    File.write!(path, content)
+    on_exit(fn -> File.rm(path) end)
+    path
   end
 
   def handle_event(event_name, measurement, meta, {pid, ref}) do

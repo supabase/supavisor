@@ -22,13 +22,16 @@ logs =
       false
   end
 
+linux_excludes =
+  if :os.type() != {:unix, :linux}, do: [linux: true], else: []
+
 ExUnit.start(
   capture_log: logs,
   exclude: [
     flaky: true,
     integration: true,
     integration_docker: true
-  ]
+  ] ++ linux_excludes
 )
 
 Ecto.Adapters.SQL.Sandbox.mode(Supavisor.Repo, :auto)
