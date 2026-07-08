@@ -222,13 +222,30 @@ defmodule Supavisor.Protocol.ServerTest do
 
     assert bin == <<
              # Parse: empty statement name, the query text, no parameter type oids
-             ?P, 56::32, 0, statement::binary, 0, 0::16,
+             ?P,
+             56::32,
+             0,
+             statement::binary,
+             0,
+             0::16,
              # Bind: unnamed portal + statement, no format codes, one text param, no result formats
-             ?B, 29::32, 0, 0, 0::16, 1::16, 13::32, "my app's name", 0::16,
+             ?B,
+             29::32,
+             0,
+             0,
+             0::16,
+             1::16,
+             13::32,
+             "my app's name",
+             0::16,
              # Execute: unnamed portal, no row limit
-             ?E, 9::32, 0, 0::32,
+             ?E,
+             9::32,
+             0,
+             0::32,
              # Sync
-             ?S, 4::32
+             ?S,
+             4::32
            >>
   end
 

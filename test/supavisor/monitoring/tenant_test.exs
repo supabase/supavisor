@@ -208,8 +208,7 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
         Enum.reduce_while(1..10, [], fn _, acc ->
           receive do
             {^ref,
-             {[:supavisor, :connections], measurement,
-              %{tenant: "metrics_app_name_test"} = meta}} ->
+             {[:supavisor, :connections], measurement, %{tenant: "metrics_app_name_test"} = meta}} ->
               {:cont, [{measurement, meta} | acc]}
           after
             100 -> {:halt, acc}
