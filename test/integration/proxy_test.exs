@@ -840,37 +840,6 @@ defmodule Supavisor.Integration.ProxyTest do
     assert count_pool_workers(tenant_id) == 0
   end
 
-  defp count_pool_workers(tenant_id) do
-    tenant_id
-    |> Supavisor.get_global_sup()
-    |> get_poolboy_workers()
-    |> length()
-  end
-
-  defp get_poolboy_workers(tenant_sup) do
-    tenant_sup
-    |> Supervisor.which_children()
-    |> Enum.filter(&match?({:pool, _}, elem(&1, 0)))
-    |> Enum.flat_map(fn {_id, pool_pid, _type, _modules} ->
-      pool_pid
-      |> Process.info()
-      |> Kernel.get_in([:links])
-      |> Enum.find(&poolboy_supervisor?/1)
-      |> case do
-        nil -> []
-        poolboy_sup -> Supervisor.which_children(poolboy_sup)
-      end
-      |> Enum.filter(&is_pid(elem(&1, 1)))
-    end)
-  end
-
-  defp poolboy_supervisor?(pid) do
-    case Process.info(pid)[:dictionary][:"$initial_call"] do
-      {:supervisor, :poolboy_sup, _} -> true
-      _ -> false
-    end
-  end
-
   test "cleanup resets session state in session mode" do
     %{db_conf: db_conf, origin: origin} = setup_tenant_connections(List.first(@tenants))
 
@@ -893,7 +862,7 @@ defmodule Supavisor.Integration.ProxyTest do
              P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
 
     # conn1's application_name reached the backend
-    assert [%P.Result{rows: [["app_one"]]}] =
+    assert [%P.Result{rows: [["Supavisor - app_one"]]}] =
              P.SimpleConnection.call(
                conn1,
                {:query,
@@ -912,7 +881,8 @@ defmodule Supavisor.Integration.ProxyTest do
     stop_supervised(:conn1)
     Process.sleep(100)
 
-    # Check if application_name was reset
+    # conn1 is now idle in the pool: cleanup (DISCARD ALL) reset application_name
+    # back to the default, dropping the "app_one" set during conn1's session
     assert %P.Result{rows: [["Supavisor"]]} =
              P.query!(
                origin,
@@ -928,7 +898,7 @@ defmodule Supavisor.Integration.ProxyTest do
     assert backend_pid_1 == backend_pid_2
 
     # conn2's application_name reached the backend
-    assert [%P.Result{rows: [["app_two"]]}] =
+    assert [%P.Result{rows: [["Supavisor - app_two"]]}] =
              P.SimpleConnection.call(
                conn2,
                {:query,
@@ -1288,5 +1258,36 @@ defmodule Supavisor.Integration.ProxyTest do
     database = String.replace(path, "/", "")
 
     [hostname: host, port: port, database: database, password: pass, username: username]
+  end
+
+  defp count_pool_workers(tenant_id) do
+    tenant_id
+    |> Supavisor.get_global_sup()
+    |> get_poolboy_workers()
+    |> length()
+  end
+
+  defp get_poolboy_workers(tenant_sup) do
+    tenant_sup
+    |> Supervisor.which_children()
+    |> Enum.filter(&match?({:pool, _}, elem(&1, 0)))
+    |> Enum.flat_map(fn {_id, pool_pid, _type, _modules} ->
+      pool_pid
+      |> Process.info()
+      |> Kernel.get_in([:links])
+      |> Enum.find(&poolboy_supervisor?/1)
+      |> case do
+        nil -> []
+        poolboy_sup -> Supervisor.which_children(poolboy_sup)
+      end
+      |> Enum.filter(&is_pid(elem(&1, 1)))
+    end)
+  end
+
+  defp poolboy_supervisor?(pid) do
+    case Process.info(pid)[:dictionary][:"$initial_call"] do
+      {:supervisor, :poolboy_sup, _} -> true
+      _ -> false
+    end
   end
 end
