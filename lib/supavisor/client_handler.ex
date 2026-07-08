@@ -428,7 +428,7 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
-  def handle_event(:timeout, :idle_terminate, _state, data) do
+  def handle_event(:state_timeout, :idle_terminate, _state, data) do
     Logger.warning("ClientHandler: Terminate an idle connection by #{data.idle_timeout} timeout")
     {:stop, :normal}
   end
@@ -648,23 +648,14 @@ defmodule Supavisor.ClientHandler do
         {:next_state, new_state, data}
 
       {:busy, :idle} ->
-        {:next_state, new_state, data}
+        {:next_state, new_state, data, idle_timeout_action(data)}
+
+      {_, :idle} ->
+        {:next_state, new_state, record_state_duration(old_state, new_state, data),
+         idle_timeout_action(data)}
 
       _ ->
-        now = System.monotonic_time()
-        time_in_previous_state = now - data.state_entered_at
-
-        :telemetry.execute(
-          [:supavisor, :client_handler, :state],
-          %{duration: time_in_previous_state},
-          %{
-            from_state: old_state,
-            to_state: new_state,
-            tenant: data.tenant
-          }
-        )
-
-        {:next_state, new_state, %{data | state_entered_at: now}}
+        {:next_state, new_state, record_state_duration(old_state, new_state, data)}
     end
   end
 
@@ -919,14 +910,26 @@ defmodule Supavisor.ClientHandler do
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
-    heartbeat =
-      if data.heartbeat_interval > 0,
-        do: [{:timeout, data.heartbeat_interval, :heartbeat_check}],
-        else: []
+    if data.heartbeat_interval > 0,
+      do: [{:timeout, data.heartbeat_interval, :heartbeat_check}],
+      else: []
+  end
 
-    idle = if data.idle_timeout > 0, do: [{:timeout, data.idle_timeout, :idle_timeout}], else: []
+  defp idle_timeout_action(%{idle_timeout: timeout}) when timeout > 0,
+    do: [{:state_timeout, timeout, :idle_terminate}]
 
-    idle ++ heartbeat
+  defp idle_timeout_action(_data), do: []
+
+  defp record_state_duration(old_state, new_state, data) do
+    now = System.monotonic_time()
+
+    :telemetry.execute(
+      [:supavisor, :client_handler, :state],
+      %{duration: now - data.state_entered_at},
+      %{from_state: old_state, to_state: new_state, tenant: data.tenant}
+    )
+
+    %{data | state_entered_at: now}
   end
 
   @spec client_sock_send(map(), iodata(), :handshake | :idle) ::
