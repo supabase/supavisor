@@ -178,6 +178,8 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
           upstream_tls: false
         )
 
+      test_pid = self()
+
       clients = [
         {id, [app_name: "webapp", include_app_name: true]},
         {id, [app_name: "webapp", include_app_name: true]},
@@ -190,11 +192,14 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
           {Task,
            fn ->
              Registry.register(Supavisor.Registry.TenantClients, reg_id, meta)
+             send(test_pid, :registered)
              Process.sleep(:infinity)
            end},
           id: :"app_name_client_#{i}"
         )
       end
+
+      for _ <- 1..length(clients), do: assert_receive(:registered, 1_000)
 
       ref = attach_handler([:supavisor, :connections])
       Tenant.execute_tenant_metrics()
@@ -202,16 +207,17 @@ defmodule Supavisor.PromEx.Plugins.TenantTest do
       events =
         Enum.reduce_while(1..10, [], fn _, acc ->
           receive do
-            {^ref, {[:supavisor, :connections], measurement, meta}} ->
+            {^ref,
+             {[:supavisor, :connections], measurement,
+              %{tenant: "metrics_app_name_test"} = meta}} ->
               {:cont, [{measurement, meta} | acc]}
           after
             100 -> {:halt, acc}
           end
         end)
 
-      assert length(events) == 3
-
       by_app = Map.new(events, fn {%{active: count}, %{app_name: app}} -> {app, count} end)
+      assert map_size(by_app) == 3
       assert by_app["webapp"] == 2
       assert by_app["worker"] == 1
       assert by_app[""] == 1
