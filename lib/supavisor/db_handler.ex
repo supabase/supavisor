@@ -59,6 +59,7 @@ defmodule Supavisor.DbHandler do
           | :busy
           | :terminating_with_error
           | :waiting_for_secrets
+          | :setting_application_name
 
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
@@ -131,6 +132,22 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
+  Sets `application_name` on the backend connection.
+
+  Intended to be called while the DbHandler is checked out (`:busy`), which is
+  how the only caller uses it — right after checkout during connection setup.
+  In any other state it is a best-effort no-op that replies `:ok` without
+  touching the backend. Only supported in session mode.
+  """
+  @spec set_application_name(pid(), String.t()) :: :ok | {:error, term()}
+  def set_application_name(db_handler_pid, name) do
+    :gen_statem.call(db_handler_pid, {:set_application_name, name}, 5_000)
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
+  end
+
+  @doc """
   Sends prepared statement packets to a DbHandler
 
   Different from most packets, prepared statements packets involve state at the DbHandler,
@@ -169,17 +186,25 @@ defmodule Supavisor.DbHandler do
         %{} -> {args.id, Supavisor.Manager.get_config(args.id)}
       end
 
+    proxy = Map.get(config, :proxy, false)
+
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
-
     Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
+
+    conn_params =
+      if proxy do
+        config.connection_params
+      else
+        %ConnectionParameters{config.connection_params | application_name: "Supavisor"}
+      end
 
     storage_mod = BackendStorage.select(config.tenant_feature_flags)
 
     data = %{
       id: id,
       sock: nil,
-      connection_params: config.connection_params,
+      connection_params: conn_params,
       user: config.user,
       tenant: config.tenant,
       tenant_feature_flags: config.tenant_feature_flags,
@@ -190,7 +215,7 @@ defmodule Supavisor.DbHandler do
       stats: %{},
       prepared_statements_storage: storage_mod,
       prepared_statements: storage_mod.new(),
-      proxy: Map.get(config, :proxy, false),
+      proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
@@ -449,6 +474,64 @@ defmodule Supavisor.DbHandler do
       true ->
         {:keep_state, %{data | pending_bin: buffered_bin}}
     end
+  end
+
+  def handle_event({:call, from}, {:set_application_name, name}, state, data) do
+    cond do
+      data.mode == :transaction ->
+        Logger.error(
+          "DbHandler: set_application_name called on transaction mode - only supported in session mode"
+        )
+
+        {:keep_state_and_data,
+         {:reply, from, {:error, :set_application_name_not_supported_in_transaction_mode}}}
+
+      # Only when checked out to this client (:busy).
+      state == :busy ->
+        app_name = "Supavisor - #{name}"
+        Logger.debug("DbHandler: Setting application_name to #{inspect(app_name)}")
+
+        query =
+          Server.extended_query("SELECT set_config('application_name', $1, false)", [app_name])
+
+        :ok = HandlerHelpers.sock_send(data.sock, query)
+
+        {:next_state, :setting_application_name,
+         Map.merge(data, %{set_app_name_from: from, pending_bin: <<>>}),
+         {:state_timeout, 5_000, :set_application_name_timeout}}
+
+      true ->
+        {:keep_state_and_data, {:reply, from, :ok}}
+    end
+  end
+
+  # Swallow the SET application_name response so it never reaches the client.
+  def handle_event(:info, {proto, _, bin}, :setting_application_name, data)
+      when proto in @proto do
+    buffered_bin = data.pending_bin <> bin
+
+    cond do
+      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
+        {:next_state, :busy, %{data | pending_bin: nil, set_app_name_from: nil},
+         {:reply, data.set_app_name_from, :ok}}
+
+      byte_size(buffered_bin) > @cleanup_buffer_limit ->
+        Logger.error("DbHandler: application_name buffer limit exceeded, shutting down")
+        {:stop, :normal}
+
+      true ->
+        {:keep_state, %{data | pending_bin: buffered_bin}}
+    end
+  end
+
+  def handle_event(
+        :state_timeout,
+        :set_application_name_timeout,
+        :setting_application_name,
+        _data
+      ) do
+    Logger.error("DbHandler: set application_name timeout, shutting down")
+    {:stop, :normal}
   end
 
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
@@ -814,14 +897,7 @@ defmodule Supavisor.DbHandler do
     secrets = data.connection_params.secrets
 
     {client_final_message, server_proof, derived_secrets} =
-      case Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws") do
-        {client_final_message, server_proof, derived_secrets} ->
-          {client_final_message, server_proof, derived_secrets}
-
-        # TODO: drop once v2.9.7 is everywhere
-        {client_final_message, server_proof} ->
-          {client_final_message, server_proof, nil}
-      end
+      Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws")
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
     :ok = HandlerHelpers.sock_send(data.sock, bin)
