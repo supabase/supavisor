@@ -142,7 +142,7 @@ defmodule Supavisor.ClientHandlerTest do
 
       data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil}
 
-      assert {:keep_state, %{app_name: "Supavisor"},
+      assert {:keep_state, %{app_name: ""},
               {:next_event, :internal,
                {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil, false, nil}}}}} =
                @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)

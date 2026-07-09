@@ -80,7 +80,7 @@ defmodule Supavisor.SecretChecker do
       check_ref: check()
     }
 
-    Logger.metadata(project: tenant, user: pool_user)
+    Logger.metadata(project: tenant_external_id, user: pool_user)
     {:ok, state, {:continue, :init_conn}}
   end
 

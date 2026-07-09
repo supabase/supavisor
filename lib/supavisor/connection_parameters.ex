@@ -21,17 +21,17 @@ defmodule Supavisor.ConnectionParameters do
           secrets: PasswordSecrets.t() | SASLSecrets.t() | nil
         }
 
-  @enforce_keys [:host, :port, :ip_version, :database, :application_name]
+  @enforce_keys [:host, :port, :ip_version, :database]
   defstruct [
     :host,
     :port,
     :ip_version,
     :database,
-    :application_name,
     :sni_hostname,
     :upstream_ssl,
     :upstream_verify,
     :upstream_tls_ca,
+    application_name: "",
     secrets: nil
   ]
 end
