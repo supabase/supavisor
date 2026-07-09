@@ -42,6 +42,7 @@ The exposed metrics include the following:
   * CPU utilization
   * RAM usage
   * Load average (LA)
+  * Disk space usage (per mountpoint)
 
 ## Tenant metrics
 
