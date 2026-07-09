@@ -242,6 +242,20 @@ if config_env() != :test do
     "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false)
   }
 
+  config :supavisor, :http_sql,
+    enabled: System.get_env("HTTP_SQL_ENABLED", "false") == "true",
+    max_query_bytes: System.get_env("HTTP_SQL_MAX_QUERY_BYTES", "1048576") |> String.to_integer(),
+    max_response_rows:
+      System.get_env("HTTP_SQL_MAX_RESPONSE_ROWS", "10000") |> String.to_integer(),
+    max_response_bytes:
+      System.get_env("HTTP_SQL_MAX_RESPONSE_BYTES", "16777216") |> String.to_integer(),
+    request_timeout_ms:
+      System.get_env("HTTP_SQL_REQUEST_TIMEOUT_MS", "30000") |> String.to_integer(),
+    trusted_proxies:
+      System.get_env("HTTP_SQL_TRUSTED_PROXIES", "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+
   config :supavisor, Supavisor.Repo,
     url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost:6432/postgres"),
     pool_size: System.get_env("DB_POOL_SIZE", "25") |> String.to_integer(),

@@ -62,6 +62,14 @@ config :supavisor, Supavisor.FeatureFlag, %{
   "override_test" => true
 }
 
+config :supavisor, :http_sql,
+  enabled: true,
+  max_query_bytes: 65_536,
+  max_response_rows: 1_000,
+  max_response_bytes: 1_048_576,
+  request_timeout_ms: 5_000,
+  trusted_proxies: ["0.0.0.0/0", "::/0"]
+
 # Print only warnings and errors during test
 config :logger, :default_handler, level: String.to_atom(System.get_env("LOGGER_LEVEL", "none"))
 

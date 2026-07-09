@@ -90,3 +90,11 @@ config :phoenix, :plug_init_mode, :runtime
 
 # disable caching to ensure the rendered spec is refreshed
 config :open_api_spex, :cache_adapter, OpenApiSpex.Plug.NoneCache
+
+config :supavisor, :http_sql,
+  enabled: true,
+  max_query_bytes: 1_048_576,
+  max_response_rows: 10_000,
+  max_response_bytes: 16_777_216,
+  request_timeout_ms: 30_000,
+  trusted_proxies: ["127.0.0.1/32", "::1/128"]

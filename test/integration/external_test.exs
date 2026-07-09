@@ -39,6 +39,46 @@ defmodule Supavisor.Integration.ExternalTest do
     end
   end
 
+  describe "neondatabase/serverless.js — HTTP /sql" do
+    @describetag library: "serverless.js (http)", suite: "js"
+
+    setup ctx do
+      # HTTP /sql is gated behind a global flag plus a per-tenant feature
+      # flag. The module-level `setup` already ran `create_instance/1`, so
+      # `ctx.external_id` is the just-created test tenant. Enable both for
+      # the duration of the test and restore on exit.
+      previous_global = Application.get_env(:supavisor, :http_sql, [])
+
+      Application.put_env(
+        :supavisor,
+        :http_sql,
+        Keyword.put(previous_global, :enabled, true)
+      )
+
+      tenant = Supavisor.Tenants.get_tenant_by_external_id(ctx.external_id)
+      previous_flags = tenant.feature_flags || %{}
+
+      {:ok, _} =
+        Supavisor.Tenants.update_tenant(tenant, %{
+          feature_flags: Map.put(previous_flags, "http_sql", true)
+        })
+
+      on_exit(fn ->
+        Application.put_env(:supavisor, :http_sql, previous_global)
+      end)
+
+      :ok
+    end
+
+    @tag runtime: "node", mode: "transaction"
+    test "Node — drop-in /sql against @neondatabase/serverless", ctx do
+      http_endpoint =
+        "http://127.0.0.1:#{Application.fetch_env!(:supavisor, SupavisorWeb.Endpoint)[:http][:port]}/sql"
+
+      assert_run(ctx, ~w[neon_http_sql/index.js], env: [{"HTTP_SQL_ENDPOINT", http_endpoint}])
+    end
+  end
+
   describe "Postgres.js" do
     @describetag library: "postgres.js", suite: "js"
 

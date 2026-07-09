@@ -38,7 +38,12 @@ defmodule Supavisor.DbHandlerTest do
       {:ok, %{behavior: behavior, sock: {:fake_db_sock, self()}}}
     end
 
-    def handle_call({:checkout, _sock, _caller}, _from, %{behavior: behavior} = state) do
+    # DbHandler.checkout/5 now forwards a 4-tuple `{:checkout, sock,
+    # caller, caller_module}` to the gen_statem (the new
+    # `:caller_module` opt added so the HTTP /sql client can receive
+    # `db_status/2` callbacks under its own module). Accept the new
+    # shape in this mock.
+    def handle_call({:checkout, _sock, _caller, _caller_module}, _from, %{behavior: behavior} = state) do
       case behavior do
         :normal ->
           {:reply, {:ok, state.sock}, state}
@@ -376,7 +381,7 @@ defmodule Supavisor.DbHandlerTest do
                {:error, %Supavisor.Errors.CheckoutError{postgres_error: ^expected_postgres_error}}}} =
                Db.handle_event(
                  {:call, from},
-                 {:checkout, nil, self()},
+                 {:checkout, nil, self(), Supavisor.ClientHandler},
                  :waiting_for_secrets,
                  data
                )
