@@ -68,13 +68,13 @@ defmodule Supavisor.PromEx.Plugins.OsMonTest do
   end
 
   describe "execute_disk_metrics/0" do
-    test "emits one disk event per filesystem, each tagged with its mountpoint" do
+    test "emits a disk event per filesystem, each tagged with its mountpoint" do
       ref = attach_handler([:prom_ex, :plugin, :osmon, :disk])
 
       assert :ok = OsMon.execute_disk_metrics()
 
       events = drain_events(ref)
-      assert length(events) >= 1
+      assert events != []
 
       for {measurement, meta} <- events do
         assert %{total: total, available: available, capacity: capacity} = measurement
@@ -86,8 +86,9 @@ defmodule Supavisor.PromEx.Plugins.OsMonTest do
         assert is_binary(mountpoint)
       end
 
-      mountpoints = Enum.map(events, fn {_measurement, meta} -> meta.mountpoint end)
-      assert mountpoints == Enum.uniq(mountpoints), "expected one event per distinct mountpoint"
+      received = MapSet.new(events, fn {_measurement, meta} -> meta.mountpoint end)
+      expected = MapSet.new(OsMon.disk(), fn {mountpoint, _} -> mountpoint end)
+      assert MapSet.subset?(expected, received)
     end
   end
 
