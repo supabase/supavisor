@@ -116,6 +116,16 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
+  Tells the DbHandler how many more ReadyForQuery messages to expect for the batch being forwarded.
+
+  The ClientHandler should send this *before* forwarding the messages that produce them,
+  so the count reaches the DbHandler before the responses do.
+  """
+  @spec expect_ready_for_query(pid(), pos_integer()) :: :ok
+  def expect_ready_for_query(pid, count),
+    do: :gen_statem.cast(pid, {:expect_ready_for_query, count})
+
+  @doc """
   Attempts to clean up session state by sending DISCARD ALL to the database.
 
   The caller is responsible for ensuring that:
@@ -226,6 +236,7 @@ defmodule Supavisor.DbHandler do
       replica_type: config.replica_type,
       caller: nil,
       client_sock: nil,
+      expected_rfq: 0,
       pool: pool,
       terminating_error: nil,
       manager_ref: nil,
@@ -434,34 +445,48 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
+  def handle_event(:cast, {:expect_ready_for_query, count}, _state, data) do
+    {:keep_state, %{data | expected_rfq: data.expected_rfq + count}}
+  end
+
   # forward the message to the client
   def handle_event(:info, {proto, _, bin}, :busy, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
-    ready_for_query? = String.ends_with?(bin, Server.ready_for_query())
+    {:ok, data, to_send} = process_backend_streaming(bin, data)
+    {count, last_status, data} = handle_ready_for_query(data)
 
-    # db_status must be enqueued in the ClientHandler's mailbox before
-    # ReadyForQuery reaches the client socket: the client sends its next query
-    # as soon as it reads ReadyForQuery, and if that query arrives while the
-    # ClientHandler is still :busy it gets forwarded to a connection the client
-    # no longer owns.
-    if ready_for_query?, do: ClientHandler.db_status(data.caller, :ready_for_query)
+    # A batch is done when we have received the expected number of `ReadyForQuery`
+    # messages and the last status is idle and not mid-transaction.
+    outstanding = data.expected_rfq - count
+    batch_done? = outstanding <= 0 and last_status == ?I
+    data = %{data | expected_rfq: max(outstanding, 0)}
 
-    case handle_server_messages(bin, data) do
+    # db_status must be enqueued in the ClientHandler's mailbox before the final
+    # ReadyForQuery reaches the client socket: the client sends its next query as
+    # soon as it reads ReadyForQuery, and if that arrives while the ClientHandler
+    # is still :busy it gets forwarded to a connection the client no longer owns.
+    if batch_done?, do: ClientHandler.db_status(data.caller, :ready_for_query)
+
+    send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
+
+    case send_result do
       {:error, reason} ->
         # Still linked to the ClientHandler (checkin is what unlinks), so
         # stopping tears the client connection down with us.
         Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
         {:stop, :normal}
 
-      {:ok, data} ->
-        if ready_for_query? do
+      :ok ->
+        if batch_done? do
           case data.mode do
             :transaction ->
               {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
               checkin(data)
-              {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+
+              {:next_state, :idle,
+               %{data | stats: stats, caller: nil, client_sock: nil, expected_rfq: 0}}
 
             :proxy ->
               {:keep_state, data}
@@ -608,7 +633,7 @@ defmodule Supavisor.DbHandler do
         send(caller, {:parameter_status, bin_ps})
       end
 
-      {:next_state, :busy, %{data | client_sock: sock, caller: caller},
+      {:next_state, :busy, %{data | client_sock: sock, caller: caller, expected_rfq: 0},
        {:reply, from, {:ok, data.sock}}}
     else
       {:keep_state_and_data, :postpone}
@@ -1002,26 +1027,18 @@ defmodule Supavisor.DbHandler do
     :ok
   end
 
-  @spec handle_server_messages(binary(), map()) :: {:ok, map()} | {:error, term()}
-  defp handle_server_messages(bin, %{backend_message_streaming: true} = data) do
-    {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
+  defp handle_ready_for_query(data) do
+    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
+    count = BackendMessageHandler.handler_state(handler_state, :rfq_count)
+    last_status = BackendMessageHandler.handler_state(handler_state, :last_rfq_status)
 
-    if to_send != [] do
-      case client_send(data, to_send) do
-        :ok -> {:ok, updated_data}
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      {:ok, updated_data}
-    end
-  end
+    # also reset the state.
+    stream_state =
+      MessageStreamer.update_state(data.stream_state, fn s ->
+        BackendMessageHandler.handler_state(s, rfq_count: 0, last_rfq_status: nil)
+      end)
 
-  # hot code reload compat: remove after full rollout
-  defp handle_server_messages(bin, data) do
-    case client_send(data, bin) do
-      :ok -> {:ok, data}
-      {:error, reason} -> {:error, reason}
-    end
+    {count, last_status, %{data | stream_state: stream_state}}
   end
 
   # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's

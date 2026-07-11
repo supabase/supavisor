@@ -45,6 +45,7 @@ defmodule Supavisor.ClientHandler do
   }
 
   alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer}
+  require MessageStreamer
 
   alias Supavisor.Errors.{
     CheckoutTimeoutError,
@@ -890,12 +891,32 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, new_stream_state, pkts} <-
            ProtocolHelpers.process_client_packets(data_to_send, data.mode, data),
+         {:ok, new_stream_state} <- maybe_expect_ready_for_query(data, new_stream_state),
          :ok <- sock_send(pkts, data) do
       {:ok, %{data | stream_state: new_stream_state}}
     else
       {:error, exception} ->
         {:error, exception}
     end
+  end
+
+  defp maybe_expect_ready_for_query(
+         %{mode: :transaction, db_connection: {_pool, db_pid, _sock}},
+         stream_state
+       ) do
+    {count, stream_state} = handle_rfq_producers(stream_state)
+    if count > 0, do: DbHandler.expect_ready_for_query(db_pid, count)
+    {:ok, stream_state}
+  end
+
+  defp maybe_expect_ready_for_query(_data, stream_state), do: {:ok, stream_state}
+
+  defp handle_rfq_producers(stream_state) do
+    handler_state = MessageStreamer.stream_state(stream_state, :handler_state)
+
+    # also reset the state.
+    {handler_state.rfq_producers,
+     MessageStreamer.update_state(stream_state, fn s -> %{s | rfq_producers: 0} end)}
   end
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
