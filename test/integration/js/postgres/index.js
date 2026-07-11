@@ -2607,6 +2607,20 @@ t('concurrent cursors multiple connections', async() => {
   return ['12233445566778', xs.sort().join('')]
 })
 
+t('Pipelines many queries on a single connection', { timeout: t.timeout * 2 }, async() => {
+  // Force prepared statements so postgres.js pipelines the statements.
+  const pipe = postgres({ ...options, prepare: true, max: 1 })
+  try {
+    const n = 50
+    const rows = await Promise.all(
+      Array.from({ length: n }, (_, i) => pipe`select ${ i }::int as x`)
+    )
+    return [n, rows.filter((r, i) => r[0].x === i).length]
+  } finally {
+    await pipe.end()
+  }
+})
+
 if (process.env.PGMODE != 'transaction') {
   t('reserve connection', async() => {
     const reserved = await sql.reserve()

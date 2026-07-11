@@ -1,7 +1,28 @@
 defmodule Supavisor.ClientHandlerTest do
   use ExUnit.Case, async: true
 
+  alias Supavisor.Protocol.FrontendMessageHandler
+  alias Supavisor.Protocol.MessageStreamer
+
   @subject Supavisor.ClientHandler
+
+  defp sockpair do
+    {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
+    {:ok, {address, port}} = :inet.sockname(listen)
+    this = self()
+    ref = make_ref()
+
+    spawn(fn ->
+      {:ok, recv} = :gen_tcp.accept(listen)
+      :gen_tcp.controlling_process(recv, this)
+      send(this, {ref, recv})
+    end)
+
+    {:ok, send} = :gen_tcp.connect(address, port, mode: :binary, active: false)
+    assert_receive {^ref, recv}
+
+    {send, recv}
+  end
 
   describe "TLS alert handling" do
     setup do
@@ -148,6 +169,46 @@ defmodule Supavisor.ClientHandlerTest do
                @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
 
       assert Logger.get_process_level(self()) == :debug
+    end
+  end
+
+  describe "handle_event/4 :busy ReadyForQuery expectation" do
+    test "forwards the expected ReadyForQuery count to the DbHandler in transaction mode" do
+      {db_sock, _recv} = sockpair()
+
+      data = %{
+        mode: :transaction,
+        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
+        tenant_feature_flags: %{},
+        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
+      }
+
+      # Three pipelined simple queries produce three ReadyForQuery replies.
+      batch =
+        <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">> <> <<?Q, 12::32, "SELECT 3">>
+
+      assert {:keep_state, _data} =
+               @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
+
+      assert_received {:"$gen_cast", {:expect_ready_for_query, 3}}
+    end
+
+    test "does not send an expectation in session mode" do
+      {db_sock, _recv} = sockpair()
+
+      data = %{
+        mode: :session,
+        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
+        tenant_feature_flags: %{},
+        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
+      }
+
+      batch = <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">>
+
+      assert {:keep_state, _data} =
+               @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
+
+      refute_received {:"$gen_cast", {:expect_ready_for_query, _count}}
     end
   end
 end
