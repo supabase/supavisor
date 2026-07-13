@@ -35,6 +35,21 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
     end
   end
 
+  describe "manual_metrics/1" do
+    test "properly exports metrics" do
+      for manual_metric <- Cluster.manual_metrics([]) do
+        assert %PromEx.MetricTypes.Manual{metrics: [_ | _]} = manual_metric
+        {m, f, a} = manual_metric.measurements_mfa
+        assert function_exported?(m, f, length(a))
+
+        for telemetry_metric <- manual_metric.metrics do
+          assert is_struct(telemetry_metric, Telemetry.Metrics.LastValue)
+          assert telemetry_metric.description
+        end
+      end
+    end
+  end
+
   describe "emit_cluster_size/0" do
     test "emits cluster size event" do
       ref = attach_handler([:supavisor, :prom_ex, :cluster])
@@ -66,6 +81,43 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
                base: "",
                previous: ""
              } = meta
+    end
+  end
+
+  describe "emit_ami_version/0" do
+    test "emits AMI version event from AMI_VERSION env var" do
+      ref = attach_handler([:supavisor, :prom_ex, :ami, :version])
+
+      System.put_env("AMI_VERSION", "2024.01.01")
+      on_exit(fn -> System.delete_env("AMI_VERSION") end)
+
+      assert :ok = Cluster.emit_ami_version()
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :ami, :version], measurement, meta}}
+
+      assert %{status: 1} = measurement
+      assert %{version: "2024.01.01"} = meta
+    end
+
+    test "does not emit when AMI_VERSION is unset" do
+      ref = attach_handler([:supavisor, :prom_ex, :ami, :version])
+
+      System.delete_env("AMI_VERSION")
+
+      assert :ok = Cluster.emit_ami_version()
+
+      refute_receive {^ref, {[:supavisor, :prom_ex, :ami, :version], _measurement, _meta}}
+    end
+
+    test "does not emit when AMI_VERSION is empty" do
+      ref = attach_handler([:supavisor, :prom_ex, :ami, :version])
+
+      System.put_env("AMI_VERSION", "")
+      on_exit(fn -> System.delete_env("AMI_VERSION") end)
+
+      assert :ok = Cluster.emit_ami_version()
+
+      refute_receive {^ref, {[:supavisor, :prom_ex, :ami, :version], _measurement, _meta}}
     end
   end
 
