@@ -52,10 +52,15 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
             tags: [:current, :permanent, :base, :previous]
           )
         ]
-      ),
-      Polling.build(
-        :supavisor_ami_version_events,
-        poll_rate,
+      )
+    ]
+  end
+
+  @impl true
+  def manual_metrics(_opts) do
+    [
+      Manual.build(
+        :supavisor_ami_version_manual_metrics,
         {__MODULE__, :emit_ami_version, []},
         [
           last_value(
@@ -106,13 +111,18 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
 
   @spec emit_ami_version() :: :ok
   def emit_ami_version do
-    version = System.get_env("AMI_VERSION") || ""
+    case System.get_env("AMI_VERSION") do
+      version when is_binary(version) and version != "" ->
+        :telemetry.execute(
+          [:supavisor, :prom_ex, :ami, :version],
+          %{status: 1},
+          %{version: version}
+        )
 
-    :telemetry.execute(
-      [:supavisor, :prom_ex, :ami, :version],
-      %{status: 1},
-      %{version: version}
-    )
+      # Don't emit for deployments (e.g. self-hosted) that don't set AMI_VERSION.
+      _ ->
+        :ok
+    end
   end
 
   @spec emit_erpc_latency() :: :ok
