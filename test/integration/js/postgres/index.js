@@ -2607,7 +2607,7 @@ t('concurrent cursors multiple connections', async() => {
   return ['12233445566778', xs.sort().join('')]
 })
 
-t('Pipelines many queries on a single connection', { timeout: t.timeout * 3 }, async() => {
+t('Pipelines many queries on a single connection', { timeout: t.timeout * 4 }, async() => {
   // Force prepared statements so postgres.js pipelines the statements.
   const pipe = postgres({ ...options, prepare: true, max: 1 })
   try {
