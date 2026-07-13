@@ -56,6 +56,25 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
     ]
   end
 
+  @impl true
+  def manual_metrics(_opts) do
+    [
+      Manual.build(
+        :supavisor_ami_version_manual_metrics,
+        {__MODULE__, :emit_ami_version, []},
+        [
+          last_value(
+            [:supavisor, :prom_ex, :ami, :version, :info],
+            event_name: [:supavisor, :prom_ex, :ami, :version],
+            measurement: :status,
+            description: "The AMI version the node is running on.",
+            tags: [:version]
+          )
+        ]
+      )
+    ]
+  end
+
   @spec emit_cluster_size() :: :ok
   def emit_cluster_size do
     connected_nodes = Node.list()
@@ -88,6 +107,22 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
       %{status: 1},
       %{current: current, permanent: permanent, base: base, previous: previous}
     )
+  end
+
+  @spec emit_ami_version() :: :ok
+  def emit_ami_version do
+    case System.get_env("AMI_VERSION") do
+      version when is_binary(version) and version != "" ->
+        :telemetry.execute(
+          [:supavisor, :prom_ex, :ami, :version],
+          %{status: 1},
+          %{version: version}
+        )
+
+      # Don't emit for deployments (e.g. self-hosted) that don't set AMI_VERSION.
+      _ ->
+        :ok
+    end
   end
 
   @spec emit_erpc_latency() :: :ok
