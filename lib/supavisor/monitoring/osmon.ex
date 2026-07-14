@@ -203,7 +203,8 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   end
 
   # sobelow_skip ["Traversal.FileModule"]
-  @spec net_stat(Path.t()) :: {:ok, %{listen_drops: non_neg_integer(), listen_overflows: non_neg_integer()}} | :error
+  @spec net_stat(Path.t()) ::
+          {:ok, %{listen_drops: non_neg_integer(), listen_overflows: non_neg_integer()}} | :error
   def net_stat(path \\ @proc_net_netstat) do
     with {:ok, content} <- File.read(path),
          {:ok, stats} <- parse_net_stat(content) do
