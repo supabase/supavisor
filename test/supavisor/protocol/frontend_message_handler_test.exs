@@ -77,8 +77,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       {:ok, new_stream_state, result} =
         MessageStreamer.handle_packets(stream_state, original_bin)
 
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               MessageStreamer.stream_state(stream_state, :handler_state)
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state).prepared_statements ==
+               MessageStreamer.stream_state(stream_state, :handler_state).prepared_statements
 
       assert result == [original_bin]
     end
@@ -100,10 +100,76 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       {:ok, new_stream_state, result} =
         MessageStreamer.handle_packets(stream_state, multi_query_bin)
 
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               MessageStreamer.stream_state(stream_state, :handler_state)
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state).prepared_statements ==
+               MessageStreamer.stream_state(stream_state, :handler_state).prepared_statements
 
       assert result == [multi_query_bin]
+    end
+  end
+
+  # Frames `bin` and returns how many RFQ-producing messages the handler counted.
+  defp rfq_producers(stream_state, bin) do
+    {:ok, new_stream_state, _result} = MessageStreamer.handle_packets(stream_state, bin)
+    MessageStreamer.stream_state(new_stream_state, :handler_state).rfq_producers
+  end
+
+  describe "ReadyForQuery-producer counting" do
+    test "counts a simple query (Q)", %{stream_state: stream_state} do
+      assert rfq_producers(stream_state, <<?Q, 12::32, "SELECT 1">>) == 1
+    end
+
+    test "counts a Sync (S)", %{stream_state: stream_state} do
+      assert rfq_producers(stream_state, <<?S, 4::32>>) == 1
+    end
+
+    test "counts a FunctionCall (F)", %{stream_state: stream_state} do
+      assert rfq_producers(stream_state, <<?F, 4::32>>) == 1
+    end
+
+    test "does not count Parse or Execute", %{stream_state: stream_state} do
+      bin = <<?P, 16::32, 0, "select 1", 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
+      assert rfq_producers(stream_state, bin) == 0
+    end
+
+    test "counts a multi-statement simple query as one producer", %{stream_state: stream_state} do
+      assert rfq_producers(stream_state, <<?Q, 32::32, "SELECT 1; SELECT 2; SELECT 3">>) == 1
+    end
+
+    test "counts every query in a pipelined simple-query batch", %{stream_state: stream_state} do
+      batch =
+        <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">> <> <<?Q, 12::32, "SELECT 3">>
+
+      assert rfq_producers(stream_state, batch) == 3
+    end
+
+    test "counts only the Sync in an extended-protocol batch", %{stream_state: stream_state} do
+      bin =
+        <<?P, 16::32, 0, "select 1", 0, 0, 0>> <>
+          <<?E, 9::32, 0, 0, 0, 0, 200>> <>
+          <<?S, 4::32>>
+
+      assert rfq_producers(stream_state, bin) == 1
+    end
+
+    test "counts every Sync in a pipelined extended-protocol batch", %{stream_state: stream_state} do
+      sequence =
+        <<?P, 16::32, 0, "select 1", 0, 0, 0>> <>
+          <<?E, 9::32, 0, 0, 0, 0, 200>> <>
+          <<?S, 4::32>>
+
+      assert rfq_producers(stream_state, sequence <> sequence) == 2
+    end
+
+    test "still counts (and forwards verbatim) when translation is disabled", %{
+      stream_state: stream_state
+    } do
+      stream_state = MessageStreamer.update_state(stream_state, &%{&1 | translate?: false})
+      sync = <<?S, 4::32>>
+
+      {:ok, new_stream_state, result} = MessageStreamer.handle_packets(stream_state, sync)
+
+      assert MessageStreamer.stream_state(new_stream_state, :handler_state).rfq_producers == 1
+      assert IO.iodata_to_binary(result) == sync
     end
   end
 end

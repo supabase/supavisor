@@ -97,11 +97,12 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
         :transaction,
         %{tenant_feature_flags: tenant_feature_flags} = data
       ) do
-    if FeatureFlag.enabled?(tenant_feature_flags, "named_prepared_statements") do
-      MessageStreamer.handle_packets(data.stream_state, bin)
-    else
-      {:ok, data.stream_state, bin}
-    end
+    translate? = FeatureFlag.enabled?(tenant_feature_flags, "named_prepared_statements")
+
+    stream_state =
+      MessageStreamer.update_state(data.stream_state, &%{&1 | translate?: translate?})
+
+    MessageStreamer.handle_packets(stream_state, bin)
   end
 
   def process_client_packets(bin, _mode, data) do
