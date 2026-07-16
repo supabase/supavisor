@@ -87,7 +87,6 @@ defmodule Supavisor.Application do
         )
       end
 
-    :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants, :availability_zone])
 
     :syn.join(:availability_zone, Application.get_env(:supavisor, :availability_zone), self(),
