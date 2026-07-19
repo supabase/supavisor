@@ -87,7 +87,6 @@ defmodule Supavisor.Application do
         )
       end
 
-    :syn.set_event_handler(Supavisor.SynHandler)
     :syn.add_node_to_scopes([:tenants, :availability_zone])
 
     :syn.join(:availability_zone, Application.get_env(:supavisor, :availability_zone), self(),
@@ -107,6 +106,7 @@ defmodule Supavisor.Application do
         Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,
         Supavisor.ConnectBackoff.Janitor,
+        Supavisor.DeadPortSweeper,
         {Task.Supervisor, name: Supavisor.PoolTerminator},
         {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
         {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},

@@ -327,7 +327,7 @@ defmodule Supavisor.Tenants do
       nil ->
         {:error, :not_found}
 
-      tenant when banned? == "true" ->
+      tenant when banned? in [true, "true"] ->
         tenant
         |> Tenant.ban_changeset(params)
         |> Repo.update()
@@ -337,7 +337,7 @@ defmodule Supavisor.Tenants do
           terminate_error: %TenantBannedError{ban_reason: params["ban_reason"]}
         )
 
-      tenant when banned? == "false" ->
+      tenant when banned? in [false, "false"] ->
         tenant
         |> Tenant.unban_changeset(params)
         |> Repo.update()

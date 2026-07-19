@@ -59,6 +59,7 @@ defmodule Supavisor.DbHandler do
           | :busy
           | :terminating_with_error
           | :waiting_for_secrets
+          | :setting_application_name
 
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
@@ -115,6 +116,16 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
+  Tells the DbHandler how many more ReadyForQuery messages to expect for the batch being forwarded.
+
+  The ClientHandler should send this *before* forwarding the messages that produce them,
+  so the count reaches the DbHandler before the responses do.
+  """
+  @spec expect_ready_for_query(pid(), pos_integer()) :: :ok
+  def expect_ready_for_query(pid, count),
+    do: :gen_statem.cast(pid, {:expect_ready_for_query, count})
+
+  @doc """
   Attempts to clean up session state by sending DISCARD ALL to the database.
 
   The caller is responsible for ensuring that:
@@ -125,6 +136,22 @@ defmodule Supavisor.DbHandler do
   @spec attempt_cleanup(pid()) :: :ok | {:error, term()}
   def attempt_cleanup(db_handler_pid) do
     :gen_statem.call(db_handler_pid, :cleanup, 5_000)
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
+  end
+
+  @doc """
+  Sets `application_name` on the backend connection.
+
+  Intended to be called while the DbHandler is checked out (`:busy`), which is
+  how the only caller uses it — right after checkout during connection setup.
+  In any other state it is a best-effort no-op that replies `:ok` without
+  touching the backend. Only supported in session mode.
+  """
+  @spec set_application_name(pid(), String.t()) :: :ok | {:error, term()}
+  def set_application_name(db_handler_pid, name) do
+    :gen_statem.call(db_handler_pid, {:set_application_name, name}, 5_000)
   catch
     :exit, reason ->
       {:error, {:exit, reason}}
@@ -169,17 +196,27 @@ defmodule Supavisor.DbHandler do
         %{} -> {args.id, Supavisor.Manager.get_config(args.id)}
       end
 
+    proxy = Map.get(config, :proxy, false)
+
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
-
     Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
 
+    conn_params =
+      if proxy do
+        config.connection_params
+      else
+        %ConnectionParameters{config.connection_params | application_name: "Supavisor"}
+      end
+
     storage_mod = BackendStorage.select(config.tenant_feature_flags)
+
+    pool = if pool_name = Map.get(args, :pool), do: GenServer.whereis(pool_name)
 
     data = %{
       id: id,
       sock: nil,
-      connection_params: config.connection_params,
+      connection_params: conn_params,
       user: config.user,
       tenant: config.tenant,
       tenant_feature_flags: config.tenant_feature_flags,
@@ -190,7 +227,7 @@ defmodule Supavisor.DbHandler do
       stats: %{},
       prepared_statements_storage: storage_mod,
       prepared_statements: storage_mod.new(),
-      proxy: Map.get(config, :proxy, false),
+      proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
@@ -199,6 +236,8 @@ defmodule Supavisor.DbHandler do
       replica_type: config.replica_type,
       caller: nil,
       client_sock: nil,
+      expected_rfq: 0,
+      pool: pool,
       terminating_error: nil,
       manager_ref: nil,
       derived_secrets: nil
@@ -406,30 +445,59 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
+  def handle_event(:cast, {:expect_ready_for_query, count}, _state, data) do
+    {:keep_state, %{data | expected_rfq: data.expected_rfq + count}}
+  end
+
   # forward the message to the client
   def handle_event(:info, {proto, _, bin}, :busy, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
-    if String.ends_with?(bin, Server.ready_for_query()) do
-      ClientHandler.db_status(data.caller, :ready_for_query)
-      data = handle_server_messages(bin, data)
+    {:ok, data, to_send} = process_backend_streaming(bin, data)
+    {count, last_status, data} = handle_ready_for_query(data)
 
-      case data.mode do
-        :transaction ->
-          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-          {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+    # A batch is done when we have received the expected number of `ReadyForQuery`
+    # messages and the last status is idle and not mid-transaction.
+    outstanding = data.expected_rfq - count
+    batch_done? = outstanding <= 0 and last_status == ?I
+    data = %{data | expected_rfq: max(outstanding, 0)}
 
-        :proxy ->
+    # db_status must be enqueued in the ClientHandler's mailbox before the final
+    # ReadyForQuery reaches the client socket: the client sends its next query as
+    # soon as it reads ReadyForQuery, and if that arrives while the ClientHandler
+    # is still :busy it gets forwarded to a connection the client no longer owns.
+    if batch_done?, do: ClientHandler.db_status(data.caller, :ready_for_query)
+
+    send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
+
+    case send_result do
+      {:error, reason} ->
+        # Still linked to the ClientHandler (checkin is what unlinks), so
+        # stopping tears the client connection down with us.
+        Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
+        {:stop, :normal}
+
+      :ok ->
+        if batch_done? do
+          case data.mode do
+            :transaction ->
+              {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+              checkin(data)
+
+              {:next_state, :idle,
+               %{data | stats: stats, caller: nil, client_sock: nil, expected_rfq: 0}}
+
+            :proxy ->
+              {:keep_state, data}
+
+            :session ->
+              {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+              {:keep_state, %{data | stats: stats}}
+          end
+        else
           {:keep_state, data}
-
-        :session ->
-          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-          {:keep_state, %{data | stats: stats}}
-      end
-    else
-      data = handle_server_messages(bin, data)
-      {:keep_state, data}
+        end
     end
   end
 
@@ -449,6 +517,64 @@ defmodule Supavisor.DbHandler do
       true ->
         {:keep_state, %{data | pending_bin: buffered_bin}}
     end
+  end
+
+  def handle_event({:call, from}, {:set_application_name, name}, state, data) do
+    cond do
+      data.mode == :transaction ->
+        Logger.error(
+          "DbHandler: set_application_name called on transaction mode - only supported in session mode"
+        )
+
+        {:keep_state_and_data,
+         {:reply, from, {:error, :set_application_name_not_supported_in_transaction_mode}}}
+
+      # Only when checked out to this client (:busy).
+      state == :busy ->
+        app_name = "Supavisor - #{name}"
+        Logger.debug("DbHandler: Setting application_name to #{inspect(app_name)}")
+
+        query =
+          Server.extended_query("SELECT set_config('application_name', $1, false)", [app_name])
+
+        :ok = HandlerHelpers.sock_send(data.sock, query)
+
+        {:next_state, :setting_application_name,
+         Map.merge(data, %{set_app_name_from: from, pending_bin: <<>>}),
+         {:state_timeout, 5_000, :set_application_name_timeout}}
+
+      true ->
+        {:keep_state_and_data, {:reply, from, :ok}}
+    end
+  end
+
+  # Swallow the SET application_name response so it never reaches the client.
+  def handle_event(:info, {proto, _, bin}, :setting_application_name, data)
+      when proto in @proto do
+    buffered_bin = data.pending_bin <> bin
+
+    cond do
+      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
+        {:next_state, :busy, %{data | pending_bin: nil, set_app_name_from: nil},
+         {:reply, data.set_app_name_from, :ok}}
+
+      byte_size(buffered_bin) > @cleanup_buffer_limit ->
+        Logger.error("DbHandler: application_name buffer limit exceeded, shutting down")
+        {:stop, :normal}
+
+      true ->
+        {:keep_state, %{data | pending_bin: buffered_bin}}
+    end
+  end
+
+  def handle_event(
+        :state_timeout,
+        :set_application_name_timeout,
+        :setting_application_name,
+        _data
+      ) do
+    Logger.error("DbHandler: set application_name timeout, shutting down")
+    {:stop, :normal}
   end
 
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
@@ -507,7 +633,7 @@ defmodule Supavisor.DbHandler do
         send(caller, {:parameter_status, bin_ps})
       end
 
-      {:next_state, :busy, %{data | client_sock: sock, caller: caller},
+      {:next_state, :busy, %{data | client_sock: sock, caller: caller, expected_rfq: 0},
        {:reply, from, {:ok, data.sock}}}
     else
       {:keep_state_and_data, :postpone}
@@ -814,14 +940,7 @@ defmodule Supavisor.DbHandler do
     secrets = data.connection_params.secrets
 
     {client_final_message, server_proof, derived_secrets} =
-      case Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws") do
-        {client_final_message, server_proof, derived_secrets} ->
-          {client_final_message, server_proof, derived_secrets}
-
-        # TODO: drop once v2.9.7 is everywhere
-        {client_final_message, server_proof} ->
-          {client_final_message, server_proof, nil}
-      end
+      Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws")
 
     bin = :pgo_protocol.encode_scram_response_message(client_final_message)
     :ok = HandlerHelpers.sock_send(data.sock, bin)
@@ -892,21 +1011,34 @@ defmodule Supavisor.DbHandler do
     Supavisor.UpstreamAuthentication.delete_upstream_auth_secrets(data.id)
   end
 
-  @spec handle_server_messages(binary(), map()) :: map()
-  defp handle_server_messages(bin, %{backend_message_streaming: true} = data) do
-    {:ok, updated_data, to_send} = process_backend_streaming(bin, data)
+  # Returning to the pool only after the response is fully forwarded keeps
+  # workers flushing to slow clients out of circulation. If the caller died
+  # mid-send (link gone), poolboy's owner monitor already reclaimed the worker
+  # and may have handed it out, so checking in again would corrupt the pool.
+  @spec checkin(map()) :: :ok
+  defp checkin(%{caller: caller, pool: pool}) do
+    {:links, links} = Process.info(self(), :links)
 
-    if to_send != [] do
-      client_send(data, to_send)
+    if caller in links do
+      Process.unlink(caller)
+      :poolboy.checkin(pool, self())
     end
 
-    updated_data
+    :ok
   end
 
-  # hot code reload compat: remove after full rollout
-  defp handle_server_messages(bin, data) do
-    client_send(data, bin)
-    data
+  defp handle_ready_for_query(data) do
+    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
+    count = BackendMessageHandler.handler_state(handler_state, :rfq_count)
+    last_status = BackendMessageHandler.handler_state(handler_state, :last_rfq_status)
+
+    # also reset the state.
+    stream_state =
+      MessageStreamer.update_state(data.stream_state, fn s ->
+        BackendMessageHandler.handler_state(s, rfq_count: 0, last_rfq_status: nil)
+      end)
+
+    {count, last_status, %{data | stream_state: stream_state}}
   end
 
   # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's

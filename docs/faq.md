@@ -12,7 +12,11 @@ subsequently should show up in your exception monitoring software.
 
 ## Does Supavisor support prepared statements?
 
-It currently supports prepared statements only in session mode.
+It supports prepared statements in session mode. In transaction mode, named
+prepared statements are supported when the `named_prepared_statements`
+feature flag is enabled, either globally with the
+`NAMED_PREPARED_STATEMENTS_ENABLED` environment variable or per tenant via
+`feature_flags`.
 
 ## Why do you route connections to a single Supavisor node when deployed as a cluster?
 

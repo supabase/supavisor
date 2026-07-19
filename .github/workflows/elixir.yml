@@ -28,7 +28,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
         with:
-          otp-version: '27.2.1'
+          otp-version: '27.3.4'
           elixir-version: '1.18.2'
       - name: Cache Mix
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
@@ -51,7 +51,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
         with:
-          otp-version: '27.2.1'
+          otp-version: '27.3.4'
           elixir-version: '1.18.2'
       - name: Cache Mix
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
@@ -72,7 +72,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
         with:
-          otp-version: '27.2.1'
+          otp-version: '27.3.4'
           elixir-version: '1.18.2'
       - name: Cache Mix
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
@@ -103,7 +103,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
         with:
-          otp-version: '27.2.1'
+          otp-version: '27.3.4'
           elixir-version: '1.18.2'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
@@ -154,7 +154,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
         with:
-          otp-version: '27.2.1'
+          otp-version: '27.3.4'
           elixir-version: '1.18.2'
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
@@ -232,7 +232,7 @@ jobs:
         id: beam
         uses: erlef/setup-beam@ee09b1e59bb240681c382eb1f0abc6a04af72764 # v1.23.0
         with:
-          otp-version: '27.2.1'
+          otp-version: '27.3.4'
           elixir-version: '1.18.2'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1

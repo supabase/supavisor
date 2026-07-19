@@ -34,9 +34,14 @@ defmodule Supavisor.Protocol.ClientTest do
            }
 
     assert Client.decode_startup_packet(<<1, 2, 3>>) ==
-             {:error, %Supavisor.Errors.StartupMessageError{reason: :bad_startup_payload}}
+             {:error,
+              %Supavisor.Errors.StartupMessageError{
+                reason: :bad_startup_payload,
+                payload: <<1, 2, 3>>
+              }}
 
     assert Client.decode_startup_packet(<<0, 0, 0, 8, 0, 3, 0, 0>>) ==
-             {:error, %Supavisor.Errors.StartupMessageError{reason: :bad_startup_payload}}
+             {:error,
+              %Supavisor.Errors.StartupMessageError{reason: :bad_startup_payload, payload: ""}}
   end
 end

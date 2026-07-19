@@ -25,6 +25,7 @@ defmodule Supavisor.ClientHandler do
 
   alias Supavisor.{
     DbHandler,
+    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Manager,
@@ -45,6 +46,7 @@ defmodule Supavisor.ClientHandler do
   }
 
   alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer}
+  require MessageStreamer
 
   alias Supavisor.Errors.{
     CheckoutTimeoutError,
@@ -326,7 +328,8 @@ defmodule Supavisor.ClientHandler do
          {:ok, opts} <- Supavisor.subscribe(data.id),
          manager_ref = Process.monitor(opts.workers.manager),
          data = Map.merge(data, opts.workers),
-         {:ok, db_connection} <- maybe_checkout(:on_connect, data) do
+         {:ok, db_connection} <- maybe_checkout(:on_connect, data),
+         :ok <- maybe_set_application_name(data, db_connection) do
       data = %{
         data
         | manager: manager_ref,
@@ -334,7 +337,11 @@ defmodule Supavisor.ClientHandler do
           idle_timeout: opts.idle_timeout
       }
 
-      Registry.register(@clients_registry, data.id, started_at: System.monotonic_time())
+      Registry.register(@clients_registry, data.id,
+        started_at: System.monotonic_time(),
+        app_name: data.app_name,
+        include_app_name: include_app_name?(data)
+      )
 
       cond do
         data.client_ready ->
@@ -360,7 +367,11 @@ defmodule Supavisor.ClientHandler do
         case Supavisor.get_pool_ranch(data.id) do
           {:ok, pool_ranch} ->
             Logger.metadata(proxy: true)
-            Registry.register(@proxy_clients_registry, data.id, [])
+
+            Registry.register(@proxy_clients_registry, data.id,
+              app_name: data.app_name,
+              include_app_name: include_app_name?(data)
+            )
 
             {:keep_state, %{data | pool_ranch: pool_ranch}, {:next_event, :internal, :connect_db}}
 
@@ -419,7 +430,7 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
-  def handle_event(:timeout, :idle_terminate, _state, data) do
+  def handle_event(:state_timeout, :idle_terminate, _state, data) do
     Logger.warning("ClientHandler: Terminate an idle connection by #{data.idle_timeout} timeout")
     {:stop, :normal}
   end
@@ -516,7 +527,9 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:cast, {:db_status, :ready_for_query}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
-    db_connection = maybe_checkin(data.mode, data.db_connection)
+    # In transaction mode the DbHandler checks itself back into the pool once
+    # it finishes forwarding the response; we only drop our reference to it.
+    db_connection = if data.mode == :transaction, do: nil, else: data.db_connection
 
     {_, stats} =
       if data.local,
@@ -639,23 +652,14 @@ defmodule Supavisor.ClientHandler do
         {:next_state, new_state, data}
 
       {:busy, :idle} ->
-        {:next_state, new_state, data}
+        {:next_state, new_state, data, idle_timeout_action(data)}
+
+      {_, :idle} ->
+        {:next_state, new_state, record_state_duration(old_state, new_state, data),
+         idle_timeout_action(data)}
 
       _ ->
-        now = System.monotonic_time()
-        time_in_previous_state = now - data.state_entered_at
-
-        :telemetry.execute(
-          [:supavisor, :client_handler, :state],
-          %{duration: time_in_previous_state},
-          %{
-            from_state: old_state,
-            to_state: new_state,
-            tenant: data.tenant
-          }
-        )
-
-        {:next_state, new_state, %{data | state_entered_at: now}}
+        {:next_state, new_state, record_state_duration(old_state, new_state, data)}
     end
   end
 
@@ -748,6 +752,24 @@ defmodule Supavisor.ClientHandler do
       end
 
     Logger.log(level, "ClientHandler: terminating with reason #{inspect(reason)}")
+  end
+
+  defp maybe_set_application_name(%{mode: :session, app_name: app_name}, {_pool, db_pid, _sock})
+       when is_binary(app_name) and app_name != "" do
+    case DbHandler.set_application_name(db_pid, app_name) do
+      :ok ->
+        :ok
+
+      error ->
+        Logger.warning("ClientHandler: failed to set application_name: #{inspect(error)}")
+        :ok
+    end
+  end
+
+  defp maybe_set_application_name(_data, _db_connection), do: :ok
+
+  defp include_app_name?(data) do
+    FeatureFlag.enabled?(data.tenant_feature_flags, "app_name_metric")
   end
 
   defp maybe_cleanup_db_handler(state, data) do
@@ -877,19 +899,6 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec maybe_checkin(:transaction | :session | :proxy, Data.db_connection()) ::
-          Data.db_connection()
-  defp maybe_checkin(:transaction, nil), do: nil
-
-  defp maybe_checkin(:transaction, {pool, db_pid, _}) do
-    Process.unlink(db_pid)
-    :poolboy.checkin(pool, db_pid)
-    nil
-  end
-
-  defp maybe_checkin(:session, db_connection), do: db_connection
-  defp maybe_checkin(:proxy, db_connection), do: db_connection
-
   @spec handle_data(binary(), map()) :: {:ok, map()} | {:error, Exception.t()}
   defp handle_data(data_to_send, data) do
     Logger.debug(
@@ -898,6 +907,7 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, new_stream_state, pkts} <-
            ProtocolHelpers.process_client_packets(data_to_send, data.mode, data),
+         {:ok, new_stream_state} <- maybe_expect_ready_for_query(data, new_stream_state),
          :ok <- sock_send(pkts, data) do
       {:ok, %{data | stream_state: new_stream_state}}
     else
@@ -906,16 +916,47 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  defp maybe_expect_ready_for_query(
+         %{mode: :transaction, db_connection: {_pool, db_pid, _sock}},
+         stream_state
+       ) do
+    {count, stream_state} = handle_rfq_producers(stream_state)
+    if count > 0, do: DbHandler.expect_ready_for_query(db_pid, count)
+    {:ok, stream_state}
+  end
+
+  defp maybe_expect_ready_for_query(_data, stream_state), do: {:ok, stream_state}
+
+  defp handle_rfq_producers(stream_state) do
+    handler_state = MessageStreamer.stream_state(stream_state, :handler_state)
+
+    # also reset the state.
+    {handler_state.rfq_producers,
+     MessageStreamer.update_state(stream_state, fn s -> %{s | rfq_producers: 0} end)}
+  end
+
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
-    heartbeat =
-      if data.heartbeat_interval > 0,
-        do: [{:timeout, data.heartbeat_interval, :heartbeat_check}],
-        else: []
+    if data.heartbeat_interval > 0,
+      do: [{:timeout, data.heartbeat_interval, :heartbeat_check}],
+      else: []
+  end
 
-    idle = if data.idle_timeout > 0, do: [{:timeout, data.idle_timeout, :idle_timeout}], else: []
+  defp idle_timeout_action(%{idle_timeout: timeout}) when timeout > 0,
+    do: [{:state_timeout, timeout, :idle_terminate}]
 
-    idle ++ heartbeat
+  defp idle_timeout_action(_data), do: []
+
+  defp record_state_duration(old_state, new_state, data) do
+    now = System.monotonic_time()
+
+    :telemetry.execute(
+      [:supavisor, :client_handler, :state],
+      %{duration: now - data.state_entered_at},
+      %{from_state: old_state, to_state: new_state, tenant: data.tenant}
+    )
+
+    %{data | state_entered_at: now}
   end
 
   @spec client_sock_send(map(), iodata(), :handshake | :idle) ::
@@ -998,7 +1039,7 @@ defmodule Supavisor.ClientHandler do
         else: :auth_query
 
     connection_params = %Supavisor.ConnectionParameters{
-      application_name: data.app_name || "Supavisor",
+      application_name: data.app_name,
       database: db_name,
       host: to_charlist(info.tenant.db_host),
       sni_hostname:

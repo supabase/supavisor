@@ -69,6 +69,7 @@ defmodule Supavisor.MixProject do
       {:cachex, "~> 3.6"},
       {:inet_cidr, "~> 1.0.0"},
       {:observer_cli, "~> 1.7"},
+      {:recon, "~> 2.5"},
 
       # pooller
       # {:poolboy, "~> 1.5.2"},

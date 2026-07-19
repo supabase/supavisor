@@ -8,6 +8,8 @@ defmodule Supavisor.DbHandlerTest do
   import Supavisor.Asserts
 
   alias Supavisor.DbHandler, as: Db
+  alias Supavisor.Protocol.BackendMessageHandler
+  alias Supavisor.Protocol.MessageStreamer
   alias Supavisor.Protocol.Server
 
   require Supavisor
@@ -140,6 +142,27 @@ defmodule Supavisor.DbHandlerTest do
     assert_receive {^ref, recv}
 
     {send, recv}
+  end
+
+  # A `:busy` DbHandler data map.
+  defp busy_data(overrides \\ %{}) do
+    {backend_sock, _recv} = sockpair()
+    {client_sock, _recv} = sockpair()
+
+    base = %{
+      caller: self(),
+      pool: self(),
+      mode: :transaction,
+      sock: {:gen_tcp, backend_sock},
+      client_sock: {:gen_tcp, client_sock},
+      id: make_id(),
+      stats: %{},
+      expected_rfq: 0,
+      backend_message_streaming: true,
+      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler)
+    }
+
+    Map.merge(base, overrides)
   end
 
   describe "init/1" do
@@ -965,6 +988,222 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:stop, :normal} =
                Db.handle_event(:state_timeout, :cleanup_timeout, :waiting_cleanup, data)
+    end
+  end
+
+  describe "set_application_name/2" do
+    test "returns error when called on transaction mode" do
+      {send, recv} = sockpair()
+
+      data = %{sock: {:gen_tcp, send}, mode: :transaction}
+
+      assert {:keep_state_and_data,
+              {:reply, _from, {:error, :set_application_name_not_supported_in_transaction_mode}}} =
+               Db.handle_event(
+                 {:call, {self(), make_ref()}},
+                 {:set_application_name, "app"},
+                 :idle,
+                 data
+               )
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "skips when called in invalid state" do
+      from = {self(), make_ref()}
+
+      data = %{mode: :session}
+
+      assert {:keep_state_and_data, {:reply, ^from, :ok}} =
+               Db.handle_event({:call, from}, {:set_application_name, "app"}, :idle, data)
+
+      assert {:keep_state_and_data, {:reply, ^from, :ok}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:set_application_name, "app"},
+                 :authentication,
+                 data
+               )
+    end
+
+    test "sends a parameterized set_config query" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{sock: {:gen_tcp, send}, mode: :session}
+
+      assert {:next_state, :setting_application_name, new_data,
+              {:state_timeout, 5_000, :set_application_name_timeout}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:set_application_name, "my app's name"},
+                 :busy,
+                 data
+               )
+
+      assert new_data.set_app_name_from == from
+      assert new_data.pending_bin == <<>>
+
+      assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
+      assert message =~ "SELECT set_config('application_name', $1, false)"
+      assert message =~ "my app's name"
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "swallows the response and replies :ok, returning to :busy" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        set_app_name_from: from,
+        pending_bin: <<>>
+      }
+
+      content = {:tcp, recv, Server.ready_for_query()}
+
+      assert {:next_state, :busy, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event(:info, content, :setting_application_name, data)
+
+      assert new_data.pending_bin == nil
+      assert new_data.set_app_name_from == nil
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "buffers incomplete messages while waiting for ReadyForQuery" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        set_app_name_from: from,
+        pending_bin: <<>>
+      }
+
+      partial_message = <<"partial">>
+      content = {:tcp, recv, partial_message}
+
+      assert {:keep_state, new_data} =
+               Db.handle_event(:info, content, :setting_application_name, data)
+
+      assert new_data.pending_bin == partial_message
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "stops when buffer limit exceeded" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        set_app_name_from: from,
+        pending_bin: <<>>
+      }
+
+      large_message = :binary.copy(<<1>>, 70_000)
+      content = {:tcp, recv, large_message}
+
+      assert {:stop, :normal} =
+               Db.handle_event(:info, content, :setting_application_name, data)
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "stops on set application_name timeout" do
+      data = %{mode: :session}
+
+      assert {:stop, :normal} =
+               Db.handle_event(
+                 :state_timeout,
+                 :set_application_name_timeout,
+                 :setting_application_name,
+                 data
+               )
+    end
+  end
+
+  describe "handle_event/4 :busy ReadyForQuery batching" do
+    test "releases the backend once the single expected ReadyForQuery arrives" do
+      data = busy_data(%{expected_rfq: 1})
+
+      assert {:next_state, :idle, new_data} =
+               Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
+
+      assert new_data.caller == nil
+      assert new_data.expected_rfq == 0
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
+    end
+
+    test "holds the backend until every pipelined ReadyForQuery has arrived" do
+      data = busy_data(%{expected_rfq: 3})
+
+      # Only one of the three expected replies so far: stay busy, no release.
+      assert {:keep_state, data} =
+               Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
+
+      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert data.expected_rfq == 2
+
+      # The remaining two arrive together, draining the batch, so we release.
+      two = Server.ready_for_query() <> Server.ready_for_query()
+
+      assert {:next_state, :idle, _new_data} =
+               Db.handle_event(:info, {:tcp, :sock, two}, :busy, data)
+
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
+    end
+
+    test "does not release mid-transaction even when the expected count is met" do
+      data = busy_data(%{expected_rfq: 1})
+      in_transaction = <<?Z, 5::32, ?T>>
+
+      assert {:keep_state, data} =
+               Db.handle_event(:info, {:tcp, :sock, in_transaction}, :busy, data)
+
+      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert data.expected_rfq == 0
+    end
+
+    test "detects a ReadyForQuery that splits across two socket reads" do
+      <<first::binary-size(4), second::binary>> = Server.ready_for_query()
+      data = busy_data(%{expected_rfq: 1})
+
+      # Partial ReadyForQuery: nothing framed yet, stay busy.
+      assert {:keep_state, data} =
+               Db.handle_event(:info, {:tcp, :sock, first}, :busy, data)
+
+      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
+
+      # Second read completes it, the framer reassembles it, and we release.
+      assert {:next_state, :idle, _new_data} =
+               Db.handle_event(:info, {:tcp, :sock, second}, :busy, data)
+
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
+    end
+
+    test "expect_ready_for_query cast accumulates the expected count" do
+      data = busy_data()
+
+      assert {:keep_state, data} =
+               Db.handle_event(:cast, {:expect_ready_for_query, 2}, :busy, data)
+
+      assert data.expected_rfq == 2
+
+      assert {:keep_state, data} =
+               Db.handle_event(:cast, {:expect_ready_for_query, 3}, :busy, data)
+
+      assert data.expected_rfq == 5
     end
   end
 end
