@@ -1031,6 +1031,7 @@ defmodule Supavisor.ClientHandler do
         tenant: info.tenant.external_id,
         tenant_feature_flags: info.tenant.feature_flags,
         tenant_availability_zone: info.tenant.availability_zone,
+        txn_mode_set_action: info.tenant.txn_mode_set_action,
         user: user,
         db_name: db_name,
         timeout: info.user.pool_checkout_timeout,
