@@ -60,9 +60,9 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
         auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1",
         default_parameter_status: %{"server_version" => "15.0"},
         upstream_tls_ca: ca_der,
-        upstream_ssl: true,
-        upstream_verify: :peer,
-        enforce_ssl: false,
+        upstream_ssl: Keyword.get(opts, :upstream_ssl, true),
+        upstream_verify: Keyword.get(opts, :upstream_verify, :peer),
+        enforce_ssl: Keyword.get(opts, :enforce_ssl, false),
         availability_zone: Keyword.get(opts, :availability_zone),
         use_jit: true,
         jit_api_url: "http://localhost:8080/projects/odvmrtdcoyfyvfrdxzsj/database/jit",
@@ -350,6 +350,27 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
                ssl: false,
                jit: true
              )
+  end
+
+  test "jit over client tls connects when tenant has ssl disabled and no verify", %{
+    db_conf: db_conf
+  } do
+    # Regression: a JIT tenant that has not configured upstream SSL leaves
+    # upstream_verify as nil. With `options jit=true` and a TLS client
+    # connection, upstream_tls/2 follows the client's SSL status, so the db
+    # handler opens an upstream TLS connection while upstream_verify is nil.
+    # ssl_connect/3 used to only match :peer/:none and crashed with a
+    # CaseClauseError on nil; nil must be treated as verify_none.
+    {tenant_id, ca_cert} =
+      setup_tenant(db_conf, upstream_ssl: false, upstream_verify: nil, enforce_ssl: false)
+
+    assert {:ok, pid} =
+             single_connection(db_conf, tenant_id, ca_cert,
+               password: "sbp_04fee3d26b63d9a3557c72a1b9902cbb8412c836",
+               jit: true
+             )
+
+    assert {:ok, %P.Result{}} = SingleConnection.query(pid, "SELECT 1")
   end
 
   test "jit successful authentication via proxy node", %{db_conf: db_conf} do
