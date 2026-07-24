@@ -5,6 +5,7 @@ defmodule Supavisor.Monitoring.Telem do
   require Supavisor
 
   @disabled Application.compile_env(:supavisor, :metrics_disabled, false)
+  @slow_auth_query_ms 1_000
 
   if @disabled do
     defp telemetry_execute(_name, _measurements, _meta), do: :ok
@@ -114,6 +115,50 @@ defmodule Supavisor.Monitoring.Telem do
       [:supavisor, :db_handler, :prepared_statements, :evicted],
       %{count: count},
       id_to_tags(id)
+    )
+  end
+
+  @spec auth_query_connection_stop(integer(), term()) :: :ok
+  def auth_query_connection_stop(duration, error_or_nil) do
+    telemetry_execute(
+      [:supavisor, :auth_query, :connection, :stop],
+      %{duration: duration},
+      %{error: error_or_nil}
+    )
+  end
+
+  @spec auth_query_query_stop(integer(), :ok | :error) :: :ok
+  def auth_query_query_stop(duration, status) do
+    duration_ms = System.convert_time_unit(duration, :native, :millisecond)
+
+    if duration_ms > @slow_auth_query_ms do
+      Logger.warning("auth_query took over #{@slow_auth_query_ms}ms (#{duration_ms}ms)")
+    end
+
+    telemetry_execute(
+      [:supavisor, :auth_query, :query, :stop],
+      %{duration: duration},
+      %{status: status}
+    )
+  end
+
+  @spec secret_checker_get_secrets_stop(integer(), :ok | :error, :local | :remote) :: :ok
+  def secret_checker_get_secrets_stop(duration, status, locality)
+      when locality in [:local, :remote] do
+    telemetry_execute(
+      [:supavisor, :secret_checker, :get_secrets, :stop, locality],
+      %{duration: duration},
+      %{status: status}
+    )
+  end
+
+  @spec secret_checker_update_credentials_stop(integer(), :ok | :error, :local | :remote) :: :ok
+  def secret_checker_update_credentials_stop(duration, status, locality)
+      when locality in [:local, :remote] do
+    telemetry_execute(
+      [:supavisor, :secret_checker, :update_credentials, :stop, locality],
+      %{duration: duration},
+      %{status: status}
     )
   end
 
