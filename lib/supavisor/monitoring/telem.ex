@@ -44,8 +44,9 @@ defmodule Supavisor.Monitoring.Telem do
     end
   end
 
-  @spec pool_checkout_time(integer(), Supavisor.id(), :local | :remote) :: :ok | nil
-  def pool_checkout_time(time, Supavisor.id() = id, same_box) do
+  @spec pool_checkout_time(integer(), Supavisor.id(), :local | :remote, :read | :write) ::
+          :ok | nil
+  def pool_checkout_time(time, Supavisor.id() = id, same_box, replica_type) do
     if time > 1_000_000 do
       Logger.warning(
         "Pool checkout took over 1s (#{div(time, 1_000)}ms), consider increasing pool size or checking for slow queries"
@@ -55,16 +56,18 @@ defmodule Supavisor.Monitoring.Telem do
     telemetry_execute(
       [:supavisor, :pool, :checkout, :stop, same_box],
       %{duration: time},
-      id_to_tags(id)
+      Map.put(id_to_tags(id), :replica_type, replica_type)
     )
   end
 
-  @spec client_query_time(integer(), Supavisor.id(), boolean()) :: :ok | nil
-  def client_query_time(start, Supavisor.id() = id, proxy) do
+  @spec client_query_time(integer(), Supavisor.id(), boolean(), :read | :write) :: :ok | nil
+  def client_query_time(start, Supavisor.id() = id, proxy, query_type) do
     telemetry_execute(
       [:supavisor, :client, :query, :stop],
       %{duration: System.monotonic_time() - start},
-      Map.put(id_to_tags(id), :proxy, proxy)
+      id_to_tags(id)
+      |> Map.put(:proxy, proxy)
+      |> Map.put(:query_type, query_type)
     )
   end
 
