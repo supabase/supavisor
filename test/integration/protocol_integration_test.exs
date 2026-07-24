@@ -60,38 +60,8 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
       {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
 
-      startup = :pgo_protocol.encode_startup_message([{"user", "#{user}.#{tenant}"}])
-      :ok = :gen_tcp.send(sock, startup)
-
-      # SASL auth request
-      {:ok, <<?R, _::32, 10::32, methods_bin::binary>>} = :gen_tcp.recv(sock, 0, 5000)
-      assert "SCRAM-SHA-256" in :pgo_protocol.decode_strings(methods_bin)
-
-      # SCRAM client-first
-      nonce = :pgo_scram.get_nonce(16)
-      client_first = :pgo_scram.get_client_first(user, nonce)
-      client_first_size = :erlang.iolist_size(client_first)
-      sasl_initial = ["SCRAM-SHA-256", 0, <<client_first_size::32>>, client_first]
-      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_scram_response_message(sasl_initial))
-
-      # SCRAM server-first
-      {:ok, <<?R, _::32, 11::32, server_first::binary>>} = :gen_tcp.recv(sock, 0, 5000)
-      server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
-
-      # SCRAM client-final
-      {client_final, server_proof} =
-        :pgo_scram.get_client_final(server_first_parts, nonce, user, password)
-
-      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_scram_response_message(client_final))
-
-      # SCRAM server-final + auth ok + params + ReadyForQuery
-      {:ok, auth_data} = :gen_tcp.recv(sock, 0, 5000)
-
-      {[<<?R, _::32, 12::32, server_final::binary>> | _], ""} =
-        Supavisor.Protocol.split_pkts(auth_data)
-
-      {:ok, ^server_proof} = :pgo_scram.parse_server_final(server_final)
-      ProtocolClient.recv_until_ready_for_query(sock, auth_data)
+      # authenticate/3 sends a user-only startup without database parameter
+      ProtocolClient.authenticate(sock, "#{user}.#{tenant}", password)
 
       # Verify the connection defaults to the correct database
       :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT current_database()"))
