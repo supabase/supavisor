@@ -189,6 +189,15 @@ defmodule Supavisor.Protocol.Server do
     }
   end
 
+  def idle_in_transaction_timeout do
+    %{
+      "S" => "FATAL",
+      "V" => "FATAL",
+      "C" => "25P03",
+      "M" => "terminating connection due to idle-in-transaction timeout"
+    }
+  end
+
   @spec scram_request :: iodata()
   def scram_request, do: @scram_request
 

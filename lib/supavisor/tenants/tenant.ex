@@ -29,6 +29,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:sni_hostname, :string)
     field(:default_max_clients, :integer, default: 1000)
     field(:client_idle_timeout, :integer, default: 0)
+    field(:client_idle_in_transaction_timeout, :integer, default: 0)
     field(:client_heartbeat_interval, :integer, default: 60)
     field(:allow_list, {:array, :string}, default: ["0.0.0.0/0", "::/0"])
     field(:availability_zone, :string)
@@ -69,6 +70,7 @@ defmodule Supavisor.Tenants.Tenant do
       :sni_hostname,
       :default_max_clients,
       :client_idle_timeout,
+      :client_idle_in_transaction_timeout,
       :client_heartbeat_interval,
       :allow_list,
       :availability_zone,

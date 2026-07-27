@@ -120,8 +120,15 @@ defmodule Supavisor do
           | {:error, Supavisor.Errors.WorkerNotFoundError.t()}
   def subscribe(id, pid \\ self()) do
     with {:ok, workers} <- get_local_workers(id),
-         {:ok, ps, idle_timeout} <- Manager.subscribe(workers.manager, pid) do
-      {:ok, %{workers: workers, ps: ps, idle_timeout: idle_timeout}}
+         {:ok, ps, idle_timeout, idle_in_transaction_timeout} <-
+           Manager.subscribe(workers.manager, pid) do
+      {:ok,
+       %{
+         workers: workers,
+         ps: ps,
+         idle_timeout: idle_timeout,
+         idle_in_transaction_timeout: idle_in_transaction_timeout
+       }}
     end
   end
 
