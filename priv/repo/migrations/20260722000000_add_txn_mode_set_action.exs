@@ -11,7 +11,8 @@ defmodule Supavisor.Repo.Migrations.AddTxnModeSetAction do
         "tenants",
         :txn_mode_set_action_values,
         check: "txn_mode_set_action IN ('ignore', 'log', 'error')",
-        prefix: "_supavisor"
+        prefix: "_supavisor",
+        validate: false
       )
     )
   end
