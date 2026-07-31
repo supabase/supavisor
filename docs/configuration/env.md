@@ -32,6 +32,11 @@ This document provides a categorized list of all environment variables used in S
 | `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                                | -                         | No       |
 | `SESSION_PROXY_PORTS`         | Comma-separated list of ports for session proxy shards     | `12100,12101,12102,12103` | No       |
 | `TRANSACTION_PROXY_PORTS`     | Comma-separated list of ports for transaction proxy shards | `12104,12105,12106,12107` | No       |
+| `PARSER_CACHE_SIZE`           | Per-scheduler SQL parse shape cache entries (`0` disables) | `1024`                    | No       |
+
+`PARSER_CACHE_SIZE` bounds the per-scheduler LRU cache of SQL parse results
+keyed by statement shape. Memory usage is roughly `size × ~300 bytes × number
+of schedulers`; changing it takes effect for newly started schedulers.
 
 ### Feature Flags
 
