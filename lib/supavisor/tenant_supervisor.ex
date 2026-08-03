@@ -31,7 +31,10 @@ defmodule Supavisor.TenantSupervisor do
           id: {:pool, id},
           start:
             {:poolboy, :start_link,
-             [pool_spec(name, min_size, e.pool_size), %{id: args.id, pool: name}]},
+             [
+               pool_spec(name, min_size, e.pool_size, e.server_idle_timeout),
+               %{id: args.id, pool: name}
+             ]},
           restart: :temporary,
           type: :supervisor
         }
@@ -68,15 +71,15 @@ defmodule Supavisor.TenantSupervisor do
     }
   end
 
-  @spec pool_spec(tuple, integer, integer) :: Keyword.t()
-  defp pool_spec(name, min_size, pool_size) do
+  @spec pool_spec(tuple, integer, integer, integer) :: Keyword.t()
+  defp pool_spec(name, min_size, pool_size, server_idle_timeout) do
     [
       name: name,
       worker_module: Supavisor.DbHandler,
       size: min_size,
       max_overflow: pool_size,
       strategy: :lifo,
-      idle_timeout: :timer.minutes(5)
+      idle_timeout: server_idle_timeout
     ]
   end
 end
