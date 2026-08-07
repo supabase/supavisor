@@ -32,12 +32,19 @@ defmodule Supavisor.SynHandlerTest do
     assert pid1 == Supavisor.get_global_sup(@id)
     assert node(pid1) == node()
 
-    true = Node.connect(node2)
-    Process.sleep(500)
+    log =
+      capture_log(fn ->
+        true = Node.connect(node2)
+        Process.sleep(500)
+      end)
 
-    msg = "Resolving syn_tenant conflict, stop local pid"
-
-    assert capture_log(fn -> Logger.warning(msg) end) =~ msg
+    assert log =~ "SynHandler: resolving"
+    assert log =~ ~s(tenant: "syn_tenant")
+    assert log =~ "SynHandler: Resolving"
+    assert log =~ "conflict, stop local pid"
+    assert log =~ "project=syn_tenant"
+    assert log =~ "user=postgres"
+    assert log =~ "mode=session"
 
     assert pid2 == Supavisor.get_global_sup(@id)
     assert node(pid2) == node2
