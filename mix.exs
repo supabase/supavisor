@@ -60,7 +60,7 @@ defmodule Supavisor.MixProject do
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
       {:cloak_ecto, "~> 1.3.0"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.6.1"},
       {:prom_ex, "~> 1.10"},
       {:open_api_spex, "~> 3.16"},
       {:libcluster, "~> 3.5"},
