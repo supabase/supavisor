@@ -13,7 +13,7 @@
 #   - Ex: hexpm/elixir:1.14.0-erlang-25.0.3-debian-bullseye-20210902-slim
 #
 ARG ELIXIR_VERSION=1.18.4
-ARG OTP_VERSION=27.3.4.12
+ARG OTP_VERSION=27.3.4.15
 ARG DEBIAN_VERSION=trixie-20260518-slim
 
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
@@ -64,7 +64,8 @@ RUN mix release supavisor
 # Start a new build stage for the final image
 FROM ${RUNNER_IMAGE}
 
-RUN apt-get update -y && apt-get install -y libstdc++6 openssl libncurses6 locales vim curl htop postgresql-contrib sudo tini cmake libclang-dev \
+RUN apt-get update -y && apt-get install -y libstdc++6 openssl libncurses6 locales curl htop postgresql-contrib sudo tini \
+  && apt-get upgrade -y openssl \
   && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
 # Set the locale

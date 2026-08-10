@@ -1,4 +1,4 @@
-FROM postgres:17.5
+FROM postgres:17.10
 
 
 COPY init.sh /docker-entrypoint-initdb.d/ssl-config.sh
