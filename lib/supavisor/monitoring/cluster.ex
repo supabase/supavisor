@@ -90,7 +90,7 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
     permanent =
       case Enum.find(releases, fn {_, _, _, status} -> status == :permanent end) do
         {_, vsn, _, _} -> to_string(vsn)
-        nil -> ""
+        nil -> nil
       end
 
     old_versions =
@@ -99,8 +99,8 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
       |> Enum.map(fn {_, vsn, _, _} -> to_string(vsn) end)
       |> Enum.sort({:asc, Version})
 
-    base = List.first(old_versions, "")
-    previous = List.last(old_versions, "")
+    base = List.first(old_versions, nil)
+    previous = List.last(old_versions, nil)
 
     :telemetry.execute(
       [:supavisor, :prom_ex, :application, :version],
