@@ -78,8 +78,8 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
                current: ^expected_current,
                # this is set to the OTP version in the test env
                permanent: _permanent,
-               base: "",
-               previous: ""
+               base: nil,
+               previous: nil
              } = meta
     end
   end
