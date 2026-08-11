@@ -29,12 +29,16 @@ defmodule Supavisor.SynHandler do
   @impl true
   def resolve_registry_conflict(
         :tenants,
-        id,
+        Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db) =
+          id,
         {pid1, _, time1} = remote,
         {pid2, _, time2} = local
       ) do
+    meta = %{project: tenant, user: user, mode: mode, db_name: db, type: type}
+
     Logger.info(
-      "SynHandler: resolving #{Supavisor.inspect_id(id)} conflict: #{inspect(local)} vs #{inspect(remote)}"
+      "SynHandler: resolving #{Supavisor.inspect_id(id)} conflict: #{inspect(local)} vs #{inspect(remote)}",
+      meta
     )
 
     {keep, stop} =
@@ -67,12 +71,14 @@ defmodule Supavisor.SynHandler do
           end
 
         Logger.warning(
-          "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
+          "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}",
+          meta
         )
       end)
     else
       Logger.warning(
-        "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, remote pid: #{inspect(stop)}"
+        "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, remote pid: #{inspect(stop)}",
+        meta
       )
     end
 
