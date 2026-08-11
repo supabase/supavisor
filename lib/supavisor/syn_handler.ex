@@ -29,7 +29,7 @@ defmodule Supavisor.SynHandler do
   @impl true
   def resolve_registry_conflict(
         :tenants,
-        Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db, search_path: _) =
+        Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db) =
           id,
         {pid1, _, time1} = remote,
         {pid2, _, time2} = local
