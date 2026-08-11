@@ -203,9 +203,12 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}, app_name,
-       log_level} ->
-        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}}
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
+       app_name, log_level} ->
+        event =
+          {:hello,
+           {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
+
         if log_level, do: Logger.put_process_level(self(), log_level)
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
@@ -217,13 +220,17 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls}}},
+        {:hello,
+         {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls, client_ip}}},
         :handshake,
         %{sock: sock} = data
       ) do
+    peer_ip = ProtocolHelpers.resolve_peer_ip(data.peer_ip, client_ip, data.local)
+    data = %{data | peer_ip: peer_ip}
     sni_hostname = HandlerHelpers.try_get_sni(sock)
 
     Logger.metadata(
+      peer_ip: peer_ip,
       project: tenant_or_alias,
       user: user,
       mode: data.mode,
@@ -391,7 +398,8 @@ defmodule Supavisor.ClientHandler do
              data.tenant_feature_flags,
              data.pool_ranch,
              client_ssl: data.ssl,
-             client_jit: data.use_jit_flow
+             client_jit: data.use_jit_flow,
+             client_ip: data.peer_ip
            ),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}

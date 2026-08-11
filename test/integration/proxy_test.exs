@@ -584,6 +584,13 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  defp single_connection_with_options(opts) do
+    with {:error, {error, _}} <-
+           start_supervised({SingleConnection, Keyword.put_new(opts, :pool_size, 1)}) do
+      {:error, error}
+    end
+  end
+
   test "connect to deleted database returns proper error" do
     %{origin: origin, db_conf: db_conf} =
       setup_tenant_connections(List.first(@tenants))
@@ -728,6 +735,99 @@ defmodule Supavisor.Integration.ProxyTest do
 
     # Clean up - clear circuit breaker for this tenant+IP
     Supavisor.CircuitBreaker.clear({tenant, "127.0.0.1"}, :auth_error)
+  end
+
+  @tag cluster: true
+  test "proxied auth failures preserve the original client IP" do
+    db_conf = Application.fetch_env!(:supavisor, Repo)
+    username = db_conf[:username]
+    forwarded_ip = "2001:db8::10"
+    relay_ip = "127.0.0.1"
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "client_ip_test_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            availability_zone: "ap-southeast-1c",
+            users: [
+              %{
+                "db_user" => username,
+                "db_password" => db_conf[:password],
+                "pool_size" => 1,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    on_exit(fn ->
+      Supavisor.CircuitBreaker.clear({tenant, forwarded_ip}, :auth_error)
+      Supavisor.CircuitBreaker.clear({tenant, relay_ip}, :auth_error)
+    end)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: username,
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    assert {:ok, connection} =
+             Postgrex.start_link(
+               hostname: db_conf[:hostname],
+               port: Application.fetch_env!(:supavisor, :proxy_port_transaction),
+               database: db_conf[:database],
+               password: db_conf[:password],
+               username: "#{username}.#{tenant}"
+             )
+
+    assert %P.Result{rows: [[1]]} = P.query!(connection, "SELECT 1", [])
+
+    assert :ok =
+             wait_until(fn ->
+               case Supavisor.get_global_sup(id) do
+                 pid when is_pid(pid) -> node(pid) == node2
+                 nil -> false
+               end
+             end)
+
+    assert {:ok, pool_ranch} = :erpc.call(node2, Supavisor, :get_pool_ranch, [id])
+
+    connection_opts = [
+      hostname: to_string(pool_ranch.host),
+      port: pool_ranch.port,
+      database: db_conf[:database],
+      password: "wrong_password",
+      username: "#{username}.#{tenant}",
+      parameters: [options: "--client_ip=#{forwarded_ip}"]
+    ]
+
+    for _ <- 1..10 do
+      assert {:error, %Postgrex.Error{postgres: %{code: :invalid_password}}} =
+               single_connection_with_options(connection_opts)
+    end
+
+    assert [{{^tenant, ^forwarded_ip}, _blocked_until}] =
+             Supavisor.CircuitBreaker.opened({tenant, forwarded_ip}, :auth_error)
+
+    assert [] = Supavisor.CircuitBreaker.opened({tenant, relay_ip}, :auth_error)
   end
 
   test "handles fatal TLS alert by terminating connection" do
