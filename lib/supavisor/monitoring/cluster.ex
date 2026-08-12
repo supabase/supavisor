@@ -71,6 +71,19 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
             tags: [:version]
           )
         ]
+      ),
+      Manual.build(
+        :supavisor_node_ipv6_manual_metrics,
+        {__MODULE__, :emit_node_ipv6, []},
+        [
+          last_value(
+            [:supavisor, :prom_ex, :node, :ipv6, :info],
+            event_name: [:supavisor, :prom_ex, :node, :ipv6],
+            measurement: :status,
+            description: "The IPv6 address of the node.",
+            tags: [:address]
+          )
+        ]
       )
     ]
   end
@@ -124,6 +137,46 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
         :ok
     end
   end
+
+  @spec emit_node_ipv6() :: :ok
+  def emit_node_ipv6 do
+    case node_ipv6_address() do
+      nil ->
+        :ok
+
+      address ->
+        :telemetry.execute(
+          [:supavisor, :prom_ex, :node, :ipv6],
+          %{status: 1},
+          %{address: address}
+        )
+    end
+  end
+
+  @spec node_ipv6_address() :: String.t() | nil
+  def node_ipv6_address do
+    case :inet.getifaddrs() do
+      {:ok, addrs} ->
+        addrs
+        |> Enum.flat_map(fn {_ifname, opts} -> Keyword.get_values(opts, :addr) end)
+        |> Enum.find(&global_ipv6?/1)
+        |> case do
+          nil -> nil
+          addr -> addr |> :inet.ntoa() |> List.to_string()
+        end
+
+      {:error, _reason} ->
+        nil
+    end
+  end
+
+  @spec global_ipv6?(:inet.ip_address()) :: boolean()
+  # Loopback (::1)
+  def global_ipv6?({0, 0, 0, 0, 0, 0, 0, 1}), do: false
+  # Link-local (fe80::/10)
+  def global_ipv6?({a, _, _, _, _, _, _, _}) when a >= 0xFE80 and a <= 0xFEBF, do: false
+  def global_ipv6?(addr) when tuple_size(addr) == 8, do: true
+  def global_ipv6?(_addr), do: false
 
   @spec emit_erpc_latency() :: :ok
   def emit_erpc_latency do
