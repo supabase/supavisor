@@ -52,6 +52,20 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
             tags: [:current, :permanent, :base, :previous]
           )
         ]
+      ),
+      Polling.build(
+        :supavisor_node_ipv6_events,
+        poll_rate,
+        {__MODULE__, :emit_node_ipv6, []},
+        [
+          last_value(
+            [:supavisor, :prom_ex, :node, :ipv6, :info],
+            event_name: [:supavisor, :prom_ex, :node, :ipv6],
+            measurement: :status,
+            description: "The IPv6 address of the node.",
+            tags: [:address]
+          )
+        ]
       )
     ]
   end
@@ -69,19 +83,6 @@ defmodule Supavisor.PromEx.Plugins.Cluster do
             measurement: :status,
             description: "The AMI version the node is running on.",
             tags: [:version]
-          )
-        ]
-      ),
-      Manual.build(
-        :supavisor_node_ipv6_manual_metrics,
-        {__MODULE__, :emit_node_ipv6, []},
-        [
-          last_value(
-            [:supavisor, :prom_ex, :node, :ipv6, :info],
-            event_name: [:supavisor, :prom_ex, :node, :ipv6],
-            measurement: :status,
-            description: "The IPv6 address of the node.",
-            tags: [:address]
           )
         ]
       )
