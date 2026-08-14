@@ -201,6 +201,34 @@ downstream_ec_key =
   end
 
 if config_env() != :test do
+  # AWS-identity (JWKS) auth for the /api pipeline, alongside API_JWT_SECRET
+  # — see Supavisor.Jwt.AwsIdentity. JWKS disabled if nil.
+  #
+  # Only one trusted issuer, deliberately: AWS accounts are 1:1 with STS
+  # issuers, and consumers are expected to assume the shared `supavisor-api`
+  # IAM role before calling GetWebIdentityToken, so every accepted token
+  # comes from this pooler cluster's own account regardless of caller — see
+  # Supavisor.Jwt.JwksStrategy.
+  api_jwks_config =
+    case System.get_env("API_JWT_TRUSTED_ISSUER", "") do
+      "" ->
+        nil
+
+      trusted_issuer ->
+        allowed_subs = System.get_env("API_JWT_ALLOWED_SUBS", "") |> String.split(",", trim: true)
+        expected_aud = System.get_env("API_JWT_EXPECTED_AUD")
+
+        if allowed_subs == [] or expected_aud == nil do
+          raise "API_JWT_ALLOWED_SUBS and API_JWT_EXPECTED_AUD  must be set"
+        end
+
+        %{
+          trusted_issuer: trusted_issuer,
+          allowed_subs: allowed_subs,
+          expected_aud: expected_aud
+        }
+    end
+
   config :supavisor,
     session_proxy_ports:
       System.get_env("SESSION_PROXY_PORTS", "12100,12101,12102,12103")
@@ -213,6 +241,7 @@ if config_env() != :test do
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> JSON.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
+    api_jwks_config: api_jwks_config,
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),

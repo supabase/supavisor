@@ -131,6 +131,8 @@ defmodule Supavisor.Application do
           child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
         },
         Supavisor.Vault,
+        # will start only if the API_JWT_TRUSTED_ISSUER is set
+        {Supavisor.Jwt.JwksStrategy, name: Supavisor.Jwt.JwksStrategy},
 
         # Start the Endpoint (http/https)
         SupavisorWeb.Endpoint
