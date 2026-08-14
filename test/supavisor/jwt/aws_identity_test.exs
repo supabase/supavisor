@@ -44,7 +44,9 @@ defmodule Supavisor.Jwt.AwsIdentityTest do
     end)
 
     {:ok, _pid} =
-      start_supervised({Supavisor.Jwt.JwksStrategy, [first_fetch_sync: true, http_adapter: Tesla.Mock]})
+      start_supervised(
+        {Supavisor.Jwt.JwksStrategy, [first_fetch_sync: true, http_adapter: Tesla.Mock]}
+      )
 
     on_exit(fn -> Application.put_env(:supavisor, :api_jwks_config, nil) end)
 
