@@ -56,13 +56,14 @@ defmodule Supavisor.MetricsPusherTest do
                  "Basic #{Base.encode64("supavisor:hunter2")}"
                ]
 
-        assert Conn.get_req_header(conn, "content-encoding") == ["gzip"]
         assert Conn.get_req_header(conn, "content-type") == ["text/plain"]
 
+        # Req.Test's plug adapter transparently decompresses gzip'd request
+        # bodies (and strips content-encoding) before the plug sees them, so
+        # the body here is already plaintext regardless of `compress: true`.
         {:ok, body, conn} = Conn.read_body(conn)
-        decompressed_body = :zlib.gunzip(body)
 
-        send(parent, {:req_called, decompressed_body})
+        send(parent, {:req_called, body})
         Req.Test.text(conn, "")
       end)
 
