@@ -179,6 +179,30 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
+  Cancels the currently executing query on this backend connection.
+
+  Opens a PostgreSQL CancelRequest connection and waits for PostgreSQL to close
+  it, confirming the cancellation was processed. While the cancel is in flight,
+  the DbHandler is blocked from processing ReadyForQuery or checking the backend
+  back into the pool.
+
+  The `caller_pid` must match the current owner (`data.caller`). If ownership
+  has changed (e.g. the backend was already checked back in or reassigned), the
+  cancel is rejected to prevent a stale cancellation from affecting a different
+  client's query.
+
+  On timeout or connection error the backend is invalidated (DbHandler stops)
+  rather than being returned to service in an uncertain state.
+  """
+  @cancel_timeout_ms 5_000
+  @spec cancel_query(pid(), pid()) :: :ok | {:error, term()}
+  def cancel_query(db_pid, caller_pid) do
+    :gen_statem.call(db_pid, {:cancel_query, caller_pid}, 10_000)
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
+  end
+
+  @doc """
   Notifies a DbHandler that secrets are now available
   """
   @spec notify_secrets_available(pid()) :: :ok
@@ -447,6 +471,26 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:cast, {:expect_ready_for_query, count}, _state, data) do
     {:keep_state, %{data | expected_rfq: data.expected_rfq + count}}
+  end
+
+  # Cancel query — only valid in :busy state with matching caller ownership
+  def handle_event({:call, from}, {:cancel_query, caller_pid}, :busy, %{caller: caller} = data)
+      when is_pid(caller) and caller == caller_pid do
+    case do_cancel_query(data) do
+      :ok ->
+        {:keep_state_and_data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        Logger.error("DbHandler: Cancel query failed: #{inspect(reason)}, invalidating backend")
+
+        {:stop_and_reply, {:shutdown, {:cancel_failed, reason}},
+         [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  # Cancel query — wrong owner, wrong state, or backend already checked in
+  def handle_event({:call, from}, {:cancel_query, _caller_pid}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_owner}}]}
   end
 
   # forward the message to the client
@@ -1264,6 +1308,65 @@ defmodule Supavisor.DbHandler do
       last_failure ->
         elapsed = System.monotonic_time(:millisecond) - last_failure
         @connect_cooldown_ms - elapsed
+    end
+  end
+
+  # Opens a PostgreSQL cancel connection, sends CancelRequest, and waits for
+  # PostgreSQL to close the connection (confirming the cancel was processed).
+  # Uses {:active, false} blocking recv so the DbHandler gen_statem is blocked
+  # during the cancel — this prevents ReadyForQuery/checkin from racing.
+  @spec do_cancel_query(map()) :: :ok | {:error, term()}
+  defp do_cancel_query(data) do
+    require Supavisor.Protocol.Server, as: Server
+
+    meta =
+      case data do
+        %{backend_key_data: %{pid: pid, key: key}, connection_params: params}
+        when is_map(params) ->
+          %{
+            host: params.host,
+            port: params.port,
+            pid: pid,
+            key: key,
+            ip_version: params.ip_version || :inet
+          }
+
+        _ ->
+          case Registry.lookup(Supavisor.Registry.PoolPids, self()) do
+            [{_pid, meta}] -> meta
+            [] -> nil
+          end
+      end
+
+    if meta do
+      cancel_msg = Server.cancel_message(meta.pid, meta.key)
+      opts = [:binary, {:packet, :raw}, {:active, false}, meta.ip_version]
+
+      case :gen_tcp.connect(meta.host, meta.port, opts, @cancel_timeout_ms) do
+        {:ok, sock} ->
+          try do
+            case :gen_tcp.send(sock, cancel_msg) do
+              :ok -> wait_for_cancel_close(sock)
+              {:error, reason} -> {:error, reason}
+            end
+          after
+            :gen_tcp.close(sock)
+          end
+
+        {:error, reason} ->
+          {:error, {:connect_failed, reason}}
+      end
+    else
+      {:error, :no_backend_metadata}
+    end
+  end
+
+  defp wait_for_cancel_close(sock) do
+    case :gen_tcp.recv(sock, 0, @cancel_timeout_ms) do
+      {:error, :closed} -> :ok
+      {:ok, _data} -> wait_for_cancel_close(sock)
+      {:error, :timeout} -> {:error, :cancel_timeout}
+      {:error, reason} -> {:error, reason}
     end
   end
 end
