@@ -151,13 +151,6 @@ defmodule Supavisor.SecretChecker do
 
     AuthQuery.stop_connection_async(state.conn)
 
-    # No cache invalidation needed here: this only rotates the manager/auth_query
-    # service account's own login, not state.user's password. A prior version of this
-    # line deleted `{:secrets, state.tenant, state.user}`, which was likely meant to be
-    # `{:secrets_for_validation, ...}` -- but even corrected, invalidating state.user's
-    # validation secret on a manager-credential rotation wouldn't be meaningful, since
-    # the two secrets are unrelated.
-
     Logger.info("SecretChecker: Successfully changed auth_query user")
     {:reply, :ok, %{state | manager_secrets: new_manager, conn: new_conn}}
   end
