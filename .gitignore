@@ -37,10 +37,20 @@ burrito_out/*
 supavisor-*.tar.gz
 
 priv/native/*
+# libpg_query download cache and NIF build intermediates (make -C native/pgparser)
+native/pgparser/vendor/
+native/pgparser/c_src/pg_nodetags.inc
+native/pgparser/c_src/**/*.o
+native/pgparser/test/shape_cache_tests
 *.bggg
 /.pre-commit-config.yaml
 *.coverdata
 /tmp
+
+# Local-only agent guides and helper scripts generated for the no-Docker workflow
+/.agents/
+/AGENTS.md
+/scripts/test_with_local_pg.sh
 
 # Generated JIT test certificates
 priv/jit/postgres/certs/*.crt

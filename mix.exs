@@ -11,6 +11,11 @@ defmodule Supavisor.MixProject do
       aliases: aliases(),
       deps: deps(),
       releases: releases(),
+      # elixir_make triggers the native/pgparser/Makefile to build the C NIF
+      compilers: [:elixir_make] ++ Mix.compilers(),
+      make_cwd: "native/pgparser",
+      make_targets: ["all"],
+      make_clean: ["clean"],
       dialyzer: [plt_add_apps: [:mix]],
       test_coverage: [tool: ExCoveralls],
       preferred_cli_env: [
@@ -76,7 +81,9 @@ defmodule Supavisor.MixProject do
       {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.3"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
-      {:rustler, "~> 0.36.1"},
+      # compile-time only: triggers the native/pgparser/Makefile to build the C NIF;
+      # no runtime, release or hot-upgrade impact (the artifact is priv/native/pgparser.so)
+      {:elixir_make, "~> 0.9", runtime: false},
       {:ranch, "~> 2.0", override: true},
 
       # Linting
