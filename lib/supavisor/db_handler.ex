@@ -827,7 +827,7 @@ defmodule Supavisor.DbHandler do
             receiver_spawn_opts: [min_heap_size: 2048]
           ]
 
-        :none ->
+        verify when verify in [:none, nil] ->
           [verify: :verify_none, receiver_spawn_opts: [min_heap_size: 2048]]
       end
 
