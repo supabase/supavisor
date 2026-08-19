@@ -132,6 +132,7 @@ defmodule Supavisor.Application do
           child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
         },
         Supavisor.Vault,
+        Supavisor.ConnectionListener,
 
         # Start the Endpoint (http/https)
         SupavisorWeb.Endpoint
