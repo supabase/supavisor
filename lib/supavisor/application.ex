@@ -108,6 +108,7 @@ defmodule Supavisor.Application do
         Supavisor.ConnectBackoff.Janitor,
         Supavisor.DeadPortSweeper,
         {Task.Supervisor, name: Supavisor.PoolTerminator},
+        {Task.Supervisor, name: Supavisor.TaskSupervisor},
         {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
         {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
         {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
@@ -142,7 +143,9 @@ defmodule Supavisor.Application do
       if @metrics_disabled do
         children
       else
-        children ++ [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner]
+        children ++
+          [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner] ++
+          metrics_pusher_children()
       end
 
     # See https://hexdocs.pm/elixir/Supervisor.html
@@ -157,6 +160,14 @@ defmodule Supavisor.Application do
   def config_change(changed, _new, removed) do
     SupavisorWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  defp metrics_pusher_children do
+    if Application.get_env(:supavisor, :metrics_pusher_enabled) do
+      [Supavisor.MetricsPusher]
+    else
+      []
+    end
   end
 
   @spec build_shards([pos_integer()], atom()) :: term()
