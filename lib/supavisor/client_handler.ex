@@ -112,6 +112,7 @@ defmodule Supavisor.ClientHandler do
       stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
       stats: %{},
       idle_timeout: 0,
+      idle_in_transaction_timeout: 0,
       heartbeat_interval: 0,
       connection_start: now,
       state_entered_at: now,
@@ -333,7 +334,8 @@ defmodule Supavisor.ClientHandler do
         data
         | manager: manager_ref,
           db_connection: db_connection,
-          idle_timeout: opts.idle_timeout
+          idle_timeout: opts.idle_timeout,
+          idle_in_transaction_timeout: opts.idle_in_transaction_timeout
       }
 
       Registry.register(@clients_registry, data.id,
@@ -545,6 +547,25 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
+  # The backend is idle inside an open transaction and holding the connection.
+  def handle_event(:cast, {:db_status, :idle_in_transaction}, :busy, data) do
+    {:keep_state_and_data, arm_idle_in_transaction(data)}
+  end
+
+  def handle_event({:timeout, :idle_in_transaction}, :idle_in_transaction_terminate, _state, data) do
+    Logger.warning(
+      "ClientHandler: Terminate an idle-in-transaction connection by " <>
+        "#{data.idle_in_transaction_timeout} timeout"
+    )
+
+    HandlerHelpers.sock_send(
+      data.sock,
+      Server.encode_error_message(Server.idle_in_transaction_timeout())
+    )
+
+    {:stop, :normal}
+  end
+
   def handle_event(:cast, {:send_error_and_terminate, error_message}, _state, data) do
     HandlerHelpers.sock_send(data.sock, error_message)
     {:stop, :normal}
@@ -694,7 +715,7 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler: Receive sync")
     :ok = sock_send(msg, data)
 
-    {:keep_state, data, handle_actions(data)}
+    {:keep_state, data, handle_actions(data) ++ cancel_idle_in_transaction(data)}
   end
 
   # Any message when idle - checkout and send to db
@@ -714,7 +735,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(_kind, {proto, _, msg}, :busy, data) when proto in @proto do
     case handle_data(msg, data) do
       {:ok, updated_data} ->
-        {:keep_state, updated_data}
+        {:keep_state, updated_data, cancel_idle_in_transaction(updated_data)}
 
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :authenticated)
@@ -930,6 +951,16 @@ defmodule Supavisor.ClientHandler do
     do: [{:state_timeout, timeout, :idle_terminate}]
 
   defp idle_timeout_action(_data), do: []
+
+  defp arm_idle_in_transaction(%{idle_in_transaction_timeout: timeout}) when timeout > 0,
+    do: [{{:timeout, :idle_in_transaction}, timeout, :idle_in_transaction_terminate}]
+
+  defp arm_idle_in_transaction(_data), do: []
+
+  defp cancel_idle_in_transaction(%{idle_in_transaction_timeout: timeout}) when timeout > 0,
+    do: [{{:timeout, :idle_in_transaction}, :cancel}]
+
+  defp cancel_idle_in_transaction(_data), do: []
 
   defp record_state_duration(old_state, new_state, data) do
     now = System.monotonic_time()

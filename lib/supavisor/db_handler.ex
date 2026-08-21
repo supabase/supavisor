@@ -461,13 +461,18 @@ defmodule Supavisor.DbHandler do
     # messages and the last status is idle and not mid-transaction.
     outstanding = data.expected_rfq - count
     batch_done? = outstanding <= 0 and last_status == ?I
+    idle_in_transaction? = outstanding <= 0 and last_status in [?T, ?E]
     data = %{data | expected_rfq: max(outstanding, 0)}
 
     # db_status must be enqueued in the ClientHandler's mailbox before the final
     # ReadyForQuery reaches the client socket: the client sends its next query as
     # soon as it reads ReadyForQuery, and if that arrives while the ClientHandler
     # is still :busy it gets forwarded to a connection the client no longer owns.
-    if batch_done?, do: ClientHandler.db_status(data.caller, :ready_for_query)
+    cond do
+      batch_done? -> ClientHandler.db_status(data.caller, :ready_for_query)
+      idle_in_transaction? -> ClientHandler.db_status(data.caller, :idle_in_transaction)
+      true -> :ok
+    end
 
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
 
