@@ -10,7 +10,7 @@ defmodule Supavisor.DbHandlerTest do
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.BackendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
-  alias Supavisor.Protocol.Server
+  require Supavisor.Protocol.Server, as: Server
 
   require Supavisor
 
@@ -1204,6 +1204,136 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event(:cast, {:expect_ready_for_query, 3}, :busy, data)
 
       assert data.expected_rfq == 5
+    end
+  end
+
+  describe "cancel_query" do
+    setup do
+      case Registry.start_link(keys: :unique, name: Supavisor.Registry.PoolPids) do
+        {:ok, _} -> :ok
+        {:error, {:already_started, _}} -> :ok
+      end
+
+      {:ok, listen_sock} =
+        :gen_tcp.listen(0, [:binary, {:packet, :raw}, {:active, false}, {:reuseaddr, true}])
+
+      {:ok, port} = :inet.port(listen_sock)
+      {:ok, listen_sock: listen_sock, cancel_port: port}
+    end
+
+    test "synchronously cancels query on PostgreSQL and blocks until cancel connection closes",
+         %{listen_sock: listen_sock, cancel_port: port} do
+      test_pid = self()
+      caller_pid = spawn(fn -> receive do: (_ -> :ok) end)
+
+      data = %{
+        caller: caller_pid,
+        connection_params: %{host: ~c"127.0.0.1", port: port, ip_version: :inet},
+        backend_key_data: %{pid: 12345, key: 67890}
+      }
+
+      cancel_task =
+        Task.async(fn ->
+          Db.handle_event(
+            {:call, {test_pid, :call_tag}},
+            {:cancel_query, caller_pid},
+            :busy,
+            data
+          )
+        end)
+
+      # 1. Cancel endpoint receives the connection and CancelRequest message
+      {:ok, cancel_server_sock} = :gen_tcp.accept(listen_sock, 2_000)
+      {:ok, bin} = :gen_tcp.recv(cancel_server_sock, 16, 2_000)
+      assert bin == Server.cancel_message(12345, 67890)
+
+      # 2. While cancel socket is HELD OPEN, cancel_task is NOT finished (blocked waiting for close)
+      refute Task.yield(cancel_task, 100)
+
+      # 3. Cancel endpoint closes the connection (PostgreSQL processed the request)
+      :gen_tcp.close(cancel_server_sock)
+
+      # 4. Now cancel completes and replies :ok
+      assert {:keep_state_and_data, [{:reply, {^test_pid, :call_tag}, :ok}]} =
+               Task.await(cancel_task, 2_000)
+    end
+
+    test "rejects cancellation if caller does not match current owner", %{cancel_port: port} do
+      caller_pid = spawn(fn -> receive do: (_ -> :ok) end)
+      wrong_caller = spawn(fn -> receive do: (_ -> :ok) end)
+
+      data = %{
+        caller: caller_pid,
+        connection_params: %{host: ~c"127.0.0.1", port: port, ip_version: :inet},
+        backend_key_data: %{pid: 12345, key: 67890}
+      }
+
+      from = {self(), :call_tag}
+
+      # In busy state with wrong owner
+      assert {:keep_state_and_data, [{:reply, ^from, {:error, :not_owner}}]} =
+               Db.handle_event({:call, from}, {:cancel_query, wrong_caller}, :busy, data)
+
+      # In idle state
+      assert {:keep_state_and_data, [{:reply, ^from, {:error, :not_owner}}]} =
+               Db.handle_event({:call, from}, {:cancel_query, wrong_caller}, :idle, %{
+                 data
+                 | caller: nil
+               })
+    end
+
+    test "invalidates and terminates backend when cancel connection fails" do
+      caller_pid = self()
+      from = {self(), :call_tag}
+
+      data = %{
+        caller: caller_pid,
+        connection_params: %{host: ~c"127.0.0.1", port: 1, ip_version: :inet},
+        backend_key_data: %{pid: 12345, key: 67890}
+      }
+
+      assert {:stop_and_reply, {:shutdown, {:cancel_failed, {:connect_failed, _}}},
+              [{:reply, ^from, {:error, {:connect_failed, _}}}]} =
+               Db.handle_event({:call, from}, {:cancel_query, caller_pid}, :busy, data)
+    end
+
+    test "public cancel_query/2 API delegates to gen_statem call and blocks until cancel socket closes",
+         %{listen_sock: listen_sock, cancel_port: port} do
+      caller_pid = self()
+
+      initial_data = %{
+        caller: caller_pid,
+        connection_params: %{host: ~c"127.0.0.1", port: port, ip_version: :inet},
+        backend_key_data: %{pid: 12345, key: 67890}
+      }
+
+      # Start a real gen_statem process with DbHandler callback in :busy state
+      db_pid =
+        :proc_lib.spawn_link(fn ->
+          :gen_statem.enter_loop(Db, [], :busy, initial_data)
+        end)
+
+      # Invoke public Db.cancel_query/2 API in a task
+      cancel_task = Task.async(fn -> Db.cancel_query(db_pid, caller_pid) end)
+
+      # 1. Upstream endpoint receives connection & packet
+      {:ok, cancel_server_sock} = :gen_tcp.accept(listen_sock, 2_000)
+      {:ok, bin} = :gen_tcp.recv(cancel_server_sock, 16, 2_000)
+      assert bin == Server.cancel_message(12345, 67890)
+
+      # 2. Call remains blocked while socket is open
+      refute Task.yield(cancel_task, 100)
+
+      # 3. Close cancel connection
+      :gen_tcp.close(cancel_server_sock)
+
+      # 4. Public API returns :ok without timing out
+      assert :ok = Task.await(cancel_task, 2_000)
+      assert Process.alive?(db_pid)
+
+      # 5. Non-owner caller receives {:error, :not_owner}
+      wrong_caller = spawn(fn -> receive do: (_ -> :ok) end)
+      assert {:error, :not_owner} = Db.cancel_query(db_pid, wrong_caller)
     end
   end
 end

@@ -15,19 +15,64 @@ defmodule Supavisor.ClientHandler.Cancel do
 
   require Logger
   alias Phoenix.PubSub
-  alias Supavisor.HandlerHelpers
-  require Supavisor.Protocol.Server, as: Server
+
+  @pre_claim_timeout 5_000
+  @post_grant_timeout 15_000
 
   @doc """
-  Called upon receiving cancel requests, broadcasts to relevant client handler
+  Called upon receiving cancel requests, broadcasts to relevant client handler and waits for acknowledgment
+  before closing the cancel connection.
   """
-  @spec send_cancel_query(non_neg_integer, non_neg_integer, term) :: :ok | {:errr, term}
-  def send_cancel_query(pid, key, msg \\ :cancel_query) do
+  @spec send_cancel_query(non_neg_integer, non_neg_integer, term) :: :ok | {:error, term}
+  def send_cancel_query(pid, key, msg \\ :cancel_query)
+
+  def send_cancel_query(pid, key, :cancel_query) do
+    ref = make_ref()
+
+    PubSub.broadcast(
+      Supavisor.PubSub,
+      "cancel_req:#{pid}_#{key}",
+      {:cancel_query, self(), ref}
+    )
+
+    wait_for_claim(ref)
+  end
+
+  def send_cancel_query(pid, key, msg) do
     PubSub.broadcast(
       Supavisor.PubSub,
       "cancel_req:#{pid}_#{key}",
       msg
     )
+  end
+
+  defp wait_for_claim(ref) do
+    receive do
+      {:cancel_claim, owner_pid, ^ref} ->
+        mref = Process.monitor(owner_pid)
+        send(owner_pid, {:cancel_granted, ref})
+        wait_for_ack(ref, owner_pid, mref)
+
+      {:cancel_ack, ^ref} ->
+        :ok
+    after
+      @pre_claim_timeout -> :ok
+    end
+  end
+
+  defp wait_for_ack(ref, owner_pid, mref) do
+    receive do
+      {:cancel_ack, ^ref} ->
+        Process.demonitor(mref, [:flush])
+        :ok
+
+      {:DOWN, ^mref, :process, ^owner_pid, _reason} ->
+        :ok
+    after
+      @post_grant_timeout ->
+        Process.demonitor(mref, [:flush])
+        :ok
+    end
   end
 
   @doc """
@@ -36,43 +81,5 @@ defmodule Supavisor.ClientHandler.Cancel do
   @spec listen_cancel_query(non_neg_integer, non_neg_integer) :: :ok | {:errr, term}
   def listen_cancel_query(pid, key) do
     PubSub.subscribe(Supavisor.PubSub, "cancel_req:#{pid}_#{key}")
-  end
-
-  @doc """
-  If there's an ongoing query, forward the message to cancel it to the checked out connection
-
-  Called by the client handler when receiving a cancel requests
-  """
-  def maybe_forward_cancel_to_db(:busy, data) do
-    key = {data.tenant, data.db_connection}
-    Logger.debug("ClientHandler: Cancel query for #{inspect(key)}")
-    {_pool, db_pid, _db_sock} = data.db_connection
-
-    case db_pid_meta(key) do
-      [{^db_pid, meta}] ->
-        msg = Server.cancel_message(meta.pid, meta.key)
-        opts = [:binary, {:packet, :raw}, {:active, true}, meta.ip_version]
-        {:ok, sock} = :gen_tcp.connect(meta.host, meta.port, opts)
-        sock = {:gen_tcp, sock}
-        :ok = HandlerHelpers.sock_send(sock, msg)
-        :ok = HandlerHelpers.sock_close(sock)
-
-      error ->
-        Logger.error(
-          "ClientHandler: Received cancel but no proc was found #{inspect(key)} #{inspect(error)}"
-        )
-    end
-  end
-
-  def maybe_forward_cancel_to_db(_state, _data) do
-    :ok
-  end
-
-  defp db_pid_meta({_, {_, pid, _}} = _key) do
-    rkey = Supavisor.Registry.PoolPids
-
-    pid
-    |> node()
-    |> :erpc.call(Registry, :lookup, [rkey, pid], 15_000)
   end
 end
