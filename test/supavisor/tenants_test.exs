@@ -122,6 +122,7 @@ defmodule Supavisor.TenantsTest do
       assert user.db_password == "some db_password"
       assert user.db_user == "some db_user"
       assert user.pool_size == 3
+      assert user.server_idle_timeout == 300_000
     end
 
     test "create_tenant/1 with invalid data returns error changeset" do
