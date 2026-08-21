@@ -39,7 +39,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @type startup_message_data() ::
           {atom(),
            {String.t(), String.t(), String.t() | nil, String.t() | nil, boolean(),
-            boolean() | nil}}
+            boolean() | nil, String.t() | nil}}
 
   ## Startup Packet Processing
 
@@ -53,14 +53,14 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
           | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
-         {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}} <-
+         {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}} <-
            extract_and_validate_user_info(hello.payload) do
       Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
       app_name = normalize_app_name(hello.payload["application_name"])
       log_level = extract_log_level(hello)
 
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}, app_name,
-       log_level}
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
+       app_name, log_level}
     end
   end
 
@@ -78,11 +78,31 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
       search_path = payload["search_path"] || options["search_path"]
       jit = options["jit"] == "true"
       client_tls = options["client_tls"] && options["client_tls"] == "true"
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}}
+      client_ip = parse_ip_address(options["client_ip"])
+
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
     else
       {:error, %InvalidUserInfoError{user: user, db_name: db_name}}
     end
   end
+
+  @doc """
+  Resolves the peer address for a connection.
+
+  Forwarded addresses are trusted only on local listeners used for inter-node proxying.
+  """
+  @spec resolve_peer_ip(String.t(), String.t() | nil, boolean()) :: String.t()
+  def resolve_peer_ip(_socket_peer_ip, client_ip, true) when is_binary(client_ip), do: client_ip
+  def resolve_peer_ip(socket_peer_ip, _client_ip, _local), do: socket_peer_ip
+
+  defp parse_ip_address(address) when is_binary(address) do
+    case :inet.parse_address(String.to_charlist(address)) do
+      {:ok, parsed} -> parsed |> :inet.ntoa() |> List.to_string()
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp parse_ip_address(_address), do: nil
 
   ## Client Packet Processing
 
