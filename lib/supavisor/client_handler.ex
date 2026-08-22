@@ -31,6 +31,7 @@ defmodule Supavisor.ClientHandler do
     Manager,
     Monitoring.Telem,
     Protocol.Debug,
+    ReadSafe,
     Tenants
   }
 
@@ -535,7 +536,7 @@ defmodule Supavisor.ClientHandler do
         do: {nil, data.stats},
         else: Telem.network_usage(:client, data.sock, data.id, data.stats)
 
-    Telem.client_query_time(data.query_start, data.id, data.mode == :proxy)
+    Telem.client_query_time(data.query_start, data.id, data.mode == :proxy, data.query_type)
 
     {:next_state, :idle, %{data | db_connection: db_connection, stats: stats},
      handle_actions(data)}
@@ -699,6 +700,8 @@ defmodule Supavisor.ClientHandler do
 
   # Any message when idle - checkout and send to db
   def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
+    data = %{data | query_type: classify_packet(msg)}
+
     case maybe_checkout(:on_query, data) do
       {:ok, db_connection} ->
         {:next_state, :busy,
@@ -861,11 +864,24 @@ defmodule Supavisor.ClientHandler do
     timeout = data.timeout |> div(attempt + 1)
     start = System.monotonic_time(:microsecond)
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, timeout, data.mode),
+    {pool, replica_type} =
+      case Supavisor.id(data.id, :type) do
+        :single -> {data.pool, :write}
+        :cluster -> Supavisor.select_pool(data.pool, data.query_type)
+      end
+
+    with {:ok, db_pid} <- pool_checkout(pool, timeout, data.mode),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
-      Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
-      {:ok, {data.pool, db_pid, db_sock}}
+
+      Telem.pool_checkout_time(
+        System.monotonic_time(:microsecond) - start,
+        data.id,
+        same_box,
+        replica_type
+      )
+
+      {:ok, {pool, db_pid, db_sock}}
     else
       {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->
         if attempt < @max_checkout_retries do
@@ -1005,6 +1021,16 @@ defmodule Supavisor.ClientHandler do
     :exit, reason ->
       {:error, %PoolCheckoutError{reason: reason}}
   end
+
+  # Classify a frontend packet for read/write routing.
+  # Only Simple Query (Q) frames are inspected, everything else routes to write.
+  @spec classify_packet(binary()) :: :read | :write
+  defp classify_packet(<<?Q, len::32, payload::binary-size(len - 4), _rest::binary>>) do
+    sql = String.trim_trailing(payload, <<0>>)
+    if ReadSafe.read_safe?(sql), do: :read, else: :write
+  end
+
+  defp classify_packet(_), do: :write
 
   defp set_tenant_info(data, info, user, id, db_name, client_jit) do
     proxy_type =
