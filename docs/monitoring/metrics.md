@@ -45,6 +45,7 @@ The exposed metrics include the following:
   * Load average (LA)
   * Disk space usage (per mountpoint)
   * Network counters (listen drops, listen overflows)
+  * TCP socket usage (in-use, orphaned, TIME_WAIT, allocated, memory pages)
 
 ## Tenant metrics
 
