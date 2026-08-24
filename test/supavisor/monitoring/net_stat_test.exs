@@ -6,10 +6,28 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
   @moduletag telemetry: true
 
   @netstat_fixture """
-  TcpExt: SyncookiesSent SyncookiesRecv SyncookiesFailed EmbryonicRsts PruneCalled RcvPruned OfoPruned OutOfWindowIcmps LockDroppedIcmps ArpFilter TW TWRecycled TWKilled PAWSActive PAWSEstab DelayedACKs DelayedACKLocked DelayedACKLost ListenOverflows ListenDrops TCPPrequeued TCPDirectCopyFromBacklog TCPDirectCopyFromPrequeue TCPPrequeueDropped TCPHPHits TCPPureAcks TCPHPAcks TCPRenoRecovery TCPSackRecovery TCPSchedulerFailed TCPRcvCollapsed TCPBacklogCoalesce TCPDSACKOldSent TCPDSACKOfoSent TCPDSACKRecv TCPDSACKOfoRecv TCPAbortOnData TCPAbortOnClose TCPAbortOnMemory TCPAbortOnTimeout TCPAbortOnLinger TCPAbortFailed TCPMemoryPressures TCPMemoryPressuresChrono TCPSACKDiscard TCPDSACKIgnoredOld TCPDSACKIgnoredNoUndo TCPSpuriousRTOs TCPMD5NotFound TCPMD5Unexpected TCPMD5Failure TCPSackShifted TCPSackMerged TCPSackShiftFallback TCPBacklogDrop TCPMinTTLDrop TCPDeferAcceptDrop IPReversePathFilter TCPTimeWaitOverflow TCPReqQFullDoCookies TCPReqQFullDrop TCPRetransFail TCPSchedulerFailed2
-  TcpExt: 0 0 0 0 0 0 0 0 0 0 1234 0 0 0 567 89012 345 678 42 17 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  TcpExt: SyncookiesSent ListenOverflows ListenDrops TCPAbortOnData TCPAbortOnClose TCPAbortOnMemory TCPAbortOnTimeout TCPAbortOnLinger TCPAbortFailed TCPSynRetrans
+  TcpExt: 0 42 17 11 22 33 44 55 66 77
   IpExt: InNoRoutes InTruncatedPkts InMcastPkts OutMcastPkts InBcastPkts OutBcastPkts InOctets OutOctets InMcastOctets OutMcastOctets InBcastOctets OutBcastOctets InCsumErrors InNoECTPkts InECT1Pkts InECT0Pkts InCEPkts ReasmOverlaps
   IpExt: 0 0 0 0 0 0 123456789 987654321 0 0 0 0 0 0 0 0 0 0
+  """
+
+  @sockstat_fixture """
+  sockets: used 1391
+  TCP: inuse 32 orphan 0 tw 337 alloc 43 mem 3
+  UDP: inuse 12 mem 3
+  UDPLITE: inuse 0
+  RAW: inuse 0
+  FRAG: inuse 0 memory 0
+  """
+
+  @snmp_fixture """
+  Ip: Forwarding DefaultTTL InReceives InDelivers
+  Ip: 1 64 123456 123000
+  Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens AttemptFails EstabResets CurrEstab InSegs OutSegs RetransSegs InErrs OutRsts InCsumErrors
+  Tcp: 1 200 120000 -1 500 300 12 7 42 100000 99000 55 3 20 0
+  Udp: InDatagrams NoPorts InErrors OutDatagrams
+  Udp: 1000 5 2 900
   """
 
   describe "polling_metrics/1" do
@@ -54,12 +72,70 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
         assert metric.reporter_options[:prometheus_type] == "counter"
       end
     end
+
+    test "reports tcp abort and syn retrans counters" do
+      metrics =
+        NetStat.polling_metrics([])
+        |> Enum.flat_map(& &1.metrics)
+
+      for suffix <- [
+            :tcp_abort_on_timeout,
+            :tcp_abort_on_close,
+            :tcp_abort_on_data,
+            :tcp_abort_on_memory,
+            :tcp_abort_on_linger,
+            :tcp_syn_retrans
+          ] do
+        name = [:supavisor, :prom_ex, :osmon, :net, suffix]
+        metric = Enum.find(metrics, &(&1.name == name))
+
+        assert metric, "expected a net #{suffix} metric named #{inspect(name)}"
+        assert metric.reporter_options[:prometheus_type] == "counter"
+      end
+    end
+
+    test "reports snmp tcp stats as counters" do
+      metrics =
+        NetStat.polling_metrics([])
+        |> Enum.flat_map(& &1.metrics)
+
+      for suffix <- [:tcp_attempt_fails, :tcp_estab_resets, :tcp_in_errs] do
+        name = [:supavisor, :prom_ex, :osmon, :net, suffix]
+        metric = Enum.find(metrics, &(&1.name == name))
+
+        assert metric, "expected a net #{suffix} metric named #{inspect(name)}"
+        assert metric.reporter_options[:prometheus_type] == "counter"
+      end
+    end
+
+    test "reports tcp socket stats as gauges" do
+      metrics =
+        NetStat.polling_metrics([])
+        |> Enum.flat_map(& &1.metrics)
+
+      for suffix <- [:tcp_inuse, :tcp_orphan, :tcp_time_wait, :tcp_alloc, :tcp_mem_pages] do
+        name = [:supavisor, :prom_ex, :osmon, :net, suffix]
+        metric = Enum.find(metrics, &(&1.name == name))
+
+        assert metric, "expected a net #{suffix} metric named #{inspect(name)}"
+        refute metric.reporter_options[:prometheus_type] == "counter"
+      end
+    end
   end
 
   describe "parse_net_stat/1" do
-    test "extracts ListenDrops and ListenOverflows" do
-      assert {:ok, %{listen_drops: 17, listen_overflows: 42}} =
-               NetStat.parse_net_stat(@netstat_fixture)
+    test "extracts ListenDrops, ListenOverflows, abort and syn retrans counters" do
+      assert {:ok,
+              %{
+                listen_drops: 17,
+                listen_overflows: 42,
+                tcp_abort_on_data: 11,
+                tcp_abort_on_close: 22,
+                tcp_abort_on_memory: 33,
+                tcp_abort_on_timeout: 44,
+                tcp_abort_on_linger: 55,
+                tcp_syn_retrans: 77
+              }} = NetStat.parse_net_stat(@netstat_fixture)
     end
 
     test "defaults missing counters to 0" do
@@ -68,7 +144,17 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
       TcpExt: 0
       """
 
-      assert {:ok, %{listen_drops: 0, listen_overflows: 0}} = NetStat.parse_net_stat(content)
+      assert {:ok,
+              %{
+                listen_drops: 0,
+                listen_overflows: 0,
+                tcp_abort_on_data: 0,
+                tcp_abort_on_close: 0,
+                tcp_abort_on_memory: 0,
+                tcp_abort_on_timeout: 0,
+                tcp_abort_on_linger: 0,
+                tcp_syn_retrans: 0
+              }} = NetStat.parse_net_stat(content)
     end
 
     test "returns error for empty content" do
@@ -94,15 +180,109 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
     end
   end
 
+  describe "parse_sock_stat/1" do
+    test "extracts tcp socket counters" do
+      assert {:ok,
+              %{
+                tcp_inuse: 32,
+                tcp_orphan: 0,
+                tcp_time_wait: 337,
+                tcp_alloc: 43,
+                tcp_mem_pages: 3
+              }} = NetStat.parse_sock_stat(@sockstat_fixture)
+    end
+
+    test "defaults missing counters to 0" do
+      content = """
+      sockets: used 1391
+      TCP: inuse 5
+      """
+
+      assert {:ok,
+              %{
+                tcp_inuse: 5,
+                tcp_orphan: 0,
+                tcp_time_wait: 0,
+                tcp_alloc: 0,
+                tcp_mem_pages: 0
+              }} = NetStat.parse_sock_stat(content)
+    end
+
+    test "returns error for empty content" do
+      assert :error = NetStat.parse_sock_stat("")
+    end
+
+    test "returns error when TCP section is missing" do
+      content = """
+      sockets: used 1391
+      UDP: inuse 12 mem 3
+      """
+
+      assert :error = NetStat.parse_sock_stat(content)
+    end
+  end
+
+  describe "sock_stat/1" do
+    @tag :linux
+    test "reads real /proc/net/sockstat on linux" do
+      assert {:ok, stats} = NetStat.sock_stat()
+
+      for key <- [:tcp_inuse, :tcp_orphan, :tcp_time_wait, :tcp_alloc, :tcp_mem_pages] do
+        assert is_integer(Map.fetch!(stats, key))
+      end
+    end
+  end
+
+  describe "parse_snmp_stat/1" do
+    test "extracts AttemptFails, EstabResets and InErrs" do
+      assert {:ok, %{tcp_attempt_fails: 12, tcp_estab_resets: 7, tcp_in_errs: 3}} =
+               NetStat.parse_snmp_stat(@snmp_fixture)
+    end
+
+    test "defaults missing counters to 0" do
+      content = """
+      Tcp: RtoAlgorithm
+      Tcp: 1
+      """
+
+      assert {:ok, %{tcp_attempt_fails: 0, tcp_estab_resets: 0, tcp_in_errs: 0}} =
+               NetStat.parse_snmp_stat(content)
+    end
+
+    test "returns error for empty content" do
+      assert :error = NetStat.parse_snmp_stat("")
+    end
+
+    test "returns error when Tcp section is missing" do
+      content = """
+      Ip: Forwarding DefaultTTL
+      Ip: 1 64
+      """
+
+      assert :error = NetStat.parse_snmp_stat(content)
+    end
+  end
+
+  describe "snmp_stat/1" do
+    @tag :linux
+    test "reads real /proc/net/snmp on linux" do
+      assert {:ok, stats} = NetStat.snmp_stat()
+
+      for key <- [:tcp_attempt_fails, :tcp_estab_resets, :tcp_in_errs] do
+        assert is_integer(Map.fetch!(stats, key))
+      end
+    end
+  end
+
   describe "execute_net_stat_metrics/1" do
     test "emits net_stat telemetry event when file exists" do
-      path = write_netstat_fixture(@netstat_fixture)
+      path = write_fixture(@netstat_fixture)
       ref = attach_handler([:supavisor, :prom_ex, :osmon, :net_stat])
 
       assert :ok = NetStat.execute_net_stat_metrics(path)
 
       assert_receive {^ref, {[:supavisor, :prom_ex, :osmon, :net_stat], measurement, %{}}}
-      assert %{listen_drops: 17, listen_overflows: 42} = measurement
+      assert %{listen_drops: 17, listen_overflows: 42, tcp_syn_retrans: 77} = measurement
     end
 
     test "returns ok and emits nothing when file does not exist" do
@@ -110,8 +290,40 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
     end
   end
 
-  defp write_netstat_fixture(content) do
-    path = Path.join(System.tmp_dir!(), "netstat_#{:erlang.unique_integer([:positive])}")
+  describe "execute_snmp_stat_metrics/1" do
+    test "emits snmp_stat telemetry event when file exists" do
+      path = write_fixture(@snmp_fixture)
+      ref = attach_handler([:supavisor, :prom_ex, :osmon, :snmp_stat])
+
+      assert :ok = NetStat.execute_snmp_stat_metrics(path)
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :osmon, :snmp_stat], measurement, %{}}}
+      assert %{tcp_attempt_fails: 12, tcp_estab_resets: 7, tcp_in_errs: 3} = measurement
+    end
+
+    test "returns ok and emits nothing when file does not exist" do
+      assert :ok = NetStat.execute_snmp_stat_metrics("/nonexistent/path")
+    end
+  end
+
+  describe "execute_sock_stat_metrics/1" do
+    test "emits sock_stat telemetry event when file exists" do
+      path = write_fixture(@sockstat_fixture)
+      ref = attach_handler([:supavisor, :prom_ex, :osmon, :sock_stat])
+
+      assert :ok = NetStat.execute_sock_stat_metrics(path)
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :osmon, :sock_stat], measurement, %{}}}
+      assert %{tcp_inuse: 32, tcp_time_wait: 337} = measurement
+    end
+
+    test "returns ok and emits nothing when file does not exist" do
+      assert :ok = NetStat.execute_sock_stat_metrics("/nonexistent/path")
+    end
+  end
+
+  defp write_fixture(content) do
+    path = Path.join(System.tmp_dir!(), "procfs_fixture_#{:erlang.unique_integer([:positive])}")
     File.write!(path, content)
     on_exit(fn -> File.rm(path) end)
     path
