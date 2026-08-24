@@ -19,6 +19,7 @@ defmodule Supavisor.ClientHandler do
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
   @max_checkout_retries 2
   @timeout_subscribe 500
+  @ssl_handshake_timeout 2_500
   @clients_registry Supavisor.Registry.TenantClients
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
   @max_startup_packet_size Supavisor.Protocol.max_startup_packet_size()
@@ -166,7 +167,7 @@ defmodule Supavisor.ClientHandler do
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
-           {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts) do
+           {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
         socket = {:ssl, ssl_sock}
         :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
         {:keep_state, %{data | sock: socket, ssl: true}}
@@ -174,8 +175,8 @@ defmodule Supavisor.ClientHandler do
         {:error, %ClientSocketClosedError{} = exception} ->
           Error.terminate_with_error(data, exception, :handshake)
 
-        error ->
-          Error.terminate_with_error(data, %SslHandshakeError{reason: error}, :handshake)
+        {:error, reason} ->
+          Error.terminate_with_error(data, %SslHandshakeError{reason: reason}, :handshake)
       end
     else
       Logger.warning(
