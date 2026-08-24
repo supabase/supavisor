@@ -43,7 +43,8 @@ The exposed metrics include the following:
   * CPU utilization
   * RAM usage
   * Load average (LA)
-  * Network counters (listen drops, listen overflows)
+  * Network counters (listen drops, listen overflows, TCP aborts, SYN retransmits, connection attempt failures, established resets, segment errors)
+  * TCP socket usage (in-use, orphaned, TIME_WAIT, allocated, memory pages)
 
 ## Tenant metrics
 
