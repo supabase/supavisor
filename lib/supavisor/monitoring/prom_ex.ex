@@ -14,7 +14,7 @@ defmodule Supavisor.Monitoring.PromEx do
   alias PromEx.Plugins
   alias Supavisor.PeepStorage
   alias Supavisor.PeepStorage.PrometheusCached
-  alias Supavisor.PromEx.Plugins.{Cluster, LoggerLines, NetStat, OsMon, Scheduler, Tenant}
+  alias Supavisor.PromEx.Plugins.{Cluster, LoggerLines, NetStat, OsMon, Ranch, Scheduler, Tenant}
   alias Telemetry.Metrics
 
   defmodule Store do
@@ -67,6 +67,7 @@ defmodule Supavisor.Monitoring.PromEx do
       # Custom PromEx metrics plugins
       {OsMon, poll_rate: poll_rate},
       {NetStat, poll_rate: poll_rate},
+      {Ranch, poll_rate: poll_rate},
       {Tenant, poll_rate: poll_rate},
       {Cluster, poll_rate: poll_rate},
       {Scheduler, poll_rate: poll_rate},
