@@ -20,6 +20,7 @@ defmodule Supavisor.ClientHandler do
   @max_checkout_retries 2
   @timeout_subscribe 500
   @ssl_handshake_timeout 2_500
+  @handshake_timeout 5_000
   @clients_registry Supavisor.Registry.TenantClients
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
   @max_startup_packet_size Supavisor.Protocol.max_startup_packet_size()
@@ -52,6 +53,7 @@ defmodule Supavisor.ClientHandler do
     CheckoutTimeoutError,
     ClientSocketClosedError,
     DbHandlerExitedError,
+    HandshakeTimeoutError,
     PoolCheckoutError,
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
@@ -119,7 +121,9 @@ defmodule Supavisor.ClientHandler do
       subscribe_retries: 0
     }
 
-    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data)
+    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data, [
+      {:state_timeout, @handshake_timeout, :handshake_timeout}
+    ])
   end
 
   @impl true
@@ -191,6 +195,10 @@ defmodule Supavisor.ClientHandler do
           Error.terminate_with_error(data, exception, :handshake)
       end
     end
+  end
+
+  def handle_event(:state_timeout, :handshake_timeout, :handshake, data) do
+    Error.terminate_with_error(data, %HandshakeTimeoutError{}, :handshake)
   end
 
   def handle_event(:info, {_, _, bin}, :handshake, data)
