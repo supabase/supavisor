@@ -99,7 +99,13 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
         NetStat.polling_metrics([])
         |> Enum.flat_map(& &1.metrics)
 
-      for suffix <- [:tcp_attempt_fails, :tcp_estab_resets, :tcp_in_errs] do
+      for suffix <- [
+            :tcp_active_opens,
+            :tcp_passive_opens,
+            :tcp_attempt_fails,
+            :tcp_estab_resets,
+            :tcp_in_errs
+          ] do
         name = [:supavisor, :prom_ex, :osmon, :net, suffix]
         metric = Enum.find(metrics, &(&1.name == name))
 
@@ -234,9 +240,15 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
   end
 
   describe "parse_snmp_stat/1" do
-    test "extracts AttemptFails, EstabResets and InErrs" do
-      assert {:ok, %{tcp_attempt_fails: 12, tcp_estab_resets: 7, tcp_in_errs: 3}} =
-               NetStat.parse_snmp_stat(@snmp_fixture)
+    test "extracts ActiveOpens, PassiveOpens, AttemptFails, EstabResets and InErrs" do
+      assert {:ok,
+              %{
+                tcp_active_opens: 500,
+                tcp_passive_opens: 300,
+                tcp_attempt_fails: 12,
+                tcp_estab_resets: 7,
+                tcp_in_errs: 3
+              }} = NetStat.parse_snmp_stat(@snmp_fixture)
     end
 
     test "defaults missing counters to 0" do
@@ -245,8 +257,14 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
       Tcp: 1
       """
 
-      assert {:ok, %{tcp_attempt_fails: 0, tcp_estab_resets: 0, tcp_in_errs: 0}} =
-               NetStat.parse_snmp_stat(content)
+      assert {:ok,
+              %{
+                tcp_active_opens: 0,
+                tcp_passive_opens: 0,
+                tcp_attempt_fails: 0,
+                tcp_estab_resets: 0,
+                tcp_in_errs: 0
+              }} = NetStat.parse_snmp_stat(content)
     end
 
     test "returns error for empty content" do
@@ -268,7 +286,13 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
     test "reads real /proc/net/snmp on linux" do
       assert {:ok, stats} = NetStat.snmp_stat()
 
-      for key <- [:tcp_attempt_fails, :tcp_estab_resets, :tcp_in_errs] do
+      for key <- [
+            :tcp_active_opens,
+            :tcp_passive_opens,
+            :tcp_attempt_fails,
+            :tcp_estab_resets,
+            :tcp_in_errs
+          ] do
         assert is_integer(Map.fetch!(stats, key))
       end
     end
@@ -298,7 +322,9 @@ defmodule Supavisor.PromEx.Plugins.NetStatTest do
       assert :ok = NetStat.execute_snmp_stat_metrics(path)
 
       assert_receive {^ref, {[:supavisor, :prom_ex, :osmon, :snmp_stat], measurement, %{}}}
-      assert %{tcp_attempt_fails: 12, tcp_estab_resets: 7, tcp_in_errs: 3} = measurement
+
+      assert %{tcp_active_opens: 500, tcp_passive_opens: 300, tcp_attempt_fails: 12} =
+               measurement
     end
 
     test "returns ok and emits nothing when file does not exist" do
