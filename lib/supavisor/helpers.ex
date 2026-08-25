@@ -154,20 +154,11 @@ defmodule Supavisor.Helpers do
   """
   @spec detect_ip_version(String.t()) :: :inet | :inet6
   def detect_ip_version(host) when is_binary(host) do
-    charlist = String.to_charlist(host)
+    host = String.to_charlist(host)
 
-    case :inet.parse_address(charlist) do
-      {:ok, ip} when tuple_size(ip) == 4 ->
-        :inet
-
-      {:ok, _ip} ->
-        :inet6
-
-      {:error, _} ->
-        case :inet.gethostbyname(charlist) do
-          {:ok, _} -> :inet
-          _ -> :inet6
-        end
+    case :inet.gethostbyname(host) do
+      {:ok, _} -> :inet
+      _ -> :inet6
     end
   end
 
