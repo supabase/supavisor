@@ -72,19 +72,19 @@ defmodule Supavisor.HelpersTest do
   end
 
   describe "detect_ip_version/1" do
-    test "IPv4 literal is detected without touching the resolver" do
+    test "IPv4 literal is detected" do
       assert @subject.detect_ip_version("127.0.0.1") == :inet
     end
 
-    test "IPv6 literal is detected without touching the resolver" do
+    test "IPv6 literal is detected" do
       assert @subject.detect_ip_version("::1") == :inet6
       assert @subject.detect_ip_version("2406:da12:5ca:b700:451c:8500:ef25:2c7e") == :inet6
     end
 
-    test "a real hostname still falls through to the pre-existing gethostbyname path" do
+    test "a real hostname still works" do
       # "localhost" isn't a literal address, so this exercises the unchanged
       # fallback branch. It should resolve locally without real DNS traffic
-      # and must return one of the two valid families, not crash.
+      # and must return one of the two valid families.
       assert @subject.detect_ip_version("localhost") in [:inet, :inet6]
     end
   end
