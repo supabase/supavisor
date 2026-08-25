@@ -308,6 +308,40 @@ defmodule Supavisor.DbHandlerTest do
       assert error["C"] == "08006"
     end
 
+    test "connection_params.host given as a literal-address charlist is parsed and connected, not resolved",
+         %{id: id} do
+      # Unlike the other tests above (which already pass a pre-built
+      # :inet.ip_address()), this exercises the actual
+      # :inet.parse_address/1 short-circuit added for INC-737 by passing a
+      # literal IP address as a charlist string, the shape a real
+      # `db_host` value has on the wire.
+      # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
+      {host, port} = {~c"127.0.0.1", 12345}
+
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
+
+      conn_params =
+        connection_params(%{
+          host: host,
+          port: port,
+          database: "some database",
+          application_name: "some application name",
+          secrets: secrets
+        })
+
+      assert {:keep_state_and_data,
+              {:next_event, :internal, {:terminate_with_error, error, :keep_pool}}} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 connection_params: conn_params,
+                 sock: nil,
+                 id: id,
+                 proxy: false,
+                 tenant: {:single, "some tenant"}
+               })
+
+      assert error["C"] == "08006"
+    end
+
     test "db connection times out", %{id: id} do
       # TEST-NET-1 (RFC 5737) — reserved for documentation, packets are
       # blackholed on a normal network so the TCP connect attempt times out
