@@ -270,6 +270,20 @@ defmodule Supavisor.PromEx.Plugins.NetStat do
       {__MODULE__, :execute_snmp_stat_metrics, []},
       [
         last_value(
+          @prefix ++ [:osmon, :net, :tcp_active_opens],
+          event_name: @event_snmp_stat,
+          description: "Cumulative number of TCP connections opened actively (outbound).",
+          measurement: :tcp_active_opens,
+          reporter_options: [prometheus_type: "counter"]
+        ),
+        last_value(
+          @prefix ++ [:osmon, :net, :tcp_passive_opens],
+          event_name: @event_snmp_stat,
+          description: "Cumulative number of TCP connections opened passively (inbound).",
+          measurement: :tcp_passive_opens,
+          reporter_options: [prometheus_type: "counter"]
+        ),
+        last_value(
           @prefix ++ [:osmon, :net, :tcp_attempt_fails],
           event_name: @event_snmp_stat,
           description: "Cumulative number of TCP connection attempts that failed.",
@@ -295,6 +309,8 @@ defmodule Supavisor.PromEx.Plugins.NetStat do
   end
 
   @type snmp_stat_counters :: %{
+          tcp_active_opens: non_neg_integer(),
+          tcp_passive_opens: non_neg_integer(),
           tcp_attempt_fails: non_neg_integer(),
           tcp_estab_resets: non_neg_integer(),
           tcp_in_errs: non_neg_integer()
@@ -324,6 +340,8 @@ defmodule Supavisor.PromEx.Plugins.NetStat do
 
         {:ok,
          %{
+           tcp_active_opens: Map.get(counters, "ActiveOpens", 0),
+           tcp_passive_opens: Map.get(counters, "PassiveOpens", 0),
            tcp_attempt_fails: Map.get(counters, "AttemptFails", 0),
            tcp_estab_resets: Map.get(counters, "EstabResets", 0),
            tcp_in_errs: Map.get(counters, "InErrs", 0)
