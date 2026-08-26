@@ -1,13 +1,12 @@
 {
   fetchMixDeps,
+  fetchurl,
   mixRelease,
-  cargo,
-  rustPlatform,
   lib,
   stdenv,
   darwin,
-  protobuf,
   libiconv,
+  cacert,
 }: let
   pname = "supavisor";
   version = "0.0.1";
@@ -16,17 +15,25 @@
   mixFodDeps = fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-vTBDNIZ6Pp23u70f8oTe3nbpReCEDPf6VuWNLdkWwq4=";
+    hash = "sha256-Y7dMy1pjRiqrLIECqxCE5vUCXT/WKAgkndxFHkyEkGs=";
+    # git deps fetch over TLS: point git at the Mozilla bundle, as the
+    # distro default paths it is compiled with do not exist on non-NixOS
+    # hosts (and hex/rebar may not set one either).
+    GIT_SSL_CAINFO = "${cacert}/etc/ssl/certs/ca-bundle.crt";
   };
 
-  cargoDeps = rustPlatform.importCargoLock {
-    lockFile = ../native/pgparser/Cargo.lock;
+  # Pre-fetched so native/pgparser/Makefile can skip downloading
+  # (the nix sandbox has no network access).
+  libpgQueryTarball = fetchurl {
+    url = "https://github.com/pganalyze/libpg_query/archive/refs/tags/17-6.2.1.tar.gz";
+    hash = "sha256-Z4Q01ZURyIksN7pbmBarZBvQB87y7aIVsil8Obechh0=";
   };
 in
   mixRelease {
     inherit pname version src mixFodDeps;
 
-    nativeBuildInputs = [cargo protobuf];
+    # Used by native/pgparser/Makefile instead of downloading.
+    LIBPG_QUERY_TARBALL = libpgQueryTarball;
 
     buildInputs = lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
       libiconv
@@ -39,11 +46,6 @@ in
       frameworks.Security
       libs.libDER
     ]);
-
-    preConfigure = ''
-      cat ${cargoDeps}/.cargo/config >> native/pgparser/.cargo/config.toml
-      ln -s ${cargoDeps} native/pgparser/cargo-vendor-dir
-    '';
 
     meta = {
       mainProgram = "supavisor";

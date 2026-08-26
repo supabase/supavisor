@@ -5,6 +5,7 @@ main modules involved in this implementation are:
 - `Supavisor.PromEx.Plugins.OsMon`
 - `Supavisor.PromEx.Plugins.NetStat`
 - `Supavisor.PromEx.Plugins.Tenant`
+- `Supavisor.PromEx.Plugins.PgParser`
 - `Supavisor.Monitoring.Telem`
 
 ## Endpoint
@@ -56,3 +57,13 @@ drill down to metrics per tenant:
 - Number of connected clients
 - Query duration and query counts
 - Network usage for client sockets and database sockets
+
+## Parse shape cache metrics
+
+The SQL parser's per-scheduler shape cache (see `PARSER_CACHE_SIZE`) exports
+two cumulative counters via a PromEx polling plugin. The cache is a NIF-level
+structure shared across tenants, so these metrics intentionally carry no
+tenant tags:
+
+- `parser_cache_hits` — cache hits (shape found, no parse needed)
+- `parser_cache_misses` — eligible shapes not yet cached

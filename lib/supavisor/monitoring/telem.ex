@@ -117,6 +117,21 @@ defmodule Supavisor.Monitoring.Telem do
     )
   end
 
+  @doc """
+  Reads `Supavisor.PgParser.cache_stats/0` and emits the aggregated
+  per-scheduler parse cache counters as a telemetry event. Values are
+  cumulative since VM start; export as last_value and use `rate()` in
+  PromQL. No raw SQL or tenant tags are attached (global NIF cache).
+  """
+  @spec execute_parser_cache_stats() :: :ok
+  def execute_parser_cache_stats do
+    telemetry_execute(
+      [:supavisor, :pg_parser, :cache, :stats],
+      Supavisor.PgParser.cache_stats(),
+      %{}
+    )
+  end
+
   @spec id_to_tags(Supavisor.id()) :: map()
   defp id_to_tags(
          Supavisor.id(

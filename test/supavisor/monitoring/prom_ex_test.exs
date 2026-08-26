@@ -6,6 +6,8 @@ defmodule Supavisor.Monitoring.PromExTest do
 
   @subject Supavisor.Monitoring.PromEx
 
+  @moduletag :prom2json
+
   describe "get_metrics/1" do
     @sources %{
       {:darwin, :aarch64} => {

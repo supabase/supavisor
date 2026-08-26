@@ -944,7 +944,7 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = single_connection(base_opts)
   end
 
-  @tag cluster: true
+  @tag cluster: true, cluster_remote_manager: true
   test "local node enforces proxy pool limit when remote manager is unresponsive" do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     tenant = "proxy_pool_tenant"

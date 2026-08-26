@@ -247,6 +247,8 @@ if config_env() != :test do
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
     proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
+    # per-scheduler parse shape cache entry limit, 0 = disabled
+    parser_cache_size: System.get_env("PARSER_CACHE_SIZE", "1024") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,
