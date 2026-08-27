@@ -4,6 +4,8 @@ defmodule Supavisor.Monitoring.PromExTest do
 
   require Supavisor
 
+  alias Supavisor.PromEx.Plugins.{Cluster, Tenant}
+
   @subject Supavisor.Monitoring.PromEx
 
   describe "tenant_metric?/1" do
@@ -14,9 +16,9 @@ defmodule Supavisor.Monitoring.PromExTest do
         tags: [:tenant, :user]
       }
 
-      # Mirrors Supavisor.PromEx.Plugins.Tenant.concurrent_tenants/1's
-      # `[:supavisor, :tenants, :active]` last_value: defined inside the
-      # Tenant plugin module, but not tagged per-tenant.
+      # Mirrors Tenant.concurrent_tenants/1's `[:supavisor, :tenants, :active]`
+      # last_value: defined inside the Tenant plugin module, but not tagged
+      # per-tenant.
       tagless_metric_in_tenant_module = %Telemetry.Metrics.LastValue{
         name: [:supavisor, :tenants, :active],
         event_name: [:supavisor, :tenants],
@@ -143,13 +145,13 @@ defmodule Supavisor.Monitoring.PromExTest do
          %{tmp_dir: dir, prom2json: exe} do
       tenant = "prom_ex_split_test_tenant_1"
 
-      Supavisor.PromEx.Plugins.Tenant.emit_telemetry_for_tenant(
+      Tenant.emit_telemetry_for_tenant(
         Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
         1,
         ""
       )
 
-      Supavisor.PromEx.Plugins.Cluster.emit_cluster_size()
+      Cluster.emit_cluster_size()
 
       metrics = @subject.get_metrics(:tenant)
       file = Path.join(dir, "prom.out")
@@ -170,13 +172,13 @@ defmodule Supavisor.Monitoring.PromExTest do
          %{tmp_dir: dir, prom2json: exe} do
       tenant = "prom_ex_split_test_tenant_2"
 
-      Supavisor.PromEx.Plugins.Tenant.emit_telemetry_for_tenant(
+      Tenant.emit_telemetry_for_tenant(
         Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
         1,
         ""
       )
 
-      Supavisor.PromEx.Plugins.Cluster.emit_cluster_size()
+      Cluster.emit_cluster_size()
 
       metrics = @subject.get_metrics(:global)
       file = Path.join(dir, "prom.out")
