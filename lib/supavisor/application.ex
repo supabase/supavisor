@@ -164,12 +164,23 @@ defmodule Supavisor.Application do
     :ok
   end
 
-  defp metrics_pusher_children do
-    if Application.get_env(:supavisor, :metrics_pusher_enabled) do
-      [Supavisor.MetricsPusher]
-    else
-      []
-    end
+  @spec metrics_pusher_children() :: [Supervisor.child_spec()]
+  def metrics_pusher_children do
+    [
+      if Application.get_env(:supavisor, :metrics_pusher_enabled) do
+        Supervisor.child_spec(
+          {Supavisor.MetricsPusher, scope: :global, name: Supavisor.MetricsPusher.Global},
+          id: Supavisor.MetricsPusher.Global
+        )
+      end,
+      if Application.get_env(:supavisor, :tenant_metrics_pusher_enabled) do
+        Supervisor.child_spec(
+          {Supavisor.MetricsPusher, scope: :tenant, name: Supavisor.MetricsPusher.Tenant},
+          id: Supavisor.MetricsPusher.Tenant
+        )
+      end
+    ]
+    |> Enum.reject(&is_nil/1)
   end
 
   @spec build_shards([pos_integer()], atom()) :: term()

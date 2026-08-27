@@ -6,6 +6,28 @@ defmodule Supavisor.Monitoring.PromExTest do
 
   @subject Supavisor.Monitoring.PromEx
 
+  describe "tenant_metric?/1" do
+    test "classifies by tag presence, not by which plugin module defined the metric" do
+      tenant_tagged = %Telemetry.Metrics.Counter{
+        name: [:supavisor, :some, :metric],
+        event_name: [:supavisor, :some, :metric],
+        tags: [:tenant, :user]
+      }
+
+      # Mirrors Supavisor.PromEx.Plugins.Tenant.concurrent_tenants/1's
+      # `[:supavisor, :tenants, :active]` last_value: defined inside the
+      # Tenant plugin module, but not tagged per-tenant.
+      tagless_metric_in_tenant_module = %Telemetry.Metrics.LastValue{
+        name: [:supavisor, :tenants, :active],
+        event_name: [:supavisor, :tenants],
+        tags: []
+      }
+
+      assert @subject.tenant_metric?(tenant_tagged)
+      refute @subject.tenant_metric?(tagless_metric_in_tenant_module)
+    end
+  end
+
   describe "get_metrics/1" do
     @sources %{
       {:darwin, :aarch64} => {
@@ -109,6 +131,61 @@ defmodule Supavisor.Monitoring.PromExTest do
                  Enum.find(measurements, &(&1["name"] == "supavisor_client_joins_ok"))
 
         assert Enum.find(metrics, &(&1["labels"]["db_name"] == db_name))
+      end
+    end
+
+    @tag :tmp_dir
+    test "get_metrics(:tenant) includes tenant-tagged LastValue metrics but excludes global ones",
+         %{tmp_dir: dir, prom2json: exe} do
+      tenant = "prom_ex_split_test_tenant_1"
+
+      Supavisor.PromEx.Plugins.Tenant.emit_telemetry_for_tenant(
+        Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
+        1,
+        ""
+      )
+
+      Supavisor.PromEx.Plugins.Cluster.emit_cluster_size()
+
+      metrics = @subject.get_metrics(:tenant)
+      file = Path.join(dir, "prom.out")
+      File.write!(file, metrics)
+
+      assert {out, 0} = System.cmd(exe, [file])
+      assert {:ok, measurements} = JSON.decode(out)
+
+      assert %{"metrics" => series} =
+               Enum.find(measurements, &(&1["name"] == "supavisor_connections_active"))
+
+      assert Enum.find(series, &(&1["labels"]["tenant"] == tenant))
+      refute Enum.find(measurements, &(&1["name"] == "supavisor_prom_ex_cluster_size"))
+    end
+
+    @tag :tmp_dir
+    test "get_metrics(:global) includes global LastValue metrics but excludes tenant-tagged ones",
+         %{tmp_dir: dir, prom2json: exe} do
+      tenant = "prom_ex_split_test_tenant_2"
+
+      Supavisor.PromEx.Plugins.Tenant.emit_telemetry_for_tenant(
+        Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
+        1,
+        ""
+      )
+
+      Supavisor.PromEx.Plugins.Cluster.emit_cluster_size()
+
+      metrics = @subject.get_metrics(:global)
+      file = Path.join(dir, "prom.out")
+      File.write!(file, metrics)
+
+      assert {out, 0} = System.cmd(exe, [file])
+      assert {:ok, measurements} = JSON.decode(out)
+
+      assert Enum.find(measurements, &(&1["name"] == "supavisor_prom_ex_cluster_size"))
+
+      case Enum.find(measurements, &(&1["name"] == "supavisor_connections_active")) do
+        nil -> :ok
+        %{"metrics" => series} -> refute Enum.find(series, &(&1["labels"]["tenant"] == tenant))
       end
     end
   end

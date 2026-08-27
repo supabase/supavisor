@@ -2,7 +2,12 @@ defmodule Supavisor.MetricsPusher do
   @moduledoc """
   GenServer that periodically pushes Prometheus metrics to an endpoint.
 
-  Only starts if `url` is configured.
+  Runs once per `:scope` (`:tenant` or `:global`), pushing only the metrics
+  belonging to that scope (see `Supavisor.Monitoring.PromEx.get_metrics/1`) so
+  tenant-tagged and cluster/node-level metrics can be routed to different
+  Prometheus endpoints.
+
+  Only starts if the scope's `url` is configured.
   Pushes metrics every 30 seconds (configurable) to the configured URL endpoint.
   """
 
@@ -12,22 +17,27 @@ defmodule Supavisor.MetricsPusher do
 
   alias Supavisor.Monitoring.PromEx
 
+  @type scope :: :tenant | :global
+
   @type t :: %__MODULE__{
+          scope: scope(),
           push_ref: reference() | nil,
           interval: pos_integer() | nil,
           req_options: keyword() | nil
         }
 
-  defstruct [:push_ref, :interval, :req_options]
+  defstruct [:scope, :push_ref, :interval, :req_options]
 
   @spec start_link(keyword()) :: {:ok, pid()} | :ignore
   def start_link(opts) do
-    url = Keyword.get(opts, :url, Application.get_env(:supavisor, :metrics_pusher_url))
+    scope = Keyword.fetch!(opts, :scope)
+    name = Keyword.get(opts, :name, __MODULE__)
+    url = Keyword.get(opts, :url, Application.get_env(:supavisor, config_key(scope, :url)))
 
     if is_binary(url) do
-      GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+      GenServer.start_link(__MODULE__, opts, name: name)
     else
-      Logger.warning("MetricsPusher not started: url must be configured")
+      Logger.warning("MetricsPusher (#{scope}) not started: url must be configured")
 
       :ignore
     end
@@ -35,45 +45,51 @@ defmodule Supavisor.MetricsPusher do
 
   @impl true
   def init(opts) do
-    url = Keyword.get(opts, :url, Application.get_env(:supavisor, :metrics_pusher_url))
+    scope = Keyword.fetch!(opts, :scope)
+
+    url = Keyword.get(opts, :url, Application.get_env(:supavisor, config_key(scope, :url)))
 
     user =
-      Keyword.get(opts, :user, Application.get_env(:supavisor, :metrics_pusher_user, "supavisor"))
+      Keyword.get(
+        opts,
+        :user,
+        Application.get_env(:supavisor, config_key(scope, :user), "supavisor")
+      )
 
-    auth = Keyword.get(opts, :auth, Application.get_env(:supavisor, :metrics_pusher_auth))
+    auth = Keyword.get(opts, :auth, Application.get_env(:supavisor, config_key(scope, :auth)))
 
     interval =
       Keyword.get(
         opts,
         :interval,
-        Application.get_env(:supavisor, :metrics_pusher_interval_ms, :timer.seconds(30))
+        Application.get_env(:supavisor, config_key(scope, :interval_ms), :timer.seconds(30))
       )
 
     timeout =
       Keyword.get(
         opts,
         :timeout,
-        Application.get_env(:supavisor, :metrics_pusher_timeout_ms, :timer.seconds(15))
+        Application.get_env(:supavisor, config_key(scope, :timeout_ms), :timer.seconds(15))
       )
 
     compress =
       Keyword.get(
         opts,
         :compress,
-        Application.get_env(:supavisor, :metrics_pusher_compress, true)
+        Application.get_env(:supavisor, config_key(scope, :compress), true)
       )
 
     extra_labels =
       Keyword.get(
         opts,
         :extra_labels,
-        Application.get_env(:supavisor, :metrics_pusher_extra_labels, [])
+        Application.get_env(:supavisor, config_key(scope, :extra_labels), [])
       )
 
     params = Enum.map(extra_labels, fn {k, v} -> {:extra_label, "#{k}=#{v}"} end)
 
     Logger.info(
-      "Starting MetricsPusher (url: #{url}, interval: #{interval}ms, compress: #{compress})"
+      "Starting MetricsPusher (scope: #{scope}, url: #{url}, interval: #{interval}ms, compress: #{compress})"
     )
 
     headers = [{"content-type", "text/plain"}]
@@ -90,9 +106,10 @@ defmodule Supavisor.MetricsPusher do
         params: params
       ]
       |> Keyword.merge(basic_auth)
-      |> Keyword.merge(Application.get_env(:supavisor, :metrics_pusher_req_options, []))
+      |> Keyword.merge(Application.get_env(:supavisor, config_key(scope, :req_options), []))
 
     state = %__MODULE__{
+      scope: scope,
       push_ref: schedule_push(interval),
       interval: interval,
       req_options: req_options
@@ -103,7 +120,8 @@ defmodule Supavisor.MetricsPusher do
 
   @impl true
   def handle_info(:push, state) do
-    {exec_time, _} = :timer.tc(fn -> push(state.req_options) end, :millisecond)
+    {exec_time, _} =
+      :timer.tc(fn -> push(state.scope, state.req_options) end, :millisecond)
 
     if exec_time > :timer.seconds(5) do
       Logger.warning("Metrics push took: #{exec_time} ms")
@@ -120,18 +138,21 @@ defmodule Supavisor.MetricsPusher do
 
   defp schedule_push(delay), do: Process.send_after(self(), :push, delay)
 
-  # Unlike realtime, which keeps separate global and per-tenant PromEx trees,
-  # supavisor keeps every plugin (Application, Beam, Ecto, OsMon, NetStat,
-  # Tenant, Cluster) in a single collector. PromEx.get_metrics/0 is this node's
-  # own local export (no cross-node RPC fan-out) and already includes any
-  # tenant-tagged series for tenants attached to this node, so one push per
-  # tick is enough. Each node pushing only its own metrics (tagged with its
-  # node identity via global_tags) avoids the O(n^2) RPC fan-out that
+  @spec config_key(scope(), atom()) :: atom()
+  defp config_key(:global, suffix), do: :"metrics_pusher_#{suffix}"
+  defp config_key(:tenant, suffix), do: :"tenant_metrics_pusher_#{suffix}"
+
+  # PromEx.get_metrics/1 is this node's own local export (no cross-node RPC
+  # fan-out), filtered down to just this pusher's scope (tenant-tagged series,
+  # or everything else). Each node pushing only its own metrics (tagged with
+  # its node identity via global_tags) avoids the O(n^2) RPC fan-out that
   # PromEx.get_cluster_metrics/0 would cause if every node in the cluster
   # pushed on its own interval.
-  defp push(req_options) do
+  defp push(scope, req_options) do
     task =
-      Task.Supervisor.async_nolink(Supavisor.TaskSupervisor, fn -> push_metrics(req_options) end)
+      Task.Supervisor.async_nolink(Supavisor.TaskSupervisor, fn ->
+        push_metrics(scope, req_options)
+      end)
 
     case Task.yield(task, :timer.minutes(1)) do
       nil ->
@@ -146,8 +167,8 @@ defmodule Supavisor.MetricsPusher do
     end
   end
 
-  defp push_metrics(req_options) do
-    case send_metrics(req_options, PromEx.get_metrics()) do
+  defp push_metrics(scope, req_options) do
+    case send_metrics(req_options, PromEx.get_metrics(scope)) do
       :ok ->
         :ok
 

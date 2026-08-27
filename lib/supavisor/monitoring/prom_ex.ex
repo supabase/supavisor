@@ -75,10 +75,36 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @spec get_metrics() :: iodata()
-  def get_metrics do
-    fetch_metrics()
+  def get_metrics, do: get_metrics(:all)
+
+  @spec get_metrics(:tenant | :global | :all) :: iodata()
+  def get_metrics(scope) when scope in [:tenant, :global, :all] do
+    {reverse_tags_tid, cache_tid, global_tags, metrics} = fetch_metrics()
+
+    scoped_metrics =
+      case scope do
+        :all -> metrics
+        :tenant -> partition_metrics(metrics) |> elem(0)
+        :global -> partition_metrics(metrics) |> elem(1)
+      end
+
+    {reverse_tags_tid, cache_tid, global_tags, scoped_metrics}
     |> PrometheusCached.export()
   end
+
+  @doc """
+  Splits a metrics map (the 4th element returned by `fetch_metrics/0`) into
+  `{tenant_metrics, global_metrics}` based on whether each metric is tagged
+  with `:tenant`.
+  """
+  @spec partition_metrics(map()) :: {map(), map()}
+  def partition_metrics(metrics) do
+    {tenant, global} = Enum.split_with(metrics, fn {metric, _} -> tenant_metric?(metric) end)
+    {Map.new(tenant), Map.new(global)}
+  end
+
+  @spec tenant_metric?(Metrics.t()) :: boolean()
+  def tenant_metric?(metric), do: :tenant in metric.tags
 
   @spec get_cluster_metrics() :: iodata()
   def get_cluster_metrics do
