@@ -10,19 +10,33 @@ defmodule Supavisor.MetricsPusherTest do
 
   setup {Req.Test, :verify_on_exit!}
 
-  # Helper function to start MetricsPusher and allow it to use Req.Test
+  # Helper function to start MetricsPusher and allow it to use Req.Test.
+  # Defaults to the :global scope so existing scope-agnostic tests (HTTP
+  # mechanics: auth, compression, error handling, extra_labels) don't need
+  # to change.
   defp start_and_allow_pusher(opts) do
-    opts = Keyword.put(opts, :interval, :timer.minutes(5))
-    pid = start_supervised!({MetricsPusher, opts})
-    Req.Test.allow(MetricsPusher, self(), pid)
+    opts =
+      opts
+      |> Keyword.put_new(:scope, :global)
+      |> Keyword.put_new(:name, Supavisor.MetricsPusher.Global)
+      |> Keyword.put(:interval, :timer.minutes(5))
+
+    name = Keyword.fetch!(opts, :name)
+    pid = start_supervised!(Supervisor.child_spec({MetricsPusher, opts}, id: name))
+    Req.Test.allow(name, self(), pid)
     send(pid, :push)
     {:ok, pid}
   end
 
   describe "start_link/1" do
     test "does not start when URL is missing" do
-      opts = [enabled: true]
+      opts = [scope: :global, enabled: true]
       assert :ignore = MetricsPusher.start_link(opts)
+    end
+
+    test "raises when :scope is omitted" do
+      opts = [url: "https://example.com:8428/api/v1/import/prometheus"]
+      assert_raise KeyError, fn -> MetricsPusher.start_link(opts) end
     end
 
     test "sends request successfully" do
@@ -43,9 +57,10 @@ defmodule Supavisor.MetricsPusherTest do
 
       parent = self()
 
-      # A single request carrying this node's local metrics: both node-wide
-      # (beam/OS-level) and tenant-tagged series live in the same collector.
-      Req.Test.expect(MetricsPusher, 1, fn conn ->
+      # The :global scope carries this node's node-wide (beam/OS-level)
+      # metrics, but excludes tenant-tagged series — those go through the
+      # separate :tenant-scoped pusher instead.
+      Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn conn ->
         assert conn.method == "POST"
         assert conn.scheme == :https
         assert conn.host == "example.com"
@@ -72,8 +87,8 @@ defmodule Supavisor.MetricsPusherTest do
       assert_receive {:req_called, body}, 300
 
       assert body =~ "beam_stats_run_queue_count"
-      assert body =~ "supavisor_client_joins_ok"
-      assert body =~ ~s(tenant="#{tenant}")
+      refute body =~ "supavisor_client_joins_ok"
+      refute body =~ ~s(tenant="#{tenant}")
     end
 
     test "sends request successfully without auth header" do
@@ -85,7 +100,7 @@ defmodule Supavisor.MetricsPusherTest do
 
       parent = self()
 
-      Req.Test.expect(MetricsPusher, 1, fn conn ->
+      Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn conn ->
         assert Conn.get_req_header(conn, "authorization") == []
 
         send(parent, :req_called)
@@ -107,7 +122,7 @@ defmodule Supavisor.MetricsPusherTest do
 
       parent = self()
 
-      Req.Test.expect(MetricsPusher, 1, fn conn ->
+      Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn conn ->
         assert Conn.get_req_header(conn, "content-encoding") == []
         assert Conn.get_req_header(conn, "content-type") == ["text/plain"]
 
@@ -131,7 +146,7 @@ defmodule Supavisor.MetricsPusherTest do
 
       log =
         capture_log(fn ->
-          Req.Test.expect(MetricsPusher, 1, fn conn ->
+          Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn conn ->
             send(parent, :req_called)
             Conn.send_resp(conn, 500, "")
           end)
@@ -157,7 +172,7 @@ defmodule Supavisor.MetricsPusherTest do
 
       log =
         capture_log(fn ->
-          Req.Test.expect(MetricsPusher, 1, fn _conn ->
+          Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn _conn ->
             send(parent, :req_called)
             raise RuntimeError, "unexpected error"
           end)
@@ -183,7 +198,7 @@ defmodule Supavisor.MetricsPusherTest do
 
       parent = self()
 
-      Req.Test.expect(MetricsPusher, 1, fn conn ->
+      Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn conn ->
         send(parent, {:req_called, conn.query_string})
         Req.Test.text(conn, "")
       end)
@@ -199,7 +214,7 @@ defmodule Supavisor.MetricsPusherTest do
     test "logs unexpected messages and stays alive" do
       parent = self()
 
-      Req.Test.expect(MetricsPusher, 1, fn conn ->
+      Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn conn ->
         send(parent, :push_happened)
         Req.Test.text(conn, "")
       end)
@@ -220,6 +235,76 @@ defmodule Supavisor.MetricsPusherTest do
         end)
 
       assert log =~ "MetricsPusher received unexpected message: :unexpected_message"
+    end
+  end
+
+  describe "start_link/1 with :tenant scope" do
+    test "pushes only tenant-tagged metrics" do
+      opts = [
+        scope: :tenant,
+        name: Supavisor.MetricsPusher.Tenant,
+        url: "https://example.com:8428/api/v1/import/prometheus",
+        compress: true,
+        timeout: 5000
+      ]
+
+      tenant = "metrics_pusher_test_tenant"
+
+      Telem.client_join(
+        :ok,
+        Supavisor.id(type: :single, tenant: tenant, user: "u", mode: :session, db: "db")
+      )
+
+      parent = self()
+
+      Req.Test.expect(Supavisor.MetricsPusher.Tenant, 1, fn conn ->
+        {:ok, body, conn} = Conn.read_body(conn)
+        send(parent, {:req_called, body})
+        Req.Test.text(conn, "")
+      end)
+
+      {:ok, _pid} = start_and_allow_pusher(opts)
+
+      assert_receive {:req_called, body}, 300
+
+      assert body =~ "supavisor_client_joins_ok"
+      assert body =~ ~s(tenant="#{tenant}")
+      refute body =~ "beam_stats_run_queue_count"
+    end
+  end
+
+  describe "running both scopes concurrently" do
+    test "each scope's pusher only receives its own traffic" do
+      parent = self()
+
+      Req.Test.expect(Supavisor.MetricsPusher.Global, 1, fn conn ->
+        send(parent, :global_called)
+        Req.Test.text(conn, "")
+      end)
+
+      Req.Test.expect(Supavisor.MetricsPusher.Tenant, 1, fn conn ->
+        send(parent, :tenant_called)
+        Req.Test.text(conn, "")
+      end)
+
+      {:ok, _global_pid} =
+        start_and_allow_pusher(
+          scope: :global,
+          name: Supavisor.MetricsPusher.Global,
+          url: "http://localhost:8428/api/v1/import/prometheus",
+          timeout: 5000
+        )
+
+      {:ok, _tenant_pid} =
+        start_and_allow_pusher(
+          scope: :tenant,
+          name: Supavisor.MetricsPusher.Tenant,
+          url: "http://localhost:8429/api/v1/import/prometheus",
+          timeout: 5000
+        )
+
+      assert_receive :global_called, 300
+      assert_receive :tenant_called, 300
     end
   end
 end

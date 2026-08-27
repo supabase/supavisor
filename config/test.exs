@@ -33,7 +33,10 @@ config :supavisor,
   max_pools: 10,
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer(),
   metrics_pusher_req_options: [
-    plug: {Req.Test, Supavisor.MetricsPusher}
+    plug: {Req.Test, Supavisor.MetricsPusher.Global}
+  ],
+  tenant_metrics_pusher_req_options: [
+    plug: {Req.Test, Supavisor.MetricsPusher.Tenant}
   ]
 
 config :supavisor, Supavisor.Repo,

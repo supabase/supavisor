@@ -425,6 +425,25 @@ defmodule Supavisor.Helpers do
     end
   end
 
+  @doc """
+  Parses a comma-separated `k1=v1,k2=v2` env var into a list of `{k, v}` tuples.
+  """
+  @spec parse_extra_labels(String.t()) :: [{String.t(), String.t()}]
+  def parse_extra_labels(env_var) do
+    case System.get_env(env_var, "") do
+      "" ->
+        []
+
+      labels ->
+        labels
+        |> String.split(",")
+        |> Enum.map(fn pair ->
+          [k, v] = String.split(pair, "=", parts: 2)
+          {k, v}
+        end)
+    end
+  end
+
   def no_warm_pool_user?(user) do
     no_warm_pool_users = Application.get_env(:supavisor, :no_warm_pool_users, [])
     user in no_warm_pool_users
