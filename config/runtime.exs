@@ -130,20 +130,6 @@ config :libcluster,
   topologies: topologies
 
 if config_env() != :test do
-  metrics_pusher_extra_labels =
-    case System.get_env("METRICS_PUSHER_EXTRA_LABELS", "") do
-      "" ->
-        []
-
-      labels ->
-        labels
-        |> String.split(",")
-        |> Enum.map(fn pair ->
-          [k, v] = String.split(pair, "=", parts: 2)
-          {k, v}
-        end)
-    end
-
   config :supavisor,
     metrics_pusher_enabled: Supavisor.Helpers.get_env_bool("METRICS_PUSHER_ENABLED", false),
     metrics_pusher_url: System.get_env("METRICS_PUSHER_URL"),
@@ -154,7 +140,21 @@ if config_env() != :test do
     metrics_pusher_timeout_ms:
       System.get_env("METRICS_PUSHER_TIMEOUT_MS", "15000") |> String.to_integer(),
     metrics_pusher_compress: Supavisor.Helpers.get_env_bool("METRICS_PUSHER_COMPRESS", true),
-    metrics_pusher_extra_labels: metrics_pusher_extra_labels
+    metrics_pusher_extra_labels:
+      Supavisor.Helpers.parse_extra_labels("METRICS_PUSHER_EXTRA_LABELS"),
+    tenant_metrics_pusher_enabled:
+      Supavisor.Helpers.get_env_bool("TENANT_METRICS_PUSHER_ENABLED", false),
+    tenant_metrics_pusher_url: System.get_env("TENANT_METRICS_PUSHER_URL"),
+    tenant_metrics_pusher_user: System.get_env("TENANT_METRICS_PUSHER_USER", "supavisor"),
+    tenant_metrics_pusher_auth: System.get_env("TENANT_METRICS_PUSHER_AUTH"),
+    tenant_metrics_pusher_interval_ms:
+      System.get_env("TENANT_METRICS_PUSHER_INTERVAL_MS", "30000") |> String.to_integer(),
+    tenant_metrics_pusher_timeout_ms:
+      System.get_env("TENANT_METRICS_PUSHER_TIMEOUT_MS", "15000") |> String.to_integer(),
+    tenant_metrics_pusher_compress:
+      Supavisor.Helpers.get_env_bool("TENANT_METRICS_PUSHER_COMPRESS", true),
+    tenant_metrics_pusher_extra_labels:
+      Supavisor.Helpers.parse_extra_labels("TENANT_METRICS_PUSHER_EXTRA_LABELS")
 end
 
 upstream_ca =
