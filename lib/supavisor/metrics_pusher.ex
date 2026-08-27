@@ -139,8 +139,23 @@ defmodule Supavisor.MetricsPusher do
   defp schedule_push(delay), do: Process.send_after(self(), :push, delay)
 
   @spec config_key(scope(), atom()) :: atom()
-  defp config_key(:global, suffix), do: :"metrics_pusher_#{suffix}"
-  defp config_key(:tenant, suffix), do: :"tenant_metrics_pusher_#{suffix}"
+  defp config_key(:global, :url), do: :metrics_pusher_url
+  defp config_key(:global, :user), do: :metrics_pusher_user
+  defp config_key(:global, :auth), do: :metrics_pusher_auth
+  defp config_key(:global, :interval_ms), do: :metrics_pusher_interval_ms
+  defp config_key(:global, :timeout_ms), do: :metrics_pusher_timeout_ms
+  defp config_key(:global, :compress), do: :metrics_pusher_compress
+  defp config_key(:global, :extra_labels), do: :metrics_pusher_extra_labels
+  defp config_key(:global, :req_options), do: :metrics_pusher_req_options
+
+  defp config_key(:tenant, :url), do: :tenant_metrics_pusher_url
+  defp config_key(:tenant, :user), do: :tenant_metrics_pusher_user
+  defp config_key(:tenant, :auth), do: :tenant_metrics_pusher_auth
+  defp config_key(:tenant, :interval_ms), do: :tenant_metrics_pusher_interval_ms
+  defp config_key(:tenant, :timeout_ms), do: :tenant_metrics_pusher_timeout_ms
+  defp config_key(:tenant, :compress), do: :tenant_metrics_pusher_compress
+  defp config_key(:tenant, :extra_labels), do: :tenant_metrics_pusher_extra_labels
+  defp config_key(:tenant, :req_options), do: :tenant_metrics_pusher_req_options
 
   # PromEx.get_metrics/1 is this node's own local export (no cross-node RPC
   # fan-out), filtered down to just this pusher's scope (tenant-tagged series,
