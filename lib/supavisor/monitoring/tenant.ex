@@ -185,7 +185,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           event_name: [:supavisor, :client_handler, :state],
           measurement: :duration,
           description: "Duration spent in each client_handler state.",
-          tags: [:tenant, :from_state, :to_state],
+          tags: [:from_state, :to_state],
           unit: {:native, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
