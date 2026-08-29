@@ -7,6 +7,9 @@ on:
     paths:
       - ".github/workflows/publish_docker.yml"
       - "VERSION"
+  # VERSION bumps after 2.9.7 land on the release-tag line, not main, so
+  # path-filtered pushes never publish those tags (Hub still ends at 2.9.7).
+  workflow_dispatch:
 
 jobs:
   settings:
