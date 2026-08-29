@@ -13,8 +13,9 @@
 #   - Ex: hexpm/elixir:1.14.0-erlang-25.0.3-debian-bullseye-20210902-slim
 #
 ARG ELIXIR_VERSION=1.18.2
-ARG OTP_VERSION=27.2.1
-ARG DEBIAN_VERSION=bullseye-20250203-slim
+# 27.2.1 rejects builds.hex.pm (TLS key_usage_mismatch). 27.3.4 matches .tool-versions.
+ARG OTP_VERSION=27.3.4
+ARG DEBIAN_VERSION=bullseye-20260610-slim
 
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
 ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
