@@ -68,19 +68,24 @@ defmodule Supavisor.Application do
          Supavisor.ClientHandler}
       ] ++ session_shards ++ transaction_shards
 
+    num_acceptors = String.to_integer(System.get_env("NUM_ACCEPTORS") || "100")
+
+    max_connections =
+      case System.get_env("MAX_CONNECTIONS") do
+        nil -> :infinity
+        value -> String.to_integer(value)
+      end
+
     ranch_listeners =
       for {key, port, opts, handler} <- proxy_ports do
         :ranch.child_spec(
           key,
           :ranch_tcp,
           %{
-            max_connections:
-              case System.get_env("MAX_CONNECTIONS") do
-                nil -> :infinity
-                value -> String.to_integer(value)
-              end,
-            num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-            socket_opts: [port: port, keepalive: true]
+            max_connections: max_connections,
+            num_acceptors: num_acceptors,
+            num_listen_sockets: min(System.schedulers_online(), num_acceptors),
+            socket_opts: [port: port, keepalive: true, reuseport: true]
           },
           handler,
           opts
