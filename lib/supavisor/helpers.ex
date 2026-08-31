@@ -351,7 +351,7 @@ defmodule Supavisor.Helpers do
   @spec set_max_heap_size(pos_integer()) :: map()
   def set_max_heap_size(max_heap_size) do
     max_heap_words = div(max_heap_size * 1024 * 1024, :erlang.system_info(:wordsize))
-    Process.flag(:max_heap_size, %{size: max_heap_words})
+    Process.flag(:max_heap_size, %{size: max_heap_words, include_shared_binaries: true})
   end
 
   @doc """
