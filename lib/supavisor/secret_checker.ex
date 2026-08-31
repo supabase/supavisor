@@ -151,9 +151,6 @@ defmodule Supavisor.SecretChecker do
 
     AuthQuery.stop_connection_async(state.conn)
 
-    # Clear the secrets cache for this tenant/user
-    Cachex.del(Supavisor.Cache, {:secrets, state.tenant, state.user})
-
     Logger.info("SecretChecker: Successfully changed auth_query user")
     {:reply, :ok, %{state | manager_secrets: new_manager, conn: new_conn}}
   end
