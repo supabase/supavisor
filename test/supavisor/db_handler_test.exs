@@ -331,13 +331,7 @@ defmodule Supavisor.DbHandlerTest do
       assert error["C"] == "08006"
     end
 
-    test "connection_params.host given as a literal-address charlist is parsed and connected, not resolved",
-         %{id: id} do
-      # Unlike the other tests above (which already pass a pre-built
-      # :inet.ip_address()), this exercises the actual
-      # :inet.parse_address/1 short-circuit added for INC-737 by passing a
-      # literal IP address as a charlist string, the shape a real
-      # `db_host` value has on the wire.
+    test "connection_params.host given as a literal-address charlist is parsed and connected", %{id: id} do
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
       {host, port} = {~c"127.0.0.1", 12345}
 
