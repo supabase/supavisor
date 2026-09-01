@@ -28,6 +28,31 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT 1"))
       assert recv_ready_for_queries(sock, 1) == 1
     end
+
+    test "delivers every reply when a segment begins with a Sync (#{tenant})" do
+      sock = connect(unquote(tenant))
+
+      # A slow first statement keeps the ClientHandler :busy, so the second
+      # write is guaranteed to arrive mid-batch. That makes the seam
+      # deterministic instead of relying on where the kernel happens to split
+      # a coalesced pipelined write.
+      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)"))
+      Process.sleep(50)
+
+      # The previous statement's trailing Sync, followed by a whole further
+      # statement: the shape a pipelined write takes when the segment boundary
+      # lands on an Execute|Sync seam. The second statement is slow too, so its
+      # reply lands in a later read from the backend, ie: after the premature
+      # release, which is when replies get dropped.
+      :ok =
+        :gen_tcp.send(sock, [
+          <<?S, 4::32>>,
+          :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)")
+        ])
+
+      # Both statements and the bare Sync each produce a ReadyForQuery.
+      assert recv_ready_for_queries(sock, 3) == 3
+    end
   end
 
   defp connect(tenant) do
