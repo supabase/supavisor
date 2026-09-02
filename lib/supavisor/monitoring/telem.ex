@@ -90,6 +90,26 @@ defmodule Supavisor.Monitoring.Telem do
     Logger.debug("client_join is called with a mismatched id: #{Supavisor.inspect_id(id)}")
   end
 
+  @doc """
+  Outcome of a connection that hit the client limit and had to wait for a free slot.
+
+  `:admitted` means a slot freed up within the wait budget, so the connection would have
+  been rejected before waiting was introduced. `:rejected` means the budget was exhausted
+  and the client received EMAXCONN.
+  """
+  @spec client_admission(:admitted | :rejected, Supavisor.id() | any()) :: :ok | nil
+  def client_admission(status, Supavisor.id() = id) do
+    telemetry_execute(
+      [:supavisor, :client, :admission, status],
+      %{},
+      id_to_tags(id)
+    )
+  end
+
+  def client_admission(_status, id) do
+    Logger.debug("client_admission is called with a mismatched id: #{Supavisor.inspect_id(id)}")
+  end
+
   @spec handler_action(
           :client_handler | :db_handler,
           :started | :stopped | :db_connection,

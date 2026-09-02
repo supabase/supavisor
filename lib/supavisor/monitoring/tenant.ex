@@ -169,6 +169,20 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: @tags
         ),
         counter(
+          [:supavisor, :client, :admission, :admitted],
+          event_name: [:supavisor, :client, :admission, :admitted],
+          description:
+            "The total number of connections admitted after waiting for a free client slot.",
+          tags: @tags
+        ),
+        counter(
+          [:supavisor, :client, :admission, :rejected],
+          event_name: [:supavisor, :client, :admission, :rejected],
+          description:
+            "The total number of connections rejected with EMAXCONN after exhausting the wait for a free client slot.",
+          tags: @tags
+        ),
+        counter(
           [:supavisor, :client_handler, :started, :count],
           event_name: [:supavisor, :client_handler, :started, :all],
           description: "The total number of created client_handler.",
