@@ -331,7 +331,9 @@ defmodule Supavisor.DbHandlerTest do
       assert error["C"] == "08006"
     end
 
-    test "connection_params.host given as a literal-address charlist is parsed and connected", %{id: id} do
+    test "connection_params.host given as a literal-address charlist is parsed and connected", %{
+      id: id
+    } do
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers
       {host, port} = {~c"127.0.0.1", 12345}
 
