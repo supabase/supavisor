@@ -302,6 +302,75 @@ defmodule Supavisor.DbHandlerTest do
               }, {:state_timeout, 15_000, :authentication_timeout}} = state
     end
 
+    test "proxy startup forwards internal client metadata", %{id: id} do
+      {:ok, listener} = :gen_tcp.listen(0, mode: :binary, active: false)
+      {:ok, {host, port}} = :inet.sockname(listener)
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
+
+      conn_params =
+        connection_params(%{
+          host: host,
+          port: port,
+          database: "some database",
+          application_name: "some application name",
+          secrets: secrets
+        })
+
+      assert {:next_state, :authentication, _, _} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 connection_params: conn_params,
+                 sock: nil,
+                 id: id,
+                 mode: :proxy,
+                 proxy: true,
+                 client_tls: true,
+                 client_jit: false,
+                 client_ip: "2001:db8::10"
+               })
+
+      assert {:ok, socket} = :gen_tcp.accept(listener)
+      assert {:ok, packet} = :gen_tcp.recv(socket, 0, 1_000)
+      assert {:ok, startup} = Supavisor.Protocol.Client.decode_startup_packet(packet)
+
+      assert startup.payload["options"] == %{
+               "client_ip" => "2001:db8::10",
+               "client_tls" => "true",
+               "jit" => "false"
+             }
+    end
+
+    test "non-proxy startup omits internal client metadata", %{id: id} do
+      {:ok, listener} = :gen_tcp.listen(0, mode: :binary, active: false)
+      {:ok, {host, port}} = :inet.sockname(listener)
+      secrets = %PasswordSecrets{user: "some user", password: "secret"}
+
+      conn_params =
+        connection_params(%{
+          host: host,
+          port: port,
+          database: "some database",
+          application_name: "some application name",
+          secrets: secrets
+        })
+
+      assert {:next_state, :authentication, _, _} =
+               Db.handle_event(:internal, :connect, :connect, %{
+                 connection_params: conn_params,
+                 sock: nil,
+                 id: id,
+                 mode: :session,
+                 proxy: false,
+                 client_tls: true,
+                 client_jit: true,
+                 client_ip: "2001:db8::10"
+               })
+
+      assert {:ok, socket} = :gen_tcp.accept(listener)
+      assert {:ok, packet} = :gen_tcp.recv(socket, 0, 1_000)
+      assert {:ok, startup} = Supavisor.Protocol.Client.decode_startup_packet(packet)
+      refute Map.has_key?(startup.payload, "options")
+    end
+
     test "db is not available", %{id: id} do
       # We assume that there is nothing running on this port
       # credo:disable-for-next-line Credo.Check.Readability.LargeNumbers

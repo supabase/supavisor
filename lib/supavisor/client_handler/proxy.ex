@@ -130,7 +130,8 @@ defmodule Supavisor.ClientHandler.Proxy do
       proxy: true,
       log_level: nil,
       client_tls: Keyword.fetch!(client_opts, :client_ssl),
-      client_jit: Keyword.fetch!(client_opts, :client_jit)
+      client_jit: Keyword.fetch!(client_opts, :client_jit),
+      client_ip: Keyword.fetch!(client_opts, :client_ip)
     }
   end
 end
