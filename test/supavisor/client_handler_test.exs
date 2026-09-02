@@ -187,7 +187,7 @@ defmodule Supavisor.ClientHandlerTest do
       batch =
         <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">> <> <<?Q, 12::32, "SELECT 3">>
 
-      assert {:keep_state, _data} =
+      assert {:keep_state, _data, _actions} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
       assert_received {:"$gen_cast", {:expect_ready_for_query, 3}}
@@ -205,10 +205,44 @@ defmodule Supavisor.ClientHandlerTest do
 
       batch = <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">>
 
-      assert {:keep_state, _data} =
+      assert {:keep_state, _data, _actions} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
       refute_received {:"$gen_cast", {:expect_ready_for_query, _count}}
+    end
+  end
+
+  describe "idle-in-transaction timeout" do
+    test "arms the timeout when the backend goes idle-in-transaction" do
+      data = %{idle_in_transaction_timeout: 5000}
+
+      assert {:keep_state_and_data,
+              [{{:timeout, :idle_in_transaction}, 5000, :idle_in_transaction_terminate}]} =
+               @subject.handle_event(:cast, {:db_status, :idle_in_transaction}, :busy, data)
+    end
+
+    test "does not arm when the timeout is disabled" do
+      data = %{idle_in_transaction_timeout: 0}
+
+      assert {:keep_state_and_data, []} =
+               @subject.handle_event(:cast, {:db_status, :idle_in_transaction}, :busy, data)
+    end
+
+    test "terminates the client with a FATAL 25P03 error when the timeout fires" do
+      {sock, recv} = sockpair()
+      data = %{sock: {:gen_tcp, sock}, idle_in_transaction_timeout: 5000}
+
+      assert {:stop, :normal} =
+               @subject.handle_event(
+                 {:timeout, :idle_in_transaction},
+                 :idle_in_transaction_terminate,
+                 :busy,
+                 data
+               )
+
+      assert {:ok, bin} = :gen_tcp.recv(recv, 0, 1000)
+      assert bin =~ "idle-in-transaction"
+      assert bin =~ "25P03"
     end
   end
 end

@@ -193,6 +193,7 @@ defmodule Supavisor.Manager do
       default_pool_size: default_pool_size,
       default_max_clients: default_max_clients,
       client_idle_timeout: client_idle_timeout,
+      client_idle_in_transaction_timeout: client_idle_in_transaction_timeout,
       sni_hostname: sni_hostname,
       feature_flags: feature_flags
     } = tenant_record
@@ -225,6 +226,7 @@ defmodule Supavisor.Manager do
       default_parameter_status: ps,
       max_clients: max_clients,
       idle_timeout: client_idle_timeout,
+      idle_in_transaction_timeout: client_idle_in_transaction_timeout,
       connection_params: connection_params,
       mode: mode,
       replica_type: replica_type,
@@ -267,7 +269,9 @@ defmodule Supavisor.Manager do
             state
           end
 
-        {:reply, {:ok, state.parameter_status, state.idle_timeout}, new_state}
+        {:reply,
+         {:ok, state.parameter_status, state.idle_timeout, state.idle_in_transaction_timeout},
+         new_state}
 
       {:error, _} = error ->
         {:reply, error, state}

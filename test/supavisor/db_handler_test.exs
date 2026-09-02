@@ -1202,6 +1202,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event(:info, {:tcp, :sock, in_transaction}, :busy, data)
 
       refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert_received {:"$gen_cast", {:db_status, :idle_in_transaction}}
       assert data.expected_rfq == 0
     end
 

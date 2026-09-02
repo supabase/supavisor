@@ -35,6 +35,7 @@ defmodule Supavisor.ClientHandler.Data do
     :stream_state,
     :stats,
     :idle_timeout,
+    :idle_in_transaction_timeout,
     :heartbeat_interval,
     :connection_start,
     :state_entered_at,
