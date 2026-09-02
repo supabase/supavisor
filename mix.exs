@@ -58,8 +58,6 @@ defmodule Supavisor.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:peep, "~> 4.4.0", override: true},
       {:plug_cowboy, "~> 2.5"},
-      {:joken, "~> 2.6.0"},
-      {:cloak_ecto, "~> 1.3.0"},
       {:req, "~> 0.6.1"},
       {:prom_ex, "~> 1.10"},
       {:open_api_spex, "~> 3.16"},
@@ -78,6 +76,13 @@ defmodule Supavisor.MixProject do
       {:pgo, "~> 0.13"},
       {:rustler, "~> 0.36.1"},
       {:ranch, "~> 2.0", override: true},
+
+      # auth
+      {:tesla, "~> 1.21"},
+      {:mint, "~> 1.9.3"},
+      {:joken, "~> 2.6.0"},
+      {:joken_jwks, "~> 1.7"},
+      {:cloak_ecto, "~> 1.3.0"},
 
       # Linting
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
