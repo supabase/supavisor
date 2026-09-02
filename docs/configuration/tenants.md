@@ -45,3 +45,9 @@ connection
 `client_idle_timeout` - the maximum duration of an idle client connection
 
 `allow_list` - a list of CIDR ranges which are allowed to connect
+
+`txn_mode_set_action` - what to do when a client sends a
+session-level `SET` statement in transaction mode: `ignore` (default), `log`
+(log a warning) or `error` (reject the statement and return an error to the
+client). Transaction-scoped variants (`SET LOCAL`, `SET TRANSACTION`) are
+always allowed
