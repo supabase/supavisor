@@ -29,7 +29,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       assert recv_ready_for_queries(sock, 1) == 1
     end
 
-    test "delivers every reply when a segment begins with a Sync (#{tenant})" do
+    test "regression: delivers every reply when a segment begins with a Sync (#{tenant})" do
       sock = connect(unquote(tenant))
 
       # A slow first statement keeps the ClientHandler :busy when the Sync arrives
