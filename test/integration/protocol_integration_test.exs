@@ -12,6 +12,12 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
     end
 
+    test "closes connection when no startup packet is sent", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 6_000)
+    end
+
     test "closes connection when startup packet is too large", %{port: port} do
       {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
 
