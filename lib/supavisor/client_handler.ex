@@ -17,6 +17,8 @@ defmodule Supavisor.ClientHandler do
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
+  @admission_retries Application.compile_env(:supavisor, :admission_retries)
+  @admission_backoff Application.compile_env(:supavisor, :admission_backoff)
   @max_checkout_retries 2
   @timeout_subscribe 500
   @ssl_handshake_timeout 2_500
@@ -54,6 +56,7 @@ defmodule Supavisor.ClientHandler do
     ClientSocketClosedError,
     DbHandlerExitedError,
     HandshakeTimeoutError,
+    MaxConnectionsError,
     PoolCheckoutError,
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
@@ -118,7 +121,8 @@ defmodule Supavisor.ClientHandler do
       heartbeat_interval: 0,
       connection_start: now,
       state_entered_at: now,
-      subscribe_retries: 0
+      subscribe_retries: 0,
+      admission_retries: 0
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data, [
@@ -226,7 +230,9 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls}}},
+        {:hello,
+         {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls}} =
+           hello_args},
         :handshake,
         %{sock: sock} = data
       ) do
@@ -279,6 +285,9 @@ defmodule Supavisor.ClientHandler do
           {:keep_state, new_data,
            {:next_event, :internal, {:start_authentication, auth_method, info}}}
         else
+          {:error, %MaxConnectionsError{} = exception} ->
+            wait_for_slot_or_terminate(%{data | id: id}, {:hello, hello_args}, exception)
+
           {:error, exception} when is_exception(exception) ->
             Error.terminate_with_error(%{data | id: id}, exception, :handshake)
         end
@@ -286,6 +295,12 @@ defmodule Supavisor.ClientHandler do
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
     end
+  end
+
+  # Re-runs admission after waiting for a free client slot.
+  # Named timeout: :state_timeout would cancel @handshake_timeout.
+  def handle_event({:timeout, :admission_retry}, retry_event, _state, _data) do
+    {:keep_state_and_data, {:next_event, :internal, retry_event}}
   end
 
   def handle_event(
@@ -351,6 +366,10 @@ defmodule Supavisor.ClientHandler do
         include_app_name: include_app_name?(data)
       )
 
+      # Only meaningful once we hold a slot, so it is recorded here rather than at the
+      # earlier limit check, which can still be followed by a rejection at subscribe.
+      if data.admission_retries > 0, do: Telem.client_admission(:admitted, data.id)
+
       cond do
         data.client_ready ->
           {:next_state, :idle, data, handle_actions(data)}
@@ -367,6 +386,12 @@ defmodule Supavisor.ClientHandler do
 
       {:error, %PoolConfigNotFoundError{}} ->
         timeout_subscribe_or_terminate(data)
+
+      # `check_client_limit/3` reads the pool's client table directly, so it can race with
+      # this authoritative check. Wait for a slot here too, but keep the original error so
+      # exhaustion is not reported as a subscribe failure.
+      {:error, %MaxConnectionsError{} = exception} ->
+        wait_for_slot_or_terminate(data, :subscribe, exception)
 
       {:error, exception} when is_exception(exception) ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -1003,6 +1028,38 @@ defmodule Supavisor.ClientHandler do
     else
       Error.terminate_with_error(data, %SubscribeRetriesExhaustedError{}, :handshake)
     end
+  end
+
+  @doc """
+  Holds a connection that hit the client limit and re-runs admission after a backoff.
+
+  Rejecting a full pool immediately makes the client reconnect, and each reconnect pays for
+  another TLS handshake only to be rejected again - which is how a saturated pool turns
+  into a CPU outage. Retrying reuses the handshake we already paid for: the client is
+  admitted as soon as a slot frees, and one that never gets a slot receives the same error
+  it would have received immediately, just later.
+
+  `retry_event` is the internal event to replay, so this serves both the pre-auth check in
+  `:handshake` and the authoritative check during `:subscribe`.
+  """
+  @spec wait_for_slot_or_terminate(map(), term(), Exception.t()) ::
+          :gen_statem.handle_event_result()
+  def wait_for_slot_or_terminate(%{admission_retries: retries} = data, retry_event, exception) do
+    if retries < @admission_retries do
+      Logger.debug("ClientHandler: Waiting for a free client slot, attempt #{retries + 1}")
+
+      {:keep_state, %{data | admission_retries: retries + 1},
+       {{:timeout, :admission_retry}, admission_backoff(), retry_event}}
+    else
+      Telem.client_admission(:rejected, data.id)
+      Error.terminate_with_error(data, exception, :handshake)
+    end
+  end
+
+  # Jittered so that waiters woken by the same freed slot do not re-check in lockstep.
+  defp admission_backoff do
+    jitter = max(div(@admission_backoff, 4), 1)
+    max(@admission_backoff - jitter + :rand.uniform(2 * jitter), 0)
   end
 
   defp pool_checkout(pool, timeout, mode) do

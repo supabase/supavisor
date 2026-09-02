@@ -439,6 +439,96 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = single_connection(connection_opts)
   end
 
+  describe "waiting for a free client slot" do
+    setup do
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      connection_opts = [
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        username: db_conf[:username] <> ".admission_tenant",
+        database: db_conf[:database],
+        password: db_conf[:password]
+      ]
+
+      test_pid = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, ref}
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:supavisor, :client, :admission, :admitted],
+          [:supavisor, :client, :admission, :rejected]
+        ],
+        fn event, _measurements, _metadata, _config -> send(test_pid, {ref, event}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      %{connection_opts: connection_opts, ref: ref}
+    end
+
+    test "admits a waiting client when a slot frees up", ctx do
+      ref = ctx.ref
+
+      # admission_tenant allows 2 clients, so the pool is now full
+      assert {:ok, conn} = single_connection(ctx.connection_opts)
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+
+      test_pid = self()
+      connection_opts = ctx.connection_opts
+
+      spawn(fn ->
+        result =
+          try do
+            SingleConnection.connect(connection_opts)
+          catch
+            kind, reason -> {:error, {kind, reason}}
+          end
+
+        send(test_pid, {:waiter, result})
+      end)
+
+      # Give the third connection time to hit the limit and start waiting, then free a
+      # slot well inside its budget. Before waiting was introduced this connection would
+      # already have been rejected.
+      Process.sleep(50)
+      GenServer.stop(conn)
+
+      assert_receive {:waiter, {:ok, _pid}}, 5_000
+      assert_receive {^ref, [:supavisor, :client, :admission, :admitted]}, 1_000
+    end
+
+    test "rejects with EMAXCONN once the wait budget is exhausted", ctx do
+      ref = ctx.ref
+
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+
+      {elapsed, result} = :timer.tc(fn -> single_connection(ctx.connection_opts) end)
+
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message: "(EMAXCONN) max client connections reached, limit: 2",
+                  pg_code: "XX000",
+                  severity: "FATAL"
+                }
+              }} = result
+
+      assert_receive {^ref, [:supavisor, :client, :admission, :rejected]}, 1_000
+
+      # The throttle: the client is held rather than being rejected immediately, which is
+      # what slows down a client reconnecting in a tight loop.
+      retries = Application.get_env(:supavisor, :admission_retries)
+      backoff = Application.get_env(:supavisor, :admission_backoff)
+      assert elapsed >= retries * div(backoff, 2) * 1_000
+    end
+  end
+
   test "checkout timeout in transaction mode" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
