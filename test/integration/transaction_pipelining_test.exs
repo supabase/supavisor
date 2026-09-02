@@ -32,10 +32,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     test "delivers every reply when a segment begins with a Sync (#{tenant})" do
       sock = connect(unquote(tenant))
 
-      # A slow first statement keeps the ClientHandler :busy, so the second
-      # write is guaranteed to arrive mid-batch. That makes the seam
-      # deterministic instead of relying on where the kernel happens to split
-      # a coalesced pipelined write.
+      # A slow first statement keeps the ClientHandler :busy when the Sync arrives
       :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)"))
       Process.sleep(50)
 
