@@ -13,7 +13,9 @@ config :supavisor,
   env: Mix.env(),
   metrics_disabled: System.get_env("METRICS_DISABLED") == "true",
   switch_active_count: System.get_env("SWITCH_ACTIVE_COUNT", "100") |> String.to_integer(),
-  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "20") |> String.to_integer()
+  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "20") |> String.to_integer(),
+  # How long a client queues for a free slot before being rejected with EMAXCONN.
+  slot_wait_timeout: System.get_env("SLOT_WAIT_TIMEOUT", "1500") |> String.to_integer()
 
 config :prom_ex, storage_adapter: Supavisor.Monitoring.PromEx.Store
 

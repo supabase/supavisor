@@ -67,6 +67,27 @@ defmodule Supavisor.Manager do
   end
 
   @doc """
+  Asks the pool for a client slot without blocking the caller.
+
+  The caller receives `{:slot_granted, parameter_status, idle_timeout}` once it holds a
+  slot - immediately if the pool has room, otherwise when another client releases one.
+  Equivalent to `subscribe/2` having returned `{:ok, ps, idle_timeout}`, so the caller must
+  not also call `subscribe/2`.
+
+  Slots are granted in request order, so a client cannot lose its place to a newer arrival.
+  The caller is monitored, which makes terminating enough to withdraw the request - there
+  is no cancellation message to get wrong, and no reply that can arrive after the caller
+  has given up.
+
+  Sends `{:slot_denied, exception}` instead if the pool is shutting down.
+  """
+  @spec request_slot(pid | Supavisor.id(), pid) :: :ok
+  def request_slot(manager_or_id, pid \\ self()) do
+    manager = resolve_manager(manager_or_id)
+    GenServer.cast(manager, {:request_slot, pid})
+  end
+
+  @doc """
   Updates parameter status for the pool
 
   Sends the parameter status update to all subscribed client handlers.
@@ -234,7 +255,12 @@ defmodule Supavisor.Manager do
       terminating_error: nil,
       drain_caller: nil,
       drain_timer: nil,
-      waiting_for_secrets: []
+      waiting_for_secrets: [],
+      # Clients queued for a slot, in request order. Entries are never removed on
+      # withdrawal - `slot_waiters_live` is the source of truth and stale entries are
+      # skipped when granting, which keeps withdrawal O(1) instead of O(queue).
+      slot_waiters: :queue.new(),
+      slot_waiters_live: MapSet.new()
     }
 
     Logger.metadata(project: tenant, user: user, type: type, db_name: db_name)
@@ -256,18 +282,8 @@ defmodule Supavisor.Manager do
 
     case check_limit(state.mode, state.pool_size, state.max_clients, current_count) do
       :ok ->
-        ref = Process.monitor(pid)
-        :ets.insert(state.tid, {ref, pid, now()})
-        :ets.insert(state.pid_to_ref, {pid, ref})
-
-        new_state =
-          if state.parameter_status == [] do
-            update_in(state.wait_ps, &[pid | &1])
-          else
-            state
-          end
-
-        {:reply, {:ok, state.parameter_status, state.idle_timeout}, new_state}
+        {ps, idle_timeout, new_state} = do_subscribe(pid, state)
+        {:reply, {:ok, ps, idle_timeout}, new_state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -284,9 +300,12 @@ defmodule Supavisor.Manager do
         Logger.warning("Unsubscribe: no entry found for #{inspect(pid)}")
     end
 
-    new_state = %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
+    new_state =
+      %{state | wait_ps: Enum.reject(state.wait_ps, &(&1 == pid))}
+      |> maybe_complete_drain()
+      |> maybe_grant_slot()
 
-    {:reply, :ok, maybe_complete_drain(new_state)}
+    {:reply, :ok, new_state}
   end
 
   def handle_call({:set_parameter_status, ps}, _, %{parameter_status: []} = state) do
@@ -356,6 +375,37 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
+  def handle_cast({:request_slot, pid}, %{terminating_error: error} = state)
+      when not is_nil(error) do
+    send(pid, {:slot_denied, %PoolTerminatingError{underlying_error: error}})
+    {:noreply, state}
+  end
+
+  def handle_cast({:request_slot, pid}, state) do
+    current_count = :ets.info(state.tid, :size)
+
+    case check_limit(state.mode, state.pool_size, state.max_clients, current_count) do
+      :ok ->
+        {ps, idle_timeout, new_state} = do_subscribe(pid, state)
+        send(pid, {:slot_granted, ps, idle_timeout})
+        {:noreply, new_state}
+
+      {:error, _} ->
+        Logger.debug("Queueing #{inspect(pid)} for a slot on #{Supavisor.inspect_id(state.id)}")
+
+        # Monitoring the waiter is what makes withdrawal implicit: a client that gives up
+        # terminates, and the DOWN takes it out of the queue.
+        mon = Process.monitor(pid)
+
+        {:noreply,
+         %{
+           state
+           | slot_waiters: :queue.in({mon, pid}, state.slot_waiters),
+             slot_waiters_live: MapSet.put(state.slot_waiters_live, mon)
+         }}
+    end
+  end
+
   def handle_cast({:shutdown_with_error, error}, state) do
     Logger.warning(
       "Shutting down pool #{Supavisor.inspect_id(state.id)} with error: #{inspect(error)}"
@@ -410,13 +460,19 @@ defmodule Supavisor.Manager do
 
   @impl true
   def handle_info({:DOWN, ref, _, pid, _}, state) do
-    Process.cancel_timer(state.check_ref)
-    :ets.delete(state.tid, ref)
-    :ets.delete(state.pid_to_ref, pid)
+    # A client queued for a slot gave up or died before getting one. It holds nothing, so
+    # there is no slot to release - just drop it from the live set.
+    if MapSet.member?(state.slot_waiters_live, ref) do
+      {:noreply, %{state | slot_waiters_live: MapSet.delete(state.slot_waiters_live, ref)}}
+    else
+      Process.cancel_timer(state.check_ref)
+      :ets.delete(state.tid, ref)
+      :ets.delete(state.pid_to_ref, pid)
 
-    state = maybe_complete_drain(state)
+      state = state |> maybe_complete_drain() |> maybe_grant_slot()
 
-    {:noreply, %{state | check_ref: check_subscribers()}}
+      {:noreply, %{state | check_ref: check_subscribers()}}
+    end
   end
 
   def handle_info({:DB_HANDLER_DOWN, ref, _, _, _}, state) do
@@ -532,6 +588,63 @@ defmodule Supavisor.Manager do
     case Supavisor.get_local_manager(id) do
       nil -> raise "Manager not found for pool #{Supavisor.inspect_id(id)}"
       pid -> pid
+    end
+  end
+
+  # Registers `pid` as a client of this pool. Shared by the synchronous `subscribe/2` and
+  # by slot grants, so both produce identical state.
+  defp do_subscribe(pid, state) do
+    ref = Process.monitor(pid)
+    :ets.insert(state.tid, {ref, pid, now()})
+    :ets.insert(state.pid_to_ref, {pid, ref})
+
+    new_state =
+      if state.parameter_status == [] do
+        update_in(state.wait_ps, &[pid | &1])
+      else
+        state
+      end
+
+    {state.parameter_status, state.idle_timeout, new_state}
+  end
+
+  # Hands the slot just released to the client that has been queued longest.
+  #
+  # Called only from the two places a slot can be released, both of which run in this
+  # process - so the limit re-check below cannot be raced by a new arrival, and exactly one
+  # waiter can be admitted per release.
+  defp maybe_grant_slot(%{terminating_error: error} = state) when not is_nil(error), do: state
+
+  defp maybe_grant_slot(state) do
+    current_count = :ets.info(state.tid, :size)
+
+    case check_limit(state.mode, state.pool_size, state.max_clients, current_count) do
+      :ok -> grant_next_slot(state)
+      {:error, _} -> state
+    end
+  end
+
+  defp grant_next_slot(state) do
+    case :queue.out(state.slot_waiters) do
+      {:empty, slot_waiters} ->
+        %{state | slot_waiters: slot_waiters}
+
+      {{:value, {mon, pid}}, slot_waiters} ->
+        state = %{state | slot_waiters: slot_waiters}
+
+        if MapSet.member?(state.slot_waiters_live, mon) do
+          # do_subscribe/2 installs its own monitor for the client, so the queue monitor
+          # has done its job.
+          Process.demonitor(mon, [:flush])
+          state = %{state | slot_waiters_live: MapSet.delete(state.slot_waiters_live, mon)}
+
+          {ps, idle_timeout, state} = do_subscribe(pid, state)
+          send(pid, {:slot_granted, ps, idle_timeout})
+          state
+        else
+          # Stale entry for a waiter that already withdrew.
+          grant_next_slot(state)
+        end
     end
   end
 
