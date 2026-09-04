@@ -31,7 +31,13 @@ config :supavisor,
   transaction_proxy_ports:
     System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107") |> parse_integer_list.(),
   max_pools: 10,
-  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer()
+  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer(),
+  metrics_pusher_req_options: [
+    plug: {Req.Test, Supavisor.MetricsPusher.Global}
+  ],
+  tenant_metrics_pusher_req_options: [
+    plug: {Req.Test, Supavisor.MetricsPusher.Tenant}
+  ]
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",
