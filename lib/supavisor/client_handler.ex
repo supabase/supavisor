@@ -145,9 +145,46 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  # send cancel request to db
-  def handle_event(:info, :cancel_query, state, data) do
-    :ok = Cancel.maybe_forward_cancel_to_db(state, data)
+  # send cancel request to db — two-phase commit protocol
+  def handle_event(:info, {:cancel_query, from_pid, ref}, :busy, %{db_connection: db_conn} = _data)
+      when db_conn != nil and is_pid(from_pid) do
+    mref = Process.monitor(from_pid)
+    send(from_pid, {:cancel_claim, self(), ref})
+
+    receive do
+      {:cancel_granted, ^ref} ->
+        Process.demonitor(mref, [:flush])
+        {_pool, db_pid, _db_sock} = db_conn
+        DbHandler.cancel_query(db_pid, self())
+        send(from_pid, {:cancel_ack, ref})
+
+      {:DOWN, ^mref, :process, ^from_pid, _reason} ->
+        # Sender timed out or exited before grant. Do NOT cancel backend.
+        :ok
+    after
+      5_000 ->
+        Process.demonitor(mref, [:flush])
+        :ok
+    end
+
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, {:cancel_query, from_pid, ref}, _state, _data)
+      when is_pid(from_pid) do
+    send(from_pid, {:cancel_ack, ref})
+    :keep_state_and_data
+  end
+
+  # send cancel request to db — legacy atom protocol
+  def handle_event(:info, :cancel_query, :busy, %{db_connection: db_conn} = _data)
+      when db_conn != nil do
+    {_pool, db_pid, _db_sock} = db_conn
+    DbHandler.cancel_query(db_pid, self())
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, :cancel_query, _state, _data) do
     :keep_state_and_data
   end
 
