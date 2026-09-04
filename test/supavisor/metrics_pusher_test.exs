@@ -10,6 +10,13 @@ defmodule Supavisor.MetricsPusherTest do
 
   setup {Req.Test, :verify_on_exit!}
 
+  # Req.Test's plug adapter decompresses gzip'd request bodies (and strips
+  # content-encoding) before the plug sees them on newer Req versions, but
+  # not on the Req pinned here — so handle both to keep the assertions
+  # independent of that internal behavior.
+  defp maybe_gunzip(<<0x1F, 0x8B, _::binary>> = body), do: :zlib.gunzip(body)
+  defp maybe_gunzip(body), do: body
+
   # Helper function to start MetricsPusher and allow it to use Req.Test.
   # Defaults to the :global scope so existing scope-agnostic tests (HTTP
   # mechanics: auth, compression, error handling, extra_labels) don't need
@@ -73,10 +80,8 @@ defmodule Supavisor.MetricsPusherTest do
 
         assert Conn.get_req_header(conn, "content-type") == ["text/plain"]
 
-        # Req.Test's plug adapter transparently decompresses gzip'd request
-        # bodies (and strips content-encoding) before the plug sees them, so
-        # the body here is already plaintext regardless of `compress: true`.
         {:ok, body, conn} = Conn.read_body(conn)
+        body = maybe_gunzip(body)
 
         send(parent, {:req_called, body})
         Req.Test.text(conn, "")
@@ -259,6 +264,7 @@ defmodule Supavisor.MetricsPusherTest do
 
       Req.Test.expect(Supavisor.MetricsPusher.Tenant, 1, fn conn ->
         {:ok, body, conn} = Conn.read_body(conn)
+        body = maybe_gunzip(body)
         send(parent, {:req_called, body})
         Req.Test.text(conn, "")
       end)

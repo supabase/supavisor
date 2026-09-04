@@ -140,9 +140,8 @@ defmodule Supavisor.Monitoring.PromExTest do
       tenant = "prom_ex_split_test_tenant_1"
 
       Supavisor.PromEx.Plugins.Tenant.emit_telemetry_for_tenant(
-        Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
-        1,
-        ""
+        {Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
+         1}
       )
 
       Supavisor.PromEx.Plugins.Cluster.emit_cluster_size()
@@ -167,9 +166,8 @@ defmodule Supavisor.Monitoring.PromExTest do
       tenant = "prom_ex_split_test_tenant_2"
 
       Supavisor.PromEx.Plugins.Tenant.emit_telemetry_for_tenant(
-        Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
-        1,
-        ""
+        {Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name"),
+         1}
       )
 
       Supavisor.PromEx.Plugins.Cluster.emit_cluster_size()
