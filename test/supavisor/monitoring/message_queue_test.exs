@@ -64,8 +64,7 @@ defmodule Supavisor.PromEx.Plugins.MessageQueueTest do
             "Supavisor.PoolTerminator",
             "Supavisor.Cache_courier"
           ] do
-        assert_receive {^ref,
-                        {[:supavisor, :prom_ex, :process], measurement, %{name: ^name}}}
+        assert_receive {^ref, {[:supavisor, :prom_ex, :process], measurement, %{name: ^name}}}
 
         assert %{message_queue_len: len} = measurement
         assert is_integer(len) and len >= 0
