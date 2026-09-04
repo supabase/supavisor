@@ -28,6 +28,27 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT 1"))
       assert recv_ready_for_queries(sock, 1) == 1
     end
+
+    test "regression: delivers every reply when a segment begins with a Sync (#{tenant})" do
+      sock = connect(unquote(tenant))
+
+      # A slow first statement keeps the ClientHandler :busy when the Sync arrives
+      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)"))
+      Process.sleep(50)
+
+      # A sync, plus a query message.
+      #
+      # In the buggy implementation, the sync at the beginning of the packet would cause the 
+      # following ReadyForQuery to trigger a checkin, and the query response wouldn't be received 
+      :ok =
+        :gen_tcp.send(sock, [
+          <<?S, 4::32>>,
+          :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)")
+        ])
+
+      # Both statements and the bare Sync each produce a ReadyForQuery.
+      assert recv_ready_for_queries(sock, 3) == 3
+    end
   end
 
   defp connect(tenant) do

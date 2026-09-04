@@ -697,15 +697,6 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  # Sync when busy - send to db
-  def handle_event(_kind, {proto, _, <<?S, 4::32, _::binary>> = msg}, :busy, data)
-      when proto in @proto do
-    Logger.debug("ClientHandler: Receive sync")
-    :ok = sock_send(msg, data)
-
-    {:keep_state, data, handle_actions(data)}
-  end
-
   # Any message when idle - checkout and send to db
   def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
     case maybe_checkout(:on_query, data) do
