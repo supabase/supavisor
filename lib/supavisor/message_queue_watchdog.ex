@@ -64,9 +64,7 @@ defmodule Supavisor.MessageQueueWatchdog do
 
   defp check_queue_len(name, len)
        when name in @shutdown_processes and len > @shutdown_queue_len do
-    Logger.critical(
-      "#{__MODULE__}: #{name} message queue length is #{len}, shutting down node"
-    )
+    Logger.critical("#{__MODULE__}: #{name} message queue length is #{len}, shutting down node")
 
     System.stop()
   end
