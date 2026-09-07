@@ -70,6 +70,62 @@ defmodule Supavisor.ClientHandlerTest do
     end
   end
 
+  describe "waiting for a free client slot" do
+    alias Supavisor.Errors.MaxConnectionsError
+
+    setup do
+      %{
+        exception: MaxConnectionsError.new(:transaction, 2),
+        retry_event: {:hello, {:single, {"user", "tenant", "postgres", nil, false, false}}},
+        budget: Application.get_env(:supavisor, :admission_retries)
+      }
+    end
+
+    test "holds the connection and schedules a retry while budget remains", ctx do
+      data = %{admission_retries: 0, id: nil}
+      retry_event = ctx.retry_event
+
+      assert {:keep_state, %{admission_retries: 1},
+              {{:timeout, :admission_retry}, delay, ^retry_event}} =
+               @subject.wait_for_slot_or_terminate(data, retry_event, ctx.exception)
+
+      assert delay > 0
+    end
+
+    test "keeps counting retries so the total wait stays bounded", ctx do
+      data = %{admission_retries: ctx.budget - 1, id: nil}
+
+      assert {:keep_state, %{admission_retries: retries}, _action} =
+               @subject.wait_for_slot_or_terminate(data, ctx.retry_event, ctx.exception)
+
+      assert retries == ctx.budget
+    end
+
+    test "sends the original error to the client once the budget is exhausted", ctx do
+      {client, server} = sockpair()
+      data = %{admission_retries: ctx.budget, id: nil, sock: {:gen_tcp, server}}
+
+      assert {:stop, :normal} =
+               @subject.wait_for_slot_or_terminate(data, ctx.retry_event, ctx.exception)
+
+      assert {:ok, response} = :gen_tcp.recv(client, 0, 1_000)
+      assert response =~ "EMAXCONN"
+      assert response =~ "max client connections reached"
+    end
+
+    test "replays the pending event when the retry timer fires", ctx do
+      retry_event = ctx.retry_event
+
+      assert {:keep_state_and_data, {:next_event, :internal, ^retry_event}} =
+               @subject.handle_event(
+                 {:timeout, :admission_retry},
+                 retry_event,
+                 :handshake,
+                 %{}
+               )
+    end
+  end
+
   describe "socket DOWN handler" do
     test "handles DOWN message for matching ref" do
       ref = make_ref()
