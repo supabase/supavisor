@@ -98,7 +98,8 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   """
   @spec effective_peer_ip(local? :: boolean(), forwarded_ip :: String.t() | nil, String.t()) ::
           String.t()
-  def effective_peer_ip(_local? = true, forwarded_ip, socket_peer_ip) when is_binary(forwarded_ip) do
+  def effective_peer_ip(_local? = true, forwarded_ip, socket_peer_ip)
+      when is_binary(forwarded_ip) do
     case :inet.parse_strict_address(to_charlist(forwarded_ip)) do
       {:ok, ip} -> List.to_string(:inet.ntoa(ip))
       {:error, _} -> socket_peer_ip
