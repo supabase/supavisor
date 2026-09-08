@@ -3,6 +3,7 @@ defmodule SupavisorTest do
 
   require Supavisor
 
+  import ExUnit.CaptureLog
   import Supavisor.Asserts
 
   alias Supavisor.Errors.{
@@ -116,6 +117,17 @@ defmodule SupavisorTest do
                result = Supavisor.start_local_pool(@fake_id, secrets, nil)
 
       assert_valid_error(result)
+    end
+
+    test "sets project/user logger metadata at :info level" do
+      secrets = %{user: "user"}
+
+      log =
+        capture_log([level: :info], fn -> Supavisor.start_local_pool(@fake_id, secrets, nil) end)
+
+      assert log =~ "Starting pool(s) for"
+      assert log =~ "project=nonexistent_tenant"
+      assert log =~ "user=user"
     end
   end
 end

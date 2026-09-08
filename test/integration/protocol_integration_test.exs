@@ -191,4 +191,127 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     #   assert auth_type == 3
     # end
   end
+
+  describe "client_ip forwarded on proxied JIT connections" do
+    # Stands in for the tenant's JIT API. Records the request body (which carries
+    # `rhost`, the IP Supavisor attributes the connection to) and rejects the token
+    # so the connection is terminated cleanly without reaching the database.
+    defmodule JitApiStub do
+      @behaviour Plug
+      import Plug.Conn
+
+      def init(test_pid), do: test_pid
+
+      def call(conn, test_pid) do
+        {:ok, body, conn} = read_body(conn)
+        send(test_pid, {:jit_request, Jason.decode!(body)})
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(403, Jason.encode!(%{"message" => "forbidden"}))
+      end
+    end
+
+    @forwarded_ip "203.0.113.9"
+    @token "sbp_0000000000000000000000000000000000000000"
+
+    setup do
+      Supavisor.Support.SSLHelper.setup_downstream_certs()
+
+      ref = :"jit_api_stub_#{System.unique_integer([:positive])}"
+
+      start_supervised!(
+        {Plug.Cowboy, scheme: :http, plug: {JitApiStub, self()}, options: [port: 0, ref: ref]}
+      )
+
+      jit_port = :ranch.get_port(ref)
+
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+      tenant_id = "jit_client_ip_tenant_#{System.unique_integer([:positive])}"
+
+      {:ok, _tenant} =
+        Supavisor.Tenants.create_tenant(%{
+          db_database: db_conf[:database],
+          db_host: to_string(db_conf[:hostname]),
+          db_port: db_conf[:port],
+          external_id: tenant_id,
+          require_user: true,
+          default_parameter_status: %{"server_version" => "15.0"},
+          use_jit: true,
+          jit_api_url: "http://127.0.0.1:#{jit_port}/jit",
+          users: [
+            %{
+              "db_user" => to_string(db_conf[:username]),
+              "db_password" => to_string(db_conf[:password]),
+              "pool_size" => 3,
+              "mode_type" => "transaction"
+            }
+          ]
+        })
+
+      on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+
+      %{
+        user: "#{db_conf[:username]}.#{tenant_id}",
+        database: to_string(db_conf[:database]),
+        local_port: hd(Application.get_env(:supavisor, :transaction_proxy_ports)),
+        public_port: Application.get_env(:supavisor, :proxy_port_transaction)
+      }
+    end
+
+    test "local listener attributes the connection to the forwarded client_ip", ctx do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", ctx.local_port, [:binary, active: false])
+
+      # This is what a peer node's proxy DbHandler sends when forwarding a client
+      # that authenticated with JIT over TLS (see DbHandler.send_startup/4).
+      jit_handshake(
+        {:gen_tcp, sock},
+        ctx,
+        "--jit=true --client_tls=true --client_ip=#{@forwarded_ip}"
+      )
+
+      assert_receive {:jit_request, %{"rhost" => @forwarded_ip, "role" => "postgres"}}, 5_000
+    end
+
+    test "local listener falls back to the socket peer without client_ip", ctx do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", ctx.local_port, [:binary, active: false])
+
+      jit_handshake({:gen_tcp, sock}, ctx, "--jit=true --client_tls=true")
+
+      assert_receive {:jit_request, %{"rhost" => "127.0.0.1", "role" => "postgres"}}, 5_000
+    end
+
+    test "public listener ignores client_ip supplied by the client", ctx do
+      {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", ctx.public_port, [:binary, active: false])
+      :ok = :gen_tcp.send(tcp, Server.ssl_request_message())
+      {:ok, "S"} = :gen_tcp.recv(tcp, 1, 5_000)
+      {:ok, ssl} = :ssl.connect(tcp, [verify: :verify_none, active: false], 5_000)
+
+      # An external client must not be able to pick the IP the JIT API sees.
+      jit_handshake({:ssl, ssl}, ctx, "--jit=true --client_ip=#{@forwarded_ip}")
+
+      assert_receive {:jit_request, %{"rhost" => "127.0.0.1", "role" => "postgres"}}, 5_000
+    end
+
+    # Sends the startup message, answers the cleartext password request with a JIT
+    # token and reads the server's (error) reply.
+    defp jit_handshake({mod, sock}, ctx, options) do
+      startup =
+        :pgo_protocol.encode_startup_message([
+          {"user", ctx.user},
+          {"database", ctx.database},
+          {"options", options}
+        ])
+
+      :ok = mod.send(sock, startup)
+
+      # 3 = AuthenticationCleartextPassword
+      {:ok, <<?R, 8::32, 3::32>>} = mod.recv(sock, 0, 5_000)
+
+      password_message = <<?p, byte_size(@token) + 5::32, @token::binary, 0>>
+      :ok = mod.send(sock, password_message)
+
+      assert {:ok, <<?E, _::binary>>} = mod.recv(sock, 0, 5_000)
+    end
+  end
 end
