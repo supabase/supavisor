@@ -230,6 +230,7 @@ defmodule Supavisor.DbHandler do
       proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
+      client_ip: Map.get(config, :client_ip),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
       backend_message_streaming: true,
       mode: config.mode,
@@ -304,7 +305,11 @@ defmodule Supavisor.DbHandler do
             options = %{
               "search_path" => Supavisor.id(data.id, :search_path),
               "client_tls" => if(data.proxy, do: to_string(data.client_tls)),
-              "jit" => if(data.proxy, do: to_string(data.client_jit))
+              "jit" => if(data.proxy, do: to_string(data.client_jit)),
+              # original client's IP, so the pool node attributes the
+              # connection (JIT auth, circuit breaker, logs) to the client
+              # rather than to this node
+              "client_ip" => if(data.proxy, do: data.client_ip)
             }
 
             case send_startup(sock, conn_params, tenant, options) do

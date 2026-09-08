@@ -39,7 +39,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @type startup_message_data() ::
           {atom(),
            {String.t(), String.t(), String.t() | nil, String.t() | nil, boolean(),
-            boolean() | nil}}
+            boolean() | nil, String.t() | nil}}
 
   ## Startup Packet Processing
 
@@ -53,14 +53,14 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
           | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
-         {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}} <-
+         {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}} <-
            extract_and_validate_user_info(hello.payload) do
       Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
       app_name = normalize_app_name(hello.payload["application_name"])
       log_level = extract_log_level(hello)
 
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}, app_name,
-       log_level}
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
+       app_name, log_level}
     end
   end
 
@@ -78,11 +78,34 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
       search_path = payload["search_path"] || options["search_path"]
       jit = options["jit"] == "true"
       client_tls = options["client_tls"] && options["client_tls"] == "true"
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}}
+      # Set by a peer node when it forwards a proxied connection; carries the
+      # original client's IP. Only honored on local listeners, see effective_peer_ip/3.
+      client_ip = options["client_ip"]
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
     else
       {:error, %InvalidUserInfoError{user: user, db_name: db_name}}
     end
   end
+
+  @doc """
+  Resolves the peer IP to attribute a connection to.
+
+  Proxied connections arrive on a `local: true` listener from a peer node, so the
+  socket's peer is that node rather than the client. The forwarding node passes the
+  original client's IP in the `client_ip` startup option; we use it only when the
+  listener is local (never reachable by external clients) and the value is a valid
+  IP address. Otherwise the socket's peer IP is kept.
+  """
+  @spec effective_peer_ip(local? :: boolean(), forwarded_ip :: String.t() | nil, String.t()) ::
+          String.t()
+  def effective_peer_ip(true, forwarded_ip, socket_peer_ip) when is_binary(forwarded_ip) do
+    case :inet.parse_strict_address(to_charlist(forwarded_ip)) do
+      {:ok, ip} -> List.to_string(:inet.ntoa(ip))
+      {:error, _} -> socket_peer_ip
+    end
+  end
+
+  def effective_peer_ip(_local?, _forwarded_ip, socket_peer_ip), do: socket_peer_ip
 
   ## Client Packet Processing
 
