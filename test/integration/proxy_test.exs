@@ -523,7 +523,8 @@ defmodule Supavisor.Integration.ProxyTest do
 
       # The throttle: the client is held rather than rejected immediately, which is what
       # slows down a client reconnecting in a tight loop.
-      assert elapsed >= Application.get_env(:supavisor, :slot_wait_timeout) * 1_000 * 0.9
+      assert elapsed >=
+               Application.get_env(:supavisor, :connection_slot_wait_timeout) * 1_000 * 0.9
     end
 
     test "grants slots in request order", ctx do

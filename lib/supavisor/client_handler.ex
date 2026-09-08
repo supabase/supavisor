@@ -17,7 +17,7 @@ defmodule Supavisor.ClientHandler do
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
-  @slot_wait_timeout Application.compile_env(:supavisor, :slot_wait_timeout)
+  @connection_slot_wait_timeout Application.compile_env(:supavisor, :connection_slot_wait_timeout)
   @max_checkout_retries 2
   @timeout_subscribe 500
   @ssl_handshake_timeout 2_500
@@ -353,8 +353,7 @@ defmodule Supavisor.ClientHandler do
 
       # The pool is full. Queue for a slot instead of rejecting: the Manager grants slots
       # in request order as clients disconnect, so a client is admitted the moment one
-      # frees rather than having to reconnect - and reconnecting is what makes a saturated
-      # pool expensive, since every attempt pays for another TLS handshake.
+      # frees rather than having to reconnect.
       {:error, %MaxConnectionsError{} = exception} ->
         queue_for_slot_or_terminate(data, exception)
 
@@ -406,7 +405,7 @@ defmodule Supavisor.ClientHandler do
     Error.terminate_with_error(data, exception, :handshake)
   end
 
-  def handle_event(:state_timeout, :slot_wait_timeout, :waiting_for_slot, data) do
+  def handle_event(:state_timeout, :connection_slot_wait_timeout, :waiting_for_slot, data) do
     Telem.client_admission(:rejected, data.id)
     Error.terminate_with_error(data, data.pending_max_connections, :handshake)
   end
@@ -1037,9 +1036,8 @@ defmodule Supavisor.ClientHandler do
   @doc """
   Queues this client for a slot on a full pool instead of rejecting it immediately.
 
-  Rejecting makes the client reconnect, and every reconnect pays for another TLS handshake
-  before being rejected again - which is how a saturated pool becomes a CPU outage. Queuing
-  keeps the handshake we already paid for and lets the Manager hand over a slot the instant
+  Rejecting makes the client reconnect and go through the TLS handshake again.
+  Queuing keeps the handshake we already paid for and lets the Manager hand over a slot the instant
   one frees. A client that never gets one receives the same error it would have received
   immediately, just later, which throttles its retry loop.
   """
@@ -1054,7 +1052,7 @@ defmodule Supavisor.ClientHandler do
         Manager.request_slot(manager)
 
         {:next_state, :waiting_for_slot, %{data | pending_max_connections: exception},
-         {:state_timeout, @slot_wait_timeout, :slot_wait_timeout}}
+         {:state_timeout, @connection_slot_wait_timeout, :connection_slot_wait_timeout}}
     end
   end
 
