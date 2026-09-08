@@ -1083,11 +1083,15 @@ defmodule Supavisor.DbHandler do
   defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
-  # bind to the socket. If it doesn't, we must send the parse pkt first.
+  # packet to the socket. If it doesn't, we must send the parse pkt first.
   #
-  # If we received a bind without a parse, we need to intercept the parse response, otherwise,
-  # the client will receive an unexpected message.
-  defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
+  # If we replay a parse, we need to intercept the parse response, otherwise the client will
+  # receive an unexpected message.
+  defp handle_prepared_statement_pkt(
+         {packet_type, stmt_name, pkt, parse_pkt},
+         {iodata, data}
+       )
+       when packet_type in [:bind_pkt, :describe_pkt] do
     storage_mod = data.prepared_statements_storage
 
     if storage_mod.member?(data.prepared_statements, stmt_name) do
@@ -1128,10 +1132,6 @@ defmodule Supavisor.DbHandler do
              )
            end)
      }}
-  end
-
-  defp handle_prepared_statement_pkt({:describe_pkt, _stmt_name, pkt}, {iodata, data}) do
-    {[pkt | iodata], data}
   end
 
   # If we stop generating unique id per statement, and instead do deterministic ids,
