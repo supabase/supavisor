@@ -230,6 +230,7 @@ defmodule Supavisor.DbHandler do
       proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
+      client_ip: Map.get(config, :client_ip),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
       backend_message_streaming: true,
       mode: config.mode,
@@ -282,7 +283,13 @@ defmodule Supavisor.DbHandler do
 
     connect_timeout = if data.proxy, do: 1_000, else: 5_000
 
-    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts, connect_timeout) do
+    host =
+      case :inet.parse_address(conn_params.host) do
+        {:ok, ip} -> ip
+        {:error, _} -> conn_params.host
+      end
+
+    case :gen_tcp.connect(host, conn_params.port, sock_opts, connect_timeout) do
       {:ok, sock} ->
         # Ensure buffer >= recbuf to avoid unnecessary copying
         # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
@@ -298,7 +305,8 @@ defmodule Supavisor.DbHandler do
             options = %{
               "search_path" => Supavisor.id(data.id, :search_path),
               "client_tls" => if(data.proxy, do: to_string(data.client_tls)),
-              "jit" => if(data.proxy, do: to_string(data.client_jit))
+              "jit" => if(data.proxy, do: to_string(data.client_jit)),
+              "client_ip" => if(data.proxy, do: data.client_ip)
             }
 
             case send_startup(sock, conn_params, tenant, options) do
@@ -1077,11 +1085,15 @@ defmodule Supavisor.DbHandler do
   defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
-  # bind to the socket. If it doesn't, we must send the parse pkt first.
+  # packet to the socket. If it doesn't, we must send the parse pkt first.
   #
-  # If we received a bind without a parse, we need to intercept the parse response, otherwise,
-  # the client will receive an unexpected message.
-  defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
+  # If we replay a parse, we need to intercept the parse response, otherwise the client will
+  # receive an unexpected message.
+  defp handle_prepared_statement_pkt(
+         {packet_type, stmt_name, pkt, parse_pkt},
+         {iodata, data}
+       )
+       when packet_type in [:bind_pkt, :describe_pkt] do
     storage_mod = data.prepared_statements_storage
 
     if storage_mod.member?(data.prepared_statements, stmt_name) do
@@ -1122,10 +1134,6 @@ defmodule Supavisor.DbHandler do
              )
            end)
      }}
-  end
-
-  defp handle_prepared_statement_pkt({:describe_pkt, _stmt_name, pkt}, {iodata, data}) do
-    {[pkt | iodata], data}
   end
 
   # If we stop generating unique id per statement, and instead do deterministic ids,

@@ -352,6 +352,7 @@ defmodule Supavisor do
         secrets,
         log_level \\ nil
       ) do
+    Logger.metadata(project: tenant, user: secrets.user)
     Logger.info("Starting pool(s) for #{inspect_id(id)}")
 
     secrets_map = secrets

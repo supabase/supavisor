@@ -63,6 +63,9 @@ defmodule Supavisor.Protocol.DebugTest do
       assert Debug.packet_to_string({:bind_pkt, "stmt1", nil, nil}, :frontend) ==
                "BindMessage(statement=\"stmt1\")"
 
+      assert Debug.packet_to_string({:describe_pkt, "stmt1", nil, nil}, :frontend) ==
+               "DescribeMessage(statement=\"stmt1\")"
+
       assert Debug.packet_to_string({:parse_pkt, "stmt2", nil}, :backend) ==
                "ParseMessage(statement=\"stmt2\")"
     end
