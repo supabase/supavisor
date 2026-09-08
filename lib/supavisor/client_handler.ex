@@ -1050,9 +1050,10 @@ defmodule Supavisor.ClientHandler do
   # Completes connection setup once this client holds a pool slot, whether it was granted
   # synchronously by `Supavisor.subscribe/1` or handed over later by the Manager.
   defp finish_subscribe(data, opts) do
-    with manager_ref = Process.monitor(opts.workers.manager),
-         data = Map.merge(data, opts.workers),
-         {:ok, db_connection} <- maybe_checkout(:on_connect, data),
+    manager_ref = Process.monitor(opts.workers.manager)
+    data = Map.merge(data, opts.workers)
+
+    with {:ok, db_connection} <- maybe_checkout(:on_connect, data),
          :ok <- maybe_set_application_name(data, db_connection) do
       data = %{
         data
