@@ -306,9 +306,6 @@ defmodule Supavisor.DbHandler do
               "search_path" => Supavisor.id(data.id, :search_path),
               "client_tls" => if(data.proxy, do: to_string(data.client_tls)),
               "jit" => if(data.proxy, do: to_string(data.client_jit)),
-              # original client's IP, so the pool node attributes the
-              # connection (JIT auth, circuit breaker, logs) to the client
-              # rather than to this node
               "client_ip" => if(data.proxy, do: data.client_ip)
             }
 
