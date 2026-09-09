@@ -11,7 +11,8 @@ defmodule Supavisor.ClientHandler.Error do
   # TODO: make response delay configurable per error via the Supavisor.Error behaviour
   @delayed_response_errors %{
     Supavisor.Errors.TenantOrUserNotFoundError => 2_500,
-    Supavisor.Errors.WrongPasswordError => 500
+    Supavisor.Errors.WrongPasswordError => 500,
+    Supavisor.Errors.MaxConnectionsError => 500
   }
 
   @type context :: :handshake | :authenticated
