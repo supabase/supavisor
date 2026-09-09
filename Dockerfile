@@ -12,8 +12,15 @@
 #   - https://pkgs.org/ - resource for finding needed packages
 #   - Ex: hexpm/elixir:1.14.0-erlang-25.0.3-debian-bullseye-20210902-slim
 #
-ARG ELIXIR_VERSION=1.18.4
-ARG OTP_VERSION=27.3.4.12
+# ELIXIR_VERSION/OTP_VERSION mirror the elixir/erlang lines in .tool-versions.
+# They cannot be read from that file here: BuildKit resolves the FROM below
+# while parsing this file, so no RUN has executed yet and a pre-FROM ARG can
+# only come from --build-arg or its literal default. Instead the builder stage
+# re-reads .tool-versions and fails the build if these drift out of sync, and
+# publish_docker.yml derives its build-args from .tool-versions directly.
+# DEBIAN_VERSION has no .tool-versions equivalent.
+ARG ELIXIR_VERSION=1.18.5
+ARG OTP_VERSION=27.3.4.16
 ARG DEBIAN_VERSION=trixie-20260518-slim
 
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
@@ -31,6 +38,33 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Prepare build dir
 WORKDIR /app
+
+# Verify the base image actually carries the toolchain .tool-versions asks for.
+# The ARGs above pick the image and cannot be computed from the file, so this
+# is what keeps them honest: a stale ARG fails the build instead of silently
+# shipping a release built on the wrong Elixir/OTP. Set to "off" when you are
+# deliberately building a tag on a different toolchain than it records --
+# publish_docker.yml does this whenever an explicit version override is passed.
+ARG TOOL_VERSIONS_CHECK=strict
+COPY .tool-versions .tool-versions
+RUN set -eu; \
+  if [ "$TOOL_VERSIONS_CHECK" = "off" ]; then \
+    echo "TOOL_VERSIONS_CHECK=off: skipping .tool-versions verification"; \
+  else \
+    want_elixir="$(awk '$1=="elixir"{print $2}' .tool-versions | sed -E 's/-otp-[0-9]+$//')"; \
+    want_otp="$(awk '$1=="erlang"{print $2}' .tool-versions)"; \
+    have_elixir="$(elixir --short-version)"; \
+    have_otp="$(cat "$(erl -noshell -eval 'io:format("~s",[code:root_dir()]),halt().')"/releases/*/OTP_VERSION | head -n1)"; \
+    if [ "$want_elixir" != "$have_elixir" ] || [ "$want_otp" != "$have_otp" ]; then \
+      echo "ERROR: base image toolchain does not match .tool-versions"; \
+      echo "  elixir: .tool-versions wants $want_elixir, image has $have_elixir"; \
+      echo "  erlang: .tool-versions wants $want_otp, image has $have_otp"; \
+      echo "Update the ELIXIR_VERSION/OTP_VERSION ARGs in this Dockerfile to match,"; \
+      echo "or pass --build-arg TOOL_VERSIONS_CHECK=off to build on a different toolchain."; \
+      exit 1; \
+    fi; \
+    echo "toolchain matches .tool-versions: elixir $have_elixir, erlang $have_otp"; \
+  fi
 
 # Install hex + rebar
 RUN mix local.hex --force && \
