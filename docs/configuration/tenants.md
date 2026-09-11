@@ -44,4 +44,6 @@ connection
 
 `client_idle_timeout` - the maximum duration of an idle client connection
 
+`server_idle_timeout` - the maximum duration of an idle database connection
+
 `allow_list` - a list of CIDR ranges which are allowed to connect
