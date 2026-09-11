@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -36,9 +38,12 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             version="${INPUT_VERSION#v}"
+          elif [ "$EVENT_NAME" = "release" ]; then
+            version="${RELEASE_TAG#v}"
           else
             version="${GITHUB_REF_NAME#v}"
           fi
