@@ -135,4 +135,140 @@ defmodule Supavisor.Integration.SecretCheckerTest do
     assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{}} =
              Task.await(task, 5_000)
   end
+
+  describe "telemetry:" do
+    setup ctx do
+      ref = make_ref()
+
+      :telemetry.attach(
+        {__MODULE__, ctx.test},
+        ctx.event,
+        fn _event, measurements, metadata, {pid, ref} ->
+          send(pid, {ref, measurements, metadata})
+        end,
+        {self(), ref}
+      )
+
+      on_exit(fn -> :telemetry.detach({__MODULE__, ctx.test}) end)
+      {:ok, ref: ref}
+    end
+
+    @tag event: [:supavisor, :secret_checker, :get_secrets, :stop, :local]
+    test "get_secrets/1 emits :local event when pool is not started", %{
+      tenant_id: tenant_id,
+      db_conf: db_conf,
+      ref: ref
+    } do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: tenant_id,
+          user: to_string(db_conf[:username]),
+          mode: :transaction,
+          db: db_conf[:database]
+        )
+
+      assert {:error, :not_started} = Supavisor.SecretChecker.get_secrets(id)
+      assert_receive {^ref, %{duration: duration}, %{status: :error}}
+      assert is_integer(duration) and duration >= 0
+    end
+
+    @tag event: [:supavisor, :secret_checker, :get_secrets, :stop, :local]
+    test "get_secrets/1 emits :local event on successful fetch", %{
+      tenant_id: tenant_id,
+      db_conf: db_conf,
+      ref: ref
+    } do
+      proxy =
+        start_supervised!(
+          {Postgrex,
+           hostname: db_conf[:hostname],
+           port: Application.get_env(:supavisor, :proxy_port_transaction),
+           database: db_conf[:database],
+           password: db_conf[:password],
+           username: "#{db_conf[:username]}.#{tenant_id}"},
+          id: :telemetry_proxy_conn
+        )
+
+      assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+      Process.sleep(100)
+
+      pool_id =
+        Supavisor.id(
+          type: :single,
+          tenant: tenant_id,
+          user: to_string(db_conf[:username]),
+          mode: :transaction,
+          db: db_conf[:database]
+        )
+
+      assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{}} =
+               Supavisor.SecretChecker.get_secrets(pool_id)
+
+      assert_receive {^ref, %{duration: duration}, %{status: :ok}}
+      assert is_integer(duration) and duration > 0
+    end
+
+    @tag event: [:supavisor, :secret_checker, :update_credentials, :stop, :local]
+    test "update_credentials/3 emits :local event on successful update", %{
+      tenant_id: tenant_id,
+      db_conf: db_conf,
+      ref: ref
+    } do
+      proxy =
+        start_supervised!(
+          {Postgrex,
+           hostname: db_conf[:hostname],
+           port: Application.get_env(:supavisor, :proxy_port_transaction),
+           database: db_conf[:database],
+           password: db_conf[:password],
+           username: "#{db_conf[:username]}.#{tenant_id}"},
+          id: :telemetry_proxy_conn
+        )
+
+      assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+      Process.sleep(100)
+
+      pool_id =
+        Supavisor.id(
+          type: :single,
+          tenant: tenant_id,
+          user: to_string(db_conf[:username]),
+          mode: :transaction,
+          db: db_conf[:database]
+        )
+
+      assert :ok =
+               Supavisor.SecretChecker.update_credentials(
+                 pool_id,
+                 to_string(db_conf[:username]),
+                 to_string(db_conf[:password])
+               )
+
+      assert_receive {^ref, %{duration: duration}, %{status: :ok}}
+      assert is_integer(duration) and duration > 0
+    end
+
+    @tag event: [:supavisor, :secret_checker, :update_credentials, :stop, :local]
+    test "update_credentials/3 emits :local event when pool is not started", %{
+      tenant_id: tenant_id,
+      db_conf: db_conf,
+      ref: ref
+    } do
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: tenant_id,
+          user: to_string(db_conf[:username]),
+          mode: :transaction,
+          db: db_conf[:database]
+        )
+
+      assert {:error, :not_started} =
+               Supavisor.SecretChecker.update_credentials(id, "new_user", "new_password")
+
+      assert_receive {^ref, %{duration: duration}, %{status: :error}}
+      assert is_integer(duration) and duration >= 0
+    end
+  end
 end
