@@ -14,9 +14,14 @@ dev:
 	DB_POOL_SIZE="5" \
 	METRICS_DISABLED="false" \
 	AVAILABILITY_ZONE="ap-southeast-1b" \
+ 	API_JWT_TRUSTED_ISSUER="" \
 	ERL_AFLAGS="-kernel shell_history enabled +zdbbl 2097151" \
+ 	API_JWT_TRUSTED_ISSUER="https://a1e49c3a-19a8-4e0b-a11a-80d7e2c30bff.tokens.sts.global.api.aws" \
+ 	API_JWT_EXPECTED_AUD="supavisor-api" \
+ 	API_JWT_ALLOWED_SUBS="" \
 	iex --name node1@127.0.0.1 --cookie cookie -S mix run --no-halt
 
+   
 dev.node2:
 	PORT=4001 \
 	MIX_ENV=dev \

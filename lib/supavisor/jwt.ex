@@ -70,6 +70,47 @@ defmodule Supavisor.Jwt do
     end
   end
 
+  @doc """
+  Authorizes a token against either a shared HMAC secret or, if configured,
+  AWS-identity JWKS verification (`Supavisor.Jwt.AwsIdentity`) — dispatching
+  on the token's JWS header `alg` rather than trying one then the other.
+  `HS256/384/512` always goes through the existing HMAC path unchanged;
+  anything else only succeeds if `jwks_config` is set, so this is a no-op
+  behavior change wherever JWKS isn't configured.
+  """
+  @spec authorize_dual(String.t(), String.t(), Supavisor.Jwt.AwsIdentity.config() | nil) ::
+          {:ok, map(), :hmac | :jwks} | {:error, any()}
+  def authorize_dual(token, hmac_secret, jwks_config) when is_binary(token) do
+    token = clean_token(token)
+
+    with {:ok, alg} <- peek_alg(token) do
+      dispatch_authorize(token, alg, hmac_secret, jwks_config)
+    end
+  end
+
+  def authorize_dual(_token, _hmac_secret, _jwks_config), do: {:error, :token_not_a_string}
+
+  defp dispatch_authorize(token, alg, hmac_secret, _jwks_config) when alg in @hs_algorithms do
+    with {:ok, claims} <- verify(token, hmac_secret), do: {:ok, claims, :hmac}
+  end
+
+  defp dispatch_authorize(token, _alg, _hmac_secret, jwks_config) when is_map(jwks_config) do
+    with {:ok, claims} <- Supavisor.Jwt.AwsIdentity.verify(token, jwks_config),
+         do: {:ok, claims, :jwks}
+  end
+
+  defp dispatch_authorize(_token, _alg, _hmac_secret, _jwks_config),
+    do: {:error, :jwks_not_configured}
+
+  defp peek_alg(token) do
+    with {:ok, header} <- check_header_format(token) do
+      case header["alg"] do
+        alg when is_binary(alg) -> {:ok, alg}
+        _ -> {:error, :missing_alg}
+      end
+    end
+  end
+
   @spec verify(String.t(), String.t()) :: {:ok, map()} | {:error, any()}
   def verify(token, secret) when is_binary(token) do
     with {:ok, _claims} <- check_claims_format(token),

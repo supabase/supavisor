@@ -1,6 +1,8 @@
 defmodule SupavisorWeb.Router do
   use SupavisorWeb, :router
 
+  require Logger
+
   pipeline :browser do
     plug(:accepts, ["html"])
     plug(:fetch_session)
@@ -12,7 +14,7 @@ defmodule SupavisorWeb.Router do
 
   pipeline :api do
     plug(:accepts, ["json"])
-    plug(:check_auth, [:api_jwt_secret, :api_blocklist])
+    plug(:check_auth, [:api_jwt_secret, :api_blocklist, :api_jwks_config])
     plug(OpenApiSpex.Plug.PutApiSpec, module: SupavisorWeb.ApiSpec)
   end
 
@@ -106,10 +108,50 @@ defmodule SupavisorWeb.Router do
          {:ok, _claims} <- Supavisor.Jwt.authorize(token, secret) do
       conn
     else
-      _ ->
-        conn
-        |> send_resp(403, "")
-        |> halt()
+      other ->
+        reject(conn, other)
     end
   end
+
+  # `:api` pipeline only — accepts either the shared HMAC secret (unchanged
+  # behavior) or, if `jwks_key`'s config is set, an AWS-identity JWT verified
+  # via JWKS (`Supavisor.Jwt.AwsIdentity`). See `Supavisor.Jwt.authorize_dual/3`.
+  defp check_auth(conn, [secret_key, blocklist_key, jwks_key]) do
+    secret = Application.fetch_env!(:supavisor, secret_key)
+    blocklist = Application.fetch_env!(:supavisor, blocklist_key)
+    jwks_config = Application.get_env(:supavisor, jwks_key)
+
+    with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
+         token <- Regex.replace(~r/\s|\n/, URI.decode(token), ""),
+         false <- token in blocklist,
+         {:ok, _claims, method} <- Supavisor.Jwt.authorize_dual(token, secret, jwks_config) do
+      :telemetry.execute([:supavisor, :jwt_auth], %{count: 1}, %{
+        method: method,
+        pipeline: :api
+      })
+
+      conn
+    else
+      other ->
+        reject(conn, other)
+    end
+  end
+
+  # Logs *why* a request was rejected (never the token/secret itself) before
+  # the usual 403 — without this, a failed request is a black box: no way to
+  # tell "no auth header" from "blocklisted" from "untrusted issuer" from a
+  # JWKS-fetch failure just by looking at the response.
+  defp reject(conn, with_else_value) do
+    Logger.warning(
+      "check_auth: rejected #{conn.method} #{conn.request_path}: #{inspect(reject_reason(with_else_value))}"
+    )
+
+    conn
+    |> send_resp(403, "")
+    |> halt()
+  end
+
+  defp reject_reason(true), do: :token_blocklisted
+  defp reject_reason({:error, _reason} = error), do: error
+  defp reject_reason(_other), do: :missing_or_malformed_authorization_header
 end

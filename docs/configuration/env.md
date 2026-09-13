@@ -60,6 +60,9 @@ This document provides a categorized list of all environment variables used in S
 | ------------------------- | --------------------------------------------------------------- | ------------- | -------------------- |
 | `JWT_CLAIM_VALIDATORS`    | JWT claim validators configuration                              | `{}`          | No                   |
 | `API_JWT_SECRET`          | Secret for API JWT authentication                               | -             | No                   |
+| `API_JWT_TRUSTED_ISSUER`  | AWS STS issuer trusted for `/api` (enables AWS-identity JWKS auth alongside `API_JWT_SECRET`; unset = disabled). Deliberately singular — see `Supavisor.Jwt.JwksStrategy` | -             | No                   |
+| `API_JWT_ALLOWED_SUBS`    | Comma-separated IAM principal ARNs (`sub` claim) allowed on `/api` when `API_JWT_TRUSTED_ISSUER` is set | -             | Yes, if `API_JWT_TRUSTED_ISSUER` set                   |
+| `API_JWT_EXPECTED_AUD`    | Expected `aud` claim on AWS-identity `/api` tokens                | -             | Yes, if `API_JWT_TRUSTED_ISSUER` set                   |
 | `METRICS_JWT_SECRET`      | Secret for metrics JWT authentication                           | -             | No                   |
 | `API_TOKEN_BLOCKLIST`     | Comma-separated list of blocked API tokens                      | -             | No                   |
 | `METRICS_TOKEN_BLOCKLIST` | Comma-separated list of blocked metrics tokens                  | -             | No                   |
