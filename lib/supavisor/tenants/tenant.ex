@@ -33,6 +33,12 @@ defmodule Supavisor.Tenants.Tenant do
     field(:allow_list, {:array, :string}, default: ["0.0.0.0/0", "::/0"])
     field(:availability_zone, :string)
     field(:feature_flags, :map, default: %{})
+
+    field(:txn_mode_set_action, Ecto.Enum,
+      values: [:ignore, :log, :error],
+      default: :ignore
+    )
+
     field(:use_jit, :boolean, default: false)
     field(:jit_api_url, :string)
     field(:banned_at, :utc_datetime)
@@ -73,6 +79,7 @@ defmodule Supavisor.Tenants.Tenant do
       :allow_list,
       :availability_zone,
       :feature_flags,
+      :txn_mode_set_action,
       :use_jit,
       :jit_api_url
     ])

@@ -19,6 +19,7 @@ defmodule Supavisor.ClientHandler.Data do
     :tenant,
     :tenant_feature_flags,
     :tenant_availability_zone,
+    :txn_mode_set_action,
     :user,
     :db_name,
     :app_name,

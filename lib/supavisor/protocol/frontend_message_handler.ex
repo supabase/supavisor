@@ -12,6 +12,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   @behaviour Supavisor.Protocol.MessageHandler
 
   alias Supavisor.Protocol.PreparedStatements
+  alias Supavisor.Protocol.SetStatements
   alias Supavisor.Protocol.SimpleQueryHandler
 
   @rfq_producers [?Q, ?S, ?F]
@@ -25,16 +26,24 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       prepared_statements: PreparedStatements.init_storage(),
       rfq_producers: 0,
       # Prepared statements feature flag:
-      translate?: true
+      translate?: true,
+      # Tenant's txn_mode_set_action field:
+      set_statements_action: :ignore
     }
   end
 
   @impl true
-  def handle_message(%{translate?: false} = state, tag, len, payload) do
+  def handle_message(state, tag, len, payload) do
+    with :ok <- SetStatements.check(state.set_statements_action, tag, payload) do
+      do_handle_message(state, tag, len, payload)
+    end
+  end
+
+  defp do_handle_message(%{translate?: false} = state, tag, len, payload) do
     {:ok, count_rfq_producer(state, tag), <<tag, len::32, payload::binary>>}
   end
 
-  def handle_message(state, tag, len, payload) do
+  defp do_handle_message(state, tag, len, payload) do
     case tag do
       ?P ->
         PreparedStatements.handle_parse_message(state.prepared_statements, len, payload)
