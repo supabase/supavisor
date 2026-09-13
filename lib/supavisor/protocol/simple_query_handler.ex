@@ -28,7 +28,7 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
     # Some clients may send null terminators
     clean_payload = String.trim_trailing(payload, <<0>>)
 
-    case Supavisor.PgParser.statement_types(clean_payload) do
+    case Supavisor.PgParser.statements(clean_payload) do
       {:ok, types} ->
         if MapSet.disjoint?(MapSet.new(types), @prepared_statements_stmts) do
           {:ok, state, <<?Q, len::32, payload::binary>>}
