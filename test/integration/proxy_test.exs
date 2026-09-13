@@ -439,6 +439,142 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = single_connection(connection_opts)
   end
 
+  describe "queuing for a free client slot" do
+    setup do
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      connection_opts = [
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        username: db_conf[:username] <> ".admission_tenant",
+        database: db_conf[:database],
+        password: db_conf[:password]
+      ]
+
+      test_pid = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, ref}
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:supavisor, :client, :admission, :admitted],
+          [:supavisor, :client, :admission, :rejected]
+        ],
+        fn event, _measurements, _metadata, _config -> send(test_pid, {ref, event}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      %{connection_opts: connection_opts, ref: ref}
+    end
+
+    test "admits a queued client when a slot frees up", ctx do
+      ref = ctx.ref
+
+      # admission_tenant allows 2 clients, so the pool is now full
+      assert {:ok, conn} = single_connection(ctx.connection_opts)
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+
+      test_pid = self()
+      connection_opts = ctx.connection_opts
+
+      spawn(fn ->
+        result =
+          try do
+            SingleConnection.connect(connection_opts)
+          catch
+            kind, reason -> {:error, {kind, reason}}
+          end
+
+        send(test_pid, {:waiter, result})
+      end)
+
+      # Give the third connection time to queue, then free a slot well inside its wait
+      # timeout. Before queuing was introduced this connection would already have been
+      # rejected.
+      Process.sleep(50)
+      GenServer.stop(conn)
+
+      assert_receive {:waiter, {:ok, _pid}}, 5_000
+      assert_receive {^ref, [:supavisor, :client, :admission, :admitted]}, 1_000
+    end
+
+    test "rejects with EMAXCONN once the slot wait times out", ctx do
+      ref = ctx.ref
+
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+
+      {elapsed, result} = :timer.tc(fn -> single_connection(ctx.connection_opts) end)
+
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message: "(EMAXCONN) max client connections reached, limit: 2",
+                  pg_code: "XX000",
+                  severity: "FATAL"
+                }
+              }} = result
+
+      assert_receive {^ref, [:supavisor, :client, :admission, :rejected]}, 1_000
+
+      # The throttle: the client is held rather than rejected immediately, which is what
+      # slows down a client reconnecting in a tight loop.
+      assert elapsed >=
+               Application.get_env(:supavisor, :connection_slot_wait_timeout) * 1_000 * 0.9
+    end
+
+    test "grants slots in request order", ctx do
+      ref = ctx.ref
+
+      assert {:ok, conn} = single_connection(ctx.connection_opts)
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+
+      test_pid = self()
+      connection_opts = ctx.connection_opts
+
+      # Supervised so the waiters are torn down with the test. They have to outlive their
+      # own result: SingleConnection links to them, so exiting early would close the
+      # connection and hand the slot straight to the next waiter.
+      waiter = fn tag ->
+        {:ok, _pid} =
+          start_supervised(%{
+            id: {:waiter, tag},
+            restart: :temporary,
+            start:
+              {Task, :start_link,
+               [
+                 fn ->
+                   # SingleConnection links to us, so without this a rejected connection
+                   # takes the waiter down before it can report.
+                   Process.flag(:trap_exit, true)
+                   send(test_pid, {tag, SingleConnection.connect(connection_opts)})
+                   Process.sleep(:infinity)
+                 end
+               ]}
+          })
+      end
+
+      waiter.(:first)
+      Process.sleep(30)
+      waiter.(:second)
+      Process.sleep(30)
+
+      # Exactly one slot frees, so the client that queued first must get it and the one
+      # that queued second must time out.
+      GenServer.stop(conn)
+
+      # The client that queued first gets the slot; the one behind it times out.
+      assert_receive {:first, {:ok, _pid}}, 5_000
+      assert_receive {^ref, [:supavisor, :client, :admission, :admitted]}, 1_000
+      assert_receive {^ref, [:supavisor, :client, :admission, :rejected]}, 5_000
+      refute_received {:second, {:ok, _pid}}
+    end
+  end
+
   test "checkout timeout in transaction mode" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
