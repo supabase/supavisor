@@ -131,13 +131,10 @@ defmodule Supavisor.Monitoring.PromEx do
   end
 
   @doc """
-  Groups every tenant-tagged metric by tenant in a single pass over the
-  metrics tables, returning `%{tenant => metrics_map}`.
+  Returns `%{tenant => metrics_map}` for every tenant-tagged metric.
 
-  `fetch_metrics_for/1` scans the whole tags table and every scheduler metric
-  table per call, so calling it once per tenant makes the cost quadratic in
-  tenant count. This folds each table once and routes rows to their tenant
-  instead.
+  Reads the tags table and each scheduler metric table once. Untagged metrics
+  are skipped.
   """
   @spec fetch_metrics_by_tenant() :: %{optional(String.t()) => map()}
   def fetch_metrics_by_tenant do
@@ -293,59 +290,6 @@ defmodule Supavisor.Monitoring.PromEx do
 
         ""
     end
-  end
-
-  def fetch_metrics_for(tags) do
-    tag_filters =
-      for {name, value} <- tags do
-        {name, value}
-      end
-
-    persistent = Peep.Persistent.fetch(__metrics_collector_name__())
-    global_tags = Peep.Persistent.persistent(persistent, :global_tags)
-
-    {_, {tags_tid, metric_tids, reverse_tags_tid, cache_tid}} =
-      Peep.Persistent.storage(__metrics_collector_name__())
-
-    itm = Peep.Persistent.ids_to_metrics(persistent)
-    boundaries_cache = precompute_boundaries(itm)
-
-    # Collect matching tag IDs by scanning the tags table
-    matching_tag_ids =
-      :ets.foldl(
-        fn {tags_map, tags_id}, acc ->
-          if Enum.all?(tag_filters, fn {k, v} -> Map.get(tags_map, k) == v end) do
-            MapSet.put(acc, tags_id)
-          else
-            acc
-          end
-        end,
-        MapSet.new(),
-        tags_tid
-      )
-
-    # Collect metrics from all scheduler tables, filtering by matching tag IDs
-    metrics =
-      metric_tids
-      |> Tuple.to_list()
-      |> Enum.reduce(%{}, fn tid, acc ->
-        :ets.foldl(
-          fn {{id, tags_id}, value}, acc ->
-            if MapSet.member?(matching_tag_ids, tags_id) do
-              %{^id => metric} = itm
-              merge_filtered_entry(metric, id, tags_id, value, boundaries_cache, acc)
-            else
-              acc
-            end
-          end,
-          acc,
-          tid
-        )
-      end)
-
-    metrics = remove_timestamps_from_last_values(metrics)
-
-    {reverse_tags_tid, cache_tid, global_tags, metrics}
   end
 
   defp merge_filtered_entry(%Metrics.Counter{} = metric, _id, tags_id, value, _bc, acc) do
