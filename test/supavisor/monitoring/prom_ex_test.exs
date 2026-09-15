@@ -30,6 +30,49 @@ defmodule Supavisor.Monitoring.PromExTest do
     end
   end
 
+  describe "fetch_metrics_by_tenant/0" do
+    setup do
+      tenants = for i <- 1..3, do: "fetch_by_tenant_#{System.unique_integer([:positive])}_#{i}"
+
+      for {tenant, i} <- Enum.with_index(tenants, 1) do
+        id =
+          Supavisor.id(type: :single, tenant: tenant, user: "user", mode: :session, db: "db_name")
+
+        Tenant.emit_telemetry_for_tenant(id, i, "app")
+      end
+
+      {:ok, tenants: tenants}
+    end
+
+    test "groups each tenant's measurements under its own key", %{tenants: tenants} do
+      by_tenant = @subject.fetch_metrics_by_tenant()
+
+      for {tenant, expected_active} <- Enum.with_index(tenants, 1) do
+        assert %{^tenant => metrics} = by_tenant
+
+        assert [^expected_active] =
+                 Enum.find(metrics, fn {metric, _} ->
+                   metric.name == [:supavisor, :connections, :active]
+                 end)
+                 |> elem(1)
+                 |> Map.values()
+      end
+    end
+
+    test "omits metrics that carry no tenant tag" do
+      Cluster.emit_cluster_size()
+
+      grouped = @subject.fetch_metrics_by_tenant()
+      assert map_size(grouped) > 0
+
+      for {_tenant, metrics} <- grouped,
+          {metric, _series} <- metrics do
+        assert metric.name != [:supavisor, :prom_ex, :cluster, :size]
+        assert :tenant in metric.tags
+      end
+    end
+  end
+
   describe "get_metrics/1" do
     @sources %{
       {:darwin, :aarch64} => {

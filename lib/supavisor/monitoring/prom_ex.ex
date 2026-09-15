@@ -115,15 +115,74 @@ defmodule Supavisor.Monitoring.PromEx do
       Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
       |> Enum.uniq_by(&Supavisor.id(&1, upstream_tls: false))
 
-    Enum.each(pools, fn Supavisor.id(tenant: tenant) ->
-      {_, _, _, metrics_map} = fetch_metrics_for(tenant: tenant)
+    by_tenant = fetch_metrics_by_tenant()
 
-      if metrics_map != %{} do
-        Cachex.put(Supavisor.Cache, {:metrics, tenant}, metrics_map)
+    Enum.each(pools, fn Supavisor.id(tenant: tenant) ->
+      case by_tenant do
+        %{^tenant => metrics_map} when metrics_map != %{} ->
+          Cachex.put(Supavisor.Cache, {:metrics, tenant}, metrics_map)
+
+        _ ->
+          :ok
       end
     end)
 
     pools
+  end
+
+  @doc """
+  Returns `%{tenant => metrics_map}` for every tenant-tagged metric.
+
+  Reads the tags table and each scheduler metric table once. Untagged metrics
+  are skipped.
+  """
+  @spec fetch_metrics_by_tenant() :: %{optional(String.t()) => map()}
+  def fetch_metrics_by_tenant do
+    persistent = Peep.Persistent.fetch(__metrics_collector_name__())
+
+    {_, {tags_tid, metric_tids, _reverse_tags_tid, _cache_tid}} =
+      Peep.Persistent.storage(__metrics_collector_name__())
+
+    itm = Peep.Persistent.ids_to_metrics(persistent)
+    boundaries_cache = precompute_boundaries(itm)
+
+    tag_id_to_tenant =
+      :ets.foldl(
+        fn {tags_map, tags_id}, acc ->
+          case tags_map do
+            %{tenant: tenant} -> Map.put(acc, tags_id, tenant)
+            _ -> acc
+          end
+        end,
+        %{},
+        tags_tid
+      )
+
+    metric_tids
+    |> Tuple.to_list()
+    |> Enum.reduce(%{}, fn tid, acc ->
+      :ets.foldl(
+        fn {{id, tags_id}, value}, acc ->
+          case tag_id_to_tenant do
+            %{^tags_id => tenant} ->
+              %{^id => metric} = itm
+
+              Map.update(
+                acc,
+                tenant,
+                merge_filtered_entry(metric, id, tags_id, value, boundaries_cache, %{}),
+                &merge_filtered_entry(metric, id, tags_id, value, boundaries_cache, &1)
+              )
+
+            _ ->
+              acc
+          end
+        end,
+        acc,
+        tid
+      )
+    end)
+    |> Map.new(fn {tenant, metrics} -> {tenant, remove_timestamps_from_last_values(metrics)} end)
   end
 
   @spec get_cluster_tenant_metrics(String.t()) :: iodata()
@@ -231,59 +290,6 @@ defmodule Supavisor.Monitoring.PromEx do
 
         ""
     end
-  end
-
-  def fetch_metrics_for(tags) do
-    tag_filters =
-      for {name, value} <- tags do
-        {name, value}
-      end
-
-    persistent = Peep.Persistent.fetch(__metrics_collector_name__())
-    global_tags = Peep.Persistent.persistent(persistent, :global_tags)
-
-    {_, {tags_tid, metric_tids, reverse_tags_tid, cache_tid}} =
-      Peep.Persistent.storage(__metrics_collector_name__())
-
-    itm = Peep.Persistent.ids_to_metrics(persistent)
-    boundaries_cache = precompute_boundaries(itm)
-
-    # Collect matching tag IDs by scanning the tags table
-    matching_tag_ids =
-      :ets.foldl(
-        fn {tags_map, tags_id}, acc ->
-          if Enum.all?(tag_filters, fn {k, v} -> Map.get(tags_map, k) == v end) do
-            MapSet.put(acc, tags_id)
-          else
-            acc
-          end
-        end,
-        MapSet.new(),
-        tags_tid
-      )
-
-    # Collect metrics from all scheduler tables, filtering by matching tag IDs
-    metrics =
-      metric_tids
-      |> Tuple.to_list()
-      |> Enum.reduce(%{}, fn tid, acc ->
-        :ets.foldl(
-          fn {{id, tags_id}, value}, acc ->
-            if MapSet.member?(matching_tag_ids, tags_id) do
-              %{^id => metric} = itm
-              merge_filtered_entry(metric, id, tags_id, value, boundaries_cache, acc)
-            else
-              acc
-            end
-          end,
-          acc,
-          tid
-        )
-      end)
-
-    metrics = remove_timestamps_from_last_values(metrics)
-
-    {reverse_tags_tid, cache_tid, global_tags, metrics}
   end
 
   defp merge_filtered_entry(%Metrics.Counter{} = metric, _id, tags_id, value, _bc, acc) do
