@@ -115,15 +115,77 @@ defmodule Supavisor.Monitoring.PromEx do
       Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
       |> Enum.uniq_by(&Supavisor.id(&1, upstream_tls: false))
 
-    Enum.each(pools, fn Supavisor.id(tenant: tenant) ->
-      {_, _, _, metrics_map} = fetch_metrics_for(tenant: tenant)
+    by_tenant = fetch_metrics_by_tenant()
 
-      if metrics_map != %{} do
-        Cachex.put(Supavisor.Cache, {:metrics, tenant}, metrics_map)
+    Enum.each(pools, fn Supavisor.id(tenant: tenant) ->
+      case by_tenant do
+        %{^tenant => metrics_map} when metrics_map != %{} ->
+          Cachex.put(Supavisor.Cache, {:metrics, tenant}, metrics_map)
+
+        _ ->
+          :ok
       end
     end)
 
     pools
+  end
+
+  @doc """
+  Groups every tenant-tagged metric by tenant in a single pass over the
+  metrics tables, returning `%{tenant => metrics_map}`.
+
+  `fetch_metrics_for/1` scans the whole tags table and every scheduler metric
+  table per call, so calling it once per tenant makes the cost quadratic in
+  tenant count. This folds each table once and routes rows to their tenant
+  instead.
+  """
+  @spec fetch_metrics_by_tenant() :: %{optional(String.t()) => map()}
+  def fetch_metrics_by_tenant do
+    persistent = Peep.Persistent.fetch(__metrics_collector_name__())
+
+    {_, {tags_tid, metric_tids, _reverse_tags_tid, _cache_tid}} =
+      Peep.Persistent.storage(__metrics_collector_name__())
+
+    itm = Peep.Persistent.ids_to_metrics(persistent)
+    boundaries_cache = precompute_boundaries(itm)
+
+    tag_id_to_tenant =
+      :ets.foldl(
+        fn {tags_map, tags_id}, acc ->
+          case tags_map do
+            %{tenant: tenant} -> Map.put(acc, tags_id, tenant)
+            _ -> acc
+          end
+        end,
+        %{},
+        tags_tid
+      )
+
+    metric_tids
+    |> Tuple.to_list()
+    |> Enum.reduce(%{}, fn tid, acc ->
+      :ets.foldl(
+        fn {{id, tags_id}, value}, acc ->
+          case tag_id_to_tenant do
+            %{^tags_id => tenant} ->
+              %{^id => metric} = itm
+
+              Map.update(
+                acc,
+                tenant,
+                merge_filtered_entry(metric, id, tags_id, value, boundaries_cache, %{}),
+                &merge_filtered_entry(metric, id, tags_id, value, boundaries_cache, &1)
+              )
+
+            _ ->
+              acc
+          end
+        end,
+        acc,
+        tid
+      )
+    end)
+    |> Map.new(fn {tenant, metrics} -> {tenant, remove_timestamps_from_last_values(metrics)} end)
   end
 
   @spec get_cluster_tenant_metrics(String.t()) :: iodata()
