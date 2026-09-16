@@ -17,6 +17,7 @@ defmodule Supavisor.ClientHandler do
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
+  @connection_slot_wait_timeout Application.compile_env(:supavisor, :connection_slot_wait_timeout)
   @max_checkout_retries 2
   @timeout_subscribe 500
   @ssl_handshake_timeout 2_500
@@ -54,6 +55,7 @@ defmodule Supavisor.ClientHandler do
     ClientSocketClosedError,
     DbHandlerExitedError,
     HandshakeTimeoutError,
+    MaxConnectionsError,
     PoolCheckoutError,
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
@@ -273,7 +275,6 @@ defmodule Supavisor.ClientHandler do
         with :ok <- Checks.check_tenant_not_banned(info),
              :ok <- Checks.check_ssl_enforcement(data, info, user),
              :ok <- Checks.check_address_allowed(sock, info),
-             :ok <- Manager.check_client_limit(id, info, data.mode),
              {:ok, auth_method} <-
                AuthMethods.fetch_authentication_method(
                  info.tenant,
@@ -341,40 +342,20 @@ defmodule Supavisor.ClientHandler do
            ),
          :not_proxy <-
            if(node(sup) != node() and data.mode != :proxy, do: :proxy, else: :not_proxy),
-         {:ok, opts} <- Supavisor.subscribe(data.id),
-         manager_ref = Process.monitor(opts.workers.manager),
-         data = Map.merge(data, opts.workers),
-         {:ok, db_connection} <- maybe_checkout(:on_connect, data),
-         :ok <- maybe_set_application_name(data, db_connection) do
-      data = %{
-        data
-        | manager: manager_ref,
-          db_connection: db_connection,
-          idle_timeout: opts.idle_timeout
-      }
-
-      Registry.register(@clients_registry, data.id,
-        started_at: System.monotonic_time(),
-        app_name: data.app_name,
-        include_app_name: include_app_name?(data)
-      )
-
-      cond do
-        data.client_ready ->
-          {:next_state, :idle, data, handle_actions(data)}
-
-        opts.ps == [] ->
-          {:keep_state, data, {:timeout, 1_000, :wait_ps}}
-
-        true ->
-          {:keep_state, data, {:next_event, :internal, {:greetings, opts.ps}}}
-      end
+         {:ok, opts} <- Supavisor.subscribe(data.id) do
+      finish_subscribe(data, opts)
     else
       {:error, %WorkerNotFoundError{}} ->
         timeout_subscribe_or_terminate(data)
 
       {:error, %PoolConfigNotFoundError{}} ->
         timeout_subscribe_or_terminate(data)
+
+      # The pool is full. Queue for a slot instead of rejecting: the Manager grants slots
+      # in request order as clients disconnect, so a client is admitted the moment one
+      # frees rather than having to reconnect.
+      {:error, %MaxConnectionsError{} = exception} ->
+        queue_for_slot_or_terminate(data, exception)
 
       {:error, exception} when is_exception(exception) ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -395,6 +376,38 @@ defmodule Supavisor.ClientHandler do
             timeout_subscribe_or_terminate(data)
         end
     end
+  end
+
+  # The Manager granted a slot, so this client is already registered as a pool client -
+  # picking up where a successful `Supavisor.subscribe/1` would have left off. Leaving
+  # :waiting_for_slot is what cancels the wait timeout.
+  def handle_event(:info, {:slot_granted, ps, idle_timeout}, :waiting_for_slot, data) do
+    {:next_state, :connecting, data, {:next_event, :internal, {:slot_granted, ps, idle_timeout}}}
+  end
+
+  def handle_event(:internal, {:slot_granted, ps, idle_timeout}, :connecting, data) do
+    Telem.client_admission(:admitted, data.id)
+
+    case Supavisor.get_local_workers(data.id) do
+      {:ok, workers} ->
+        finish_subscribe(%{data | pending_max_connections: nil}, %{
+          workers: workers,
+          ps: ps,
+          idle_timeout: idle_timeout
+        })
+
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, :handshake)
+    end
+  end
+
+  def handle_event(:info, {:slot_denied, exception}, :waiting_for_slot, data) do
+    Error.terminate_with_error(data, exception, :handshake)
+  end
+
+  def handle_event(:state_timeout, :connection_slot_wait_timeout, :waiting_for_slot, data) do
+    Telem.client_admission(:rejected, data.id)
+    Error.terminate_with_error(data, data.pending_max_connections, :handshake)
   end
 
   def handle_event(:internal, :connect_db, _state, data) do
@@ -731,7 +744,8 @@ defmodule Supavisor.ClientHandler do
   end
 
   # Any message when connecting - postpone
-  def handle_event(_kind, {proto, _socket, _msg}, :connecting, _data) when proto in @proto do
+  def handle_event(_kind, {proto, _socket, _msg}, state, _data)
+      when proto in @proto and state in [:connecting, :waiting_for_slot] do
     {:keep_state_and_data, :postpone}
   end
 
@@ -1007,6 +1021,66 @@ defmodule Supavisor.ClientHandler do
        {:timeout, @timeout_subscribe, :subscribe}}
     else
       Error.terminate_with_error(data, %SubscribeRetriesExhaustedError{}, :handshake)
+    end
+  end
+
+  @doc """
+  Queues this client for a slot on a full pool instead of rejecting it immediately.
+
+  Rejecting makes the client reconnect and go through the TLS handshake again.
+  Queuing keeps the handshake we already paid for and lets the Manager hand over a slot the instant
+  one frees. A client that never gets one receives the same error it would have received
+  immediately, just later, which throttles its retry loop.
+  """
+  @spec queue_for_slot_or_terminate(map(), Exception.t()) :: :gen_statem.handle_event_result()
+  def queue_for_slot_or_terminate(data, exception) do
+    case Supavisor.get_local_manager(data.id) do
+      nil ->
+        Error.terminate_with_error(data, exception, :handshake)
+
+      manager ->
+        Logger.debug("ClientHandler: Queueing for a free client slot")
+        Manager.request_slot(manager)
+
+        {:next_state, :waiting_for_slot, %{data | pending_max_connections: exception},
+         {:state_timeout, @connection_slot_wait_timeout, :connection_slot_wait_timeout}}
+    end
+  end
+
+  # Completes connection setup once this client holds a pool slot, whether it was granted
+  # synchronously by `Supavisor.subscribe/1` or handed over later by the Manager.
+  defp finish_subscribe(data, opts) do
+    manager_ref = Process.monitor(opts.workers.manager)
+    data = Map.merge(data, opts.workers)
+
+    with {:ok, db_connection} <- maybe_checkout(:on_connect, data),
+         :ok <- maybe_set_application_name(data, db_connection) do
+      data = %{
+        data
+        | manager: manager_ref,
+          db_connection: db_connection,
+          idle_timeout: opts.idle_timeout
+      }
+
+      Registry.register(@clients_registry, data.id,
+        started_at: System.monotonic_time(),
+        app_name: data.app_name,
+        include_app_name: include_app_name?(data)
+      )
+
+      cond do
+        data.client_ready ->
+          {:next_state, :idle, data, handle_actions(data)}
+
+        opts.ps == [] ->
+          {:keep_state, data, {:timeout, 1_000, :wait_ps}}
+
+        true ->
+          {:keep_state, data, {:next_event, :internal, {:greetings, opts.ps}}}
+      end
+    else
+      {:error, exception} when is_exception(exception) ->
+        Error.terminate_with_error(data, exception, :handshake)
     end
   end
 
