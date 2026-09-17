@@ -149,7 +149,13 @@ defmodule Supavisor.Application do
         children
       else
         children ++
-          [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner] ++
+          [
+            {Supavisor.SchedulerUtilization,
+             interval: Application.fetch_env!(:supavisor, :prom_poll_rate)},
+            PromEx,
+            Supavisor.TenantsMetrics,
+            Supavisor.MetricsCleaner
+          ] ++
           metrics_pusher_children()
       end
 
