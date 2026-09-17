@@ -25,12 +25,13 @@ defmodule Supavisor.TenantSupervisor do
       |> Enum.with_index()
       |> Enum.map(fn {e, i} ->
         id = {:pool, e.replica_type, i, args.id}
+        name = {:via, Registry, {Supavisor.Registry.Tenants, id, e.replica_type}}
 
         %{
           id: {:pool, id},
           start:
             {:poolboy, :start_link,
-             [pool_spec(id, e.replica_type, min_size, e.pool_size), %{id: args.id}]},
+             [pool_spec(name, min_size, e.pool_size), %{id: args.id, pool: name}]},
           restart: :temporary,
           type: :supervisor
         }
@@ -67,10 +68,10 @@ defmodule Supavisor.TenantSupervisor do
     }
   end
 
-  @spec pool_spec(tuple, atom, integer, integer) :: Keyword.t()
-  defp pool_spec(id, replica_type, min_size, pool_size) do
+  @spec pool_spec(tuple, integer, integer) :: Keyword.t()
+  defp pool_spec(name, min_size, pool_size) do
     [
-      name: {:via, Registry, {Supavisor.Registry.Tenants, id, replica_type}},
+      name: name,
       worker_module: Supavisor.DbHandler,
       size: min_size,
       max_overflow: pool_size,

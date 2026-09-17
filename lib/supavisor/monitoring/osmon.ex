@@ -10,6 +10,7 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   @event_ram_usage [:prom_ex, :plugin, :osmon, :ram_usage]
   @event_cpu_util [:prom_ex, :plugin, :osmon, :cpu_util]
   @event_cpu_la [:prom_ex, :plugin, :osmon, :cpu_avg1]
+  @event_disk [:prom_ex, :plugin, :osmon, :disk]
   @prefix [:supavisor, :prom_ex]
 
   @impl true
@@ -99,6 +100,29 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
           event_name: @event_cpu_la,
           description: "The average system load in the last 15 minutes.",
           measurement: :avg15
+        ),
+        last_value(
+          @prefix ++ [:osmon, :disk, :total],
+          event_name: @event_disk,
+          description: "The total size of the file system.",
+          unit: :bytes,
+          measurement: :total,
+          tags: [:mountpoint]
+        ),
+        last_value(
+          @prefix ++ [:osmon, :disk, :available],
+          event_name: @event_disk,
+          description: "The available space on the file system.",
+          unit: :bytes,
+          measurement: :available,
+          tags: [:mountpoint]
+        ),
+        last_value(
+          @prefix ++ [:osmon, :disk, :used_percent],
+          event_name: @event_disk,
+          description: "The percentage of used space on the file system.",
+          measurement: :capacity,
+          tags: [:mountpoint]
         )
       ]
     )
@@ -109,10 +133,17 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
     execute_metrics(@event_ram_usage, %{ram: ram_usage()})
     execute_metrics(@event_cpu_util, %{cpu: cpu_util()})
     execute_metrics(@event_cpu_la, cpu_la())
+    execute_disk_metrics()
   end
 
   def execute_metrics(event, metrics) do
     :telemetry.execute(event, metrics, %{})
+  end
+
+  def execute_disk_metrics do
+    Enum.each(disk(), fn {mountpoint, measurements} ->
+      :telemetry.execute(@event_disk, measurements, %{mountpoint: mountpoint})
+    end)
   end
 
   @spec ram_usage() :: float()
@@ -147,5 +178,17 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   @spec cpu_util() :: float() | {:error, term()}
   def cpu_util do
     :cpu_sup.util()
+  end
+
+  @spec disk() :: [{String.t(), %{total: integer(), available: integer(), capacity: integer()}}]
+  def disk do
+    for {id, total_kib, available_kib, capacity} <- :disksup.get_disk_info() do
+      {to_string(id),
+       %{
+         total: total_kib * 1024,
+         available: available_kib * 1024,
+         capacity: capacity
+       }}
+    end
   end
 end

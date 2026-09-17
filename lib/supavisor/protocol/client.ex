@@ -1,8 +1,6 @@
 defmodule Supavisor.Protocol.Client do
   @moduledoc false
 
-  require Logger
-
   alias Supavisor.Errors.StartupMessageError
 
   @spec decode_startup_packet(binary()) :: {:ok, map()} | {:error, StartupMessageError.t()}
@@ -12,7 +10,9 @@ defmodule Supavisor.Protocol.Client do
     end
   end
 
-  def decode_startup_packet(_), do: {:error, %StartupMessageError{reason: :bad_startup_payload}}
+  def decode_startup_packet(bin) do
+    {:error, %StartupMessageError{reason: :bad_startup_payload, payload: bin}}
+  end
 
   # The startup packet payload is a list of key/value pairs, separated by null bytes.
   # The payload is terminated by an extra null byte. Empty values are valid (e.g. options\x00\x00).
@@ -23,7 +23,7 @@ defmodule Supavisor.Protocol.Client do
 
     # If the number of fields is odd, then the payload is malformed
     if rem(length(fields), 2) == 1 do
-      {:error, %StartupMessageError{reason: :bad_startup_payload}}
+      {:error, %StartupMessageError{reason: :bad_startup_payload, payload: payload}}
     else
       map =
         fields
@@ -49,8 +49,7 @@ defmodule Supavisor.Protocol.Client do
       if Map.has_key?(map, "user") do
         {:ok, map}
       else
-        Logger.error("Bad startup payload: #{inspect(payload, limit: 200)}")
-        {:error, %StartupMessageError{reason: :missing_user}}
+        {:error, %StartupMessageError{reason: :missing_user, payload: payload}}
       end
     end
   end

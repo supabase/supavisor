@@ -19,12 +19,15 @@ defmodule Supavisor.ClientHandler do
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
   @max_checkout_retries 2
   @timeout_subscribe 500
+  @ssl_handshake_timeout 2_500
+  @handshake_timeout 5_000
   @clients_registry Supavisor.Registry.TenantClients
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
   @max_startup_packet_size Supavisor.Protocol.max_startup_packet_size()
 
   alias Supavisor.{
     DbHandler,
+    FeatureFlag,
     HandlerHelpers,
     Helpers,
     Manager,
@@ -44,11 +47,13 @@ defmodule Supavisor.ClientHandler do
   }
 
   alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer}
+  require MessageStreamer
 
   alias Supavisor.Errors.{
     CheckoutTimeoutError,
     ClientSocketClosedError,
     DbHandlerExitedError,
+    HandshakeTimeoutError,
     PoolCheckoutError,
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
@@ -116,7 +121,9 @@ defmodule Supavisor.ClientHandler do
       subscribe_retries: 0
     }
 
-    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data)
+    :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data, [
+      {:state_timeout, @handshake_timeout, :handshake_timeout}
+    ])
   end
 
   @impl true
@@ -164,7 +171,7 @@ defmodule Supavisor.ClientHandler do
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
-           {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts) do
+           {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
         socket = {:ssl, ssl_sock}
         :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
         {:keep_state, %{data | sock: socket, ssl: true}}
@@ -172,8 +179,8 @@ defmodule Supavisor.ClientHandler do
         {:error, %ClientSocketClosedError{} = exception} ->
           Error.terminate_with_error(data, exception, :handshake)
 
-        error ->
-          Error.terminate_with_error(data, %SslHandshakeError{reason: error}, :handshake)
+        {:error, reason} ->
+          Error.terminate_with_error(data, %SslHandshakeError{reason: reason}, :handshake)
       end
     else
       Logger.warning(
@@ -190,6 +197,10 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  def handle_event(:state_timeout, :handshake_timeout, :handshake, data) do
+    Error.terminate_with_error(data, %HandshakeTimeoutError{}, :handshake)
+  end
+
   def handle_event(:info, {_, _, bin}, :handshake, data)
       when byte_size(bin) > @max_startup_packet_size do
     Error.terminate_with_error(
@@ -201,9 +212,12 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}, app_name,
-       log_level} ->
-        event = {:hello, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls}}}
+      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
+       app_name, log_level} ->
+        event =
+          {:hello,
+           {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
+
         if log_level, do: Logger.put_process_level(self(), log_level)
 
         {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
@@ -215,11 +229,19 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls}}},
+        {:hello,
+         {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls, client_ip}}},
         :handshake,
         %{sock: sock} = data
       ) do
     sni_hostname = HandlerHelpers.try_get_sni(sock)
+
+    # When receiving a proxied connection on a local listener, client_tls and
+    # client_ip carry the original client's TLS status and IP address (the socket
+    # peer is the forwarding node). Otherwise, use what we observed on the socket.
+    effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
+    peer_ip = ProtocolHelpers.effective_peer_ip(data.local, client_ip, data.peer_ip)
+    data = %{data | peer_ip: peer_ip}
 
     Logger.metadata(
       project: tenant_or_alias,
@@ -227,12 +249,9 @@ defmodule Supavisor.ClientHandler do
       mode: data.mode,
       type: type,
       app_name: data.app_name,
-      db_name: db_name
+      db_name: db_name,
+      peer_ip: peer_ip
     )
-
-    # When receiving a proxied connection on a local listener, client_tls
-    # carries the original client's TLS status. Otherwise, use data.ssl.
-    effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
@@ -325,7 +344,8 @@ defmodule Supavisor.ClientHandler do
          {:ok, opts} <- Supavisor.subscribe(data.id),
          manager_ref = Process.monitor(opts.workers.manager),
          data = Map.merge(data, opts.workers),
-         {:ok, db_connection} <- maybe_checkout(:on_connect, data) do
+         {:ok, db_connection} <- maybe_checkout(:on_connect, data),
+         :ok <- maybe_set_application_name(data, db_connection) do
       data = %{
         data
         | manager: manager_ref,
@@ -333,7 +353,11 @@ defmodule Supavisor.ClientHandler do
           idle_timeout: opts.idle_timeout
       }
 
-      Registry.register(@clients_registry, data.id, started_at: System.monotonic_time())
+      Registry.register(@clients_registry, data.id,
+        started_at: System.monotonic_time(),
+        app_name: data.app_name,
+        include_app_name: include_app_name?(data)
+      )
 
       cond do
         data.client_ready ->
@@ -359,7 +383,11 @@ defmodule Supavisor.ClientHandler do
         case Supavisor.get_pool_ranch(data.id) do
           {:ok, pool_ranch} ->
             Logger.metadata(proxy: true)
-            Registry.register(@proxy_clients_registry, data.id, [])
+
+            Registry.register(@proxy_clients_registry, data.id,
+              app_name: data.app_name,
+              include_app_name: include_app_name?(data)
+            )
 
             {:keep_state, %{data | pool_ranch: pool_ranch}, {:next_event, :internal, :connect_db}}
 
@@ -380,7 +408,8 @@ defmodule Supavisor.ClientHandler do
              data.tenant_feature_flags,
              data.pool_ranch,
              client_ssl: data.ssl,
-             client_jit: data.use_jit_flow
+             client_jit: data.use_jit_flow,
+             client_ip: forwardable_peer_ip(data.peer_ip)
            ),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
@@ -418,7 +447,7 @@ defmodule Supavisor.ClientHandler do
     {:keep_state_and_data, {:next_event, :internal, {:greetings, ps}}}
   end
 
-  def handle_event(:timeout, :idle_terminate, _state, data) do
+  def handle_event(:state_timeout, :idle_terminate, _state, data) do
     Logger.warning("ClientHandler: Terminate an idle connection by #{data.idle_timeout} timeout")
     {:stop, :normal}
   end
@@ -515,7 +544,9 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:cast, {:db_status, :ready_for_query}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
-    db_connection = maybe_checkin(data.mode, data.pool, data.db_connection)
+    # In transaction mode the DbHandler checks itself back into the pool once
+    # it finishes forwarding the response; we only drop our reference to it.
+    db_connection = if data.mode == :transaction, do: nil, else: data.db_connection
 
     {_, stats} =
       if data.local,
@@ -638,23 +669,14 @@ defmodule Supavisor.ClientHandler do
         {:next_state, new_state, data}
 
       {:busy, :idle} ->
-        {:next_state, new_state, data}
+        {:next_state, new_state, data, idle_timeout_action(data)}
+
+      {_, :idle} ->
+        {:next_state, new_state, record_state_duration(old_state, new_state, data),
+         idle_timeout_action(data)}
 
       _ ->
-        now = System.monotonic_time()
-        time_in_previous_state = now - data.state_entered_at
-
-        :telemetry.execute(
-          [:supavisor, :client_handler, :state],
-          %{duration: time_in_previous_state},
-          %{
-            from_state: old_state,
-            to_state: new_state,
-            tenant: data.tenant
-          }
-        )
-
-        {:next_state, new_state, %{data | state_entered_at: now}}
+        {:next_state, new_state, record_state_duration(old_state, new_state, data)}
     end
   end
 
@@ -682,15 +704,6 @@ defmodule Supavisor.ClientHandler do
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :authenticated)
     end
-  end
-
-  # Sync when busy - send to db
-  def handle_event(_kind, {proto, _, <<?S, 4::32, _::binary>> = msg}, :busy, data)
-      when proto in @proto do
-    Logger.debug("ClientHandler: Receive sync")
-    :ok = sock_send(msg, data)
-
-    {:keep_state, data, handle_actions(data)}
   end
 
   # Any message when idle - checkout and send to db
@@ -745,6 +758,24 @@ defmodule Supavisor.ClientHandler do
       end
 
     Logger.log(level, "ClientHandler: terminating with reason #{inspect(reason)}")
+  end
+
+  defp maybe_set_application_name(%{mode: :session, app_name: app_name}, {_pool, db_pid, _sock})
+       when is_binary(app_name) and app_name != "" do
+    case DbHandler.set_application_name(db_pid, app_name) do
+      :ok ->
+        :ok
+
+      error ->
+        Logger.warning("ClientHandler: failed to set application_name: #{inspect(error)}")
+        :ok
+    end
+  end
+
+  defp maybe_set_application_name(_data, _db_connection), do: :ok
+
+  defp include_app_name?(data) do
+    FeatureFlag.enabled?(data.tenant_feature_flags, "app_name_metric")
   end
 
   defp maybe_cleanup_db_handler(state, data) do
@@ -818,6 +849,11 @@ defmodule Supavisor.ClientHandler do
 
   defp cache_validated_password(_data, _secrets), do: :ok
 
+  # Helpers.peer_ip/1 returns "undefined" when the socket address can't be read;
+  # don't forward that to the pool node.
+  defp forwardable_peer_ip("undefined"), do: nil
+  defp forwardable_peer_ip(peer_ip), do: peer_ip
+
   defp handle_auth_failure(exception, data) do
     AuthMethods.handle_auth_failure(data.auth_context, exception)
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
@@ -861,18 +897,6 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  @spec maybe_checkin(:proxy, pool_pid :: pid(), Data.db_connection()) :: Data.db_connection()
-  defp maybe_checkin(:transaction, _pool, nil), do: nil
-
-  defp maybe_checkin(:transaction, pool, {_, db_pid, _}) do
-    Process.unlink(db_pid)
-    :poolboy.checkin(pool, db_pid)
-    nil
-  end
-
-  defp maybe_checkin(:session, _, db_connection), do: db_connection
-  defp maybe_checkin(:proxy, _, db_connection), do: db_connection
-
   @spec handle_data(binary(), map()) :: {:ok, map()} | {:error, Exception.t()}
   defp handle_data(data_to_send, data) do
     Logger.debug(
@@ -881,6 +905,7 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, new_stream_state, pkts} <-
            ProtocolHelpers.process_client_packets(data_to_send, data.mode, data),
+         {:ok, new_stream_state} <- maybe_expect_ready_for_query(data, new_stream_state),
          :ok <- sock_send(pkts, data) do
       {:ok, %{data | stream_state: new_stream_state}}
     else
@@ -889,16 +914,47 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  defp maybe_expect_ready_for_query(
+         %{mode: :transaction, db_connection: {_pool, db_pid, _sock}},
+         stream_state
+       ) do
+    {count, stream_state} = handle_rfq_producers(stream_state)
+    if count > 0, do: DbHandler.expect_ready_for_query(db_pid, count)
+    {:ok, stream_state}
+  end
+
+  defp maybe_expect_ready_for_query(_data, stream_state), do: {:ok, stream_state}
+
+  defp handle_rfq_producers(stream_state) do
+    handler_state = MessageStreamer.stream_state(stream_state, :handler_state)
+
+    # also reset the state.
+    {handler_state.rfq_producers,
+     MessageStreamer.update_state(stream_state, fn s -> %{s | rfq_producers: 0} end)}
+  end
+
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
-    heartbeat =
-      if data.heartbeat_interval > 0,
-        do: [{:timeout, data.heartbeat_interval, :heartbeat_check}],
-        else: []
+    if data.heartbeat_interval > 0,
+      do: [{:timeout, data.heartbeat_interval, :heartbeat_check}],
+      else: []
+  end
 
-    idle = if data.idle_timeout > 0, do: [{:timeout, data.idle_timeout, :idle_timeout}], else: []
+  defp idle_timeout_action(%{idle_timeout: timeout}) when timeout > 0,
+    do: [{:state_timeout, timeout, :idle_terminate}]
 
-    idle ++ heartbeat
+  defp idle_timeout_action(_data), do: []
+
+  defp record_state_duration(old_state, new_state, data) do
+    now = System.monotonic_time()
+
+    :telemetry.execute(
+      [:supavisor, :client_handler, :state],
+      %{duration: now - data.state_entered_at},
+      %{from_state: old_state, to_state: new_state, tenant: data.tenant}
+    )
+
+    %{data | state_entered_at: now}
   end
 
   @spec client_sock_send(map(), iodata(), :handshake | :idle) ::
@@ -971,7 +1027,7 @@ defmodule Supavisor.ClientHandler do
         else: :auth_query
 
     connection_params = %Supavisor.ConnectionParameters{
-      application_name: data.app_name || "Supavisor",
+      application_name: data.app_name,
       database: db_name,
       host: to_charlist(info.tenant.db_host),
       sni_hostname:

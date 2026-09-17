@@ -38,6 +38,7 @@ This document provides a categorized list of all environment variables used in S
 | Variable                            | Description                                                  | Default Value | Required |
 | ----------------------------------- | ------------------------------------------------------------ | ------------- | -------- |
 | `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `false`       | No       |
+| `APP_NAME_METRIC_ENABLED`           | Add client `app_name` label to connection metrics (true, false, 1, 0) | `false` | No       |
 
 ---
 

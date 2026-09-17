@@ -154,11 +154,20 @@ defmodule Supavisor.Helpers do
   """
   @spec detect_ip_version(String.t()) :: :inet | :inet6
   def detect_ip_version(host) when is_binary(host) do
-    host = String.to_charlist(host)
+    charlist = String.to_charlist(host)
 
-    case :inet.gethostbyname(host) do
-      {:ok, _} -> :inet
-      _ -> :inet6
+    case :inet.parse_address(charlist) do
+      {:ok, ip} when tuple_size(ip) == 4 ->
+        :inet
+
+      {:ok, _ip} ->
+        :inet6
+
+      {:error, _} ->
+        case :inet.gethostbyname(charlist) do
+          {:ok, _} -> :inet
+          _ -> :inet6
+        end
     end
   end
 
@@ -428,6 +437,25 @@ defmodule Supavisor.Helpers do
 
       value ->
         raise "Invalid boolean value for #{env_var}: #{inspect(value)}. Expected: true, false, 1, or 0"
+    end
+  end
+
+  @doc """
+  Parses a comma-separated `k1=v1,k2=v2` env var into a list of `{k, v}` tuples.
+  """
+  @spec parse_extra_labels(String.t()) :: [{String.t(), String.t()}]
+  def parse_extra_labels(env_var) do
+    case System.get_env(env_var, "") do
+      "" ->
+        []
+
+      labels ->
+        labels
+        |> String.split(",")
+        |> Enum.map(fn pair ->
+          [k, v] = String.split(pair, "=", parts: 2)
+          {k, v}
+        end)
     end
   end
 

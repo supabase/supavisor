@@ -616,6 +616,34 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert diff >= 0 and diff < 5
     end
 
+    test "bans a tenant when banned is a JSON boolean true", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      assert %{data: %{external_id: ^external_id, banned_at: banned_at, ban_reason: "abuse"}} =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{banned: true, ban_reason: "abuse"})
+               |> json_response(200)
+               |> assert_schema("TenantData")
+
+      assert banned_at != nil
+    end
+
+    test "unbans a tenant when banned is a JSON boolean false", %{
+      conn: conn,
+      tenant: %Tenant{external_id: external_id}
+    } do
+      conn
+      |> patch(~p"/api/tenants/#{external_id}", %{banned: true, ban_reason: "abuse"})
+      |> json_response(200)
+
+      assert %{data: %{external_id: ^external_id, banned_at: nil, ban_reason: nil}} =
+               conn
+               |> patch(~p"/api/tenants/#{external_id}", %{banned: false})
+               |> json_response(200)
+               |> assert_schema("TenantData")
+    end
+
     test "returns 404 for non-existent tenant", %{conn: conn} do
       assert %{"error" => "not found"} =
                conn

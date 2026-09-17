@@ -136,14 +136,14 @@ defmodule Supavisor.Tenants.Tenant do
   end
 
   @doc false
-  def ban_changeset(tenant, %{"banned" => "true"} = params) do
+  def ban_changeset(tenant, %{"banned" => banned} = params) when banned in [true, "true"] do
     tenant
     |> cast(params, [:ban_reason, :banned_until])
     |> validate_required([:ban_reason])
     |> put_change(:banned_at, DateTime.utc_now() |> DateTime.truncate(:second))
   end
 
-  def unban_changeset(tenant, %{"banned" => "false"}) do
+  def unban_changeset(tenant, %{"banned" => banned}) when banned in [false, "false"] do
     change(tenant, banned_at: nil, ban_reason: nil, banned_until: nil)
   end
 end

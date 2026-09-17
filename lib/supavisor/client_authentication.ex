@@ -42,10 +42,12 @@ defmodule Supavisor.ClientAuthentication do
           | {:error, Supavisor.Errors.CircuitBreakerError.t()}
           | {:error, Supavisor.Errors.AuthQueryError.t()}
           | {:error, :no_auth_config}
-  def fetch_validation_secrets(_id, %{require_user: true} = tenant, user) do
+  def fetch_validation_secrets(id, %{require_user: true} = tenant, user) do
     # Even though this is pure computation, we cache for memoization. Computing the
     # SASL secrets from the password can be CPU expensive.
     cache_fetch_validation_secrets(tenant.external_id, user.db_user, fn ->
+      Logger.metadata(project: tenant.external_id, user: Supavisor.id(id, :user))
+
       secrets =
         ValidationSecrets.from_password_secrets(%PasswordSecrets{
           user: user.db_user,
@@ -65,6 +67,8 @@ defmodule Supavisor.ClientAuthentication do
     }
 
     cache_fetch_validation_secrets(tenant.external_id, db_user, fn ->
+      Logger.metadata(project: tenant.external_id, user: Supavisor.id(id, :user))
+
       case fetch_secrets_from_database(id, tenant, manager_secrets) do
         {:ok, secrets} -> {:commit, secrets, ttl: @default_secrets_ttl}
         {:error, _} = error -> {:ignore, error}
@@ -94,7 +98,7 @@ defmodule Supavisor.ClientAuthentication do
       :ok
     else
       {:error, :rate_limited} ->
-        Logger.debug("ClientHandler: Cache refresh rate-limited, skipping secret check")
+        Logger.warning("ClientHandler: Cache refresh rate-limited, skipping secret check")
 
       {:error, reason} ->
         Logger.error("ClientHandler: Auth secrets check error: #{inspect(reason)}")

@@ -17,6 +17,8 @@ config :supavisor,
 
 config :prom_ex, storage_adapter: Supavisor.Monitoring.PromEx.Store
 
+config :syn, event_handler: Supavisor.SynHandler
+
 # Configures the endpoint
 config :supavisor, SupavisorWeb.Endpoint,
   url: [host: "localhost"],

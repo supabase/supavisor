@@ -206,7 +206,6 @@ defmodule Supavisor.Manager do
       sni_hostname: if(sni_hostname != nil, do: to_charlist(sni_hostname)),
       port: db_port,
       database: if(db_name != nil, do: db_name, else: db_database),
-      application_name: "Supavisor",
       ip_version: Helpers.ip_version(ip_ver, db_host),
       upstream_ssl: Supavisor.id(args.id, :upstream_tls),
       upstream_verify: tenant_record.upstream_verify,

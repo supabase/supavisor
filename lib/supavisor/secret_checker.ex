@@ -80,7 +80,7 @@ defmodule Supavisor.SecretChecker do
       check_ref: check()
     }
 
-    Logger.metadata(project: tenant, user: pool_user)
+    Logger.metadata(project: tenant_external_id, user: pool_user)
     {:ok, state, {:continue, :init_conn}}
   end
 
@@ -150,9 +150,6 @@ defmodule Supavisor.SecretChecker do
     {:ok, new_conn} = AuthQuery.start_link(state.tenant_record, new_manager)
 
     AuthQuery.stop_connection_async(state.conn)
-
-    # Clear the secrets cache for this tenant/user
-    Cachex.del(Supavisor.Cache, {:secrets, state.tenant, state.user})
 
     Logger.info("SecretChecker: Successfully changed auth_query user")
     {:reply, :ok, %{state | manager_secrets: new_manager, conn: new_conn}}
