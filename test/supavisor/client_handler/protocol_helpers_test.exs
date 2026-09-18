@@ -99,7 +99,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
 
   # Builds a StartupMessage wire packet from key/value pairs.
   defp startup_packet(pairs) do
-    body = Enum.map_join(pairs, fn {k, v} -> k <> <<0>> <> v <> <<0>> end)
-    <<0::32, 0, 3, 0, 0>> <> body <> <<0>>
+    body = Enum.map(pairs, fn {k, v} -> [k, <<0>>, v, <<0>>] end)
+    IO.iodata_to_binary([<<0::32, 0, 3, 0, 0>>,  body, <<0>>]
   end
 end
