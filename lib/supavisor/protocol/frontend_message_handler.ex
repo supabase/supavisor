@@ -3,8 +3,11 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   Handles PostgreSQL frontend messages.
 
   - Parse (P), Bind (B), Close (C), Describe (D): PreparedStatements
-  - Simple Query (Q): SimpleQueryHandler
-  - Sync (S), FunctionCall (F): forwarded unchanged
+  - Simple Query (Q), Sync (S), FunctionCall (F): forwarded unchanged
+
+  Simple queries are first checked by SetStatements and SimpleQueryHandler,
+  which reject session-level SET and prepared statement commands when the
+  tenant has those checks enabled.
 
   It also counts the number of messages that produce a `ReadyForQuery` response from the backend.
   """
@@ -41,26 +44,34 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
 
   @impl true
   def handle_message(state, ?Q, len, payload) do
-    # Both checks parse the same query, and parsing dominates their cost, so
-    # parse once here and let each of them walk the resulting tree.
-    set_check? = state.set_statements_action not in [nil, :ignore]
-    prepare_check? = state.translate? and state.check_simple_query_prepare?
-
-    if set_check? or prepare_check? do
-      query = String.trim_trailing(payload, <<0>>)
-      parsed = parse_query(query)
-
-      with :ok <- SetStatements.check_parsed(state.set_statements_action, parsed, query) do
-        do_handle_message(state, ?Q, len, payload, parsed)
-      end
-    else
-      do_handle_message(state, ?Q, len, payload, nil)
+    with :ok <- check_simple_query(state, payload) do
+      do_handle_message(state, ?Q, len, payload)
     end
   end
 
   def handle_message(state, tag, len, payload) do
     with :ok <- SetStatements.check(state.set_statements_action, tag, payload) do
-      do_handle_message(state, tag, len, payload, nil)
+      do_handle_message(state, tag, len, payload)
+    end
+  end
+
+  # Both checks below need the query parsed, and parsing dominates their cost,
+  # so parse at most once and let each of them walk the resulting tree.
+  defp check_simple_query(state, payload) do
+    set_action = state.set_statements_action
+    set_check? = set_action not in [nil, :ignore]
+    prepare_check? = state.translate? and state.check_simple_query_prepare?
+
+    if set_check? or prepare_check? do
+      # Some clients send null terminators
+      query = String.trim_trailing(payload, <<0>>)
+      parsed = parse_query(query)
+
+      with :ok <- SetStatements.check_parsed(set_action, parsed, query) do
+        SimpleQueryHandler.check(prepare_check?, parsed)
+      end
+    else
+      :ok
     end
   end
 
@@ -75,11 +86,11 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
     end
   end
 
-  defp do_handle_message(%{translate?: false} = state, tag, len, payload, _parsed) do
+  defp do_handle_message(%{translate?: false} = state, tag, len, payload) do
     {:ok, count_rfq_producer(state, tag), <<tag, len::32, payload::binary>>}
   end
 
-  defp do_handle_message(state, tag, len, payload, parsed) do
+  defp do_handle_message(state, tag, len, payload) do
     case tag do
       ?P ->
         PreparedStatements.handle_parse_message(state.prepared_statements, len, payload)
@@ -93,18 +104,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       ?D ->
         PreparedStatements.handle_describe_message(state.prepared_statements, len, payload)
 
-      ?Q when state.check_simple_query_prepare? ->
-        SimpleQueryHandler.handle_simple_query_message(
-          state.prepared_statements,
-          len,
-          payload,
-          parsed
-        )
-
-      ?Q ->
-        {:ok, state.prepared_statements, <<?Q, len::32, payload::binary>>}
-
-      tag when tag in [?S, ?F] ->
+      tag when tag in [?Q, ?S, ?F] ->
         {:ok, state.prepared_statements, <<tag, len::32, payload::binary>>}
     end
     |> case do
