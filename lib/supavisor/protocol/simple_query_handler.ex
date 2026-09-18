@@ -1,14 +1,14 @@
 defmodule Supavisor.Protocol.SimpleQueryHandler do
   @moduledoc """
-  Handles PostgreSQL Simple Query (Q) messages.
+  Restrictions on PostgreSQL Simple Query (Q) messages.
 
-  This module processes simple query messages and enforces restrictions,
-  such as preventing the use of PREPARE statements in simple queries.
+  Transaction mode only supports prepared statements through the Extended
+  Query Protocol, so `PREPARE`, `EXECUTE` and `DEALLOCATE` are rejected when
+  they arrive as a simple query.
   """
 
-  require Logger
-
-  @type pkt() :: binary()
+  alias Supavisor.Errors.SimpleQueryNotSupportedError
+  alias Supavisor.PgParser
 
   @prepared_statements_stmts MapSet.new([
                                "DeallocateStmt",
@@ -17,31 +17,24 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
                              ])
 
   @doc """
-  Handles a Simple Query (Q) message.
+  Rejects a parsed simple query that uses prepared statement commands.
 
-  Validates the query and returns an error if PREPARE statements are detected,
-  otherwise passes the query through unchanged.
+  Does nothing unless `enabled?` is true, since the check is opt-in per tenant.
+  `parsed` is the tree from `Supavisor.PgParser.parse/1`, or `nil` when the
+  query could not be parsed, in which case it is allowed through.
   """
-  @spec handle_simple_query_message(any(), non_neg_integer(), binary()) ::
-          {:ok, any(), pkt()} | {:error, Supavisor.Errors.SimpleQueryNotSupportedError.t()}
-  def handle_simple_query_message(state, len, payload) do
-    # Some clients may send null terminators
-    clean_payload = String.trim_trailing(payload, <<0>>)
+  @spec check(boolean(), PgParser.parsed() | nil) ::
+          :ok | {:error, SimpleQueryNotSupportedError.t()}
+  def check(false, _parsed), do: :ok
+  def check(_enabled?, nil), do: :ok
 
-    case Supavisor.PgParser.statement_types(clean_payload) do
-      {:ok, types} ->
-        if MapSet.disjoint?(MapSet.new(types), @prepared_statements_stmts) do
-          {:ok, state, <<?Q, len::32, payload::binary>>}
-        else
-          {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}}
-        end
+  def check(_enabled?, parsed) do
+    types = MapSet.new(PgParser.parsed_statement_types(parsed))
 
-      {:error, error} ->
-        Logger.debug(
-          "Failed to parse simple query: #{inspect(error)}, payload: #{inspect(clean_payload)}"
-        )
-
-        {:ok, state, <<?Q, len::32, payload::binary>>}
+    if MapSet.disjoint?(types, @prepared_statements_stmts) do
+      :ok
+    else
+      {:error, %SimpleQueryNotSupportedError{}}
     end
   end
 end
