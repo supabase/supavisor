@@ -77,4 +77,72 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
       assert opts == opts |> StartupOptions.encode() |> StartupOptions.parse()
     end
   end
+
+  describe "validate/1" do
+    test "converts boolean spellings case-insensitively" do
+      for v <- ~w(1 t tr tru true y ye yes on TRUE On) do
+        assert {:ok, %{"jit" => true}} = StartupOptions.validate(%{"jit" => v}),
+               "expected #{inspect(v)} to be true"
+      end
+
+      for v <- ~w(0 f fa fal fals false n no of off OFF) do
+        assert {:ok, %{"jit" => false}} = StartupOptions.validate(%{"jit" => v}),
+               "expected #{inspect(v)} to be false"
+      end
+    end
+
+    test "rejects invalid boolean values" do
+      for v <- ~w(o maybe 10 2) ++ [""] do
+        assert {:error, {"jit", ^v}} = StartupOptions.validate(%{"jit" => v}),
+               "expected #{inspect(v)} to be invalid"
+      end
+    end
+
+    test "converts enum values to atoms" do
+      assert {:ok, %{"log_level" => :info}} =
+               StartupOptions.validate(%{"log_level" => "INFO"})
+    end
+
+    test "rejects invalid enum values" do
+      assert {:error, {"log_level", "trace"}} =
+               StartupOptions.validate(%{"log_level" => "trace"})
+    end
+
+    test "passes string values through unchanged" do
+      assert {:ok, %{"search_path" => "public, foo"}} =
+               StartupOptions.validate(%{"search_path" => "public, foo"})
+    end
+
+    test "passes unknown options through unchanged" do
+      assert {:ok, %{"work_mem" => "64MB"}} =
+               StartupOptions.validate(%{"work_mem" => "64MB"})
+    end
+
+    test "fails when any option is invalid" do
+      assert {:error, {"jit", "maybe"}} =
+               StartupOptions.validate(%{"jit" => "maybe", "search_path" => "public"})
+    end
+
+    test "empty map" do
+      assert {:ok, %{}} = StartupOptions.validate(%{})
+    end
+  end
+
+  describe "invalid_option_message/1" do
+    test "returns the boolean error message" do
+      assert {~s(parameter "jit" requires a Boolean value), nil} =
+               StartupOptions.invalid_option_message({"jit", "maybe"})
+    end
+
+    test "uses the option name in the message" do
+      assert {~s(parameter "client_tls" requires a Boolean value), nil} =
+               StartupOptions.invalid_option_message({"client_tls", "yep"})
+    end
+
+    test "returns the enum error message and hint" do
+      assert {~s(invalid value for parameter "log_level": "trace"),
+              "Available values: debug, info, notice, warning, error."} =
+               StartupOptions.invalid_option_message({"log_level", "trace"})
+    end
+  end
 end
