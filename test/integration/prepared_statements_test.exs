@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
   require Logger
 
   alias Supavisor.Protocol.PreparedStatements
+  alias Supavisor.Support.ProtocolClient
 
   @tenant "proxy_tenant_ps_enabled"
 
@@ -166,6 +167,42 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     assert {:ok, _, _} = Postgrex.execute(c2, q2, ["private"])
   end
 
+  test "describes a named statement after its original backend is checked out" do
+    client = connect_protocol_client()
+    statement_name = "metadata_statement"
+
+    initial_query = [
+      :pgo_protocol.encode_parse_message(statement_name, "SELECT $1::int", []),
+      encode_bind_message(statement_name, "7"),
+      :pgo_protocol.encode_execute_message("", 0),
+      :pgo_protocol.encode_sync_message()
+    ]
+
+    :ok = :gen_tcp.send(client, initial_query)
+    initial_response = recv_until_ready_for_query(client)
+    refute Enum.any?(initial_response, &match?(<<?E, _::binary>>, &1))
+
+    holder = connect_protocol_client()
+    :ok = :gen_tcp.send(holder, :pgo_protocol.encode_query_message("BEGIN"))
+    holder_response = recv_until_ready_for_query(holder)
+    assert Enum.any?(holder_response, &match?(<<?Z, 5::32, ?T>>, &1))
+
+    :ok =
+      :gen_tcp.send(client, [
+        encode_describe_statement_message(statement_name),
+        :pgo_protocol.encode_sync_message()
+      ])
+
+    describe_response = recv_until_ready_for_query(client)
+
+    refute Enum.any?(describe_response, &match?(<<?E, _::binary>>, &1))
+    assert Enum.any?(describe_response, &match?(<<?t, _::binary>>, &1))
+    assert Enum.any?(describe_response, &match?(<<?T, _::binary>>, &1))
+
+    :ok = :gen_tcp.send(holder, :pgo_protocol.encode_query_message("ROLLBACK"))
+    recv_until_ready_for_query(holder)
+  end
+
   test "prepared statements error on simple query protocol", %{conn_opts: conn_opts} do
     expected_message =
       "(EPSSIMPLEQUERY) transaction mode only supports prepared statements using the Extended Query Protocol"
@@ -237,5 +274,50 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     AND #{i} > 0
     ORDER BY tablename;
     """
+  end
+
+  defp connect_protocol_client do
+    db_conf = Application.get_env(:supavisor, Repo)
+    port = Application.get_env(:supavisor, :proxy_port_transaction)
+    {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+    ProtocolClient.authenticate(
+      sock,
+      "#{db_conf[:username]}.#{@tenant}",
+      db_conf[:password]
+    )
+
+    sock
+  end
+
+  defp encode_bind_message(statement_name, value) do
+    payload =
+      IO.iodata_to_binary([
+        0,
+        statement_name,
+        0,
+        <<0::16, 1::16, byte_size(value)::32>>,
+        value,
+        <<0::16>>
+      ])
+
+    <<?B, byte_size(payload) + 4::32, payload::binary>>
+  end
+
+  defp encode_describe_statement_message(statement_name) do
+    payload = <<?S, statement_name::binary, 0>>
+    <<?D, byte_size(payload) + 4::32, payload::binary>>
+  end
+
+  defp recv_until_ready_for_query(sock, buffered \\ <<>>, packets \\ []) do
+    {received_packets, rest} = Supavisor.Protocol.split_pkts(buffered)
+    packets = packets ++ received_packets
+
+    if Enum.any?(received_packets, &match?(<<?Z, _::binary>>, &1)) do
+      packets
+    else
+      {:ok, more} = :gen_tcp.recv(sock, 0, 5000)
+      recv_until_ready_for_query(sock, rest <> more, packets)
+    end
   end
 end

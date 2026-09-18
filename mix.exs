@@ -60,7 +60,7 @@ defmodule Supavisor.MixProject do
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
       {:cloak_ecto, "~> 1.3.0"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.6.1"},
       {:prom_ex, "~> 1.10"},
       {:open_api_spex, "~> 3.16"},
       {:libcluster, "~> 3.5"},
@@ -76,6 +76,8 @@ defmodule Supavisor.MixProject do
       {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.3"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
+      {:pg_saslprep,
+       github: "v0idpwn/pg_saslprep", ref: "455e2e50757e8e5e091c00be4c1b9818612e3ca2"},
       {:rustler, "~> 0.36.1"},
       {:ranch, "~> 2.0", override: true},
 

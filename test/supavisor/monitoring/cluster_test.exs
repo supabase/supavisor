@@ -78,8 +78,8 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
                current: ^expected_current,
                # this is set to the OTP version in the test env
                permanent: _permanent,
-               base: "",
-               previous: ""
+               base: nil,
+               previous: nil
              } = meta
     end
   end
@@ -118,6 +118,57 @@ defmodule Supavisor.PromEx.Plugins.ClusterTest do
       assert :ok = Cluster.emit_ami_version()
 
       refute_receive {^ref, {[:supavisor, :prom_ex, :ami, :version], _measurement, _meta}}
+    end
+  end
+
+  describe "emit_node_ipv6/0" do
+    test "emits node ipv6 event when a global IPv6 address is available" do
+      ref = attach_handler([:supavisor, :prom_ex, :node, :ipv6])
+
+      assert :ok = Cluster.emit_node_ipv6()
+
+      case Cluster.node_ipv6_address() do
+        nil ->
+          refute_receive {^ref, {[:supavisor, :prom_ex, :node, :ipv6], _measurement, _meta}}
+
+        expected_address ->
+          assert_receive {^ref, {[:supavisor, :prom_ex, :node, :ipv6], measurement, meta}}
+          assert %{status: 1} = measurement
+          assert %{address: ^expected_address} = meta
+      end
+    end
+  end
+
+  describe "global_ipv6?/1" do
+    test "rejects the loopback address" do
+      refute Cluster.global_ipv6?({0, 0, 0, 0, 0, 0, 0, 1})
+    end
+
+    test "rejects link-local addresses (fe80::/10)" do
+      refute Cluster.global_ipv6?({0xFE80, 0, 0, 0, 0, 0, 0, 1})
+
+      refute Cluster.global_ipv6?(
+               {0xFEBF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}
+             )
+    end
+
+    test "accepts global and unique-local IPv6 addresses" do
+      assert Cluster.global_ipv6?({0x2406, 0xDA18, 0x4FD, 0x9B02, 0xF1F7, 0x7026, 0x5CDA, 0xEE90})
+
+      assert Cluster.global_ipv6?(
+               {0xFD10, 0x3D6F, 0x1A98, 0x4B8C, 0x1442, 0xBF82, 0xF7AF, 0x9E3C}
+             )
+
+      # Just outside the fe80::/10 range on either side
+      assert Cluster.global_ipv6?(
+               {0xFE7F, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}
+             )
+
+      assert Cluster.global_ipv6?({0xFEC0, 0, 0, 0, 0, 0, 0, 1})
+    end
+
+    test "rejects non-IPv6 (e.g. IPv4) addresses" do
+      refute Cluster.global_ipv6?({127, 0, 0, 1})
     end
   end
 
