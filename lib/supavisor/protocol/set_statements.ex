@@ -45,6 +45,23 @@ defmodule Supavisor.Protocol.SetStatements do
 
   def check(_action, _tag, _payload), do: :ok
 
+  @doc """
+  Same as `check/3` for a Simple Query whose tree has already been parsed by
+  `Supavisor.PgParser.parse/1`, avoiding a second parse of the same query.
+  """
+  @spec check_parsed(action() | nil, PgParser.parsed() | nil, binary()) ::
+          :ok | {:error, SetStatementNotAllowedError.t()}
+  def check_parsed(action, _parsed, _query) when action in [nil, :ignore], do: :ok
+  def check_parsed(_action, nil, _query), do: :ok
+
+  def check_parsed(action, parsed, query) do
+    if PgParser.parsed_has_session_set(parsed) do
+      handle_detected(action, query)
+    else
+      :ok
+    end
+  end
+
   defp check_query(action, query) do
     case PgParser.has_session_set(query) do
       {:ok, true} -> handle_detected(action, query)

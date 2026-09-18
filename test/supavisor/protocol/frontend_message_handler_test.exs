@@ -102,7 +102,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "prepared statement commands pass through when the check is disabled", %{
       stream_state: stream_state
     } do
-      prepare_bin = <<?Q, 27::32, "PREPARE stmt AS SELECT 1">>
+      prepare_bin = simple_query("PREPARE stmt AS SELECT 1")
 
       assert {:ok, _, [^prepare_bin]} =
                MessageStreamer.handle_packets(stream_state, prepare_bin)

@@ -6,7 +6,7 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
   such as preventing the use of PREPARE statements in simple queries.
   """
 
-  require Logger
+  alias Supavisor.PgParser
 
   @type pkt() :: binary()
 
@@ -21,27 +21,22 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
 
   Validates the query and returns an error if PREPARE statements are detected,
   otherwise passes the query through unchanged.
+
+  `parsed` is the query tree from `Supavisor.PgParser.parse/1`, or `nil` when
+  the query could not be parsed, in which case it passes through.
   """
-  @spec handle_simple_query_message(any(), non_neg_integer(), binary()) ::
+  @spec handle_simple_query_message(any(), non_neg_integer(), binary(), PgParser.parsed() | nil) ::
           {:ok, any(), pkt()} | {:error, Supavisor.Errors.SimpleQueryNotSupportedError.t()}
-  def handle_simple_query_message(state, len, payload) do
-    # Some clients may send null terminators
-    clean_payload = String.trim_trailing(payload, <<0>>)
+  def handle_simple_query_message(state, len, payload, nil),
+    do: {:ok, state, <<?Q, len::32, payload::binary>>}
 
-    case Supavisor.PgParser.statement_types(clean_payload) do
-      {:ok, types} ->
-        if MapSet.disjoint?(MapSet.new(types), @prepared_statements_stmts) do
-          {:ok, state, <<?Q, len::32, payload::binary>>}
-        else
-          {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}}
-        end
+  def handle_simple_query_message(state, len, payload, parsed) do
+    types = PgParser.parsed_statement_types(parsed)
 
-      {:error, error} ->
-        Logger.debug(
-          "Failed to parse simple query: #{inspect(error)}, payload: #{inspect(clean_payload)}"
-        )
-
-        {:ok, state, <<?Q, len::32, payload::binary>>}
+    if MapSet.disjoint?(MapSet.new(types), @prepared_statements_stmts) do
+      {:ok, state, <<?Q, len::32, payload::binary>>}
+    else
+      {:error, %Supavisor.Errors.SimpleQueryNotSupportedError{}}
     end
   end
 end

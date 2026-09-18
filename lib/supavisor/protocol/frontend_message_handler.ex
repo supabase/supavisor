@@ -11,6 +11,9 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
 
   @behaviour Supavisor.Protocol.MessageHandler
 
+  require Logger
+
+  alias Supavisor.PgParser
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.SetStatements
   alias Supavisor.Protocol.SimpleQueryHandler
@@ -37,17 +40,46 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   end
 
   @impl true
-  def handle_message(state, tag, len, payload) do
-    with :ok <- SetStatements.check(state.set_statements_action, tag, payload) do
-      do_handle_message(state, tag, len, payload)
+  def handle_message(state, ?Q, len, payload) do
+    # Both checks parse the same query, and parsing dominates their cost, so
+    # parse once here and let each of them walk the resulting tree.
+    set_check? = state.set_statements_action not in [nil, :ignore]
+    prepare_check? = state.translate? and state.check_simple_query_prepare?
+
+    if set_check? or prepare_check? do
+      query = String.trim_trailing(payload, <<0>>)
+      parsed = parse_query(query)
+
+      with :ok <- SetStatements.check_parsed(state.set_statements_action, parsed, query) do
+        do_handle_message(state, ?Q, len, payload, parsed)
+      end
+    else
+      do_handle_message(state, ?Q, len, payload, nil)
     end
   end
 
-  defp do_handle_message(%{translate?: false} = state, tag, len, payload) do
+  def handle_message(state, tag, len, payload) do
+    with :ok <- SetStatements.check(state.set_statements_action, tag, payload) do
+      do_handle_message(state, tag, len, payload, nil)
+    end
+  end
+
+  defp parse_query(query) do
+    case PgParser.parse(query) do
+      {:ok, parsed} ->
+        parsed
+
+      {:error, error} ->
+        Logger.debug("Failed to parse simple query: #{inspect(error)}, query: #{inspect(query)}")
+        nil
+    end
+  end
+
+  defp do_handle_message(%{translate?: false} = state, tag, len, payload, _parsed) do
     {:ok, count_rfq_producer(state, tag), <<tag, len::32, payload::binary>>}
   end
 
-  defp do_handle_message(state, tag, len, payload) do
+  defp do_handle_message(state, tag, len, payload, parsed) do
     case tag do
       ?P ->
         PreparedStatements.handle_parse_message(state.prepared_statements, len, payload)
@@ -62,7 +94,12 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
         PreparedStatements.handle_describe_message(state.prepared_statements, len, payload)
 
       ?Q when state.check_simple_query_prepare? ->
-        SimpleQueryHandler.handle_simple_query_message(state.prepared_statements, len, payload)
+        SimpleQueryHandler.handle_simple_query_message(
+          state.prepared_statements,
+          len,
+          payload,
+          parsed
+        )
 
       ?Q ->
         {:ok, state.prepared_statements, <<?Q, len::32, payload::binary>>}
