@@ -48,7 +48,9 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "simple query with prepared statement commands returns error" do
-      stream_state = MessageStreamer.new_stream_state(FrontendMessageHandler)
+      stream_state =
+        MessageStreamer.new_stream_state(FrontendMessageHandler)
+        |> with_simple_query_prepare_check()
 
       prepare_bin = <<?Q, 27::32, "PREPARE stmt AS SELECT 1">>
 
@@ -85,7 +87,9 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "multiple statements with prepared statement commands returns error" do
-      stream_state = MessageStreamer.new_stream_state(FrontendMessageHandler)
+      stream_state =
+        MessageStreamer.new_stream_state(FrontendMessageHandler)
+        |> with_simple_query_prepare_check()
 
       multi_query_bin = <<?Q, 36::32, "SELECT 1; PREPARE stmt AS SELECT 2">>
 
@@ -93,6 +97,15 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
                error = MessageStreamer.handle_packets(stream_state, multi_query_bin)
 
       assert_valid_error(error)
+    end
+
+    test "prepared statement commands pass through when the check is disabled", %{
+      stream_state: stream_state
+    } do
+      prepare_bin = <<?Q, 27::32, "PREPARE stmt AS SELECT 1">>
+
+      assert {:ok, _, [^prepare_bin]} =
+               MessageStreamer.handle_packets(stream_state, prepare_bin)
     end
 
     test "multiple allowed statements pass through unchanged", %{stream_state: stream_state} do
@@ -110,6 +123,10 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
 
   defp with_set_statements_action(stream_state, action) do
     MessageStreamer.update_state(stream_state, &%{&1 | set_statements_action: action})
+  end
+
+  defp with_simple_query_prepare_check(stream_state) do
+    MessageStreamer.update_state(stream_state, &%{&1 | check_simple_query_prepare?: true})
   end
 
   defp simple_query(query) do

@@ -125,13 +125,17 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
       ) do
     translate? = FeatureFlag.enabled?(tenant_feature_flags, "named_prepared_statements")
 
+    check_simple_query_prepare? =
+      FeatureFlag.enabled?(tenant_feature_flags, "check_simple_query_prepare")
+
     stream_state =
       MessageStreamer.update_state(
         data.stream_state,
         &%{
           &1
           | translate?: translate?,
-            set_statements_action: data.txn_mode_set_action
+            set_statements_action: data.txn_mode_set_action,
+            check_simple_query_prepare?: check_simple_query_prepare?
         }
       )
 

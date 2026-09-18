@@ -28,7 +28,11 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       # Prepared statements feature flag:
       translate?: true,
       # Tenant's txn_mode_set_action field:
-      set_statements_action: :ignore
+      set_statements_action: :ignore,
+      # Rejection of PREPARE/EXECUTE/DEALLOCATE on the simple query protocol.
+      # Costs a full parse of every simple query, so it is opt-in via the
+      # check_simple_query_prepare feature flag.
+      check_simple_query_prepare?: false
     }
   end
 
@@ -57,8 +61,11 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       ?D ->
         PreparedStatements.handle_describe_message(state.prepared_statements, len, payload)
 
-      ?Q ->
+      ?Q when state.check_simple_query_prepare? ->
         SimpleQueryHandler.handle_simple_query_message(state.prepared_statements, len, payload)
+
+      ?Q ->
+        {:ok, state.prepared_statements, <<?Q, len::32, payload::binary>>}
 
       tag when tag in [?S, ?F] ->
         {:ok, state.prepared_statements, <<tag, len::32, payload::binary>>}
