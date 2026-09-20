@@ -88,7 +88,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
       else
         salted_password =
           :pgo_scram.hi(
-            :pgo_sasl_prep_profile.validate([password]),
+            PgSASLprep.scram_normalize(password),
             sasl_secrets.salt,
             sasl_secrets.iterations
           )
