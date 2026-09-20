@@ -81,68 +81,76 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
   describe "validate/1" do
     test "converts boolean spellings case-insensitively" do
       for v <- ~w(1 t tr tru true y ye yes on TRUE On) do
-        assert {:ok, %{"jit" => true}} = StartupOptions.validate(%{"jit" => v}),
+        assert {%{"jit" => true}, []} = StartupOptions.validate(%{"jit" => v}),
                "expected #{inspect(v)} to be true"
       end
 
       for v <- ~w(0 f fa fal fals false n no of off OFF) do
-        assert {:ok, %{"jit" => false}} = StartupOptions.validate(%{"jit" => v}),
+        assert {%{"jit" => false}, []} = StartupOptions.validate(%{"jit" => v}),
                "expected #{inspect(v)} to be false"
       end
     end
 
-    test "rejects invalid boolean values" do
+    test "reports invalid boolean values" do
       for v <- ~w(o maybe 10 2) ++ [""] do
-        assert {:error, {"jit", ^v}} = StartupOptions.validate(%{"jit" => v}),
+        assert {%{}, [{"jit", ^v}]} = StartupOptions.validate(%{"jit" => v}),
                "expected #{inspect(v)} to be invalid"
       end
     end
 
     test "converts enum values to atoms" do
-      assert {:ok, %{"log_level" => :info}} =
+      assert {%{"log_level" => :info}, []} =
                StartupOptions.validate(%{"log_level" => "INFO"})
     end
 
-    test "rejects invalid enum values" do
-      assert {:error, {"log_level", "trace"}} =
+    test "reports invalid enum values" do
+      assert {%{}, [{"log_level", "trace"}]} =
                StartupOptions.validate(%{"log_level" => "trace"})
     end
 
     test "passes string values through unchanged" do
-      assert {:ok, %{"search_path" => "public, foo"}} =
+      assert {%{"search_path" => "public, foo"}, []} =
                StartupOptions.validate(%{"search_path" => "public, foo"})
     end
 
     test "passes unknown options through unchanged" do
-      assert {:ok, %{"work_mem" => "64MB"}} =
+      assert {%{"work_mem" => "64MB"}, []} =
                StartupOptions.validate(%{"work_mem" => "64MB"})
     end
 
-    test "fails when any option is invalid" do
-      assert {:error, {"jit", "maybe"}} =
+    test "drops invalid options and keeps the rest" do
+      assert {%{"search_path" => "public"}, [{"jit", "maybe"}]} =
                StartupOptions.validate(%{"jit" => "maybe", "search_path" => "public"})
     end
 
     test "empty map" do
-      assert {:ok, %{}} = StartupOptions.validate(%{})
+      assert {%{}, []} = StartupOptions.validate(%{})
     end
   end
 
-  describe "invalid_option_message/1" do
-    test "returns the boolean error message" do
-      assert {~s(parameter "jit" requires a Boolean value), nil} =
-               StartupOptions.invalid_option_message({"jit", "maybe"})
+  describe "invalid_option_notice/1" do
+    test "returns the boolean notice" do
+      assert %{
+               "S" => "NOTICE",
+               "V" => "NOTICE",
+               "C" => "22023",
+               "M" => ~s(parameter "jit" requires a Boolean value)
+             } == StartupOptions.invalid_option_notice({"jit", "maybe"})
     end
 
     test "uses the option name in the message" do
-      assert {~s(parameter "client_tls" requires a Boolean value), nil} =
-               StartupOptions.invalid_option_message({"client_tls", "yep"})
+      assert %{"M" => ~s(parameter "client_tls" requires a Boolean value)} =
+               StartupOptions.invalid_option_notice({"client_tls", "yep"})
     end
 
-    test "returns the enum error message and hint" do
-      assert {~s(invalid value for parameter "log_level": "trace"),
-              "Available values: debug, info, notice, warning, error."} =
-               StartupOptions.invalid_option_message({"log_level", "trace"})
+    test "returns the enum notice with a hint" do
+      assert %{
+               "S" => "NOTICE",
+               "V" => "NOTICE",
+               "C" => "22023",
+               "M" => ~s(invalid value for parameter "log_level": "trace"),
+               "H" => "Available values: debug, info, notice, warning, error."
+             } == StartupOptions.invalid_option_notice({"log_level", "trace"})
     end
   end
 end

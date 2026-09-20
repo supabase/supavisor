@@ -46,7 +46,7 @@ defmodule Supavisor.ClientHandler do
     Proxy
   }
 
-  alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer}
+  alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer, StartupOptions}
   require MessageStreamer
 
   alias Supavisor.Errors.{
@@ -213,14 +213,15 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
       {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
-       app_name, log_level} ->
+       app_name, log_level, invalid} ->
         event =
           {:hello,
            {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
 
         if log_level, do: Logger.put_process_level(self(), log_level)
 
-        {:keep_state, %{data | app_name: app_name}, {:next_event, :internal, event}}
+        {:keep_state, %{data | app_name: app_name, invalid_options: invalid},
+         {:next_event, :internal, event}}
 
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -421,7 +422,8 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:internal, {:greetings, ps}, _state, data) do
     {header, <<pid::32, key::32>> = payload} = Server.backend_key_data()
-    msg = [ps, [header, payload], Server.ready_for_query()]
+    notices = invalid_option_notices(data.invalid_options)
+    msg = [ps, [header, payload], notices, Server.ready_for_query()]
     :ok = Cancel.listen_cancel_query(pid, key)
 
     case client_sock_send(data, msg, :handshake) do
@@ -955,6 +957,13 @@ defmodule Supavisor.ClientHandler do
     )
 
     %{data | state_entered_at: now}
+  end
+
+  @spec invalid_option_notices([{String.t(), String.t()}]) :: iodata()
+  defp invalid_option_notices(invalid) do
+    Enum.map(invalid, fn opt ->
+      Server.encode_notice_message(StartupOptions.invalid_option_notice(opt))
+    end)
   end
 
   @spec client_sock_send(map(), iodata(), :handshake | :idle) ::

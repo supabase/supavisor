@@ -95,24 +95,24 @@ defmodule Supavisor.Protocol.StartupOptions do
   ## Examples
 
       iex> Supavisor.Protocol.StartupOptions.validate(%{"jit" => "1", "work_mem" => "64MB"})
-      {:ok, %{"jit" => true, "work_mem" => "64MB"}}
+      {%{"jit" => true, "work_mem" => "64MB"}, []}
 
       iex> Supavisor.Protocol.StartupOptions.validate(%{"jit" => "maybe"})
-      {:error, {"jit", "maybe"}}
+      {%{}, [{"jit", "maybe"}]}
 
   """
-  @spec validate(map()) :: {:ok, map()} | {:error, {String.t(), String.t()}}
+  @spec validate(map()) :: {map(), [{String.t(), String.t()}]}
   def validate(opts) do
-    Enum.reduce_while(opts, {:ok, %{}}, fn {name, value}, {:ok, options} ->
+    Enum.reduce(opts, {%{}, []}, fn {name, value}, {options, invalid} ->
       case @schema do
         %{^name => type} ->
           case cast(type, value) do
-            {:ok, cast} -> {:cont, {:ok, Map.put(options, name, cast)}}
-            :error -> {:halt, {:error, {name, value}}}
+            {:ok, cast} -> {Map.put(options, name, cast), invalid}
+            :error -> {options, [{name, value} | invalid]}
           end
 
         _ ->
-          {:cont, {:ok, Map.put(options, name, value)}}
+          {Map.put(options, name, value), invalid}
       end
     end)
   end
@@ -148,26 +148,32 @@ defmodule Supavisor.Protocol.StartupOptions do
   defp cast(:string, value), do: {:ok, value}
 
   @doc """
-  Returns the PostgreSQL error text (and optional hint) for an invalid option.
+  Builds a `NoticeResponse` field map for an invalid option.
 
   ## Examples
 
-      iex> Supavisor.Protocol.StartupOptions.invalid_option_message({"jit", "maybe"})
-      {~s(parameter "jit" requires a Boolean value), nil}
+      iex> Supavisor.Protocol.StartupOptions.invalid_option_notice({"jit", "maybe"})
+      %{"S" => "NOTICE", "V" => "NOTICE", "C" => "22023",
+        "M" => ~s(parameter "jit" requires a Boolean value)}
 
   """
-  @spec invalid_option_message({String.t(), String.t()}) :: {String.t(), String.t() | nil}
-  def invalid_option_message({name, value}) do
+  @spec invalid_option_notice({String.t(), String.t()}) :: map()
+  def invalid_option_notice({name, value}) do
+    base = %{"S" => "NOTICE", "V" => "NOTICE", "C" => "22023"}
+
     case @schema do
       %{^name => :boolean} ->
-        {~s(parameter "#{name}" requires a Boolean value), nil}
+        Map.put(base, "M", ~s(parameter "#{name}" requires a Boolean value))
 
       %{^name => {:enum, allowed}} ->
         hint = "Available values: " <> Enum.map_join(allowed, ", ", &Atom.to_string/1) <> "."
-        {~s(invalid value for parameter "#{name}": "#{value}"), hint}
+
+        base
+        |> Map.put("M", ~s(invalid value for parameter "#{name}": "#{value}"))
+        |> Map.put("H", hint)
 
       _ ->
-        {~s(invalid value for parameter "#{name}": "#{value}"), nil}
+        Map.put(base, "M", ~s(invalid value for parameter "#{name}": "#{value}"))
     end
   end
 

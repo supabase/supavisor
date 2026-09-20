@@ -2,28 +2,21 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
   use ExUnit.Case, async: true
 
   alias Supavisor.ClientHandler.ProtocolHelpers
-  alias Supavisor.Errors.InvalidStartupOptionError
   alias Supavisor.Protocol.StartupOptions
 
   describe "parse_startup_packet/1" do
-    test "rejects an invalid option with a fatal error" do
+    test "drops an invalid option and reports it" do
       bin = startup_packet([{"user", "postgres.some_tenant"}, {"options", "-c jit=maybe"}])
 
-      assert {:error, %InvalidStartupOptionError{name: "jit", value: "maybe"} = err} =
-               ProtocolHelpers.parse_startup_packet(bin)
-
-      assert %{
-               "S" => "FATAL",
-               "V" => "FATAL",
-               "C" => "22023",
-               "M" => ~s(parameter "jit" requires a Boolean value)
-             } = InvalidStartupOptionError.postgres_error(err)
+      assert {:ok, {_type, {"postgres", "some_tenant", _db, _sp, false, _tls, _ip}}, _app, _log,
+              [{"jit", "maybe"}]} = ProtocolHelpers.parse_startup_packet(bin)
     end
 
     test "accepts and type-converts valid options" do
       bin = startup_packet([{"user", "postgres.some_tenant"}, {"options", "-c jit=1"}])
 
-      assert {:ok, {_type, {"postgres", "some_tenant", _db, _sp, true, _tls, _ip}}, _app, _log} =
+      assert {:ok, {_type, {"postgres", "some_tenant", _db, _sp, true, _tls, _ip}}, _app, _log,
+              []} =
                ProtocolHelpers.parse_startup_packet(bin)
     end
   end
@@ -61,7 +54,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
           "client_ip" => "2001:db8::1"
         })
 
-      {:ok, options} = StartupOptions.validate(StartupOptions.parse(encoded))
+      {options, []} = StartupOptions.validate(StartupOptions.parse(encoded))
       payload = %{"user" => "postgres.some_tenant"}
 
       assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, true, true, "2001:db8::1"}}} =
@@ -100,6 +93,6 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
   # Builds a StartupMessage wire packet from key/value pairs.
   defp startup_packet(pairs) do
     body = Enum.map(pairs, fn {k, v} -> [k, <<0>>, v, <<0>>] end)
-    IO.iodata_to_binary([<<0::32, 0, 3, 0, 0>>,  body, <<0>>]
+    IO.iodata_to_binary([<<0::32, 0, 3, 0, 0>>, body, <<0>>])
   end
 end

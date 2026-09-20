@@ -15,7 +15,6 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
 
   alias Supavisor.{
     Errors.InvalidUserInfoError,
-    Errors.InvalidStartupOptionError,
     Errors.StartupMessageError,
     Errors.MaxPreparedStatementsError,
     Errors.PreparedStatementNotFoundError,
@@ -48,26 +47,21 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @doc """
   Parses and validates startup packet data.
 
-  Returns parsed user info, application name, and log level if successful.
+  Returns parsed user info, application name, log level, and list of invalid options.
   """
   @spec parse_startup_packet(binary()) ::
-          {:ok, startup_message_data(), String.t() | nil, Logger.level() | nil}
-          | {:error,
-             StartupMessageError.t()
-             | InvalidStartupOptionError.t()
-             | InvalidUserInfoError.t()}
+          {:ok, startup_message_data(), String.t() | nil, Logger.level() | nil,
+           [{String.t(), String.t()}]}
+          | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
-         {:ok, options} <- StartupOptions.validate(hello.payload["options"] || %{}),
+         {options, invalid} = StartupOptions.validate(hello.payload["options"] || %{}),
          {:ok, user_info} <- extract_and_validate_user_info(hello.payload, options) do
       Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
       app_name = normalize_app_name(hello.payload["application_name"])
       log_level = options["log_level"]
 
-      {:ok, user_info, app_name, log_level}
-    else
-      {:error, {name, value}} -> {:error, %InvalidStartupOptionError{name: name, value: value}}
-      error -> error
+      {:ok, user_info, app_name, log_level, invalid}
     end
   end
 
