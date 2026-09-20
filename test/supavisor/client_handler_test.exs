@@ -161,7 +161,7 @@ defmodule Supavisor.ClientHandlerTest do
         <<79::32,
           "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00">>
 
-      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil}
+      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil, invalid_options: []}
 
       assert {:keep_state, %{app_name: ""},
               {:next_event, :internal,
