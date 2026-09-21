@@ -21,8 +21,8 @@ defmodule Supavisor.NodeMembership do
   def init(:ok) do
     availability_zone = Application.get_env(:supavisor, :availability_zone)
 
-    :ok = :syn.join(:accepting_pools, :nodes, self(), node: node())
-    :ok = :syn.join(:availability_zone, availability_zone, self(), node: node())
+    :ok = :syn.join(:accepting_pools, :nodes, self())
+    :ok = :syn.join(:availability_zone, availability_zone, self())
 
     {:ok, nil}
   end
