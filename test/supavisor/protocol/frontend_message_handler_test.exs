@@ -121,8 +121,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
   end
 
-  defp with_set_statements_action(stream_state, action) do
-    MessageStreamer.update_state(stream_state, &%{&1 | set_statements_action: action})
+  defp with_leak_action(stream_state, action) do
+    MessageStreamer.update_state(stream_state, &%{&1 | leak_action: action})
   end
 
   defp with_simple_query_prepare_check(stream_state) do
@@ -150,7 +150,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "log action logs a warning and passes SET through", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :log)
+      stream_state = with_leak_action(stream_state, :log)
       bin = simple_query("SET statement_timeout = '1s'")
 
       log =
@@ -163,7 +163,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "log action detects SET in Parse messages", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :log)
+      stream_state = with_leak_action(stream_state, :log)
       bin = parse_message("SET statement_timeout = '1s'")
 
       log =
@@ -176,7 +176,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "log action ignores transaction-scoped SET variants", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :log)
+      stream_state = with_leak_action(stream_state, :log)
 
       for query <- [
             "SET LOCAL statement_timeout = '1s'",
@@ -195,7 +195,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "error action returns an error on simple query", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
       bin = simple_query("SET statement_timeout = '1s'")
 
       assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
@@ -205,7 +205,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "error action returns an error on Parse message", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
       bin = parse_message("SET statement_timeout = '1s'")
 
       assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
@@ -217,7 +217,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "error action detects SET in multi-statement simple queries", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
       bin = simple_query("SELECT 1; SET statement_timeout = '1s'")
 
       assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
@@ -229,7 +229,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "error action passes transaction-scoped SET variants through", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- [
             "SET LOCAL statement_timeout = '1s'",
@@ -245,7 +245,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       stream_state =
         MessageStreamer.update_state(
           stream_state,
-          &%{&1 | translate?: false, set_statements_action: :error}
+          &%{&1 | translate?: false, leak_action: :error}
         )
 
       bin = simple_query("SET statement_timeout = '1s'")
@@ -261,7 +261,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
   # leak state onto a backend the client will not get back.
   describe "other session-poisoning statements" do
     test "set_config with is_local=false is an equivalent of SET", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- [
             "SELECT set_config('statement_timeout', '0', false)",
@@ -280,7 +280,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "set_config with is_local=true is transaction-scoped and allowed", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- [
             "SELECT set_config('statement_timeout', '0', true)",
@@ -294,7 +294,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "DISCARD wipes backend state, including our prepared statement cache", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- ["DISCARD ALL", "DISCARD PLANS", "DISCARD SEQUENCES", "DISCARD TEMP"] do
         bin = simple_query(query)
@@ -309,7 +309,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "session-scoped advisory locks are held on a backend the client loses", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- [
             "SELECT pg_advisory_lock(1)",
@@ -329,7 +329,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "xact-scoped advisory locks are released on commit and allowed", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- [
             "SELECT pg_advisory_xact_lock(1)",
@@ -343,7 +343,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "LISTEN/UNLISTEN register notifications the client will never receive", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- ["LISTEN chan", "UNLISTEN chan", "UNLISTEN *"] do
         bin = simple_query(query)
@@ -358,7 +358,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "WITH HOLD cursors survive commit and stay open on the backend", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
       bin = simple_query("DECLARE c CURSOR WITH HOLD FOR SELECT 1")
 
       assert {:error, %Supavisor.Errors.SessionLeakError{leak: :hold_cursor}} =
@@ -370,7 +370,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "temp tables live for the lifetime of the backend connection", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for query <- [
             "CREATE TEMP TABLE t (a int)",
@@ -389,14 +389,14 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     test "ON COMMIT DROP temp tables do not outlive the transaction", %{
       stream_state: stream_state
     } do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
       bin = simple_query("CREATE TEMP TABLE t ON COMMIT DROP AS SELECT 1")
 
       assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
     end
 
     test "SET CONSTRAINTS outside a transaction is session-scoped", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
       bin = simple_query("SET CONSTRAINTS ALL DEFERRED")
 
       assert {:error, %Supavisor.Errors.SessionLeakError{leak: :set_constraints}} =
@@ -406,7 +406,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "LOAD attaches a module to the session", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
       bin = simple_query("LOAD 'auto_explain'")
 
       assert {:error, %Supavisor.Errors.SessionLeakError{leak: :load}} =
@@ -416,7 +416,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "detected on the Parse path too, not just simple query", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for {query, leak} <- [
             {"SELECT set_config('statement_timeout', '0', false)", :set_config},
@@ -434,7 +434,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "detected when buried in a multi-statement simple query", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for {query, leak} <- [
             {"SELECT 1; SELECT set_config('statement_timeout', '0', false)", :set_config},
@@ -451,7 +451,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "reports the first leak when a query has several", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :error)
+      stream_state = with_leak_action(stream_state, :error)
 
       for {query, leak} <- [
             {"DISCARD ALL; LISTEN chan", :discard},
@@ -468,7 +468,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     end
 
     test "log action warns instead of erroring", %{stream_state: stream_state} do
-      stream_state = with_set_statements_action(stream_state, :log)
+      stream_state = with_leak_action(stream_state, :log)
       bin = simple_query("DISCARD ALL")
 
       log =

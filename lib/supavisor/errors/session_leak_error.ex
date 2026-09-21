@@ -16,6 +16,6 @@ defmodule Supavisor.Errors.SessionLeakError do
 
   @impl Supavisor.Error
   def error_message(%{leak: leak}) do
-    "#{Supavisor.Protocol.SetStatements.describe(leak)} is not allowed in transaction mode"
+    "#{Supavisor.Protocol.SessionLeaks.describe(leak)} is not allowed in transaction mode"
   end
 end

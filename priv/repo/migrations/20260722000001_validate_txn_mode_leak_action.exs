@@ -1,4 +1,4 @@
-defmodule Supavisor.Repo.Migrations.ValidateTxnModeSetAction do
+defmodule Supavisor.Repo.Migrations.ValidateTxnModeLeakAction do
   use Ecto.Migration
 
   @disable_ddl_transaction true
@@ -6,7 +6,7 @@ defmodule Supavisor.Repo.Migrations.ValidateTxnModeSetAction do
   def up do
     execute("""
     ALTER TABLE _supavisor.tenants
-      VALIDATE CONSTRAINT txn_mode_set_action_values
+      VALIDATE CONSTRAINT txn_mode_leak_action_values
     """)
   end
 

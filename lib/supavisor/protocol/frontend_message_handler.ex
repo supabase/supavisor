@@ -6,8 +6,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   - Simple Query (Q), Sync (S), FunctionCall (F): forwarded unchanged
 
   Parse (P) and Simple Query (Q) messages are validated before being handled,
-  rejecting session-level SET and prepared statement commands when the tenant
-  has those checks enabled.
+  rejecting statements that leave session state behind and prepared statement
+  commands when the tenant has those checks enabled.
 
   It also counts the number of messages that produce a `ReadyForQuery` response from the backend.
   """
@@ -30,8 +30,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       rfq_producers: 0,
       # Prepared statements feature flag:
       translate?: true,
-      # Tenant's txn_mode_set_action field:
-      set_statements_action: :ignore,
+      # Tenant's txn_mode_leak_action field:
+      leak_action: :ignore,
       # Rejection of PREPARE/EXECUTE/DEALLOCATE on the simple query protocol.
       # Costs a full parse of every simple query, so it is opt-in via the
       # check_simple_query_prepare feature flag.

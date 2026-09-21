@@ -34,7 +34,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:availability_zone, :string)
     field(:feature_flags, :map, default: %{})
 
-    field(:txn_mode_set_action, Ecto.Enum,
+    field(:txn_mode_leak_action, Ecto.Enum,
       values: [:ignore, :log, :error],
       default: :ignore
     )
@@ -79,7 +79,7 @@ defmodule Supavisor.Tenants.Tenant do
       :allow_list,
       :availability_zone,
       :feature_flags,
-      :txn_mode_set_action,
+      :txn_mode_leak_action,
       :use_jit,
       :jit_api_url
     ])

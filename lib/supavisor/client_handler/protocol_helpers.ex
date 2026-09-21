@@ -134,7 +134,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
         &%{
           &1
           | translate?: translate?,
-            set_statements_action: data.txn_mode_set_action,
+            leak_action: data.txn_mode_leak_action,
             check_simple_query_prepare?: check_simple_query_prepare?
         }
       )

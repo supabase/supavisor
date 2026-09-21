@@ -1,4 +1,4 @@
-defmodule Supavisor.Protocol.SetStatements do
+defmodule Supavisor.Protocol.SessionLeaks do
   @moduledoc """
   Detects statements that leave session state behind in transaction mode.
 
@@ -10,7 +10,7 @@ defmodule Supavisor.Protocol.SetStatements do
   `LOAD`. Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
   `ON COMMIT DROP`) are safe and never flagged.
 
-  The tenant's `txn_mode_set_action` field picks what happens when
+  The tenant's `txn_mode_leak_action` field picks what happens when
   one is detected:
 
   * `:ignore` (default) - pass through silently

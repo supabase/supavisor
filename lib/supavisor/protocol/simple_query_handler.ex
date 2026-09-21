@@ -4,7 +4,8 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
 
   Two checks run on the query, both opt-in per tenant:
 
-  * session-level SET statements, delegated to `Supavisor.Protocol.SetStatements`
+  * statements leaving session state behind, delegated to
+    `Supavisor.Protocol.SessionLeaks`
   * `PREPARE`, `EXECUTE` and `DEALLOCATE`, which transaction mode only supports
     through the Extended Query Protocol
 
@@ -19,7 +20,7 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
   alias Supavisor.PgParser
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.Storage
-  alias Supavisor.Protocol.SetStatements
+  alias Supavisor.Protocol.SessionLeaks
 
   @prepared_statements_stmts MapSet.new([
                                "DeallocateStmt",
@@ -35,19 +36,19 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
           {:ok, Storage.t(), PreparedStatements.pkt()} | {:error, Exception.t()}
   def handle_message(state, len, payload) do
     with :ok <-
-           check_message(state.set_statements_action, state.check_simple_query_prepare?, payload) do
+           check_message(state.leak_action, state.check_simple_query_prepare?, payload) do
       {:ok, state.prepared_statements, <<?Q, len::32, payload::binary>>}
     end
   end
 
-  defp check_message(set_action, prepare_check?, payload) do
-    set_check? = set_action != :ignore
+  defp check_message(leak_action, prepare_check?, payload) do
+    leak_check? = leak_action != :ignore
 
-    with true <- set_check? or prepare_check?,
+    with true <- leak_check? or prepare_check?,
          # Some clients send null terminators
          query = String.trim_trailing(payload, <<0>>),
          {:ok, parsed} <- parse(query),
-         :ok <- if(set_check?, do: SetStatements.check(set_action, parsed, query), else: :ok) do
+         :ok <- if(leak_check?, do: SessionLeaks.check(leak_action, parsed, query), else: :ok) do
       if prepare_check?, do: check_prepared_statements(parsed), else: :ok
     else
       {:error, _} = error -> error
