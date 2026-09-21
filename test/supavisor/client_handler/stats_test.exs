@@ -1,6 +1,7 @@
 defmodule Supavisor.ClientHandler.StatsTest do
   use Supavisor.E2ECase, async: false
 
+  alias Supavisor.Monitoring.Tracing
   alias Supavisor.TelemetryHelper
 
   @moduletag telemetry: true
@@ -111,6 +112,74 @@ defmodule Supavisor.ClientHandler.StatsTest do
       assert recv > 0
       assert sent > 0
     end
+  end
+
+  if Mix.target() == :otel do
+    require Record
+    @span_fields Record.extract(:span, from: "deps/opentelemetry/include/otel_span.hrl")
+    Record.defrecordp(:otel_span, :span, @span_fields)
+    @event_fields Record.extract(:event, from: "deps/opentelemetry/include/otel_span.hrl")
+    Record.defrecordp(:otel_event, :event, @event_fields)
+
+    test "interrupted query spans have error status" do
+      previous = Application.get_env(:supavisor, :otel_enabled)
+      Application.put_env(:supavisor, :otel_enabled, true)
+      :otel_simple_processor.set_exporter(:otel_exporter_pid, self())
+
+      on_exit(fn ->
+        :otel_simple_processor.set_exporter(:none)
+        Application.put_env(:supavisor, :otel_enabled, previous)
+      end)
+
+      span = Tracing.start_query(%{mode: :transaction, tenant: "tenant", db_name: "postgres"})
+      assert :ok = Tracing.finish(span, :error)
+      assert_receive {:span, ended_span = otel_span(name: "supavisor.query")}, 5_000
+      assert match?({:status, :error, _}, otel_span(ended_span, :status))
+    end
+
+    for mode <- [:transaction, :session] do
+      test "OpenTelemetry traces connection and query in #{mode} mode", ctx do
+        mode = unquote(mode)
+        previous = Application.get_env(:supavisor, :otel_enabled)
+        Application.put_env(:supavisor, :otel_enabled, true)
+        :otel_simple_processor.set_exporter(:otel_exporter_pid, self())
+
+        on_exit(fn ->
+          :otel_simple_processor.set_exporter(:none)
+          Application.put_env(:supavisor, :otel_enabled, previous)
+        end)
+
+        conn = setup_connection(mode, ctx)
+        assert_receive {:span, connection_span = otel_span(name: "supavisor.connect")}, 5_000
+        connection_attributes = :otel_attributes.map(otel_span(connection_span, :attributes))
+        assert connection_attributes["supavisor.mode"] == Atom.to_string(mode)
+        assert connection_attributes["supavisor.tenant"] == ctx.external_id
+
+        assert {:ok, _} = SingleConnection.query(conn, "SELECT 1")
+        assert_receive {:span, query_span = otel_span(name: "supavisor.query")}, 5_000
+        query_attributes = :otel_attributes.map(otel_span(query_span, :attributes))
+        assert query_attributes["supavisor.mode"] == Atom.to_string(mode)
+        assert query_attributes["supavisor.tenant"] == ctx.external_id
+        assert query_attributes["db.namespace"] == ctx.db
+        refute Map.has_key?(query_attributes, "db.statement")
+
+        assert Enum.any?(:otel_events.list(otel_span(query_span, :events)), fn event ->
+                 otel_event(event, :name) == "pool.checkout"
+               end)
+
+        assert {:ok, _} = SingleConnection.query(conn, "SELECT 2")
+        assert_receive {:span, otel_span(name: "supavisor.query")}, 5_000
+      end
+    end
+  end
+
+  test "tracing is inactive by default" do
+    previous = Application.get_env(:supavisor, :otel_enabled)
+    Application.put_env(:supavisor, :otel_enabled, false)
+    on_exit(fn -> Application.put_env(:supavisor, :otel_enabled, previous) end)
+
+    assert Tracing.start_connection(:session) == nil
+    assert Tracing.start_query(%{mode: :session, tenant: "tenant", db_name: "postgres"}) == nil
   end
 
   @tag external_id: "metrics_tenant", mode: :transaction

@@ -96,7 +96,19 @@ defmodule Supavisor.MixProject do
       {:stream_data, "~> 1.0", only: [:dev, :test]},
       # Override needed due to eflambe
       {:meck, "~> 1.0", only: [:dev, :test], override: true}
-    ]
+    ] ++ otel_deps()
+  end
+
+  defp otel_deps do
+    if Mix.target() == :otel do
+      [
+        {:opentelemetry_api, "~> 1.5"},
+        {:opentelemetry, "~> 1.7"},
+        {:opentelemetry_exporter, "~> 1.10"}
+      ]
+    else
+      []
+    end
   end
 
   def releases do

@@ -2,6 +2,21 @@ import Config
 
 require Logger
 
+otel_enabled = System.get_env("ENABLE_OTEL") == "true"
+config :supavisor, otel_enabled: otel_enabled
+
+if Code.ensure_loaded?(:otel_configuration) do
+  if config_env() == :test do
+    config :opentelemetry,
+      traces_exporter: :none,
+      processors: [{:otel_simple_processor, %{}}]
+  else
+    config :opentelemetry,
+      span_processor: :batch,
+      traces_exporter: if(otel_enabled, do: :otlp, else: :none)
+  end
+end
+
 parse_integer_list = fn numbers when is_binary(numbers) ->
   numbers
   |> String.split(",", trim: true)
