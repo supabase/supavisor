@@ -9,9 +9,7 @@ defmodule Supavisor.Protocol.ParseMessageHandler do
   An unparseable query is passed through for the backend to reject.
   """
 
-  require Logger
-
-  alias Supavisor.PgParser
+  alias Supavisor.Protocol.MessageHandlerHelpers
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.Storage
   alias Supavisor.Protocol.SessionLeaks
@@ -35,21 +33,10 @@ defmodule Supavisor.Protocol.ParseMessageHandler do
   defp check_session_leaks(set_action, payload) do
     with [_name, rest] <- :binary.split(payload, <<0>>),
          [query, _] <- :binary.split(rest, <<0>>),
-         {:ok, parsed} <- parse(query) do
+         {:ok, parsed} <- MessageHandlerHelpers.parse_query(query) do
       SessionLeaks.check(set_action, parsed, query)
     else
       _ -> :ok
-    end
-  end
-
-  defp parse(query) do
-    case PgParser.parse(query) do
-      {:ok, _parsed} = ok ->
-        ok
-
-      {:error, error} ->
-        Logger.debug("Failed to parse query: #{inspect(error)}, query: #{inspect(query)}")
-        :unparseable
     end
   end
 end

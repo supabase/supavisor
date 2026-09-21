@@ -14,10 +14,9 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
   query is passed through for the backend to reject.
   """
 
-  require Logger
-
   alias Supavisor.Errors.SimpleQueryNotSupportedError
   alias Supavisor.PgParser
+  alias Supavisor.Protocol.MessageHandlerHelpers
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.Storage
   alias Supavisor.Protocol.SessionLeaks
@@ -47,7 +46,7 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
     with true <- leak_check? or prepare_check?,
          # Some clients send null terminators
          query = String.trim_trailing(payload, <<0>>),
-         {:ok, parsed} <- parse(query),
+         {:ok, parsed} <- MessageHandlerHelpers.parse_query(query),
          :ok <- if(leak_check?, do: SessionLeaks.check(leak_action, parsed, query), else: :ok) do
       if prepare_check?, do: check_prepared_statements(parsed), else: :ok
     else
@@ -63,17 +62,6 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
       :ok
     else
       {:error, %SimpleQueryNotSupportedError{}}
-    end
-  end
-
-  defp parse(query) do
-    case PgParser.parse(query) do
-      {:ok, parsed} ->
-        {:ok, parsed}
-
-      {:error, error} ->
-        Logger.debug("Failed to parse simple query: #{inspect(error)}, query: #{inspect(query)}")
-        :unparseable
     end
   end
 end
