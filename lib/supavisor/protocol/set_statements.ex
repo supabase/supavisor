@@ -23,58 +23,25 @@ defmodule Supavisor.Protocol.SetStatements do
   @type action() :: :ignore | :log | :error
 
   @doc """
-  Checks a Simple Query (Q) or Parse (P) message payload for session-level SET
-  statements, applying the given action. Other message types pass through.
+  Checks a parsed query for session-level SET statements, applying the given
+  action. `query` is only used for logging.
   """
-  @spec check(action() | nil, byte(), binary()) ::
+  @spec check(action(), PgParser.parsed(), binary()) ::
           :ok | {:error, SetStatementNotAllowedError.t()}
-  def check(action, _tag, _payload) when action in [nil, :ignore], do: :ok
+  def check(:ignore, _parsed, _query), do: :ok
 
-  def check(action, ?Q, payload) do
-    check_query(action, String.trim_trailing(payload, <<0>>))
-  end
+  def check(action, parsed, query) do
+    if PgParser.has_session_set(parsed) do
+      case action do
+        :log ->
+          Logger.warning("received session-level SET statement in transaction mode: #{query}")
+          :ok
 
-  def check(action, ?P, payload) do
-    with [_name, rest] <- :binary.split(payload, <<0>>),
-         [query, _] <- :binary.split(rest, <<0>>) do
-      check_query(action, query)
-    else
-      _ -> :ok
-    end
-  end
-
-  def check(_action, _tag, _payload), do: :ok
-
-  @doc """
-  Same as `check/3` for a Simple Query whose tree has already been parsed by
-  `Supavisor.PgParser.parse/1`, avoiding a second parse of the same query.
-  """
-  @spec check_parsed(action() | nil, PgParser.parsed() | nil, binary()) ::
-          :ok | {:error, SetStatementNotAllowedError.t()}
-  def check_parsed(action, _parsed, _query) when action in [nil, :ignore], do: :ok
-  def check_parsed(_action, nil, _query), do: :ok
-
-  def check_parsed(action, parsed, query) do
-    if PgParser.parsed_has_session_set(parsed) do
-      handle_detected(action, query)
+        :error ->
+          {:error, %SetStatementNotAllowedError{}}
+      end
     else
       :ok
     end
-  end
-
-  defp check_query(action, query) do
-    case PgParser.has_session_set(query) do
-      {:ok, true} -> handle_detected(action, query)
-      _ -> :ok
-    end
-  end
-
-  defp handle_detected(:log, query) do
-    Logger.warning("received session-level SET statement in transaction mode: #{query}")
-    :ok
-  end
-
-  defp handle_detected(:error, _query) do
-    {:error, %SetStatementNotAllowedError{}}
   end
 end
