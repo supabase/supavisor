@@ -1,6 +1,6 @@
 defmodule Supavisor.Protocol.SimpleQueryHandler do
   @moduledoc """
-  Restrictions on PostgreSQL Simple Query (Q) messages in transaction mode.
+  Handles PostgreSQL Simple Query (Q) messages.
 
   Two checks run on the query, both opt-in per tenant:
 
