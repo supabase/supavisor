@@ -26,4 +26,8 @@ defmodule Supavisor.NodeMembership do
 
     {:ok, nil}
   end
+
+  def terminate(_) do
+    Logger.notice("#{inspect(__MODULE__)} terminating")
+  end
 end
