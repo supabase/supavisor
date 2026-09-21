@@ -198,7 +198,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       stream_state = with_set_statements_action(stream_state, :error)
       bin = simple_query("SET statement_timeout = '1s'")
 
-      assert {:error, %Supavisor.Errors.SetStatementNotAllowedError{}} =
+      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
                error = MessageStreamer.handle_packets(stream_state, bin)
 
       assert_valid_error(error)
@@ -208,7 +208,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       stream_state = with_set_statements_action(stream_state, :error)
       bin = parse_message("SET statement_timeout = '1s'")
 
-      assert {:error, %Supavisor.Errors.SetStatementNotAllowedError{}} =
+      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
                error = MessageStreamer.handle_packets(stream_state, bin)
 
       assert_valid_error(error)
@@ -220,7 +220,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       stream_state = with_set_statements_action(stream_state, :error)
       bin = simple_query("SELECT 1; SET statement_timeout = '1s'")
 
-      assert {:error, %Supavisor.Errors.SetStatementNotAllowedError{}} =
+      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
                error = MessageStreamer.handle_packets(stream_state, bin)
 
       assert_valid_error(error)
@@ -250,10 +250,251 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
 
       bin = simple_query("SET statement_timeout = '1s'")
 
-      assert {:error, %Supavisor.Errors.SetStatementNotAllowedError{}} =
+      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
                error = MessageStreamer.handle_packets(stream_state, bin)
 
       assert_valid_error(error)
+    end
+  end
+
+  # Statements other than a bare SET that also outlive the transaction and so
+  # leak state onto a backend the client will not get back.
+  describe "other session-poisoning statements" do
+    test "set_config with is_local=false is an equivalent of SET", %{stream_state: stream_state} do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for query <- [
+            "SELECT set_config('statement_timeout', '0', false)",
+            "SELECT set_config('search_path', 'public', FALSE)",
+            "SELECT pg_catalog.set_config('statement_timeout', '0', false)"
+          ] do
+        bin = simple_query(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: :set_config}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "set_config with is_local=true is transaction-scoped and allowed", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for query <- [
+            "SELECT set_config('statement_timeout', '0', true)",
+            "SELECT set_config('statement_timeout', '0', TRUE)"
+          ] do
+        bin = simple_query(query)
+        assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+      end
+    end
+
+    test "DISCARD wipes backend state, including our prepared statement cache", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for query <- ["DISCARD ALL", "DISCARD PLANS", "DISCARD SEQUENCES", "DISCARD TEMP"] do
+        bin = simple_query(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: :discard}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "session-scoped advisory locks are held on a backend the client loses", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for query <- [
+            "SELECT pg_advisory_lock(1)",
+            "SELECT pg_advisory_lock_shared(1)",
+            "SELECT pg_try_advisory_lock(1)",
+            "SELECT pg_advisory_unlock_all()"
+          ] do
+        bin = simple_query(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: :advisory_lock}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "xact-scoped advisory locks are released on commit and allowed", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for query <- [
+            "SELECT pg_advisory_xact_lock(1)",
+            "SELECT pg_try_advisory_xact_lock(1)"
+          ] do
+        bin = simple_query(query)
+        assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+      end
+    end
+
+    test "LISTEN/UNLISTEN register notifications the client will never receive", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for query <- ["LISTEN chan", "UNLISTEN chan", "UNLISTEN *"] do
+        bin = simple_query(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: :listen}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "WITH HOLD cursors survive commit and stay open on the backend", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+      bin = simple_query("DECLARE c CURSOR WITH HOLD FOR SELECT 1")
+
+      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :hold_cursor}} =
+               error = MessageStreamer.handle_packets(stream_state, bin)
+
+      assert_valid_error(error)
+    end
+
+    test "temp tables live for the lifetime of the backend connection", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for query <- [
+            "CREATE TEMP TABLE t (a int)",
+            "CREATE TEMPORARY TABLE t (a int)",
+            "CREATE TEMP TABLE t ON COMMIT PRESERVE ROWS AS SELECT 1"
+          ] do
+        bin = simple_query(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: :temp_table}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "ON COMMIT DROP temp tables do not outlive the transaction", %{
+      stream_state: stream_state
+    } do
+      stream_state = with_set_statements_action(stream_state, :error)
+      bin = simple_query("CREATE TEMP TABLE t ON COMMIT DROP AS SELECT 1")
+
+      assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+    end
+
+    test "SET CONSTRAINTS outside a transaction is session-scoped", %{stream_state: stream_state} do
+      stream_state = with_set_statements_action(stream_state, :error)
+      bin = simple_query("SET CONSTRAINTS ALL DEFERRED")
+
+      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :set_constraints}} =
+               error = MessageStreamer.handle_packets(stream_state, bin)
+
+      assert_valid_error(error)
+    end
+
+    test "LOAD attaches a module to the session", %{stream_state: stream_state} do
+      stream_state = with_set_statements_action(stream_state, :error)
+      bin = simple_query("LOAD 'auto_explain'")
+
+      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :load}} =
+               error = MessageStreamer.handle_packets(stream_state, bin)
+
+      assert_valid_error(error)
+    end
+
+    test "detected on the Parse path too, not just simple query", %{stream_state: stream_state} do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for {query, leak} <- [
+            {"SELECT set_config('statement_timeout', '0', false)", :set_config},
+            {"DISCARD ALL", :discard},
+            {"SELECT pg_advisory_lock(1)", :advisory_lock},
+            {"LISTEN chan", :listen}
+          ] do
+        bin = parse_message(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: ^leak}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "detected when buried in a multi-statement simple query", %{stream_state: stream_state} do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for {query, leak} <- [
+            {"SELECT 1; SELECT set_config('statement_timeout', '0', false)", :set_config},
+            {"SELECT 1; DISCARD ALL", :discard},
+            {"SELECT 1; LISTEN chan", :listen}
+          ] do
+        bin = simple_query(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: ^leak}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "reports the first leak when a query has several", %{stream_state: stream_state} do
+      stream_state = with_set_statements_action(stream_state, :error)
+
+      for {query, leak} <- [
+            {"DISCARD ALL; LISTEN chan", :discard},
+            {"LISTEN chan; DISCARD ALL", :listen},
+            {"SELECT 1; LOAD 'auto_explain'; DISCARD ALL", :load}
+          ] do
+        bin = simple_query(query)
+
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: ^leak}} =
+                 error = MessageStreamer.handle_packets(stream_state, bin)
+
+        assert_valid_error(error)
+      end
+    end
+
+    test "log action warns instead of erroring", %{stream_state: stream_state} do
+      stream_state = with_set_statements_action(stream_state, :log)
+      bin = simple_query("DISCARD ALL")
+
+      log =
+        capture_log(fn ->
+          assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+        end)
+
+      assert log =~ "DISCARD ALL"
+    end
+
+    test "ignore action passes them through silently", %{stream_state: stream_state} do
+      for query <- [
+            "SELECT set_config('statement_timeout', '0', false)",
+            "DISCARD ALL",
+            "SELECT pg_advisory_lock(1)",
+            "LISTEN chan"
+          ] do
+        bin = simple_query(query)
+
+        log =
+          capture_log(fn ->
+            assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+          end)
+
+        refute log =~ "transaction mode"
+      end
     end
   end
 

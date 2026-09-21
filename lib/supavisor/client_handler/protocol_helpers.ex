@@ -18,7 +18,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     Errors.StartupMessageError,
     Errors.MaxPreparedStatementsError,
     Errors.PreparedStatementNotFoundError,
-    Errors.SetStatementNotAllowedError,
+    Errors.SessionLeakError,
     Errors.SimpleQueryNotSupportedError,
     Errors.DuplicatePreparedStatementError,
     FeatureFlag,
@@ -33,7 +33,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @type packet_processing_result ::
           {:ok, MessageStreamer.stream_state(), [PreparedStatements.handled_pkt()] | binary()}
           | {:error, MaxPreparedStatementsError.t()}
-          | {:error, SetStatementNotAllowedError.t()}
+          | {:error, SessionLeakError.t()}
           | {:error, SimpleQueryNotSupportedError.t()}
           | {:error, DuplicatePreparedStatementError.t()}
           | {:error, PreparedStatementNotFoundError.t()}
