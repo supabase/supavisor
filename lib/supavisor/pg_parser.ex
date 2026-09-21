@@ -58,7 +58,8 @@ defmodule Supavisor.PgParser do
   Returns the kind of state left on the backend by the first statement in a
   parsed query that outlives the transaction, or `nil` when none does.
 
-  Besides session-level `SET`, this covers `set_config/3` with `is_local` false,
+  Besides session-level `SET`, this covers `set_config/3` with a literal
+  `is_local` of false,
   `DISCARD`, session-scoped advisory locks, `LISTEN`/`UNLISTEN`, `WITH HOLD`
   cursors, temp tables, `SET CONSTRAINTS` and `LOAD`.
 

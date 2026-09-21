@@ -291,6 +291,18 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       end
     end
 
+    test "set_config with a non-literal is_local is allowed", %{stream_state: stream_state} do
+      stream_state = with_leak_action(stream_state, :error)
+
+      for query <- [
+            "SELECT set_config('statement_timeout', '0', $1)",
+            "SELECT set_config($1, $2, $3)"
+          ] do
+        bin = simple_query(query)
+        assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+      end
+    end
+
     test "DISCARD wipes backend state, including our prepared statement cache", %{
       stream_state: stream_state
     } do

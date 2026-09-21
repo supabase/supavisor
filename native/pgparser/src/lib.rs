@@ -172,13 +172,14 @@ fn named_func_call_leak(func_call: &pg_query::protobuf::FuncCall) -> Option<Atom
 
     if name == SET_CONFIG {
         // set_config(setting, value, is_local); only the session-scoped form
-        // poisons the connection
-        let session_scoped = match func_call.args.get(2).and_then(bool_const_value) {
-            Some(is_local) => !is_local,
-            // A non-literal is_local (a parameter, say) could be either, so
-            // treat it as unsafe
-            None => true,
-        };
+        // poisons the connection. A non-literal is_local (a parameter, say)
+        // could be either, and flagging it would reject calls that are in fact
+        // transaction-local, so it is let through
+        let session_scoped = func_call
+            .args
+            .get(2)
+            .and_then(bool_const_value)
+            .is_some_and(|is_local| !is_local);
 
         return session_scoped.then(atoms::set_config);
     }
