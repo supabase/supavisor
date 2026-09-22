@@ -10,19 +10,16 @@ defmodule Supavisor.Drainer do
 
   This process sits near the end of the application supervisor, just before
   `Supavisor.NodeMembership`, so it is terminated right after the node stops
-  accepting new pools and well before the listeners. Its `terminate/2` drains
-  every pool synchronously and only returns once they are done, which holds the
-  rest of the shutdown back until clients have finished their queries.
+  accepting new pools and well before the listeners. Its `terminate/2` stops
+  every local tenant supervisor and only returns once they are done.
   """
 
-  use GenServer, shutdown: :timer.seconds(15)
+  use GenServer, shutdown: :timer.seconds(30)
 
   require Logger
 
-  alias Supavisor.Manager
-
-  @drain_timeout :timer.seconds(5)
-  @max_concurrency 200
+  @stop_timeout :timer.seconds(6)
+  @max_concurrency 500
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args, name: __MODULE__)
 
@@ -34,12 +31,12 @@ defmodule Supavisor.Drainer do
 
   @impl true
   def terminate(_reason, _state) do
-    managers = local_managers()
+    sups = local_tenant_sups()
 
-    Logger.info("Draining #{length(managers)} pools before shutdown")
+    Logger.info("Draining #{length(sups)} pools before shutdown")
 
-    managers
-    |> Task.async_stream(&Manager.graceful_shutdown(&1, @drain_timeout),
+    sups
+    |> Task.async_stream(&stop/1,
       max_concurrency: @max_concurrency,
       timeout: :infinity,
       on_timeout: :kill_task
@@ -49,14 +46,16 @@ defmodule Supavisor.Drainer do
     Logger.info("Finished draining pools")
   end
 
-  defp local_managers do
-    Supavisor.Registry.TenantSups
-    |> Registry.select([{{:_, :_, :"$1"}, [], [:"$1"]}])
-    |> Enum.flat_map(fn id ->
-      case Supavisor.get_local_manager(id) do
-        nil -> []
-        pid -> [pid]
-      end
-    end)
+  # Stopping the tenant supervisor runs its Terminator, which drains the
+  # clients before the pools underneath them are torn down.
+  defp stop(pid) do
+    Supervisor.stop(pid, :shutdown, @stop_timeout)
+  catch
+    :exit, :noproc -> :ok
+    :exit, reason -> Logger.error("Failed to drain pool #{inspect(pid)}: #{inspect(reason)}")
+  end
+
+  defp local_tenant_sups do
+    Registry.select(Supavisor.Registry.TenantSups, [{{:_, :"$1", :_}, [], [:"$1"]}])
   end
 end
