@@ -149,9 +149,10 @@ defmodule Supavisor.Application do
           metrics_pusher_children()
       end
 
-    # Must be last: it is terminated first on shutdown, so other nodes stop
-    # placing new pools here before anything starts being torn down.
-    children = children ++ [Supavisor.NodeMembership]
+    # These two must be last, in this order. NodeMembership is terminated
+    # first, so other nodes stop placing new pools here. The Drainer follows,
+    # draining every local pool before the client listeners are torn down.
+    children = children ++ [Supavisor.Drainer, Supavisor.NodeMembership]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
