@@ -319,17 +319,20 @@ defmodule Supavisor do
 
   @spec determine_node(id, String.t() | nil) :: Node.t()
   def determine_node(id(tenant: tenant), availability_zone) do
-    # If the AWS zone group is empty, we will use all nodes.
+    # Nodes that started shutting down leave the :accepting_pools scope, so they
+    # stop being picked for new pools while they drain.
+    #
+    # If the AWS zone group is empty, we will use all accepting nodes.
     # If the AWS zone group exists with the same zone, we will use nodes from this group.
-    #   :syn.members(:availability_zone, "1c")
-    #   [{#PID<0.381.0>, [node: :"node1@127.0.0.1"]}]
+    accepting = accepting_nodes()
+
     nodes =
       with zone when is_binary(zone) <- availability_zone,
-           zone_nodes when zone_nodes != [] <- :syn.members(:availability_zone, zone) do
+           zone_nodes when zone_nodes != [] <- scope_nodes(:availability_zone, zone),
+           [_ | _] = zone_nodes <- Enum.filter(zone_nodes, &(&1 in accepting)) do
         zone_nodes
-        |> Enum.map(fn {_, [node: node]} -> node end)
       else
-        _ -> [node() | Node.list()]
+        _ -> accepting
       end
 
     index = :erlang.phash2(tenant, length(nodes))
@@ -337,6 +340,36 @@ defmodule Supavisor do
     nodes
     |> Enum.sort()
     |> Enum.at(index)
+  end
+
+  @doc """
+  Nodes that are available to host new pools.
+
+  Nodes join the `:accepting_pools` scope on boot and leave it when they start
+  shutting down, so a draining node stops receiving new pools while the ones it
+  already hosts drain.
+
+  Falls back to every connected node when no node is accepting pools, which
+  includes this node even if it is itself shutting down. Placing the pool
+  somewhere is better than having nowhere to place it.
+  """
+  @spec accepting_nodes() :: [Node.t()]
+  def accepting_nodes do
+    case scope_nodes(:accepting_pools, :nodes) do
+      [] ->
+        Logger.warning("No node is accepting pools, falling back to all connected nodes")
+        [node() | Node.list()]
+
+      nodes ->
+        nodes
+    end
+  end
+
+  @spec scope_nodes(atom(), term()) :: [Node.t()]
+  defp scope_nodes(scope, group) do
+    scope
+    |> :syn.members(group)
+    |> Enum.map(fn {pid, _meta} -> node(pid) end)
   end
 
   @spec try_start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
