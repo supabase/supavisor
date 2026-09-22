@@ -51,7 +51,6 @@ defmodule Supavisor.PgParser do
           | :listen
           | :hold_cursor
           | :temp_table
-          | :set_constraints
           | :load
 
   @doc """
@@ -61,11 +60,11 @@ defmodule Supavisor.PgParser do
   Besides session-level `SET`, this covers `set_config/3` with a literal
   `is_local` of false,
   `DISCARD`, session-scoped advisory locks, `LISTEN`/`UNLISTEN`, `WITH HOLD`
-  cursors, temp tables, `SET CONSTRAINTS` and `LOAD`.
+  cursors, temp tables and `LOAD`.
 
   Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
-  `set_config(_, _, true)`, `pg_advisory_xact_lock/1`, `ON COMMIT DROP`) don't
-  count.
+  `set_config(_, _, true)`, `pg_advisory_xact_lock/1`, `ON COMMIT DROP`,
+  `SET CONSTRAINTS`) don't count.
 
   When several statements leak, the first one in statement order is reported.
 

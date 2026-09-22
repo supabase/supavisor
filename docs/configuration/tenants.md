@@ -50,6 +50,6 @@ connection
 session state behind in transaction mode: `ignore` (default), `log` (log a
 warning) or `error` (reject the statement and return an error to the client).
 This covers session-level `SET`, `set_config/3`, `DISCARD`, session-scoped
-advisory locks, `LISTEN`/`UNLISTEN`, `WITH HOLD` cursors, temp tables,
-`SET CONSTRAINTS` and `LOAD`. Transaction-scoped counterparts (`SET LOCAL`,
-`SET TRANSACTION`, `ON COMMIT DROP`) are always allowed
+advisory locks, `LISTEN`/`UNLISTEN`, `WITH HOLD` cursors, temp tables and
+`LOAD`. Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
+`ON COMMIT DROP`, `SET CONSTRAINTS`) are always allowed

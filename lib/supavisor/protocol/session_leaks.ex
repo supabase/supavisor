@@ -6,9 +6,9 @@ defmodule Supavisor.Protocol.SessionLeaks do
   connections, so state that outlives a transaction leaks across clients
   instead of applying to the session the client sees. Besides session-level
   `SET` this covers `set_config/3`, `DISCARD`, session-scoped advisory locks,
-  `LISTEN`/`UNLISTEN`, `WITH HOLD` cursors, temp tables, `SET CONSTRAINTS` and
-  `LOAD`. Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
-  `ON COMMIT DROP`) are safe and never flagged.
+  `LISTEN`/`UNLISTEN`, `WITH HOLD` cursors, temp tables and `LOAD`.
+  Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
+  `ON COMMIT DROP`, `SET CONSTRAINTS`) are safe and never flagged.
 
   The tenant's `txn_mode_leak_action` field picks what happens when
   one is detected:
@@ -58,6 +58,5 @@ defmodule Supavisor.Protocol.SessionLeaks do
   def describe(:listen), do: "LISTEN statement"
   def describe(:hold_cursor), do: "WITH HOLD cursor"
   def describe(:temp_table), do: "temporary table creation"
-  def describe(:set_constraints), do: "session-level SET CONSTRAINTS statement"
   def describe(:load), do: "LOAD statement"
 end

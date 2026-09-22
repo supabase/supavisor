@@ -10,7 +10,6 @@ mod atoms {
         listen,
         hold_cursor,
         temp_table,
-        set_constraints,
         load,
     }
 }
@@ -107,9 +106,6 @@ fn statement_leak(node: &pg_query::NodeEnum) -> Option<Atom> {
         pg_query::NodeEnum::ListenStmt(_) => Some(atoms::listen()),
         pg_query::NodeEnum::UnlistenStmt(_) => Some(atoms::listen()),
 
-        // Deferred constraints are session-scoped when set outside a transaction
-        pg_query::NodeEnum::ConstraintsSetStmt(_) => Some(atoms::set_constraints()),
-
         // The loaded module stays attached to the session
         pg_query::NodeEnum::LoadStmt(_) => Some(atoms::load()),
 
@@ -133,14 +129,15 @@ fn statement_leak(node: &pg_query::NodeEnum) -> Option<Atom> {
         // CREATE TEMP TABLE ... AS SELECT, which carries its temp-ness and its
         // ON COMMIT action on the INTO clause instead
         pg_query::NodeEnum::CreateTableAsStmt(stmt) => {
-            let temp = stmt.into.as_ref().is_some_and(|into| {
-                into.rel
-                    .as_ref()
-                    .is_some_and(|rel| is_temp_persistence(&rel.relpersistence))
-                    && into.on_commit != ONCOMMIT_DROP
-            });
+            temp_into_clause(stmt.into.as_deref()).then(atoms::temp_table)
+        }
 
-            temp.then(atoms::temp_table)
+        // SELECT ... INTO TEMP, the older spelling of CREATE TEMP TABLE AS
+        pg_query::NodeEnum::SelectStmt(stmt) => {
+            match temp_into_clause(stmt.into_clause.as_deref()) {
+                true => Some(atoms::temp_table()),
+                false => func_call_leak(node),
+            }
         }
 
         // Otherwise the statement itself is harmless, but a function call
@@ -153,6 +150,16 @@ fn statement_leak(node: &pg_query::NodeEnum) -> Option<Atom> {
 /// tables are not session state.
 fn is_temp_persistence(relpersistence: &str) -> bool {
     relpersistence == "t"
+}
+
+/// Whether an `INTO` clause creates a temp table that outlives the transaction.
+fn temp_into_clause(into: Option<&pg_query::protobuf::IntoClause>) -> bool {
+    into.is_some_and(|into| {
+        into.rel
+            .as_ref()
+            .is_some_and(|rel| is_temp_persistence(&rel.relpersistence))
+            && into.on_commit != ONCOMMIT_DROP
+    })
 }
 
 /// Walks the node tree looking for a call to a function that mutates session

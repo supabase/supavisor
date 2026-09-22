@@ -407,14 +407,11 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
     end
 
-    test "SET CONSTRAINTS outside a transaction is session-scoped", %{stream_state: stream_state} do
+    test "SET CONSTRAINTS does not outlive the transaction", %{stream_state: stream_state} do
       stream_state = with_leak_action(stream_state, :error)
       bin = simple_query("SET CONSTRAINTS ALL DEFERRED")
 
-      assert {:error, %Supavisor.Errors.SessionLeakError{leak: :set_constraints}} =
-               error = MessageStreamer.handle_packets(stream_state, bin)
-
-      assert_valid_error(error)
+      assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
     end
 
     test "LOAD attaches a module to the session", %{stream_state: stream_state} do
