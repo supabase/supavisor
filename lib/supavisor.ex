@@ -324,8 +324,6 @@ defmodule Supavisor do
     #
     # If the AWS zone group is empty, we will use all accepting nodes.
     # If the AWS zone group exists with the same zone, we will use nodes from this group.
-    #   :syn.members(:availability_zone, "1c")
-    #   [{#PID<0.381.0>, [node: :"node1@127.0.0.1"]}]
     accepting = accepting_nodes()
 
     nodes =
@@ -371,7 +369,7 @@ defmodule Supavisor do
   defp scope_nodes(scope, group) do
     scope
     |> :syn.members(group)
-    |> Enum.map(fn {_pid, [node: node]} -> node end)
+    |> Enum.map(fn {pid, _meta} -> node(pid) end)
   end
 
   @spec try_start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
