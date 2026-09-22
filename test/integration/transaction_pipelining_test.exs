@@ -49,6 +49,51 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       # Both statements and the bare Sync each produce a ReadyForQuery.
       assert recv_ready_for_queries(sock, 3) == 3
     end
+
+    test "does not fabricate a ReadyForQuery for an Execute sent without its Sync (#{tenant})" do
+      sock = connect(unquote(tenant))
+      marker = "batch#{System.unique_integer([:positive])}"
+
+      # one :gen_tcp.send, so both batches land in the same read on
+      # Supavisor's side -- batch A ends in a real Sync, batch B does not.
+      :ok =
+        :gen_tcp.send(sock, [
+          extended_batch("select '#{marker}A' as m, pg_sleep(0.2)", sync?: true),
+          extended_batch("select '#{marker}B' as m, pg_sleep(0.2)", sync?: false)
+        ])
+
+      # Batch A's real ReadyForQuery. Batch B hasn't
+      # been given its Sync.
+      assert recv_ready_for_queries(sock, 1) == 1
+
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      {:ok, observer} =
+        Postgrex.start_link(
+          hostname: db_conf[:hostname],
+          port: db_conf[:port],
+          database: db_conf[:database],
+          username: db_conf[:username],
+          password: db_conf[:password]
+        )
+
+      Process.sleep(300)
+
+      # batch B's backend SHOULD be stuck — withholding a Sync is *supposed*
+      # to strand a backend
+      assert stranded?(observer, marker <> "B")
+
+      # THE CRUX: send batch B's Sync alone, in a second write - should be forwarded
+      # to the still-open backend which replies with an RFQ.
+      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_sync_message())
+      assert recv_ready_for_queries(sock, 1) == 1
+      Process.sleep(200)
+
+      refute stranded?(observer, marker <> "B"),
+             "backend still stranded after its withheld Sync was sent -- fabricated ReadyForQuery"
+
+      GenServer.stop(observer)
+    end
   end
 
   defp connect(tenant) do
@@ -81,5 +126,36 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
           flunk("received only #{count}/#{n} ReadyForQuery before #{inspect(reason)}")
       end
     end
+  end
+
+  # Zero-parameter Bind (unnamed portal, unnamed statement)
+  # -- the minimum needed to Execute an unnamed Parse.
+  # https://www.postgresql.org/docs/current/protocol-message-formats.html
+  defp encode_bind_message_no_params do
+    payload = <<0, 0, 0::16, 0::16, 0::16>>
+    <<?B, byte_size(payload) + 4::32, payload::binary>>
+  end
+
+  # One Extended Query Protocol batch: Parse+Bind+Execute, with the Sync
+  # included or withheld per `sync?`.
+  defp extended_batch(sql, sync?: sync?) do
+    msgs = [
+      :pgo_protocol.encode_parse_message("", sql, []),
+      encode_bind_message_no_params(),
+      :pgo_protocol.encode_execute_message("", 0)
+    ]
+
+    if sync?, do: msgs ++ [:pgo_protocol.encode_sync_message()], else: msgs
+  end
+
+  defp stranded?(observer, marker) do
+    {:ok, res} =
+      Postgrex.query(
+        observer,
+        "select 1 from pg_stat_activity where query like $1 and state = 'active' and wait_event_type = 'Client' and wait_event = 'ClientRead'",
+        ["%#{marker}%"]
+      )
+
+    res.num_rows > 0
   end
 end

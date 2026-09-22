@@ -150,6 +150,13 @@ defmodule Supavisor.Protocol.Server do
     [<<?E, IO.iodata_length(message) + 4::32>>, message]
   end
 
+  @spec encode_notice_message(map()) :: iodata()
+  def encode_notice_message(notice_map) when is_map(notice_map) do
+    sorted_fields = Enum.sort(notice_map)
+    message = [Enum.map(sorted_fields, fn {char, content} -> [char, content, <<0>>] end), <<0>>]
+    [<<?N, IO.iodata_length(message) + 4::32>>, message]
+  end
+
   @spec encode_parameter_status(map) :: iodata()
   def encode_parameter_status(ps) do
     for {key, value} <- ps do

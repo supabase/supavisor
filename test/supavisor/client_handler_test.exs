@@ -161,7 +161,7 @@ defmodule Supavisor.ClientHandlerTest do
         <<79::32,
           "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00">>
 
-      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil}
+      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil, invalid_options: []}
 
       assert {:keep_state, %{app_name: ""},
               {:next_event, :internal,
@@ -191,7 +191,52 @@ defmodule Supavisor.ClientHandlerTest do
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 3}}
+      assert_received {:"$gen_cast", {:expect_ready_for_query, 3, false}}
+    end
+
+    test "reports an extended batch left open without its Sync" do
+      {db_sock, _recv} = sockpair()
+
+      data = %{
+        mode: :transaction,
+        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
+        tenant_feature_flags: %{},
+        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
+      }
+
+      # Parse/Bind/Execute with no Sync: no ReadyForQuery is expected, but the
+      # backend is left holding the batch.
+      batch =
+        <<?P, 16::32, 0, "select 1", 0, 0, 0>> <>
+          <<?B, 12::32, 0, 0, 0, 0, 0, 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
+
+      assert {:keep_state, _data} =
+               @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
+
+      assert_received {:"$gen_cast", {:expect_ready_for_query, 0, true}}
+    end
+
+    test "a Sync closes a previously open batch" do
+      {db_sock, _recv} = sockpair()
+
+      data = %{
+        mode: :transaction,
+        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
+        tenant_feature_flags: %{},
+        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
+      }
+
+      batch = <<?P, 16::32, 0, "select 1", 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
+
+      assert {:keep_state, data} =
+               @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
+
+      assert_received {:"$gen_cast", {:expect_ready_for_query, 0, true}}
+
+      assert {:keep_state, _data} =
+               @subject.handle_event(:info, {:tcp, :sock, <<?S, 4::32>>}, :busy, data)
+
+      assert_received {:"$gen_cast", {:expect_ready_for_query, 1, false}}
     end
 
     test "does not send an expectation in session mode" do
@@ -209,7 +254,7 @@ defmodule Supavisor.ClientHandlerTest do
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      refute_received {:"$gen_cast", {:expect_ready_for_query, _count}}
+      refute_received {:"$gen_cast", {:expect_ready_for_query, _count, _open_batch?}}
     end
   end
 end

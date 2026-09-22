@@ -5,7 +5,7 @@ defmodule Supavisor.Terminator do
   Signals the pool manager to stop accepting new connections, and to
   stop current client connections gracefully.
   """
-  use GenServer
+  use GenServer, shutdown: :timer.seconds(5)
 
   require Logger
 
@@ -21,10 +21,11 @@ defmodule Supavisor.Terminator do
     {:ok, %{id: args.id}}
   end
 
-  @drain_timeout :timer.seconds(5)
+  @drain_timeout 2_500
+  @call_timeout 4_000
 
   @impl true
   def terminate(_reason, state) do
-    :ok = Manager.graceful_shutdown(state.id, @drain_timeout)
+    :ok = Manager.graceful_shutdown(state.id, @drain_timeout, @call_timeout)
   end
 end
