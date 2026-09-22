@@ -920,8 +920,8 @@ defmodule Supavisor.ClientHandler do
          %{mode: :transaction, db_connection: {_pool, db_pid, _sock}},
          stream_state
        ) do
-    {count, stream_state} = handle_rfq_producers(stream_state)
-    if count > 0, do: DbHandler.expect_ready_for_query(db_pid, count)
+    {count, open_batch?, stream_state} = handle_rfq_producers(stream_state)
+    DbHandler.expect_ready_for_query(db_pid, count, open_batch?)
     {:ok, stream_state}
   end
 
@@ -930,8 +930,9 @@ defmodule Supavisor.ClientHandler do
   defp handle_rfq_producers(stream_state) do
     handler_state = MessageStreamer.stream_state(stream_state, :handler_state)
 
-    # also reset the state.
-    {handler_state.rfq_producers,
+    # The count is per write, so it is reset on read. `open_batch?` outlives the
+    # write that opened the batch and is only cleared by the client's Sync.
+    {handler_state.rfq_producers, handler_state.open_batch?,
      MessageStreamer.update_state(stream_state, fn s -> %{s | rfq_producers: 0} end)}
   end
 
