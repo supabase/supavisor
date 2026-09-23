@@ -201,6 +201,7 @@ defmodule Supavisor.ClientHandlerTest do
         mode: :transaction,
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
+        txn_mode_leak_action: :ignore,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
@@ -223,6 +224,7 @@ defmodule Supavisor.ClientHandlerTest do
         mode: :transaction,
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
+        txn_mode_leak_action: :ignore,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
