@@ -583,6 +583,141 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  # AWS-identity JWKS auth is a second, additive path on the `:api` pipeline
+  # (see Supavisor.Jwt.AwsIdentity / check_auth/2's 3-arg clause) — the
+  # existing `conn`/`blocked_conn` fixtures above and every other describe
+  # block in this file exercise the untouched HMAC path.
+  describe "AWS-identity (JWKS) auth on /api" do
+    @jwks_issuer "https://issuer.example.tokens.sts.global.api.aws"
+    @jwks_kid "test-kid"
+    @jwks_sub "arn:aws:iam::123456789012:role/supavisor-api"
+    @jwks_aud "supavisor-api"
+
+    setup do
+      jwk = JOSE.JWK.generate_key({:rsa, 2048})
+      {_, pem} = JOSE.JWK.to_pem(jwk)
+      {_, public_jwk} = JOSE.JWK.to_public_map(jwk)
+      # No "alg" — matches AWS's real outbound-identity-federation JWKS shape
+      # for RSA keys (see Supavisor.Jwt.JwksAlgFixup). Exercises the fixup.
+      public_jwk = Map.merge(public_jwk, %{"kid" => @jwks_kid})
+
+      %{pem: pem, public_jwk: public_jwk}
+    end
+
+    defp jwks_token(pem, overrides \\ %{}) do
+      claims =
+        Map.merge(
+          %{
+            "iss" => @jwks_issuer,
+            "sub" => @jwks_sub,
+            "aud" => @jwks_aud,
+            "exp" => Joken.current_time() + 300
+          },
+          overrides
+        )
+
+      signer = Joken.Signer.create("RS256", %{"pem" => pem}, %{"kid" => @jwks_kid})
+      Supavisor.Jwt.AwsIdentity.Token.generate_and_sign!(claims, signer)
+    end
+
+    defp put_jwks_config(config) do
+      previous = Application.get_env(:supavisor, :api_jwks_config)
+      Application.put_env(:supavisor, :api_jwks_config, config)
+      on_exit(fn -> Application.put_env(:supavisor, :api_jwks_config, previous) end)
+    end
+
+    test "is disabled by default: an AWS-identity token gets 403 with no api_jwks_config",
+         %{conn: conn, pem: pem} do
+      assert Application.get_env(:supavisor, :api_jwks_config) == nil
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+    end
+
+    # Starts the real, named `Supavisor.Jwt.JwksStrategy` (hardcoded into
+    # `AwsIdentity.Token`'s `add_hook/2` — there's no swappable fake for it,
+    # by design, see its moduledoc) against a `Tesla.Mock`-served JWKS.
+    # `api_jwks_config` must be set before starting it, since `init_opts/1`
+    # reads the trusted issuer from it to build the JWKS URL.
+    defp start_jwks_auth(config, public_jwk) do
+      put_jwks_config(config)
+
+      # Raw JSON string + real content-type header, not a pre-decoded map —
+      # see Supavisor.Jwt.JwksAlgFixup's moduledoc for why that distinction
+      # matters here.
+      Tesla.Mock.mock_global(fn
+        %{method: :get, url: @jwks_issuer <> "/.well-known/jwks.json"} ->
+          %Tesla.Env{
+            status: 200,
+            body: JSON.encode!(%{"keys" => [public_jwk]}),
+            headers: [{"content-type", "application/json"}]
+          }
+      end)
+
+      start_supervised!(
+        {Supavisor.Jwt.JwksStrategy, [first_fetch_sync: true, http_adapter: Tesla.Mock]}
+      )
+    end
+
+    test "an allow-listed subject is authorized once api_jwks_config is set", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      # 404 (reached the controller), not 403 — proves the JWKS path authorized the request.
+      assert conn.status == 404
+    end
+
+    test "a subject outside the allow-list is rejected even with api_jwks_config set", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{
+          trusted_issuer: @jwks_issuer,
+          allowed_subs: ["arn:aws:iam::123456789012:role/someone-else"],
+          expected_aud: @jwks_aud
+        },
+        public_jwk
+      )
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+    end
+
+    test "the existing HMAC token still works unchanged once api_jwks_config is set", %{
+      conn: conn
+    } do
+      put_jwks_config(%{trusted_issuer: @jwks_issuer, allowed_subs: [], expected_aud: nil})
+
+      # `conn` already carries the standard "dev" HMAC bearer token from the
+      # top-level setup — unaffected by api_jwks_config being set.
+      assert %{"error" => "not found"} ==
+               conn
+               |> get(~p"/api/tenants/non_existing_tenant_id")
+               |> json_response(404)
+    end
+  end
+
   describe "PATCH /api/tenants/:external_id" do
     setup [:create_tenant]
 
