@@ -9,260 +9,167 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
 
   @moduletag :integration
 
-  @tenants ["proxy_tenant_ps_disabled", "proxy_tenant_ps_enabled"]
-
   @sync <<?S, 4::32>>
   @flush <<?H, 4::32>>
   @copy_done <<?c, 4::32>>
 
-  for tenant <- @tenants do
-    test "delivers every reply in a pipelined batch (#{tenant})" do
-      sock = connect(unquote(tenant))
-      n = 50
+  # Each test gets its own tenant, and so its own pool.
+  setup ctx do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "pipelining_#{System.unique_integer([:positive])}"
 
-      # Fire N simple queries in a single write so they pipeline.
-      :ok = :gen_tcp.send(sock, pipeline(n))
+    {:ok, _} =
+      Supavisor.Tenants.create_tenant(%{
+        db_host: db_conf[:hostname],
+        db_port: db_conf[:port],
+        db_database: db_conf[:database],
+        default_parameter_status: %{},
+        external_id: tenant,
+        require_user: true,
+        feature_flags: %{
+          "named_prepared_statements" => Map.get(ctx, :named_prepared_statements, false)
+        },
+        users: [
+          %{
+            "db_user" => db_conf[:username],
+            "db_password" => db_conf[:password],
+            "pool_size" => 9,
+            "max_clients" => 100,
+            "mode_type" => "transaction"
+          }
+        ]
+      })
 
-      assert recv_ready_for_queries(sock, n) == n
-    end
+    on_exit(fn ->
+      Supavisor.stop(
+        Supavisor.id(type: :single, tenant: tenant, user: db_conf[:username], mode: :transaction)
+      )
+    end)
 
-    test "releases and reuses the backend after a pipelined batch (#{tenant})" do
-      sock = connect(unquote(tenant))
+    {:ok, tenant: tenant}
+  end
 
-      :ok = :gen_tcp.send(sock, pipeline(5))
-      assert recv_ready_for_queries(sock, 5) == 5
+  for {label, named_prepared_statements?} <- [
+        {"prepared statements disabled", false},
+        {"prepared statements enabled", true}
+      ] do
+    describe label do
+      @describetag named_prepared_statements: named_prepared_statements?
 
-      # A fresh query on the same client connection must still succeed.
-      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT 1"))
-      assert recv_ready_for_queries(sock, 1) == 1
-    end
+      test "delivers every reply in a pipelined batch", %{tenant: tenant} do
+        sock = connect(tenant)
+        n = 50
 
-    test "regression: delivers every reply when a segment begins with a Sync (#{tenant})" do
-      sock = connect(unquote(tenant))
+        # Fire N simple queries in a single write so they pipeline.
+        :ok = :gen_tcp.send(sock, pipeline(n))
 
-      # A slow first statement keeps the ClientHandler :busy when the Sync arrives
-      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)"))
-      Process.sleep(50)
-
-      # A sync, plus a query message.
-      #
-      # In the buggy implementation, the sync at the beginning of the packet would cause the 
-      # following ReadyForQuery to trigger a checkin, and the query response wouldn't be received 
-      :ok =
-        :gen_tcp.send(sock, [
-          <<?S, 4::32>>,
-          :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)")
-        ])
-
-      # Both statements and the bare Sync each produce a ReadyForQuery.
-      assert recv_ready_for_queries(sock, 3) == 3
-    end
-
-    test "does not fabricate a ReadyForQuery for an Execute sent without its Sync (#{tenant})" do
-      sock = connect(unquote(tenant))
-      marker = "batch#{System.unique_integer([:positive])}"
-
-      # one :gen_tcp.send, so both batches land in the same read on
-      # Supavisor's side -- batch A ends in a real Sync, batch B does not.
-      :ok =
-        :gen_tcp.send(sock, [
-          extended_batch("select '#{marker}A' as m, pg_sleep(0.2)", sync?: true),
-          extended_batch("select '#{marker}B' as m, pg_sleep(0.2)", sync?: false)
-        ])
-
-      # Batch A's real ReadyForQuery. Batch B hasn't
-      # been given its Sync.
-      assert recv_ready_for_queries(sock, 1) == 1
-
-      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
-
-      {:ok, observer} =
-        Postgrex.start_link(
-          hostname: db_conf[:hostname],
-          port: db_conf[:port],
-          database: db_conf[:database],
-          username: db_conf[:username],
-          password: db_conf[:password]
-        )
-
-      Process.sleep(300)
-
-      # batch B's backend SHOULD be stuck — withholding a Sync is *supposed*
-      # to strand a backend
-      assert stranded?(observer, marker <> "B")
-
-      # THE CRUX: send batch B's Sync alone, in a second write - should be forwarded
-      # to the still-open backend which replies with an RFQ.
-      :ok = :gen_tcp.send(sock, :pgo_protocol.encode_sync_message())
-      assert recv_ready_for_queries(sock, 1) == 1
-      Process.sleep(200)
-
-      refute stranded?(observer, marker <> "B"),
-             "backend still stranded after its withheld Sync was sent -- fabricated ReadyForQuery"
-
-      GenServer.stop(observer)
-    end
-
-    test "answers a Sync pipelined with a query while idle (#{tenant})" do
-      sock = connect(unquote(tenant))
-
-      :ok = :gen_tcp.send(sock, [@sync, query("SELECT 42")])
-
-      pkts = recv_rfqs(sock, 2)
-      assert rows(pkts) == [["42"]]
-      assert statuses(pkts) == [?I, ?I]
-      refute_more(sock)
-    end
-
-    test "answers every bare Sync pipelined while idle (#{tenant})" do
-      sock = connect(unquote(tenant))
-
-      :ok = :gen_tcp.send(sock, [@sync, @sync, @sync])
-
-      assert statuses(recv_rfqs(sock, 3)) == [?I, ?I, ?I]
-      refute_more(sock)
-    end
-
-    test "mixes simple and extended queries in one write (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          query("SELECT 1"),
-          extended("SELECT 2"),
-          @sync,
-          query("SELECT 3"),
-          extended("SELECT 4"),
-          @sync
-        ])
-
-      pkts = recv_rfqs(sock, 4)
-      assert rows(pkts) == [["1"], ["2"], ["3"], ["4"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "runs several Executes under a single Sync (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          parse("", "SELECT $1::int"),
-          bind("", "", ["1"]),
-          execute(""),
-          bind("", "", ["2"]),
-          execute(""),
-          bind("", "", ["3"]),
-          execute(""),
-          @sync
-        ])
-
-      pkts = recv_rfqs(sock, 1)
-      assert rows(pkts) == [["1"], ["2"], ["3"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "answers consecutive Syncs after an extended batch (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok = :gen_tcp.send(sock, [extended("SELECT 1"), @sync, @sync, @sync])
-
-      pkts = recv_rfqs(sock, 3)
-      assert rows(pkts) == [["1"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "an error in one batch doesn't affect the next pipelined batch (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          extended("SELECT 1/0"),
-          @sync,
-          extended("SELECT 2"),
-          @sync
-        ])
-
-      pkts = recv_rfqs(sock, 2)
-      assert error_codes(pkts) == ["22012"]
-      assert rows(pkts) == [["2"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "holds the backend after an error until the Sync arrives (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok = :gen_tcp.send(sock, extended("SELECT 1/0"))
-
-      pkts = recv_until(sock, &(error_codes(&1) != []))
-      assert error_codes(pkts) == ["22012"]
-      assert statuses(pkts) == []
-      refute_more(sock)
-      assert checked_out(tenant) == 1
-
-      :ok = :gen_tcp.send(sock, @sync)
-
-      assert statuses(recv_rfqs(sock, 1)) == [?I]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "holds the backend across a Flush until the Sync arrives (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          parse("", "SELECT 7"),
-          bind("", "", []),
-          describe_msg(?P, ""),
-          execute(""),
-          @flush
-        ])
-
-      pkts = recv_until(sock, &Enum.any?(&1, fn pkt -> match?(<<?C, _::binary>>, pkt) end))
-      assert rows(pkts) == [["7"]]
-      assert statuses(pkts) == []
-      refute_more(sock)
-      assert checked_out(tenant) == 1
-
-      :ok = :gen_tcp.send(sock, @sync)
-
-      assert statuses(recv_rfqs(sock, 1)) == [?I]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "handles an extended batch sent one message per write (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      for msg <- [parse("", "SELECT $1::int"), bind("", "", ["5"]), execute(""), @sync] do
-        :ok = :gen_tcp.send(sock, msg)
-        Process.sleep(20)
+        assert recv_ready_for_queries(sock, n) == n
       end
 
-      pkts = recv_rfqs(sock, 1)
-      assert rows(pkts) == [["5"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    for chunk_size <- [1, 3, 7, 64] do
-      test "handles a pipeline split into #{chunk_size}-byte writes (#{tenant})" do
-        tenant = unquote(tenant)
+      test "releases and reuses the backend after a pipelined batch", %{tenant: tenant} do
         sock = connect(tenant)
 
-        bin =
-          IO.iodata_to_binary([
+        :ok = :gen_tcp.send(sock, pipeline(5))
+        assert recv_ready_for_queries(sock, 5) == 5
+
+        # A fresh query on the same client connection must still succeed.
+        :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT 1"))
+        assert recv_ready_for_queries(sock, 1) == 1
+      end
+
+      test "regression: delivers every reply when a segment begins with a Sync", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        # A slow first statement keeps the ClientHandler :busy when the Sync arrives
+        :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)"))
+        Process.sleep(50)
+
+        # A sync, plus a query message.
+        #
+        # In the buggy implementation, the sync at the beginning of the packet would cause the 
+        # following ReadyForQuery to trigger a checkin, and the query response wouldn't be received 
+        :ok =
+          :gen_tcp.send(sock, [
+            <<?S, 4::32>>,
+            :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)")
+          ])
+
+        # Both statements and the bare Sync each produce a ReadyForQuery.
+        assert recv_ready_for_queries(sock, 3) == 3
+      end
+
+      test "does not fabricate a ReadyForQuery for an Execute sent without its Sync", %{
+        tenant: tenant
+      } do
+        sock = connect(tenant)
+        marker = "batch#{System.unique_integer([:positive])}"
+
+        # one :gen_tcp.send, so both batches land in the same read on
+        # Supavisor's side -- batch A ends in a real Sync, batch B does not.
+        :ok =
+          :gen_tcp.send(sock, [
+            extended_batch("select '#{marker}A' as m, pg_sleep(0.2)", sync?: true),
+            extended_batch("select '#{marker}B' as m, pg_sleep(0.2)", sync?: false)
+          ])
+
+        # Batch A's real ReadyForQuery. Batch B hasn't
+        # been given its Sync.
+        assert recv_ready_for_queries(sock, 1) == 1
+
+        db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+        {:ok, observer} =
+          Postgrex.start_link(
+            hostname: db_conf[:hostname],
+            port: db_conf[:port],
+            database: db_conf[:database],
+            username: db_conf[:username],
+            password: db_conf[:password]
+          )
+
+        Process.sleep(300)
+
+        # batch B's backend SHOULD be stuck — withholding a Sync is *supposed*
+        # to strand a backend
+        assert stranded?(observer, marker <> "B")
+
+        # THE CRUX: send batch B's Sync alone, in a second write - should be forwarded
+        # to the still-open backend which replies with an RFQ.
+        :ok = :gen_tcp.send(sock, :pgo_protocol.encode_sync_message())
+        assert recv_ready_for_queries(sock, 1) == 1
+        Process.sleep(200)
+
+        refute stranded?(observer, marker <> "B"),
+               "backend still stranded after its withheld Sync was sent -- fabricated ReadyForQuery"
+
+        GenServer.stop(observer)
+      end
+
+      test "answers a Sync pipelined with a query while idle", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok = :gen_tcp.send(sock, [@sync, query("SELECT 42")])
+
+        pkts = recv_rfqs(sock, 2)
+        assert rows(pkts) == [["42"]]
+        assert statuses(pkts) == [?I, ?I]
+        refute_more(sock)
+      end
+
+      test "answers every bare Sync pipelined while idle", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok = :gen_tcp.send(sock, [@sync, @sync, @sync])
+
+        assert statuses(recv_rfqs(sock, 3)) == [?I, ?I, ?I]
+        refute_more(sock)
+      end
+
+      test "mixes simple and extended queries in one write", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
             query("SELECT 1"),
             extended("SELECT 2"),
             @sync,
@@ -271,362 +178,566 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
             @sync
           ])
 
-        for chunk <- chunks(bin, unquote(chunk_size)) do
-          :ok = :gen_tcp.send(sock, chunk)
-          Process.sleep(1)
-        end
-
         pkts = recv_rfqs(sock, 4)
         assert rows(pkts) == [["1"], ["2"], ["3"], ["4"]]
         refute_more(sock)
         assert_released(tenant)
       end
-    end
 
-    test "counts one ReadyForQuery per multi-statement simple query (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
+      test "runs several Executes under a single Sync", %{tenant: tenant} do
+        sock = connect(tenant)
 
-      :ok =
-        :gen_tcp.send(sock, [
-          query("SELECT 1; SELECT 1/0; SELECT 3"),
-          query(""),
-          query("SELECT 4")
-        ])
+        :ok =
+          :gen_tcp.send(sock, [
+            parse("", "SELECT $1::int"),
+            bind("", "", ["1"]),
+            execute(""),
+            bind("", "", ["2"]),
+            execute(""),
+            bind("", "", ["3"]),
+            execute(""),
+            @sync
+          ])
 
-      pkts = recv_rfqs(sock, 3)
-      assert rows(pkts) == [["1"], ["4"]]
-      assert error_codes(pkts) == ["22012"]
-      refute_more(sock)
-      assert_released(tenant)
-    end
+        pkts = recv_rfqs(sock, 1)
+        assert rows(pkts) == [["1"], ["2"], ["3"]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
 
-    test "releases after a BEGIN..COMMIT pipelined in one write (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
+      test "answers consecutive Syncs after an extended batch", %{tenant: tenant} do
+        sock = connect(tenant)
 
-      :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1"), query("COMMIT")])
+        :ok = :gen_tcp.send(sock, [extended("SELECT 1"), @sync, @sync, @sync])
 
-      assert statuses(recv_rfqs(sock, 3)) == [?T, ?T, ?I]
-      refute_more(sock)
-      assert_released(tenant)
-    end
+        pkts = recv_rfqs(sock, 3)
+        assert rows(pkts) == [["1"]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
 
-    test "keeps the backend for a simple protocol transaction across writes (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
+      test "an error in one batch doesn't affect the next pipelined batch", %{tenant: tenant} do
+        sock = connect(tenant)
 
-      :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT pg_backend_pid()")])
+        :ok =
+          :gen_tcp.send(sock, [
+            extended("SELECT 1/0"),
+            @sync,
+            extended("SELECT 2"),
+            @sync
+          ])
 
-      pkts = recv_rfqs(sock, 2)
-      assert statuses(pkts) == [?T, ?T]
-      assert [[backend_pid]] = rows(pkts)
-      assert checked_out(tenant) == 1
+        pkts = recv_rfqs(sock, 2)
+        assert error_codes(pkts) == ["22012"]
+        assert rows(pkts) == [["2"]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
 
-      Process.sleep(100)
-      :ok = :gen_tcp.send(sock, query("SELECT pg_backend_pid()"))
+      test "holds the backend after an error until the Sync arrives", %{tenant: tenant} do
+        sock = connect(tenant)
 
-      pkts = recv_rfqs(sock, 1)
-      assert rows(pkts) == [[backend_pid]]
-      assert statuses(pkts) == [?T]
-      assert checked_out(tenant) == 1
+        :ok = :gen_tcp.send(sock, extended("SELECT 1/0"))
 
-      :ok = :gen_tcp.send(sock, query("COMMIT"))
+        pkts = recv_until(sock, &(error_codes(&1) != []))
+        assert error_codes(pkts) == ["22012"]
+        assert statuses(pkts) == []
+        refute_more(sock)
+        assert checked_out(tenant) == 1
 
-      assert statuses(recv_rfqs(sock, 1)) == [?I]
-      refute_more(sock)
-      assert_released(tenant)
-    end
+        :ok = :gen_tcp.send(sock, @sync)
 
-    test "keeps the backend for a failed transaction until ROLLBACK (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
+        assert statuses(recv_rfqs(sock, 1)) == [?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
 
-      :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1/0")])
+      test "holds the backend across a Flush until the Sync arrives", %{tenant: tenant} do
+        sock = connect(tenant)
 
-      pkts = recv_rfqs(sock, 2)
-      assert statuses(pkts) == [?T, ?E]
-      assert error_codes(pkts) == ["22012"]
-      assert checked_out(tenant) == 1
+        :ok =
+          :gen_tcp.send(sock, [
+            parse("", "SELECT 7"),
+            bind("", "", []),
+            describe_msg(?P, ""),
+            execute(""),
+            @flush
+          ])
 
-      :ok = :gen_tcp.send(sock, query("SELECT 1"))
+        pkts = recv_until(sock, &Enum.any?(&1, fn pkt -> match?(<<?C, _::binary>>, pkt) end))
+        assert rows(pkts) == [["7"]]
+        assert statuses(pkts) == []
+        refute_more(sock)
+        assert checked_out(tenant) == 1
 
-      pkts = recv_rfqs(sock, 1)
-      assert error_codes(pkts) == ["25P02"]
-      assert statuses(pkts) == [?E]
-      assert checked_out(tenant) == 1
+        :ok = :gen_tcp.send(sock, @sync)
 
-      :ok = :gen_tcp.send(sock, query("ROLLBACK"))
+        assert statuses(recv_rfqs(sock, 1)) == [?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
 
-      assert statuses(recv_rfqs(sock, 1)) == [?I]
-      refute_more(sock)
-      assert_released(tenant)
-    end
+      test "handles an extended batch sent one message per write", %{tenant: tenant} do
+        sock = connect(tenant)
 
-    test "keeps the backend for an extended protocol transaction across writes (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
+        for msg <- [parse("", "SELECT $1::int"), bind("", "", ["5"]), execute(""), @sync] do
+          :ok = :gen_tcp.send(sock, msg)
+          Process.sleep(20)
+        end
 
-      :ok =
-        :gen_tcp.send(sock, [
-          extended("BEGIN"),
-          @sync,
-          extended("SELECT pg_backend_pid()"),
-          @sync
-        ])
+        pkts = recv_rfqs(sock, 1)
+        assert rows(pkts) == [["5"]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
 
-      pkts = recv_rfqs(sock, 2)
-      assert statuses(pkts) == [?T, ?T]
-      assert [[backend_pid]] = rows(pkts)
-      assert checked_out(tenant) == 1
-
-      Process.sleep(100)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          extended("SELECT pg_backend_pid()"),
-          @sync,
-          extended("COMMIT"),
-          @sync
-        ])
-
-      pkts = recv_rfqs(sock, 2)
-      assert rows(pkts) == [[backend_pid]]
-      assert statuses(pkts) == [?T, ?I]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "delivers a large result followed by a pipelined query (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-      n = 50_000
-
-      :ok =
-        :gen_tcp.send(sock, [
-          query("SELECT generate_series(1, #{n})"),
-          query("SELECT 'tail'")
-        ])
-
-      pkts = recv_rfqs(sock, 2)
-      rows = rows(pkts)
-      assert length(rows) == n + 1
-      assert List.last(rows) == ["tail"]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    test "handles COPY FROM STDIN via simple query pipelined in one write (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          query("BEGIN"),
-          query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
-          query("COPY pipelining_copy FROM STDIN"),
-          copy_data("1\n2\n"),
-          @copy_done,
-          query("SELECT count(*) FROM pipelining_copy"),
-          query("COMMIT")
-        ])
-
-      pkts = recv_rfqs(sock, 5)
-      assert rows(pkts) == [["2"]]
-      assert statuses(pkts) == [?T, ?T, ?T, ?T, ?I]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    # libpq sends a Sync right after the Execute of an extended protocol COPY
-    # and another one after CopyDone. The backend ignores Syncs during copy-in,
-    # so only the second one produces a ReadyForQuery.
-    test "handles COPY FROM STDIN via extended protocol with libpq's Syncs (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          query("BEGIN"),
-          query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
-          extended("COPY pipelining_copy FROM STDIN"),
-          @sync
-        ])
-
-      pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
-      assert statuses(pkts) == [?T, ?T]
-      refute_more(sock)
-
-      :ok = :gen_tcp.send(sock, [copy_data("1\n2\n"), @copy_done, @sync])
-
-      assert statuses(recv_rfqs(sock, 1)) == [?T]
-      refute_more(sock)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          query("SELECT count(*) FROM pipelining_copy"),
-          query("COMMIT")
-        ])
-
-      pkts = recv_rfqs(sock, 2)
-      assert rows(pkts) == [["2"]]
-      assert statuses(pkts) == [?T, ?I]
-      refute_more(sock)
-      assert [{:busy, %{expected_rfq: 1, open_batch?: false}}] = busy_db_handlers(tenant)
-      assert_released(tenant)
-    end
-
-    test "handles CopyFail via extended protocol with libpq's Syncs (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          query("BEGIN"),
-          query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
-          extended("COPY pipelining_copy FROM STDIN"),
-          @sync
-        ])
-
-      pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
-      assert statuses(pkts) == [?T, ?T]
-
-      :ok = :gen_tcp.send(sock, [copy_fail("client gave up"), @sync])
-
-      pkts = recv_rfqs(sock, 1)
-      assert error_codes(pkts) == ["57014"]
-      assert statuses(pkts) == [?E]
-      refute_more(sock)
-
-      :ok = :gen_tcp.send(sock, query("ROLLBACK"))
-
-      assert statuses(recv_rfqs(sock, 1)) == [?I]
-      refute_more(sock)
-      assert [{:busy, %{expected_rfq: 1, open_batch?: false}}] = busy_db_handlers(tenant)
-      assert_released(tenant)
-    end
-
-    test "handles COPY TO STDOUT via extended protocol pipelined (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok =
-        :gen_tcp.send(sock, [
-          extended("COPY (SELECT generate_series(1, 3)) TO STDOUT"),
-          @sync,
-          query("SELECT 'after'")
-        ])
-
-      pkts = recv_rfqs(sock, 2)
-      assert for(<<?d, _::32, data::binary>> <- pkts, do: data) == ["1\n", "2\n", "3\n"]
-      assert rows(pkts) == [["after"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    # After an error the backend discards everything up to the Sync, so the
-    # Query produces no ReadyForQuery of its own.
-    test "releases the backend when a Query is discarded after an extended error (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-
-      :ok = :gen_tcp.send(sock, [extended("SELECT 1/0"), query("SELECT 2"), @sync])
-
-      pkts = recv_rfqs(sock, 1)
-      assert error_codes(pkts) == ["22012"]
-      assert rows(pkts) == []
-      refute_more(sock)
-      assert [{:busy, %{expected_rfq: 1, open_batch?: false}}] = busy_db_handlers(tenant)
-      assert_released(tenant)
-    end
-
-    test "closes and re-parses a named statement within one write (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-      name = "pipelining_stmt_#{System.unique_integer([:positive])}"
-
-      :ok =
-        :gen_tcp.send(sock, [
-          parse(name, "SELECT $1::int"),
-          bind("", name, ["1"]),
-          execute(""),
-          close(?S, name),
-          @sync,
-          parse(name, "SELECT $1::int + 1"),
-          bind("", name, ["1"]),
-          execute(""),
-          close(?S, name),
-          @sync
-        ])
-
-      pkts = recv_rfqs(sock, 2)
-      assert error_codes(pkts) == []
-      assert rows(pkts) == [["1"], ["2"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    # Suspending the ClientHandler guarantees the second write is queued ahead
-    # of the db_status that the first batch's ReadyForQuery triggers.
-    test "delivers a write queued before the previous batch completes (#{tenant})" do
-      tenant = unquote(tenant)
-      sock = connect(tenant)
-      client = client_handler(tenant, sock)
-
-      :ok = :gen_tcp.send(sock, query("SELECT 'a', pg_sleep(0.2)"))
-      assert_eventually(20, 10, fn -> elem(:sys.get_state(client), 0) == :busy end)
-
-      :ok = :sys.suspend(client)
-      :ok = :gen_tcp.send(sock, query("SELECT 'b'"))
-      Process.sleep(400)
-      :ok = :sys.resume(client)
-
-      pkts = recv_rfqs(sock, 2)
-      assert rows(pkts) == [["a", ""], ["b"]]
-      refute_more(sock)
-      assert_released(tenant)
-    end
-
-    # The next write reaches Supavisor while the previous reply may already be
-    # in flight. Replies must never be lost or delivered to another client.
-    test "keeps every reply when the next write races the previous reply (#{tenant})" do
-      tenant = unquote(tenant)
-
-      1..4
-      |> Enum.map(fn c ->
-        Task.async(fn ->
+      for chunk_size <- [1, 3, 7, 64] do
+        test "handles a pipeline split into #{chunk_size}-byte writes", %{tenant: tenant} do
           sock = connect(tenant)
 
-          for i <- 1..150 do
-            a = "c#{c}-#{i}-a"
-            b = "c#{c}-#{i}-b"
+          bin =
+            IO.iodata_to_binary([
+              query("SELECT 1"),
+              extended("SELECT 2"),
+              @sync,
+              query("SELECT 3"),
+              extended("SELECT 4"),
+              @sync
+            ])
 
-            if rem(i, 2) == 0 do
-              :ok = :gen_tcp.send(sock, query("SELECT '#{a}'"))
-              spin(rem(i, 50) * 10)
-              :ok = :gen_tcp.send(sock, query("SELECT '#{b}'"))
-
-              assert rows(recv_rfqs(sock, 2, 2000)) == [[a], [b]]
-            else
-              :ok = :gen_tcp.send(sock, [extended("SELECT '#{a}'"), @sync])
-              spin(rem(i, 50) * 10)
-              :ok = :gen_tcp.send(sock, [extended("SELECT '#{b}'"), @sync])
-
-              assert rows(recv_rfqs(sock, 2, 2000)) == [[a], [b]]
-            end
+          for chunk <- chunks(bin, unquote(chunk_size)) do
+            :ok = :gen_tcp.send(sock, chunk)
+            Process.sleep(1)
           end
 
-          :gen_tcp.close(sock)
-        end)
-      end)
-      |> Task.await_many(120_000)
+          pkts = recv_rfqs(sock, 4)
+          assert rows(pkts) == [["1"], ["2"], ["3"], ["4"]]
+          refute_more(sock)
+          assert_released(tenant)
+        end
+      end
 
-      assert_released(tenant)
+      test "counts one ReadyForQuery per multi-statement simple query", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("SELECT 1; SELECT 1/0; SELECT 3"),
+            query(""),
+            query("SELECT 4")
+          ])
+
+        pkts = recv_rfqs(sock, 3)
+        assert rows(pkts) == [["1"], ["4"]]
+        assert error_codes(pkts) == ["22012"]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "releases after a BEGIN..COMMIT pipelined in one write", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1"), query("COMMIT")])
+
+        assert statuses(recv_rfqs(sock, 3)) == [?T, ?T, ?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "keeps the backend for a simple protocol transaction across writes", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT pg_backend_pid()")])
+
+        pkts = recv_rfqs(sock, 2)
+        assert statuses(pkts) == [?T, ?T]
+        assert [[backend_pid]] = rows(pkts)
+        assert checked_out(tenant) == 1
+
+        Process.sleep(100)
+        :ok = :gen_tcp.send(sock, query("SELECT pg_backend_pid()"))
+
+        pkts = recv_rfqs(sock, 1)
+        assert rows(pkts) == [[backend_pid]]
+        assert statuses(pkts) == [?T]
+        assert checked_out(tenant) == 1
+
+        :ok = :gen_tcp.send(sock, query("COMMIT"))
+
+        assert statuses(recv_rfqs(sock, 1)) == [?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "keeps the backend for a failed transaction until ROLLBACK", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1/0")])
+
+        pkts = recv_rfqs(sock, 2)
+        assert statuses(pkts) == [?T, ?E]
+        assert error_codes(pkts) == ["22012"]
+        assert checked_out(tenant) == 1
+
+        :ok = :gen_tcp.send(sock, query("SELECT 1"))
+
+        pkts = recv_rfqs(sock, 1)
+        assert error_codes(pkts) == ["25P02"]
+        assert statuses(pkts) == [?E]
+        assert checked_out(tenant) == 1
+
+        :ok = :gen_tcp.send(sock, query("ROLLBACK"))
+
+        assert statuses(recv_rfqs(sock, 1)) == [?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "keeps the backend for an extended protocol transaction across writes", %{
+        tenant: tenant
+      } do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            extended("BEGIN"),
+            @sync,
+            extended("SELECT pg_backend_pid()"),
+            @sync
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert statuses(pkts) == [?T, ?T]
+        assert [[backend_pid]] = rows(pkts)
+        assert checked_out(tenant) == 1
+
+        Process.sleep(100)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            extended("SELECT pg_backend_pid()"),
+            @sync,
+            extended("COMMIT"),
+            @sync
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert rows(pkts) == [[backend_pid]]
+        assert statuses(pkts) == [?T, ?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "delivers a large result followed by a pipelined query", %{tenant: tenant} do
+        sock = connect(tenant)
+        n = 50_000
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("SELECT generate_series(1, #{n})"),
+            query("SELECT 'tail'")
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        rows = rows(pkts)
+        assert length(rows) == n + 1
+        assert List.last(rows) == ["tail"]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "handles COPY FROM STDIN via simple query pipelined in one write", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("BEGIN"),
+            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
+            query("COPY pipelining_copy FROM STDIN"),
+            copy_data("1\n2\n"),
+            @copy_done,
+            query("SELECT count(*) FROM pipelining_copy"),
+            query("COMMIT")
+          ])
+
+        pkts = recv_rfqs(sock, 5)
+        assert rows(pkts) == [["2"]]
+        assert statuses(pkts) == [?T, ?T, ?T, ?T, ?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      # libpq sends a Sync right after the Execute of an extended protocol COPY
+      # and another one after CopyDone. The backend ignores Syncs during copy-in,
+      # so only the second one produces a ReadyForQuery.
+      test "handles COPY FROM STDIN via extended protocol with libpq's Syncs", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("BEGIN"),
+            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
+            extended("COPY pipelining_copy FROM STDIN"),
+            @sync
+          ])
+
+        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
+        assert statuses(pkts) == [?T, ?T]
+        refute_more(sock)
+
+        :ok = :gen_tcp.send(sock, [copy_data("1\n2\n"), @copy_done, @sync])
+
+        assert statuses(recv_rfqs(sock, 1)) == [?T]
+        refute_more(sock)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("SELECT count(*) FROM pipelining_copy"),
+            query("COMMIT")
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert rows(pkts) == [["2"]]
+        assert statuses(pkts) == [?T, ?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "handles CopyFail via extended protocol with libpq's Syncs", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("BEGIN"),
+            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
+            extended("COPY pipelining_copy FROM STDIN"),
+            @sync
+          ])
+
+        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
+        assert statuses(pkts) == [?T, ?T]
+
+        :ok = :gen_tcp.send(sock, [copy_fail("client gave up"), @sync])
+
+        pkts = recv_rfqs(sock, 1)
+        assert error_codes(pkts) == ["57014"]
+        assert statuses(pkts) == [?E]
+        refute_more(sock)
+
+        :ok = :gen_tcp.send(sock, query("ROLLBACK"))
+
+        assert statuses(recv_rfqs(sock, 1)) == [?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      # Without waiting for CopyInResponse, a client can't know the COPY never
+      # started, so its CopyDone and second Sync reach a backend in normal mode.
+      test "answers both Syncs when a blindly pipelined extended COPY fails to start", %{
+        tenant: tenant
+      } do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            extended("COPY pipelining_missing_table FROM STDIN"),
+            @sync,
+            copy_data("1\n"),
+            @copy_done,
+            @sync
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert error_codes(pkts) == ["42P01"]
+        assert statuses(pkts) == [?I, ?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "ignores every Sync sent during an extended COPY", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("BEGIN"),
+            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
+            extended("COPY pipelining_copy FROM STDIN"),
+            @sync,
+            @sync,
+            @sync,
+            @sync,
+            @sync
+          ])
+
+        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
+        assert statuses(pkts) == [?T, ?T]
+        refute_more(sock)
+
+        :ok = :gen_tcp.send(sock, [copy_data("1\n2\n"), @copy_done, @sync])
+
+        assert statuses(recv_rfqs(sock, 1)) == [?T]
+        refute_more(sock)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("SELECT count(*) FROM pipelining_copy"),
+            query("COMMIT")
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert rows(pkts) == [["2"]]
+        assert statuses(pkts) == [?T, ?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "answers the Sync after CopyDone when an extended COPY fails on bad data", %{
+        tenant: tenant
+      } do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            query("BEGIN"),
+            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
+            extended("COPY pipelining_copy FROM STDIN"),
+            @sync
+          ])
+
+        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
+        assert statuses(pkts) == [?T, ?T]
+
+        :ok = :gen_tcp.send(sock, [copy_data("not a number\n"), @copy_done, @sync])
+
+        pkts = recv_rfqs(sock, 1)
+        assert error_codes(pkts) == ["22P02"]
+        assert statuses(pkts) == [?E]
+        refute_more(sock)
+
+        :ok = :gen_tcp.send(sock, query("ROLLBACK"))
+
+        assert statuses(recv_rfqs(sock, 1)) == [?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "handles COPY TO STDOUT via extended protocol pipelined", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            extended("COPY (SELECT generate_series(1, 3)) TO STDOUT"),
+            @sync,
+            query("SELECT 'after'")
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert for(<<?d, _::32, data::binary>> <- pkts, do: data) == ["1\n", "2\n", "3\n"]
+        assert rows(pkts) == [["after"]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      # After an error the backend discards everything up to the Sync, so the
+      # Query produces no ReadyForQuery of its own.
+      test "releases the backend when a Query is discarded after an extended error", %{
+        tenant: tenant
+      } do
+        sock = connect(tenant)
+
+        :ok = :gen_tcp.send(sock, [extended("SELECT 1/0"), query("SELECT 2"), @sync])
+
+        pkts = recv_rfqs(sock, 1)
+        assert error_codes(pkts) == ["22012"]
+        assert rows(pkts) == []
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "closes and re-parses a named statement within one write", %{tenant: tenant} do
+        sock = connect(tenant)
+        name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+
+        :ok =
+          :gen_tcp.send(sock, [
+            parse(name, "SELECT $1::int"),
+            bind("", name, ["1"]),
+            execute(""),
+            close(?S, name),
+            @sync,
+            parse(name, "SELECT $1::int + 1"),
+            bind("", name, ["1"]),
+            execute(""),
+            close(?S, name),
+            @sync
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert error_codes(pkts) == []
+        assert rows(pkts) == [["1"], ["2"]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      # Suspending the ClientHandler guarantees the second write is queued ahead
+      # of the db_status that the first batch's ReadyForQuery triggers.
+      test "delivers a write queued before the previous batch completes", %{tenant: tenant} do
+        sock = connect(tenant)
+        client = client_handler(tenant, sock)
+
+        :ok = :gen_tcp.send(sock, query("SELECT 'a', pg_sleep(0.2)"))
+        assert_eventually(20, 10, fn -> elem(:sys.get_state(client), 0) == :busy end)
+
+        :ok = :sys.suspend(client)
+        :ok = :gen_tcp.send(sock, query("SELECT 'b'"))
+        Process.sleep(400)
+        :ok = :sys.resume(client)
+
+        pkts = recv_rfqs(sock, 2)
+        assert rows(pkts) == [["a", ""], ["b"]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      # The next write reaches Supavisor while the previous reply may already be
+      # in flight. Replies must never be lost or delivered to another client.
+      test "keeps every reply when the next write races the previous reply", %{tenant: tenant} do
+        1..4
+        |> Enum.map(fn c ->
+          Task.async(fn ->
+            sock = connect(tenant)
+
+            for i <- 1..150 do
+              a = "c#{c}-#{i}-a"
+              b = "c#{c}-#{i}-b"
+
+              if rem(i, 2) == 0 do
+                :ok = :gen_tcp.send(sock, query("SELECT '#{a}'"))
+                spin(rem(i, 50) * 10)
+                :ok = :gen_tcp.send(sock, query("SELECT '#{b}'"))
+
+                assert rows(recv_rfqs(sock, 2, 2000)) == [[a], [b]]
+              else
+                :ok = :gen_tcp.send(sock, [extended("SELECT '#{a}'"), @sync])
+                spin(rem(i, 50) * 10)
+                :ok = :gen_tcp.send(sock, [extended("SELECT '#{b}'"), @sync])
+
+                assert rows(recv_rfqs(sock, 2, 2000)) == [[a], [b]]
+              end
+            end
+
+            :gen_tcp.close(sock)
+          end)
+        end)
+        |> Task.await_many(120_000)
+
+        assert_released(tenant)
+      end
     end
   end
 
-  test "reuses a named statement across writes and backends (proxy_tenant_ps_enabled)" do
-    tenant = "proxy_tenant_ps_enabled"
+  @tag named_prepared_statements: true
+  test "reuses a named statement across writes and backends", %{tenant: tenant} do
     name = "pipelining_stmt_#{System.unique_integer([:positive])}"
 
     sock = connect(tenant)
@@ -832,12 +943,6 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
           do: {id, pid}
 
     entry
-  end
-
-  defp busy_db_handlers(tenant) do
-    for {_, pid, _, _} <- GenServer.call(pool(tenant), :get_all_workers),
-        {:busy, _data} = state <- [:sys.get_state(pid)],
-        do: state
   end
 
   # The ClientHandler serving `sock`, matched by the client's address.

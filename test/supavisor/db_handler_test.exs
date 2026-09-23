@@ -160,8 +160,7 @@ defmodule Supavisor.DbHandlerTest do
       client_sock: {:gen_tcp, client_sock},
       id: make_id(),
       stats: %{},
-      expected_rfq: 0,
-      open_batch?: false,
+      write_seq: 0,
       backend_message_streaming: true,
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler)
     }
@@ -1244,113 +1243,161 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
-  describe "handle_event/4 :busy ReadyForQuery batching" do
-    test "releases the backend once the single expected ReadyForQuery arrives" do
-      data = busy_data(%{expected_rfq: 1})
+  describe "handle_event/4 :busy batch completion" do
+    test "reports the synced write and waits for the release" do
+      data = busy_data() |> expecting(1, [?Q])
 
-      assert {:next_state, :idle, new_data} =
+      assert {:keep_state, data} =
                Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
 
-      assert new_data.caller == nil
-      assert new_data.expected_rfq == 0
-      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 1}}
+      assert data.caller
+
+      assert {:next_state, :idle, data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      assert data.caller == nil
+    end
+
+    test "ignores a release for an earlier write" do
+      data = busy_data() |> expecting(1, [?Q]) |> expecting(2, [?Q])
+
+      assert :keep_state_and_data = Db.handle_event(:cast, {:release, 1}, :busy, data)
+    end
+
+    test "discards the exit of a ClientHandler that released it" do
+      data = busy_data() |> expecting(1, [?Q])
+      send(self(), {:EXIT, data.caller, :normal})
+
+      assert {:next_state, :idle, _data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      refute_received {:EXIT, _pid, _reason}
     end
 
     test "holds the backend until every pipelined ReadyForQuery has arrived" do
-      data = busy_data(%{expected_rfq: 3})
+      data = busy_data() |> expecting(1, [?Q, ?Q, ?Q])
 
-      # Only one of the three expected replies so far: stay busy, no release.
       assert {:keep_state, data} =
                Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
 
-      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
-      assert data.expected_rfq == 2
+      refute_received {:"$gen_cast", {:db_status, _status, _write_seq}}
 
-      # The remaining two arrive together, draining the batch, so we release.
       two = Server.ready_for_query() <> Server.ready_for_query()
 
-      assert {:next_state, :idle, _new_data} =
-               Db.handle_event(:info, {:tcp, :sock, two}, :busy, data)
+      assert {:keep_state, _data} = Db.handle_event(:info, {:tcp, :sock, two}, :busy, data)
 
-      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 1}}
     end
 
-    test "does not release mid-transaction even when the expected count is met" do
-      data = busy_data(%{expected_rfq: 1})
-      in_transaction = <<?Z, 5::32, ?T>>
+    test "does not report mid-transaction" do
+      data = busy_data() |> expecting(1, [?Q])
 
-      assert {:keep_state, data} =
-               Db.handle_event(:info, {:tcp, :sock, in_transaction}, :busy, data)
+      assert {:keep_state, _data} =
+               Db.handle_event(:info, {:tcp, :sock, <<?Z, 5::32, ?T>>}, :busy, data)
 
-      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
-      assert data.expected_rfq == 0
+      refute_received {:"$gen_cast", {:db_status, _status, _write_seq}}
     end
 
     test "detects a ReadyForQuery that splits across two socket reads" do
       <<first::binary-size(4), second::binary>> = Server.ready_for_query()
-      data = busy_data(%{expected_rfq: 1})
+      data = busy_data() |> expecting(1, [?Q])
 
-      # Partial ReadyForQuery: nothing framed yet, stay busy.
-      assert {:keep_state, data} =
-               Db.handle_event(:info, {:tcp, :sock, first}, :busy, data)
+      assert {:keep_state, data} = Db.handle_event(:info, {:tcp, :sock, first}, :busy, data)
 
-      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      refute_received {:"$gen_cast", {:db_status, _status, _write_seq}}
 
-      # Second read completes it, the framer reassembles it, and we release.
-      assert {:next_state, :idle, _new_data} =
-               Db.handle_event(:info, {:tcp, :sock, second}, :busy, data)
+      assert {:keep_state, _data} = Db.handle_event(:info, {:tcp, :sock, second}, :busy, data)
 
-      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 1}}
     end
 
-    test "expect_ready_for_query cast accumulates the expected count" do
-      data = busy_data()
+    test "expect_messages cast queues the messages in order and keeps the latest write" do
+      data = busy_data() |> expecting(1, [?P, ?B]) |> expecting(2, [?E, ?S])
 
-      assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 2, false}, :busy, data)
-
-      assert data.expected_rfq == 2
-
-      assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 3, false}, :busy, data)
-
-      assert data.expected_rfq == 5
+      assert pending(data) == [?P, ?B, ?E, ?S]
+      assert data.write_seq == 2
     end
 
-    test "expect_ready_for_query cast tracks whether a batch is left open" do
-      data = busy_data()
+    test "does not report while an extended batch waits for its Sync" do
+      data = busy_data() |> expecting(1, [?P, ?B, ?E])
+      responses = <<?1, 4::32>> <> <<?2, 4::32>> <> <<?C, 13::32, "SELECT 1", 0>>
+
+      assert {:keep_state, data} = Db.handle_event(:info, {:tcp, :sock, responses}, :busy, data)
+
+      refute_received {:"$gen_cast", {:db_status, _status, _write_seq}}
+
+      data = expecting(data, 2, [?S])
+
+      assert {:keep_state, _data} =
+               Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
+
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 2}}
+    end
+
+    test "a later chunk without a ReadyForQuery doesn't report again" do
+      data = busy_data(%{mode: :session})
 
       assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 0, true}, :busy, data)
+               Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
 
-      assert data.open_batch?
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 0}}
 
-      assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 1, false}, :busy, data)
+      notice = <<?N, 5::32, 0>>
+      assert {:keep_state, _data} = Db.handle_event(:info, {:tcp, :sock, notice}, :busy, data)
 
-      refute data.open_batch?
+      refute_received {:"$gen_cast", {:db_status, _status, _write_seq}}
     end
 
-    test "does not check in while the client holds an extended batch open" do
-      data = %{busy_data() | expected_rfq: 1, open_batch?: true, mode: :transaction}
+    test "checkout forgets what a previous client left expected" do
+      data = busy_data(%{caller: nil, client_sock: nil}) |> expecting(7, [?Q, ?S])
+      {client_sock, _recv} = sockpair()
+      from = {self(), make_ref()}
 
-      rfq = <<?Z, 5::32, ?I>>
+      assert {:next_state, :busy, data, {:reply, ^from, {:ok, _sock}}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:checkout, {:gen_tcp, client_sock}, self()},
+                 :idle,
+                 data
+               )
 
-      assert {:keep_state, data} = Db.handle_event(:info, {:tcp, :sock, rfq}, :busy, data)
-
-      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
-      assert data.caller
+      assert pending(data) == []
+      assert data.write_seq == 0
     end
 
-    test "checks in once the batch is closed" do
-      data = %{busy_data() | expected_rfq: 1, open_batch?: false, mode: :transaction}
+    test "prepared statement packets resolve to the messages sent for them" do
+      {backend_send, _backend_recv} = sockpair()
+      statement_name = "server_stmt"
+      parse_pkt = <<?P, 27::32, statement_name::binary, 0, "select 1", 0, 0, 0>>
+      bind_pkt = <<?B, 23::32, 0, statement_name::binary, 0, 0, 0, 0, 0, 0, 0>>
+      from = {self(), make_ref()}
 
-      rfq = <<?Z, 5::32, ?I>>
+      data =
+        busy_data(%{
+          sock: {:gen_tcp, backend_send},
+          prepared_statements_storage: BackendStorage.LRU,
+          prepared_statements: BackendStorage.LRU.new()
+        })
+        |> expecting(1, [?Q, :ps, ?E, ?S])
 
-      assert {:next_state, :idle, _data} =
-               Db.handle_event(:info, {:tcp, :sock, rfq}, :busy, data)
+      assert {:keep_state, data, {:reply, ^from, :ok}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:handle_ps_pkts, [{:bind_pkt, statement_name, bind_pkt, parse_pkt}]},
+                 :busy,
+                 data
+               )
 
-      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert pending(data) == [?Q, ?P, ?B, ?E, ?S]
     end
+  end
+
+  defp expecting(data, write_seq, tags) do
+    {:keep_state, data} =
+      Db.handle_event(:cast, {:expect_messages, write_seq, tags}, :busy, data)
+
+    data
+  end
+
+  defp pending(data) do
+    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
+    :queue.to_list(BackendMessageHandler.handler_state(handler_state, :pending))
   end
 end

@@ -153,7 +153,8 @@ end
 [
   {"proxy_tenant_ps_enabled", %{"named_prepared_statements" => true}},
   {"proxy_tenant_ps_disabled", %{"named_prepared_statements" => false}},
-  {"proxy_tenant_pgoptions", %{}}
+  {"proxy_tenant_pgoptions", %{}},
+  {"proxy_tenant_psql", %{}}
 ]
 |> Enum.each(fn {tenant, feature_flags} ->
   if !Tenants.get_tenant_by_external_id(tenant) do
