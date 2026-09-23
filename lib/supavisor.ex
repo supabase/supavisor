@@ -407,7 +407,9 @@ defmodule Supavisor do
                 %{
                   replica_type: type,
                   pool_size:
-                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size)
+                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size),
+                  server_idle_timeout:
+                    if(first_user, do: first_user.server_idle_timeout, else: 300_000)
                 }
 
               %Tenants.Tenant{} = tenant ->
@@ -416,7 +418,9 @@ defmodule Supavisor do
                 %{
                   replica_type: :write,
                   pool_size:
-                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size)
+                    if(first_user, do: first_user.pool_size, else: tenant.default_pool_size),
+                  server_idle_timeout:
+                    if(first_user, do: first_user.server_idle_timeout, else: 300_000)
                 }
             end
           end)
