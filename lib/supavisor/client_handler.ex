@@ -689,10 +689,10 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  # Sync when idle and no db_connection - return sync directly
+  # Lone sync when idle and no db_connection - return sync directly
   def handle_event(
         _kind,
-        {proto, _, <<?S, 4::32, _::binary>>},
+        {proto, _, <<?S, 4::32>>},
         :idle,
         %{db_connection: nil} = data
       )
