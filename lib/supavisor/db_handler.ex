@@ -169,8 +169,8 @@ defmodule Supavisor.DbHandler do
   Sends prepared statement packets to a DbHandler
 
   Different from most packets, prepared statements packets involve state at the DbHandler,
-  and hence can't be sent directly to the database socket. Instead, they should be sent
-  to the DbHandler through this function.
+  and hence can't be sent directly to the database socket. A write containing any of them
+  is sent whole through this function instead, so it reaches the backend in order.
   """
   @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
   def handle_prepared_statement_pkts(pid, pkts) do
@@ -477,7 +477,16 @@ defmodule Supavisor.DbHandler do
     {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
   end
 
-  def handle_event(:cast, {:release, _write_seq}, _state, _data), do: :keep_state_and_data
+  # The ClientHandler already let go of us, so ignoring this would keep us checked out for
+  # as long as it lives. We unlink so it isn't taken down, and poolboy replaces us.
+  def handle_event(:cast, {:release, write_seq}, state, data) do
+    Logger.error(
+      "unexpected release for write #{write_seq} while #{state}, last write was #{data.write_seq}; closing server connection"
+    )
+
+    if is_pid(data.caller), do: Process.unlink(data.caller)
+    {:stop, :normal}
+  end
 
   # forward the message to the client
   def handle_event(:info, {proto, _, bin}, :busy, %{caller: caller} = data)
@@ -601,31 +610,21 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
-    {iodata, data} = Enum.reduce(pkts, {[], data}, &handle_prepared_statement_pkt/2)
-
+    {sent, resolved, data} = Enum.reduce(pkts, {[], [], data}, &handle_write_pkt/2)
     {close_pkts, prepared_statements} = evict_exceeding(data)
 
-    items =
-      List.flatten(Enum.reverse([Enum.map(close_pkts, &{:intercept, &1}) | iodata]))
-
-    sent =
-      for item <- items, item != :parse_complete do
-        with {:intercept, pkt} <- item, do: pkt
-      end
-
-    tags =
-      Enum.map(items, fn
-        <<tag, _::binary>> -> tag
-        {:intercept, <<tag, _::binary>>} -> {:intercept, tag}
-        :parse_complete -> :parse_complete
-      end)
-
+    # The closes go after the whole write, and so do their responses. Nothing else is
+    # expected yet, since the ClientHandler waits for this call before its next write.
     handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
-    {handler_state, due} = BackendMessageHandler.resolve_ps(handler_state, length(pkts), tags)
+    {handler_state, due} = BackendMessageHandler.resolve_ps(handler_state, Enum.reverse(resolved))
+
+    handler_state =
+      BackendMessageHandler.expect(handler_state, Enum.map(close_pkts, fn _ -> {:intercept, ?C} end))
+
     stream_state = MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
 
     if due != [], do: client_send(data, due)
-    :ok = HandlerHelpers.sock_send(data.sock, sent)
+    :ok = HandlerHelpers.sock_send(data.sock, [Enum.reverse(sent), close_pkts])
 
     data = %{data | stream_state: stream_state, prepared_statements: prepared_statements}
 
@@ -1119,45 +1118,56 @@ defmodule Supavisor.DbHandler do
 
   defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
+  # Plain packets were already expected by the ClientHandler with their own tags. Each
+  # prepared statement packet was expected as `:ps`, resolved to the tags of what it sent.
+  # Both lists are built reversed.
+  defp handle_write_pkt(bin, {sent, resolved, data}) when is_binary(bin),
+    do: {[bin | sent], resolved, data}
+
+  defp handle_write_pkt(pkt, {sent, resolved, data}) do
+    {pkts, tags, data} = handle_prepared_statement_pkt(pkt, data)
+    {Enum.reverse(pkts, sent), [tags | resolved], data}
+  end
+
   # If the prepared statement exists for us, it exists for the server, so we just send the
   # packet to the socket. If it doesn't, we must send the parse pkt first.
   #
   # A replayed Parse's response is intercepted, otherwise the client would receive an
-  # unexpected message. Sent messages are tagged for BackendMessageHandler.resolve_ps/3.
+  # unexpected message.
   defp handle_prepared_statement_pkt(
-         {packet_type, stmt_name, pkt, parse_pkt},
-         {iodata, data}
+         {packet_type, stmt_name, <<tag, _::binary>> = pkt, parse_pkt},
+         data
        )
        when packet_type in [:bind_pkt, :describe_pkt] do
     storage_mod = data.prepared_statements_storage
 
     if storage_mod.member?(data.prepared_statements, stmt_name) do
-      {[pkt | iodata],
+      {[pkt], [tag],
        %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
     else
-      {[[{:intercept, parse_pkt}, pkt] | iodata],
+      {[parse_pkt, pkt], [{:intercept, ?P}, tag],
        %{data | prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)}}
     end
   end
 
-  defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, {iodata, data}) do
+  defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, data) do
     storage_mod = data.prepared_statements_storage
 
-    {[pkt | iodata],
+    {[pkt], [?C],
      %{data | prepared_statements: storage_mod.delete(data.prepared_statements, stmt_name)}}
   end
 
   # If we stop generating unique id per statement, and instead do deterministic ids,
   # we need to potentially drop parse pkts and return a parse response
-  defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
+  defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, data) do
     storage_mod = data.prepared_statements_storage
 
     # Not sent: the ParseComplete is answered by us, in the Parse's place.
     if storage_mod.member?(data.prepared_statements, stmt_name) do
-      {[:parse_complete | iodata],
+      {[], [:parse_complete],
        %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
     else
-      {[pkt | iodata],
+      {[pkt], [?P],
        %{data | prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)}}
     end
   end

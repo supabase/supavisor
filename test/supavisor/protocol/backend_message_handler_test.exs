@@ -313,7 +313,20 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       run([
         send([?Q, :ps, :ps, ?E, ?S]),
         recv(z(?I), false),
-        resolve_ps(2, [?P, ?B]),
+        resolve_ps([[?P], [?B]]),
+        recv(parse_complete(), false),
+        recv(bind_complete(), false),
+        recv(command_complete("SELECT 1"), false),
+        recv(z(?I), true)
+      ])
+    end
+
+    test "placeholders spread through a write each resolve to what was sent for them" do
+      run([
+        send([:ps, ?E, :ps, ?E, ?S]),
+        resolve_ps([[?B], [{:intercept, ?P}, ?B]]),
+        recv(bind_complete(), false),
+        recv(command_complete("SELECT 1"), false),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(command_complete("SELECT 1"), false),
@@ -324,7 +337,7 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
     test "a placeholder can resolve to nothing, for a Parse that wasn't sent" do
       run([
         send([:ps, ?B, ?E, ?S]),
-        resolve_ps(1, []),
+        resolve_ps([[]]),
         recv(bind_complete(), false),
         recv(command_complete("SELECT 1"), false),
         recv(z(?I), true)
@@ -389,7 +402,7 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
     test "a Parse not sent with nothing before it is answered on resolve" do
       state = BackendMessageHandler.expect(BackendMessageHandler.init_state(), [:ps, ?H])
 
-      assert {state, [due]} = BackendMessageHandler.resolve_ps(state, 1, [:parse_complete])
+      assert {state, [due]} = BackendMessageHandler.resolve_ps(state, [[:parse_complete]])
       assert due == parse_complete()
       assert :queue.to_list(BackendMessageHandler.handler_state(state, :pending)) == [?H]
     end
@@ -419,7 +432,7 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
     do: BackendMessageHandler.synced?(MessageStreamer.stream_state(stream_state, :handler_state))
 
   defp send(tags), do: {:send, tags}
-  defp resolve_ps(count, tags), do: {:resolve_ps, count, tags}
+  defp resolve_ps(resolved), do: {:resolve_ps, resolved}
   defp recv(bin, synced?), do: {:recv, bin, synced?}
 
   defp run(steps) do
@@ -427,9 +440,9 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       {:send, tags}, stream_state ->
         MessageStreamer.update_state(stream_state, &BackendMessageHandler.expect(&1, tags))
 
-      {:resolve_ps, count, tags}, stream_state ->
+      {:resolve_ps, resolved}, stream_state ->
         MessageStreamer.update_state(stream_state, fn hs ->
-          {hs, []} = BackendMessageHandler.resolve_ps(hs, count, tags)
+          {hs, []} = BackendMessageHandler.resolve_ps(hs, resolved)
           hs
         end)
 

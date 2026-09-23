@@ -1182,6 +1182,7 @@ defmodule Supavisor.DbHandlerTest do
           prepared_statements_storage: BackendStorage.LRU,
           prepared_statements: BackendStorage.LRU.new()
         })
+        |> expecting(1, [:ps])
 
       assert {:keep_state, new_data, {:reply, ^from, :ok}} =
                Db.handle_event(
@@ -1221,6 +1222,7 @@ defmodule Supavisor.DbHandlerTest do
           prepared_statements_storage: BackendStorage.LRU,
           prepared_statements: prepared_statements
         })
+        |> expecting(1, [:ps])
 
       assert {:keep_state, new_data, {:reply, ^from, :ok}} =
                Db.handle_event(
@@ -1278,10 +1280,13 @@ defmodule Supavisor.DbHandlerTest do
       assert data.caller == nil
     end
 
-    test "ignores a release for an earlier write" do
-      data = busy_data() |> expecting(1, [?Q]) |> expecting(2, [?Q])
+    test "stops without taking the ClientHandler down on a release for an earlier write" do
+      caller = spawn_link(fn -> Process.sleep(:infinity) end)
+      data = busy_data(%{caller: caller}) |> expecting(1, [?Q]) |> expecting(2, [?Q])
 
-      assert :keep_state_and_data = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      assert {:stop, :normal} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      {:links, links} = Process.info(self(), :links)
+      refute caller in links
     end
 
     test "discards the exit of a ClientHandler that released it" do
@@ -1407,6 +1412,76 @@ defmodule Supavisor.DbHandlerTest do
                )
 
       assert pending(data) == [?Q, {:intercept, ?P}, ?B, ?E, ?S]
+    end
+
+    test "sends a whole write in order, resolving each prepared statement packet" do
+      {backend_send, backend_recv} = sockpair()
+      statement_name = "server_stmt"
+      parse_pkt = <<?P, 27::32, statement_name::binary, 0, "select 1", 0, 0, 0>>
+      bind_pkt = <<?B, 23::32, 0, statement_name::binary, 0, 0, 0, 0, 0, 0, 0>>
+      execute_pkt = <<?E, 9::32, 0, 0, 0, 0, 0>>
+      sync_pkt = <<?S, 4::32>>
+      from = {self(), make_ref()}
+
+      # What the ClientHandler expects for the write below: plain packets with their own
+      # tags, prepared statement packets as placeholders.
+      data =
+        busy_data(%{
+          sock: {:gen_tcp, backend_send},
+          prepared_statements_storage: BackendStorage.LRU,
+          prepared_statements: BackendStorage.LRU.new()
+        })
+        |> expecting(1, [:ps, ?E, :ps, ?E, ?S])
+
+      bind = {:bind_pkt, statement_name, bind_pkt, parse_pkt}
+      pkts = [bind, execute_pkt, bind, execute_pkt, sync_pkt]
+
+      assert {:keep_state, data, {:reply, ^from, :ok}} =
+               Db.handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data)
+
+      expected = parse_pkt <> bind_pkt <> execute_pkt <> bind_pkt <> execute_pkt <> sync_pkt
+      assert {:ok, ^expected} = :gen_tcp.recv(backend_recv, byte_size(expected), 1000)
+      assert pending(data) == [{:intercept, ?P}, ?B, ?E, ?B, ?E, ?S]
+    end
+
+    test "evictions are sent and expected after the whole write" do
+      {backend_send, backend_recv} = sockpair()
+      statement_name = "server_stmt"
+      parse_pkt = <<?P, 27::32, statement_name::binary, 0, "select 1", 0, 0, 0>>
+      bind_pkt = <<?B, 23::32, 0, statement_name::binary, 0, 0, 0, 0, 0, 0, 0>>
+      sync_pkt = <<?S, 4::32>>
+      from = {self(), make_ref()}
+      limit = Supavisor.Protocol.PreparedStatements.backend_limit()
+      evicted_count = div(limit, 5)
+
+      prepared_statements =
+        Enum.reduce(1..(limit - 1), BackendStorage.LRU.new(), fn i, storage ->
+          BackendStorage.LRU.put(storage, "old_#{i}")
+        end)
+
+      data =
+        busy_data(%{
+          sock: {:gen_tcp, backend_send},
+          prepared_statements_storage: BackendStorage.LRU,
+          prepared_statements: prepared_statements
+        })
+        |> expecting(1, [:ps, ?S])
+
+      pkts = [{:bind_pkt, statement_name, bind_pkt, parse_pkt}, sync_pkt]
+
+      assert {:keep_state, data, {:reply, ^from, :ok}} =
+               Db.handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data)
+
+      closes =
+        for i <- 1..evicted_count,
+            into: <<>>,
+            do: Supavisor.Protocol.PreparedStatements.build_close_pkt("old_#{i}")
+
+      expected = parse_pkt <> bind_pkt <> sync_pkt <> closes
+      assert {:ok, ^expected} = :gen_tcp.recv(backend_recv, byte_size(expected), 1000)
+
+      assert pending(data) ==
+               [{:intercept, ?P}, ?B, ?S] ++ List.duplicate({:intercept, ?C}, evicted_count)
     end
   end
 

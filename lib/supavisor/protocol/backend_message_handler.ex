@@ -54,7 +54,7 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
 
   @doc """
   Queues frontend messages about to be sent to the backend. `:ps` stands for a prepared
-  statement packet, resolved later with `resolve_ps/3`.
+  statement packet, resolved later with `resolve_ps/2`.
   """
   def expect(state, tags) do
     pending = Enum.reduce(tags, handler_state(state, :pending), &:queue.in/2)
@@ -62,22 +62,26 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   end
 
   @doc """
-  Replaces the first `count` `:ps` placeholders with the messages actually sent for them.
+  Replaces the next `:ps` placeholders, in order, with the messages actually sent for each.
 
   Returns the ParseCompletes already due, for Parses not sent with nothing left to answer
   before them.
   """
-  def resolve_ps(state, count, tags) do
-    {before, rest} =
-      Enum.split_while(:queue.to_list(handler_state(state, :pending)), &(&1 != :ps))
-
-    {placeholders, rest} = Enum.split(rest, count)
-    true = Enum.all?(placeholders, &(&1 == :ps))
+  def resolve_ps(state, resolved) do
+    pending = replace_placeholders(:queue.to_list(handler_state(state, :pending)), resolved, [])
 
     state
-    |> handler_state(pending: :queue.from_list(before ++ tags ++ rest))
+    |> handler_state(pending: :queue.from_list(pending))
     |> advance()
   end
+
+  defp replace_placeholders(pending, [], acc), do: Enum.reverse(acc, pending)
+
+  defp replace_placeholders([:ps | pending], [tags | resolved], acc),
+    do: replace_placeholders(pending, resolved, Enum.reverse(tags, acc))
+
+  defp replace_placeholders([tag | pending], resolved, acc),
+    do: replace_placeholders(pending, resolved, [tag | acc])
 
   @doc """
   Whether the backend processed every queued message and is idle outside a transaction.

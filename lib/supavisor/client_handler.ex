@@ -1005,28 +1005,11 @@ defmodule Supavisor.ClientHandler do
   defp sock_send(bin_or_pkts, data) do
     {_pool, db_handler, db_sock} = data.db_connection
 
-    case bin_or_pkts do
-      pkts when is_list(pkts) ->
-        # Chunking to ensure we send bigger packets
-        pkts
-        |> Enum.chunk_by(&is_tuple/1)
-        |> Enum.reduce_while(:ok, fn chunk, _acc ->
-          case chunk do
-            [t | _] = prepared_pkts when is_tuple(t) ->
-              Supavisor.DbHandler.handle_prepared_statement_pkts(db_handler, prepared_pkts)
-
-            bins ->
-              HandlerHelpers.sock_send(db_sock, bins)
-          end
-          |> case do
-            :ok -> {:cont, :ok}
-            error -> {:halt, error}
-          end
-        end)
-
-      bin ->
-        HandlerHelpers.sock_send(elem(data.db_connection, 2), bin)
-    end
+    # A write with prepared statement packets goes whole through the DbHandler, so it
+    # reaches the backend in order.
+    if is_list(bin_or_pkts) and Enum.any?(bin_or_pkts, &is_tuple/1),
+      do: DbHandler.handle_prepared_statement_pkts(db_handler, bin_or_pkts),
+      else: HandlerHelpers.sock_send(db_sock, bin_or_pkts)
   end
 
   @spec timeout_subscribe_or_terminate(map()) :: :gen_statem.handle_event_result()
