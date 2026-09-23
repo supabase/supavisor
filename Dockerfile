@@ -72,6 +72,10 @@ RUN mix local.hex --force && \
 
 # Set build ENV
 ENV MIX_ENV="prod"
+ARG MIX_TARGET=host
+ENV MIX_TARGET="${MIX_TARGET}"
+# Keep the release path stable for the runner stage with either Mix target.
+ENV MIX_BUILD_PATH="/app/_build/prod"
 
 # Install mix dependencies
 COPY mix.exs mix.lock VERSION ./
@@ -125,4 +129,3 @@ CMD ["/app/bin/server"]
 # Appended by flyctl
 ENV ECTO_IPV6 true
 ENV ERL_AFLAGS "-proto_dist inet6_tcp"
-

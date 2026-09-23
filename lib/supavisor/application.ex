@@ -8,11 +8,16 @@ defmodule Supavisor.Application do
   require Logger
 
   alias Supavisor.Monitoring.PromEx
+  alias Supavisor.Monitoring.Tracing
 
   @metrics_disabled Application.compile_env(:supavisor, :metrics_disabled, false)
 
   @impl true
   def start(_type, _args) do
+    if Application.get_env(:supavisor, :otel_enabled, false) and not Tracing.available?() do
+      raise "OpenTelemetry requires a build with MIX_TARGET=otel"
+    end
+
     primary_config = :logger.get_primary_config()
 
     host =

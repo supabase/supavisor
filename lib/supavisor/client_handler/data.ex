@@ -29,6 +29,8 @@ defmodule Supavisor.ClientHandler.Data do
     :mode,
     :proxy_type,
     :query_start,
+    :query_span,
+    :connection_span,
     :last_query,
     :timeout,
     :ps,

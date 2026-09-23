@@ -32,6 +32,7 @@ defmodule Supavisor.ClientHandler do
     Helpers,
     Manager,
     Monitoring.Telem,
+    Monitoring.Tracing,
     Protocol.Debug,
     Tenants
   }
@@ -117,6 +118,7 @@ defmodule Supavisor.ClientHandler do
       idle_timeout: 0,
       heartbeat_interval: 0,
       connection_start: now,
+      connection_span: Tracing.start_connection(opts.mode),
       state_entered_at: now,
       subscribe_retries: 0
     }
@@ -429,7 +431,10 @@ defmodule Supavisor.ClientHandler do
     case client_sock_send(data, msg, :handshake) do
       :ok ->
         Telem.client_connection_time(data.connection_start, data.id)
-        {:next_state, :idle, %{data | client_ready: true}, handle_actions(data)}
+        Tracing.connection_ready(data.connection_span, data.tenant)
+
+        {:next_state, :idle, %{data | client_ready: true, connection_span: nil},
+         handle_actions(data)}
 
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -556,8 +561,9 @@ defmodule Supavisor.ClientHandler do
         else: Telem.network_usage(:client, data.sock, data.id, data.stats)
 
     Telem.client_query_time(data.query_start, data.id, data.mode == :proxy)
+    Tracing.finish(data.query_span, :ok)
 
-    {:next_state, :idle, %{data | db_connection: db_connection, stats: stats},
+    {:next_state, :idle, %{data | db_connection: db_connection, stats: stats, query_span: nil},
      handle_actions(data)}
   end
 
@@ -710,13 +716,24 @@ defmodule Supavisor.ClientHandler do
 
   # Any message when idle - checkout and send to db
   def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
+    span = Tracing.start_query(data)
+    checkout_start = System.monotonic_time(:microsecond)
+
     case maybe_checkout(:on_query, data) do
       {:ok, db_connection} ->
+        Tracing.checkout(span, :ok, System.monotonic_time(:microsecond) - checkout_start)
+
         {:next_state, :busy,
-         %{data | db_connection: db_connection, query_start: System.monotonic_time()},
-         [{:next_event, :internal, {proto, socket, msg}}]}
+         %{
+           data
+           | db_connection: db_connection,
+             query_start: System.monotonic_time(),
+             query_span: span
+         }, [{:next_event, :internal, {proto, socket, msg}}]}
 
       {:error, exception} ->
+        Tracing.checkout(span, :error, System.monotonic_time(:microsecond) - checkout_start)
+        Tracing.finish(span, :error)
         Error.terminate_with_error(data, exception, :authenticated)
     end
   end
@@ -750,8 +767,10 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
-  def terminate(reason, state, _data) do
+  def terminate(reason, state, data) do
     Logger.metadata(state: state)
+    Tracing.finish(data.connection_span, :error)
+    Tracing.finish(data.query_span, :error)
 
     level =
       case reason do

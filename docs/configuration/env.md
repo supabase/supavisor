@@ -73,6 +73,7 @@ This document provides a categorized list of all environment variables used in S
 | ------------------ | --------------------------------------- | ------------- | -------- |
 | `METRICS_DISABLED` | Disable metrics collection              | `false`       | No       |
 | `PROM_POLL_RATE`   | Prometheus polling rate in milliseconds | `15000`       | No       |
+| `ENABLE_OTEL` | Enable tracing in a `MIX_TARGET=otel` build ([setup](../monitoring/tracing.md)) | `false` | No |
 
 ### Logging
 

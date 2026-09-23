@@ -26,6 +26,7 @@ nav:
       - from PgBouncer: "migrating/pgbouncer.md"
   - Monitoring:
       - Metrics: "monitoring/metrics.md"
+      - Tracing: "monitoring/tracing.md"
       - Logs: "monitoring/logs.md"
   - ORMs:
       - Prisma: "orms/prisma.md"
