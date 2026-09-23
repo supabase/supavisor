@@ -35,6 +35,7 @@ defmodule Supavisor.DbHandler do
   alias Supavisor.ConnectionParameters
   alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.ClientSocketClosedError
   alias Supavisor.Errors.DbHandlerExitedError
   alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
@@ -172,7 +173,8 @@ defmodule Supavisor.DbHandler do
   and hence can't be sent directly to the database socket. A write containing any of them
   is sent whole through this function instead, so it reaches the backend in order.
   """
-  @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) :: :ok
+  @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) ::
+          :ok | {:error, ClientSocketClosedError.t()}
   def handle_prepared_statement_pkts(pid, pkts) do
     :gen_statem.call(pid, {:handle_ps_pkts, pkts}, 15_000)
   end
@@ -623,12 +625,19 @@ defmodule Supavisor.DbHandler do
 
     stream_state = MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
 
-    if due != [], do: client_send(data, due)
-    :ok = HandlerHelpers.sock_send(data.sock, [Enum.reverse(sent), close_pkts])
+    send_result = if due == [], do: :ok, else: client_send(data, due)
 
-    data = %{data | stream_state: stream_state, prepared_statements: prepared_statements}
+    case send_result do
+      :ok ->
+        :ok = HandlerHelpers.sock_send(data.sock, [Enum.reverse(sent), close_pkts])
+        data = %{data | stream_state: stream_state, prepared_statements: prepared_statements}
+        {:keep_state, data, {:reply, from, :ok}}
 
-    {:keep_state, data, {:reply, from, :ok}}
+      # The client missed a response, so the connection can't go on.
+      {:error, reason} ->
+        error = %ClientSocketClosedError{mode: data.mode, client_state: :busy, reason: reason}
+        {:stop_and_reply, :normal, {:reply, from, {:error, error}}}
+    end
   end
 
   def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do

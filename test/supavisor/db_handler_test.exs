@@ -3,6 +3,7 @@ defmodule Supavisor.DbHandlerTest do
 
   alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
+  alias Supavisor.Errors.ClientSocketClosedError
   alias Supavisor.Errors.DbHandlerExitedError
 
   import Supavisor.Asserts
@@ -1263,6 +1264,37 @@ defmodule Supavisor.DbHandlerTest do
       assert {:ok, <<?1, 4::32>>} = :gen_tcp.recv(client_recv, 0, 1000)
       assert {:error, :timeout} = :gen_tcp.recv(backend_recv, 0, 50)
       assert pending(new_data) == []
+    end
+
+    test "stops without sending the write when the client misses an answered Parse" do
+      {backend_send, backend_recv} = sockpair()
+      {client_send, _client_recv} = sockpair()
+      :ok = :gen_tcp.close(client_send)
+      statement_name = "server_stmt"
+      parse_pkt = <<?P, 27::32, statement_name::binary, 0, "select 1", 0, 0, 0>>
+      sync_pkt = <<?S, 4::32>>
+      from = {self(), make_ref()}
+
+      data =
+        busy_data(%{
+          sock: {:gen_tcp, backend_send},
+          client_sock: {:gen_tcp, client_send},
+          prepared_statements_storage: BackendStorage.LRU,
+          prepared_statements: BackendStorage.LRU.put(BackendStorage.LRU.new(), statement_name)
+        })
+        |> expecting(1, [:ps, ?S])
+
+      assert {:stop_and_reply, :normal,
+              {:reply, ^from,
+               {:error, %ClientSocketClosedError{client_state: :busy, reason: :closed}}}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:handle_ps_pkts, [{:parse_pkt, statement_name, parse_pkt}, sync_pkt]},
+                 :busy,
+                 data
+               )
+
+      assert {:error, :timeout} = :gen_tcp.recv(backend_recv, 0, 50)
     end
   end
 
