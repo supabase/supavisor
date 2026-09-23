@@ -1,4 +1,7 @@
 defmodule Supavisor.Integration.TransactionPipeliningTest do
+  # Drives transaction mode with raw protocol messages and checks both what the
+  # client receives and that the backend returns to the pool once, and only once,
+  # Postgres is done with everything the client sent.
   use Supavisor.DataCase, async: false
 
   import Supavisor.Asserts
@@ -80,14 +83,12 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       test "regression: delivers every reply when a segment begins with a Sync", %{tenant: tenant} do
         sock = connect(tenant)
 
-        # A slow first statement keeps the ClientHandler :busy when the Sync arrives
+        # The slow query keeps the ClientHandler busy when the next write arrives.
         :ok = :gen_tcp.send(sock, :pgo_protocol.encode_query_message("SELECT pg_sleep(0.3)"))
         Process.sleep(50)
 
-        # A sync, plus a query message.
-        #
-        # In the buggy implementation, the sync at the beginning of the packet would cause the 
-        # following ReadyForQuery to trigger a checkin, and the query response wouldn't be received 
+        # A write starting with a Sync must not end the batch early: the query after
+        # it still has to be answered on this backend.
         :ok =
           :gen_tcp.send(sock, [
             <<?S, 4::32>>,
@@ -104,16 +105,14 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         sock = connect(tenant)
         marker = "batch#{System.unique_integer([:positive])}"
 
-        # one :gen_tcp.send, so both batches land in the same read on
-        # Supavisor's side -- batch A ends in a real Sync, batch B does not.
+        # Both batches land in one read: batch A ends in a Sync, batch B doesn't.
         :ok =
           :gen_tcp.send(sock, [
             extended_batch("select '#{marker}A' as m, pg_sleep(0.2)", sync?: true),
             extended_batch("select '#{marker}B' as m, pg_sleep(0.2)", sync?: false)
           ])
 
-        # Batch A's real ReadyForQuery. Batch B hasn't
-        # been given its Sync.
+        # Only batch A is answered, since batch B has no Sync yet.
         assert recv_ready_for_queries(sock, 1) == 1
 
         db_conf = Application.get_env(:supavisor, Supavisor.Repo)
@@ -129,12 +128,10 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
 
         Process.sleep(300)
 
-        # batch B's backend SHOULD be stuck — withholding a Sync is *supposed*
-        # to strand a backend
+        # The backend waits for batch B's Sync, as it should.
         assert stranded?(observer, marker <> "B")
 
-        # THE CRUX: send batch B's Sync alone, in a second write - should be forwarded
-        # to the still-open backend which replies with an RFQ.
+        # Sent alone in a later write, the Sync must reach that same backend.
         :ok = :gen_tcp.send(sock, :pgo_protocol.encode_sync_message())
         assert recv_ready_for_queries(sock, 1) == 1
         Process.sleep(200)
@@ -473,16 +470,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       test "handles COPY FROM STDIN via extended protocol with libpq's Syncs", %{tenant: tenant} do
         sock = connect(tenant)
 
-        :ok =
-          :gen_tcp.send(sock, [
-            query("BEGIN"),
-            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
-            extended("COPY pipelining_copy FROM STDIN"),
-            @sync
-          ])
-
-        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
-        assert statuses(pkts) == [?T, ?T]
+        start_extended_copy(sock, syncs: 1)
         refute_more(sock)
 
         :ok = :gen_tcp.send(sock, [copy_data("1\n2\n"), @copy_done, @sync])
@@ -506,16 +494,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       test "handles CopyFail via extended protocol with libpq's Syncs", %{tenant: tenant} do
         sock = connect(tenant)
 
-        :ok =
-          :gen_tcp.send(sock, [
-            query("BEGIN"),
-            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
-            extended("COPY pipelining_copy FROM STDIN"),
-            @sync
-          ])
-
-        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
-        assert statuses(pkts) == [?T, ?T]
+        start_extended_copy(sock, syncs: 1)
 
         :ok = :gen_tcp.send(sock, [copy_fail("client gave up"), @sync])
 
@@ -557,20 +536,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       test "ignores every Sync sent during an extended COPY", %{tenant: tenant} do
         sock = connect(tenant)
 
-        :ok =
-          :gen_tcp.send(sock, [
-            query("BEGIN"),
-            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
-            extended("COPY pipelining_copy FROM STDIN"),
-            @sync,
-            @sync,
-            @sync,
-            @sync,
-            @sync
-          ])
-
-        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
-        assert statuses(pkts) == [?T, ?T]
+        start_extended_copy(sock, syncs: 5)
         refute_more(sock)
 
         :ok = :gen_tcp.send(sock, [copy_data("1\n2\n"), @copy_done, @sync])
@@ -596,16 +562,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       } do
         sock = connect(tenant)
 
-        :ok =
-          :gen_tcp.send(sock, [
-            query("BEGIN"),
-            query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
-            extended("COPY pipelining_copy FROM STDIN"),
-            @sync
-          ])
-
-        pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
-        assert statuses(pkts) == [?T, ?T]
+        start_extended_copy(sock, syncs: 1)
 
         :ok = :gen_tcp.send(sock, [copy_data("not a number\n"), @copy_done, @sync])
 
@@ -679,19 +636,12 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         assert_released(tenant)
       end
 
-      # Suspending the ClientHandler guarantees the second write is queued ahead
-      # of the db_status that the first batch's ReadyForQuery triggers.
+      # race/3 queues the second write ahead of the db_status that the first
+      # write's ReadyForQuery triggers.
       test "delivers a write queued before the previous batch completes", %{tenant: tenant} do
         sock = connect(tenant)
-        client = client_handler(tenant, sock)
 
-        :ok = :gen_tcp.send(sock, query("SELECT 'a', pg_sleep(0.2)"))
-        assert_eventually(20, 10, fn -> elem(:sys.get_state(client), 0) == :busy end)
-
-        :ok = :sys.suspend(client)
-        :ok = :gen_tcp.send(sock, query("SELECT 'b'"))
-        Process.sleep(400)
-        :ok = :sys.resume(client)
+        race(tenant, sock, query("SELECT 'b'"))
 
         pkts = recv_rfqs(sock, 2)
         assert rows(pkts) == [["a", ""], ["b"]]
@@ -704,15 +654,8 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         tenant: tenant
       } do
         sock = connect(tenant)
-        client = client_handler(tenant, sock)
 
-        :ok = :gen_tcp.send(sock, query("SELECT 'a', pg_sleep(0.2)"))
-        assert_eventually(20, 10, fn -> elem(:sys.get_state(client), 0) == :busy end)
-
-        :ok = :sys.suspend(client)
-        :ok = :gen_tcp.send(sock, @flush)
-        Process.sleep(400)
-        :ok = :sys.resume(client)
+        race(tenant, sock, @flush)
 
         pkts = recv_rfqs(sock, 1)
         assert rows(pkts) == [["a", ""]]
@@ -797,9 +740,9 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
-  # The pool keeps a single backend for one client at a time, so the second client
-  # lands on the backend the first one prepared the statement on, and its Parse
-  # isn't sent. Supavisor answers it with its own ParseComplete.
+  # With one client at a time the pool reuses a single backend, so this client
+  # lands where the statement is already prepared and its Parse isn't sent.
+  # Supavisor answers it with its own ParseComplete.
   @tag named_prepared_statements: true
   test "answers a Parse the backend already has in its place in the pipeline", %{
     tenant: tenant
@@ -839,14 +782,6 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
-  defp prepare_on_backend(tenant, name, sql) do
-    sock = connect(tenant)
-    :ok = :gen_tcp.send(sock, [parse(name, sql), @sync])
-    assert tags(recv_rfqs(sock, 1)) == [?1, ?Z]
-    :ok = :gen_tcp.close(sock)
-    assert_released(tenant)
-  end
-
   defp connect(tenant) do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     port = Application.get_env(:supavisor, :proxy_port_transaction)
@@ -856,48 +791,57 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     sock
   end
 
-  # N simple queries as one iolist, so a single send pipelines them.
-  defp pipeline(n) do
-    Enum.map(1..n, fn i -> :pgo_protocol.encode_query_message("SELECT #{i}") end)
+  # Sends a slow query and, while its reply is pending, `write` to a suspended
+  # ClientHandler, so `write` is only handled after the reply arrives.
+  defp race(tenant, sock, write) do
+    client = client_handler(tenant, sock)
+
+    :ok = :gen_tcp.send(sock, query("SELECT 'a', pg_sleep(0.2)"))
+    assert_eventually(20, 10, fn -> elem(:sys.get_state(client), 0) == :busy end)
+
+    :ok = :sys.suspend(client)
+    :ok = :gen_tcp.send(sock, write)
+    Process.sleep(400)
+    :ok = :sys.resume(client)
   end
 
-  # Reads until `n` ReadyForQuery packets have been seen, returning the count.
-  defp recv_ready_for_queries(sock, n, buf \\ <<>>) do
-    {pkts, _rest} = Supavisor.Protocol.split_pkts(buf)
-    count = Enum.count(pkts, &match?(<<?Z, _::binary>>, &1))
+  # Starts an extended protocol COPY into a temp table inside a transaction,
+  # followed by `syncs` Syncs, and waits for its CopyInResponse.
+  defp start_extended_copy(sock, syncs: syncs) do
+    :ok =
+      :gen_tcp.send(sock, [
+        query("BEGIN"),
+        query("CREATE TEMP TABLE pipelining_copy (a int) ON COMMIT DROP"),
+        extended("COPY pipelining_copy FROM STDIN"),
+        List.duplicate(@sync, syncs)
+      ])
 
-    if count >= n do
-      count
-    else
-      case :gen_tcp.recv(sock, 0, 5000) do
-        {:ok, more} ->
-          recv_ready_for_queries(sock, n, buf <> more)
-
-        {:error, reason} ->
-          flunk("received only #{count}/#{n} ReadyForQuery before #{inspect(reason)}")
-      end
-    end
+    pkts = recv_until(sock, &(length(statuses(&1)) == 2 and copy_in?(&1)))
+    assert statuses(pkts) == [?T, ?T]
   end
 
-  # Zero-parameter Bind (unnamed portal, unnamed statement)
-  # -- the minimum needed to Execute an unnamed Parse.
-  # https://www.postgresql.org/docs/current/protocol-message-formats.html
-  defp encode_bind_message_no_params do
-    payload = <<0, 0, 0::16, 0::16, 0::16>>
-    <<?B, byte_size(payload) + 4::32, payload::binary>>
+  defp prepare_on_backend(tenant, name, sql) do
+    sock = connect(tenant)
+    :ok = :gen_tcp.send(sock, [parse(name, sql), @sync])
+    assert tags(recv_rfqs(sock, 1)) == [?1, ?Z]
+    :ok = :gen_tcp.close(sock)
+    assert_released(tenant)
   end
 
-  # One Extended Query Protocol batch: Parse+Bind+Execute, with the Sync
-  # included or withheld per `sync?`.
-  defp extended_batch(sql, sync?: sync?) do
-    msgs = [
-      :pgo_protocol.encode_parse_message("", sql, []),
-      encode_bind_message_no_params(),
-      :pgo_protocol.encode_execute_message("", 0)
-    ]
+  defp chunks(bin, size) when byte_size(bin) <= size, do: [bin]
 
-    if sync?, do: msgs ++ [:pgo_protocol.encode_sync_message()], else: msgs
+  defp chunks(bin, size) do
+    <<chunk::binary-size(size), rest::binary>> = bin
+    [chunk | chunks(rest, size)]
   end
+
+  defp spin(us), do: spin_until(System.monotonic_time(:microsecond) + us)
+
+  defp spin_until(deadline) do
+    if System.monotonic_time(:microsecond) < deadline, do: spin_until(deadline), else: :ok
+  end
+
+  ## Frontend messages
 
   defp msg(tag, payload), do: <<tag, byte_size(payload) + 4::32, payload::binary>>
 
@@ -928,12 +872,32 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
   # Parse+Bind+Execute on the unnamed statement and portal, without a Sync.
   defp extended(sql), do: [parse("", sql), bind("", "", []), execute("")]
 
-  defp chunks(bin, size) when byte_size(bin) <= size, do: [bin]
-
-  defp chunks(bin, size) do
-    <<chunk::binary-size(size), rest::binary>> = bin
-    [chunk | chunks(rest, size)]
+  # N simple queries as one iolist, so a single send pipelines them.
+  defp pipeline(n) do
+    Enum.map(1..n, fn i -> :pgo_protocol.encode_query_message("SELECT #{i}") end)
   end
+
+  # Zero-parameter Bind (unnamed portal, unnamed statement)
+  # -- the minimum needed to Execute an unnamed Parse.
+  # https://www.postgresql.org/docs/current/protocol-message-formats.html
+  defp encode_bind_message_no_params do
+    payload = <<0, 0, 0::16, 0::16, 0::16>>
+    <<?B, byte_size(payload) + 4::32, payload::binary>>
+  end
+
+  # One Extended Query Protocol batch: Parse+Bind+Execute, with the Sync
+  # included or withheld per `sync?`.
+  defp extended_batch(sql, sync?: sync?) do
+    msgs = [
+      :pgo_protocol.encode_parse_message("", sql, []),
+      encode_bind_message_no_params(),
+      :pgo_protocol.encode_execute_message("", 0)
+    ]
+
+    if sync?, do: msgs ++ [:pgo_protocol.encode_sync_message()], else: msgs
+  end
+
+  ## Backend messages
 
   defp recv_rfqs(sock, n, timeout \\ 5000),
     do: recv_until(sock, &(length(statuses(&1)) >= n), timeout)
@@ -961,17 +925,36 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     end
   end
 
+  # Reads until `n` ReadyForQuery packets have been seen, returning the count.
+  defp recv_ready_for_queries(sock, n, buf \\ <<>>) do
+    {pkts, _rest} = Supavisor.Protocol.split_pkts(buf)
+    count = Enum.count(pkts, &match?(<<?Z, _::binary>>, &1))
+
+    if count >= n do
+      count
+    else
+      case :gen_tcp.recv(sock, 0, 5000) do
+        {:ok, more} ->
+          recv_ready_for_queries(sock, n, buf <> more)
+
+        {:error, reason} ->
+          flunk("received only #{count}/#{n} ReadyForQuery before #{inspect(reason)}")
+      end
+    end
+  end
+
   defp refute_more(sock) do
     assert {:error, :timeout} = :gen_tcp.recv(sock, 0, 200)
   end
 
-  defp statuses(pkts), do: for(<<?Z, 5::32, status>> <- pkts, do: status)
-
   defp tags(pkts), do: for(<<tag, _::binary>> <- pkts, do: tag)
+
+  defp statuses(pkts), do: for(<<?Z, 5::32, status>> <- pkts, do: status)
 
   defp rows(pkts), do: for(<<?D, _::32, _::16, cols::binary>> <- pkts, do: decode_cols(cols))
 
   defp decode_cols(<<>>), do: []
+
   defp decode_cols(<<-1::signed-32, rest::binary>>), do: [nil | decode_cols(rest)]
 
   defp decode_cols(<<len::32, val::binary-size(len), rest::binary>>),
@@ -988,11 +971,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
 
   defp copy_in?(pkts), do: Enum.any?(pkts, &match?(<<?G, _::binary>>, &1))
 
-  defp spin(us), do: spin_until(System.monotonic_time(:microsecond) + us)
-
-  defp spin_until(deadline) do
-    if System.monotonic_time(:microsecond) < deadline, do: spin_until(deadline), else: :ok
-  end
+  ## Pool and backends
 
   defp checked_out(tenant) do
     {_state, _available, _overflow, checked_out} = :poolboy.status(pool(tenant))
@@ -1012,7 +991,6 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     [entry] =
       for {{:pool, _, _, id}, pid} <- entries,
           Supavisor.id(id, :tenant) == tenant,
-          Supavisor.id(id, :mode) == :transaction,
           do: {id, pid}
 
     entry
