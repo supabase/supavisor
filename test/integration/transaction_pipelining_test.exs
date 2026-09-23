@@ -699,6 +699,27 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         assert_released(tenant)
       end
 
+      # A Flush gets no reply, so nothing follows the db_status it races.
+      test "releases the backend after a write with nothing to answer races the reply", %{
+        tenant: tenant
+      } do
+        sock = connect(tenant)
+        client = client_handler(tenant, sock)
+
+        :ok = :gen_tcp.send(sock, query("SELECT 'a', pg_sleep(0.2)"))
+        assert_eventually(20, 10, fn -> elem(:sys.get_state(client), 0) == :busy end)
+
+        :ok = :sys.suspend(client)
+        :ok = :gen_tcp.send(sock, @flush)
+        Process.sleep(400)
+        :ok = :sys.resume(client)
+
+        pkts = recv_rfqs(sock, 1)
+        assert rows(pkts) == [["a", ""]]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
       # The next write reaches Supavisor while the previous reply may already be
       # in flight. Replies must never be lost or delivered to another client.
       test "keeps every reply when the next write races the previous reply", %{tenant: tenant} do
@@ -773,6 +794,56 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     end
 
     refute_more(sock)
+    assert_released(tenant)
+  end
+
+  # The pool keeps a single backend for one client at a time, so the second client
+  # lands on the backend the first one prepared the statement on, and its Parse
+  # isn't sent. Supavisor answers it with its own ParseComplete.
+  @tag named_prepared_statements: true
+  test "answers a Parse the backend already has in its place in the pipeline", %{
+    tenant: tenant
+  } do
+    prepare_on_backend(tenant, "stmt", "SELECT 1")
+    sock = connect(tenant)
+
+    :ok =
+      :gen_tcp.send(sock, [
+        query("SELECT pg_sleep(0.1)"),
+        parse("stmt", "SELECT 1"),
+        bind("", "stmt", []),
+        execute(""),
+        @sync
+      ])
+
+    pkts = recv_rfqs(sock, 2)
+    assert tags(pkts) == [?T, ?D, ?C, ?Z, ?1, ?2, ?D, ?C, ?Z]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
+  @tag named_prepared_statements: true
+  test "answers a Parse the backend already has when only a Flush follows", %{tenant: tenant} do
+    prepare_on_backend(tenant, "stmt", "SELECT 1")
+    sock = connect(tenant)
+
+    :ok = :gen_tcp.send(sock, [parse("stmt", "SELECT 1"), @flush])
+
+    assert tags(recv_until(sock, &(&1 != []))) == [?1]
+    refute_more(sock)
+
+    :ok = :gen_tcp.send(sock, @sync)
+
+    assert statuses(recv_rfqs(sock, 1)) == [?I]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
+  defp prepare_on_backend(tenant, name, sql) do
+    sock = connect(tenant)
+    :ok = :gen_tcp.send(sock, [parse(name, sql), @sync])
+    assert tags(recv_rfqs(sock, 1)) == [?1, ?Z]
+    :ok = :gen_tcp.close(sock)
     assert_released(tenant)
   end
 
@@ -895,6 +966,8 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
   end
 
   defp statuses(pkts), do: for(<<?Z, 5::32, status>> <- pkts, do: status)
+
+  defp tags(pkts), do: for(<<tag, _::binary>> <- pkts, do: tag)
 
   defp rows(pkts), do: for(<<?D, _::32, _::16, cols::binary>> <- pkts, do: decode_cols(cols))
 

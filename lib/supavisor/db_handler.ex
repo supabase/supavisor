@@ -605,31 +605,29 @@ defmodule Supavisor.DbHandler do
 
     {close_pkts, prepared_statements} = evict_exceeding(data)
 
-    sent = List.flatten(Enum.reverse([close_pkts | iodata]))
-    tags = for <<tag, _::binary>> <- sent, do: tag
+    items =
+      List.flatten(Enum.reverse([Enum.map(close_pkts, &{:intercept, &1}) | iodata]))
 
-    stream_state =
-      MessageStreamer.update_state(
-        data.stream_state,
-        &BackendMessageHandler.resolve_ps(&1, length(pkts), tags)
-      )
+    sent =
+      for item <- items, item != :parse_complete do
+        with {:intercept, pkt} <- item, do: pkt
+      end
 
+    tags =
+      Enum.map(items, fn
+        <<tag, _::binary>> -> tag
+        {:intercept, <<tag, _::binary>>} -> {:intercept, tag}
+        :parse_complete -> :parse_complete
+      end)
+
+    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
+    {handler_state, due} = BackendMessageHandler.resolve_ps(handler_state, length(pkts), tags)
+    stream_state = MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
+
+    if due != [], do: client_send(data, due)
     :ok = HandlerHelpers.sock_send(data.sock, sent)
 
-    data = %{
-      data
-      | stream_state:
-          Enum.reduce(close_pkts, stream_state, fn _, stream_state ->
-            MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                            action_queue: queue
-                                                          ) = s ->
-              BackendMessageHandler.handler_state(s,
-                action_queue: :queue.in({:intercept, :close}, queue)
-              )
-            end)
-          end),
-        prepared_statements: prepared_statements
-    }
+    data = %{data | stream_state: stream_state, prepared_statements: prepared_statements}
 
     {:keep_state, data, {:reply, from, :ok}}
   end
@@ -1124,8 +1122,8 @@ defmodule Supavisor.DbHandler do
   # If the prepared statement exists for us, it exists for the server, so we just send the
   # packet to the socket. If it doesn't, we must send the parse pkt first.
   #
-  # If we replay a parse, we need to intercept the parse response, otherwise the client will
-  # receive an unexpected message.
+  # A replayed Parse's response is intercepted, otherwise the client would receive an
+  # unexpected message. Sent messages are tagged for BackendMessageHandler.resolve_ps/3.
   defp handle_prepared_statement_pkt(
          {packet_type, stmt_name, pkt, parse_pkt},
          {iodata, data}
@@ -1137,21 +1135,8 @@ defmodule Supavisor.DbHandler do
       {[pkt | iodata],
        %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
     else
-      new_data = %{
-        data
-        | stream_state:
-            MessageStreamer.update_state(
-              data.stream_state,
-              fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
-                BackendMessageHandler.handler_state(s,
-                  action_queue: :queue.in({:intercept, :parse}, queue)
-                )
-              end
-            ),
-          prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)
-      }
-
-      {[[parse_pkt, pkt] | iodata], new_data}
+      {[[{:intercept, parse_pkt}, pkt] | iodata],
+       %{data | prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)}}
     end
   end
 
@@ -1159,18 +1144,7 @@ defmodule Supavisor.DbHandler do
     storage_mod = data.prepared_statements_storage
 
     {[pkt | iodata],
-     %{
-       data
-       | prepared_statements: storage_mod.delete(data.prepared_statements, stmt_name),
-         stream_state:
-           MessageStreamer.update_state(data.stream_state, fn BackendMessageHandler.handler_state(
-                                                                action_queue: queue
-                                                              ) = s ->
-             BackendMessageHandler.handler_state(s,
-               action_queue: :queue.in({:forward, :close}, queue)
-             )
-           end)
-     }}
+     %{data | prepared_statements: storage_mod.delete(data.prepared_statements, stmt_name)}}
   end
 
   # If we stop generating unique id per statement, and instead do deterministic ids,
@@ -1178,38 +1152,13 @@ defmodule Supavisor.DbHandler do
   defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, {iodata, data}) do
     storage_mod = data.prepared_statements_storage
 
+    # Not sent: the ParseComplete is answered by us, in the Parse's place.
     if storage_mod.member?(data.prepared_statements, stmt_name) do
-      {iodata,
-       %{
-         data
-         | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name),
-           stream_state:
-             MessageStreamer.update_state(
-               data.stream_state,
-               fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
-                 BackendMessageHandler.handler_state(s,
-                   action_queue: :queue.in({:inject, :parse}, queue)
-                 )
-               end
-             )
-       }}
+      {[:parse_complete | iodata],
+       %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
     else
-      prepared_statements = storage_mod.put(data.prepared_statements, stmt_name)
-
       {[pkt | iodata],
-       %{
-         data
-         | prepared_statements: prepared_statements,
-           stream_state:
-             MessageStreamer.update_state(
-               data.stream_state,
-               fn BackendMessageHandler.handler_state(action_queue: queue) = s ->
-                 BackendMessageHandler.handler_state(s,
-                   action_queue: :queue.in({:forward, :parse}, queue)
-                 )
-               end
-             )
-       }}
+       %{data | prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)}}
     end
   end
 

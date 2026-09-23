@@ -183,6 +183,7 @@ defmodule Supavisor.ClientHandlerTest do
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
         write_seq: 0,
+        tracked_seq: 0,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
@@ -203,6 +204,7 @@ defmodule Supavisor.ClientHandlerTest do
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
         write_seq: 0,
+        tracked_seq: 0,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
@@ -224,6 +226,7 @@ defmodule Supavisor.ClientHandlerTest do
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
         write_seq: 0,
+        tracked_seq: 0,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
@@ -248,6 +251,7 @@ defmodule Supavisor.ClientHandlerTest do
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
         write_seq: 4,
+        tracked_seq: 2,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
@@ -255,6 +259,7 @@ defmodule Supavisor.ClientHandlerTest do
                @subject.handle_event(:info, {:tcp, :sock, <<?d, 6::32, "1\n">>}, :busy, data)
 
       assert data.write_seq == 5
+      assert data.tracked_seq == 2
       assert_received {:"$gen_cast", {:expect_messages, 5, []}}
     end
 
@@ -266,6 +271,7 @@ defmodule Supavisor.ClientHandlerTest do
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
         write_seq: 0,
+        tracked_seq: 0,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
@@ -286,6 +292,7 @@ defmodule Supavisor.ClientHandlerTest do
         mode: :transaction,
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         write_seq: 3,
+        tracked_seq: 3,
         local: true,
         stats: %{},
         query_start: System.monotonic_time(),
@@ -310,6 +317,16 @@ defmodule Supavisor.ClientHandlerTest do
 
       assert data.db_connection == nil
       assert_received {:"$gen_cast", {:release, 3}}
+    end
+
+    test "releases the DbHandler when only untracked writes followed", %{data: data} do
+      data = %{data | write_seq: 5}
+
+      assert {:next_state, :idle, data, _actions} =
+               @subject.handle_event(:cast, {:db_status, :ready_for_query, 3}, :busy, data)
+
+      assert data.db_connection == nil
+      assert_received {:"$gen_cast", {:release, 5}}
     end
 
     test "stays busy when a later write is still in flight", %{data: data} do

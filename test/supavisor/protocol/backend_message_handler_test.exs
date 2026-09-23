@@ -55,237 +55,11 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       assert IO.iodata_to_binary(result) == original_bin
     end
 
-    test "ready for query message with no actions passes through unchanged", %{
-      stream_state: stream_state
-    } do
+    test "ready for query message passes through unchanged", %{stream_state: stream_state} do
       original_bin = <<?Z, 5::32, ?I>>
 
-      {:ok, new_stream_state, result} =
+      {:ok, _new_stream_state, result} =
         MessageStreamer.handle_packets(stream_state, original_bin)
-
-      # The action queue is untouched.
-      assert BackendMessageHandler.handler_state(
-               MessageStreamer.stream_state(new_stream_state, :handler_state),
-               :action_queue
-             ) == :queue.new()
-
-      assert IO.iodata_to_binary(result) == original_bin
-    end
-
-    test "parse complete message with intercept action is intercepted", %{
-      stream_state: stream_state
-    } do
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:intercept, :parse}, queue)
-          )
-        end)
-
-      original_bin = <<?1, 4::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(result) == <<>>
-    end
-
-    test "close complete message with intercept action is intercepted", %{
-      stream_state: stream_state
-    } do
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:intercept, :close}, queue)
-          )
-        end)
-
-      original_bin = <<?3, 4::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(result) == <<>>
-    end
-
-    test "parameter description message with intercept action is intercepted", %{
-      stream_state: stream_state
-    } do
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:intercept, :parameter_description}, queue)
-          )
-        end)
-
-      original_bin = <<?t, 10::32, 1::16, 23::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(result) == <<>>
-    end
-
-    test "parse complete message with forward action is forwarded", %{stream_state: stream_state} do
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:forward, :parse}, queue)
-          )
-        end)
-
-      original_bin = <<?1, 4::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(result) == original_bin
-    end
-
-    test "close complete message with forward action is forwarded", %{stream_state: stream_state} do
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:forward, :close}, queue)
-          )
-        end)
-
-      original_bin = <<?3, 4::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(result) == original_bin
-    end
-
-    test "parameter description message with forward action is forwarded", %{
-      stream_state: stream_state
-    } do
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:forward, :parameter_description}, queue)
-          )
-        end)
-
-      original_bin = <<?t, 10::32, 1::16, 23::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(result) == original_bin
-    end
-
-    test "parameter description message with inject parse action injects parse complete", %{
-      stream_state: stream_state
-    } do
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:inject, :parse}, queue)
-          )
-        end)
-
-      original_bin = <<?t, 10::32, 1::16, 23::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(result) == <<?1, 4::32, original_bin::binary>>
-    end
-
-    test "multiple actions are processed in order" do
-      stream_state = MessageStreamer.new_stream_state(BackendMessageHandler)
-
-      stream_state_with_actions =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          queue = :queue.in({:inject, :parse}, queue)
-          queue = :queue.in({:forward, :close}, queue)
-          BackendMessageHandler.handler_state(s, action_queue: queue)
-        end)
-
-      parameter_desc_bin = <<?t, 10::32, 1::16, 23::32>>
-      close_bin = <<?3, 4::32>>
-
-      {:ok, stream_state_after_param, param_result} =
-        MessageStreamer.handle_packets(stream_state_with_actions, parameter_desc_bin)
-
-      remaining_state =
-        MessageStreamer.stream_state(stream_state_after_param, :handler_state)
-
-      remaining_queue = BackendMessageHandler.handler_state(remaining_state, :action_queue)
-      assert :queue.len(remaining_queue) == 1
-      assert {:value, {:forward, :close}} = :queue.peek(remaining_queue)
-
-      assert IO.iodata_to_binary(param_result) == <<?1, 4::32, parameter_desc_bin::binary>>
-
-      {:ok, stream_state_after_close, close_result} =
-        MessageStreamer.handle_packets(stream_state_after_param, close_bin)
-
-      assert MessageStreamer.stream_state(stream_state_after_close, :handler_state) ==
-               BackendMessageHandler.init_state()
-
-      assert IO.iodata_to_binary(close_result) == close_bin
-    end
-
-    test "non-matching action type is kept for later" do
-      stream_state = MessageStreamer.new_stream_state(BackendMessageHandler)
-
-      stream_state_with_action =
-        MessageStreamer.update_state(stream_state, fn BackendMessageHandler.handler_state(
-                                                        action_queue: queue
-                                                      ) = s ->
-          BackendMessageHandler.handler_state(s,
-            action_queue: :queue.in({:intercept, :close}, queue)
-          )
-        end)
-
-      original_bin = <<?1, 4::32>>
-
-      {:ok, new_stream_state, result} =
-        MessageStreamer.handle_packets(stream_state_with_action, original_bin)
-
-      remaining_state = MessageStreamer.stream_state(new_stream_state, :handler_state)
-      remaining_queue = BackendMessageHandler.handler_state(remaining_state, :action_queue)
-      assert :queue.len(remaining_queue) == 1
-      assert {:value, {:intercept, :close}} = :queue.peek(remaining_queue)
 
       assert IO.iodata_to_binary(result) == original_bin
     end
@@ -572,6 +346,78 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
     end
   end
 
+  describe "prepared statement messages" do
+    test "the response to a Parse sent by Supavisor is intercepted" do
+      {_stream_state, out} =
+        feed([{:intercept, ?P}, ?B, ?E, ?S], [
+          parse_complete(),
+          bind_complete(),
+          command_complete("SELECT 1"),
+          z(?I)
+        ])
+
+      assert out == bind_complete() <> command_complete("SELECT 1") <> z(?I)
+    end
+
+    test "an earlier client Parse's response isn't taken by a later intercept" do
+      {_stream_state, out} =
+        feed([?P, {:intercept, ?P}, ?B], [parse_complete(), parse_complete(), bind_complete()])
+
+      assert out == parse_complete() <> bind_complete()
+    end
+
+    test "an earlier client Close's response isn't taken by a later eviction" do
+      {_stream_state, out} = feed([?C, {:intercept, ?C}], [close_complete(), close_complete()])
+
+      assert out == close_complete()
+    end
+
+    test "an error on a Parse sent by Supavisor is forwarded and skips until Sync" do
+      {stream_state, out} = feed([{:intercept, ?P}, ?B, ?E, ?S], [error("42P01"), z(?I)])
+
+      assert out == error("42P01") <> z(?I)
+      assert synced?(stream_state)
+    end
+
+    test "a Parse not sent is answered after the response before it" do
+      {_stream_state, out} =
+        feed([?Q, :parse_complete, ?B, ?S], [z(?I), bind_complete(), z(?I)])
+
+      assert out == z(?I) <> parse_complete() <> bind_complete() <> z(?I)
+    end
+
+    test "a Parse not sent with nothing before it is answered on resolve" do
+      state = BackendMessageHandler.expect(BackendMessageHandler.init_state(), [:ps, ?H])
+
+      assert {state, [due]} = BackendMessageHandler.resolve_ps(state, 1, [:parse_complete])
+      assert due == parse_complete()
+      assert :queue.to_list(BackendMessageHandler.handler_state(state, :pending)) == [?H]
+    end
+
+    test "a Parse not sent after an error is skipped like the backend would" do
+      {stream_state, out} = feed([?P, :parse_complete, ?B, ?S], [error("42601"), z(?I)])
+
+      assert out == error("42601") <> z(?I)
+      assert synced?(stream_state)
+    end
+  end
+
+  defp feed(tags, bins) do
+    stream_state =
+      MessageStreamer.update_state(
+        MessageStreamer.new_stream_state(BackendMessageHandler),
+        &BackendMessageHandler.expect(&1, tags)
+      )
+
+    Enum.reduce(bins, {stream_state, <<>>}, fn bin, {stream_state, out} ->
+      {:ok, stream_state, pkts} = MessageStreamer.handle_packets(stream_state, bin)
+      {stream_state, out <> IO.iodata_to_binary(pkts)}
+    end)
+  end
+
+  defp synced?(stream_state),
+    do: BackendMessageHandler.synced?(MessageStreamer.stream_state(stream_state, :handler_state))
+
   defp send(tags), do: {:send, tags}
   defp resolve_ps(count, tags), do: {:resolve_ps, count, tags}
   defp recv(bin, synced?), do: {:recv, bin, synced?}
@@ -582,10 +428,10 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
         MessageStreamer.update_state(stream_state, &BackendMessageHandler.expect(&1, tags))
 
       {:resolve_ps, count, tags}, stream_state ->
-        MessageStreamer.update_state(
-          stream_state,
-          &BackendMessageHandler.resolve_ps(&1, count, tags)
-        )
+        MessageStreamer.update_state(stream_state, fn hs ->
+          {hs, []} = BackendMessageHandler.resolve_ps(hs, count, tags)
+          hs
+        end)
 
       {:recv, bin, synced?}, stream_state ->
         {:ok, stream_state, _pkts} = MessageStreamer.handle_packets(stream_state, bin)

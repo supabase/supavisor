@@ -547,14 +547,16 @@ defmodule Supavisor.ClientHandler do
   end
 
   # emulate handle_cast
-  # A write forwarded after the one the backend caught up with is still in flight,
-  # so the backend isn't done yet. Another db_status follows once it is.
+  # A write with tracked messages was forwarded after the one the backend caught up
+  # with, so the backend isn't done yet. Another db_status follows once it is.
   def handle_event(:cast, {:db_status, :ready_for_query, write_seq}, :busy, data)
-      when write_seq != data.write_seq do
+      when write_seq < data.tracked_seq do
     :keep_state_and_data
   end
 
-  def handle_event(:cast, {:db_status, :ready_for_query, write_seq}, :busy, data) do
+  # Later writes without tracked messages get no reply and can't change the backend's
+  # state, so the backend is done with them too.
+  def handle_event(:cast, {:db_status, :ready_for_query, _write_seq}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
     # In transaction mode the DbHandler waits for us to release it, since only we
@@ -562,7 +564,7 @@ defmodule Supavisor.ClientHandler do
     db_connection =
       case data do
         %{mode: :transaction, db_connection: {_pool, db_pid, _sock}} ->
-          DbHandler.release(db_pid, write_seq)
+          DbHandler.release(db_pid, data.write_seq)
           nil
 
         _ ->
@@ -941,11 +943,13 @@ defmodule Supavisor.ClientHandler do
     handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
     {forwarded, handler_state} = FrontendMessageHandler.take_forwarded(handler_state)
     write_seq = data.write_seq + 1
+    tracked_seq = if forwarded == [], do: data.tracked_seq, else: write_seq
     DbHandler.expect_messages(db_pid, write_seq, forwarded)
 
     %{
       data
       | write_seq: write_seq,
+        tracked_seq: tracked_seq,
         stream_state:
           MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
     }

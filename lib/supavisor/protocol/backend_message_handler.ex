@@ -2,13 +2,8 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   @moduledoc """
   Message handler for PostgreSQL backend messages.
 
-  Handles messages that need special processing:
-
-  - `ParseComplete`, `CloseComplete`, `ParameterDescription`: prepared statement management.
-    We use a queue to manage the actions that need to be performed on these messages, and
-    actions may be inserted through `Supavisor.Protocol.MessageHandler.update_state/2`.
-  - `ErrorResponse`: FATAL/PANIC errors are detected and stored in the handler state so the
-    DbHandler can read the error reason before the connection closes.
+  `ErrorResponse`: FATAL/PANIC errors are detected and stored in the handler state so the
+  DbHandler can read the error reason before the connection closes.
 
   It also follows the backend through the frontend messages forwarded to it, so the DbHandler
   can tell when the backend has processed all of them and is idle. The frontend messages are
@@ -23,6 +18,14 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
 
   A Sync interleaved between CopyData messages of a COPY that then fails on bad data is
   assumed to have been ignored. Whether the backend read it before failing isn't observable.
+
+  Prepared statement management adds messages the client didn't send and drops some it did:
+
+  - `{:intercept, tag}`: a Parse or Close sent by Supavisor. Its response is consumed in its
+    place instead of being forwarded.
+  - `:parse_complete`: a Parse not sent because the backend already has the statement. Its
+    ParseComplete is emitted once every message before it has been answered, where the
+    backend's own would have been.
   """
 
   @behaviour Supavisor.Protocol.MessageHandler
@@ -31,7 +34,6 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   require Supavisor.Protocol.Server, as: Server
 
   Record.defrecord(:handler_state,
-    action_queue: :queue.new(),
     fatal_error: nil,
     pending: :queue.new(),
     mode: :normal,
@@ -61,6 +63,9 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
 
   @doc """
   Replaces the first `count` `:ps` placeholders with the messages actually sent for them.
+
+  Returns the ParseCompletes already due, for Parses not sent with nothing left to answer
+  before them.
   """
   def resolve_ps(state, count, tags) do
     {before, rest} =
@@ -68,7 +73,10 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
 
     {placeholders, rest} = Enum.split(rest, count)
     true = Enum.all?(placeholders, &(&1 == :ps))
-    handler_state(state, pending: :queue.from_list(before ++ tags ++ rest))
+
+    state
+    |> handler_state(pending: :queue.from_list(before ++ tags ++ rest))
+    |> advance()
   end
 
   @doc """
@@ -88,50 +96,60 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
     error = Server.decode_error_response(payload)
 
     fatal = if error["S"] in ["FATAL", "PANIC"], do: error
-    {:ok, state |> track(?E, payload) |> handler_state(fatal_error: fatal), pkt}
+    {state, before, _intercepted?, after_pkts} = track(state, ?E, payload)
+    {:ok, handler_state(state, fatal_error: fatal), [before, pkt, after_pkts]}
   end
 
   def handle_message(state, tag, len, payload) do
-    state = track(state, tag, payload)
-    action_queue = handler_state(state, :action_queue)
-    message_type = message_type(tag)
-    {injected_pkts, action_queue} = maybe_inject(action_queue)
-
-    case :queue.out(action_queue) do
-      {{:value, {:intercept, ^message_type}}, updated_queue} ->
-        {:ok, handler_state(state, action_queue: updated_queue), injected_pkts}
-
-      {{:value, {:forward, ^message_type}}, updated_queue} ->
-        {:ok, handler_state(state, action_queue: updated_queue),
-         [injected_pkts, <<tag, len::32, payload::binary>>]}
-
-      _other ->
-        {:ok, handler_state(state, action_queue: action_queue),
-         [injected_pkts, <<tag, len::32, payload::binary>>]}
-    end
-  end
-
-  defp maybe_inject(action_queue) do
-    case :queue.out(action_queue) do
-      {{:value, {:inject, :parse}}, updated_queue} ->
-        {Server.parse_complete_message(), updated_queue}
-
-      _other ->
-        {[], action_queue}
-    end
+    {state, before, intercepted?, after_pkts} = track(state, tag, payload)
+    pkt = if intercepted?, do: [], else: <<tag, len::32, payload::binary>>
+    {:ok, state, [before, pkt, after_pkts]}
   end
 
   defp track(state, tag, payload) do
+    {state, before} = advance(state)
     mode = handler_state(state, :mode)
     pending = handler_state(state, :pending)
-    pending = if mode == :normal, do: drop_while(pending, &(&1 in [?c, ?f])), else: pending
+    head = :queue.peek(pending)
 
-    case track(mode, tag, payload, pending, :queue.peek(pending)) do
-      {mode, pending, status} ->
-        handler_state(state, mode: mode, pending: pending, last_rfq_status: status)
+    {state, intercepted?} =
+      case track(mode, tag, payload, pending, sent_tag(head)) do
+        {mode, pending, status} ->
+          intercepted? = tag in [?1, ?3] and match?({:value, {:intercept, _}}, head)
 
-      :keep ->
-        handler_state(state, pending: pending)
+          {handler_state(state, mode: mode, pending: pending, last_rfq_status: status),
+           intercepted?}
+
+        :keep ->
+          {state, false}
+      end
+
+    {state, after_pkts} = advance(state)
+    {state, before, intercepted?, after_pkts}
+  end
+
+  defp sent_tag({:value, {:intercept, tag}}), do: {:value, tag}
+  defp sent_tag(head), do: head
+
+  # In normal mode, CopyDone and CopyFail are ignored by the backend, and a Parse that
+  # wasn't sent is answered as soon as it's next.
+  defp advance(state) do
+    if handler_state(state, :mode) == :normal,
+      do: advance(state, handler_state(state, :pending), []),
+      else: {state, []}
+  end
+
+  defp advance(state, pending, pkts) do
+    case :queue.peek(pending) do
+      {:value, tag} when tag in [?c, ?f] ->
+        advance(state, :queue.drop(pending), pkts)
+
+      {:value, :parse_complete} ->
+        state = handler_state(state, last_rfq_status: nil)
+        advance(state, :queue.drop(pending), [Server.parse_complete_message() | pkts])
+
+      _ ->
+        {handler_state(state, pending: pending), Enum.reverse(pkts)}
     end
   end
 
@@ -201,10 +219,4 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
       :empty -> pending
     end
   end
-
-  defp message_type(?1), do: :parse
-  defp message_type(?3), do: :close
-  defp message_type(?t), do: :parameter_description
-  defp message_type(?Z), do: :ready_for_query
-  defp message_type(_tag), do: :other
 end

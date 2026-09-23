@@ -1195,19 +1195,13 @@ defmodule Supavisor.DbHandlerTest do
       assert sent == parse_pkt <> describe_pkt
 
       assert BackendStorage.LRU.member?(new_data.prepared_statements, statement_name)
-
-      handler_state = MessageStreamer.stream_state(new_data.stream_state, :handler_state)
-
-      assert :queue.to_list(BackendMessageHandler.handler_state(handler_state, :action_queue)) ==
-               [{:intercept, :parse}]
+      assert pending(new_data) == [{:intercept, ?P}, ?D]
 
       assert {:keep_state, after_parse} =
                Db.handle_event(:info, {:tcp, :sock, <<?1, 4::32>>}, :busy, new_data)
 
       assert {:error, :timeout} = :gen_tcp.recv(client_recv, 0, 50)
-
-      handler_state = MessageStreamer.stream_state(after_parse.stream_state, :handler_state)
-      assert :queue.is_empty(BackendMessageHandler.handler_state(handler_state, :action_queue))
+      assert pending(after_parse) == [?D]
     end
 
     test "sends only describe when the named statement exists on the backend" do
@@ -1237,9 +1231,36 @@ defmodule Supavisor.DbHandlerTest do
                )
 
       assert {:ok, ^describe_pkt} = :gen_tcp.recv(backend_recv, 0, 1000)
+      assert pending(new_data) == [?D]
+    end
 
-      handler_state = MessageStreamer.stream_state(new_data.stream_state, :handler_state)
-      assert :queue.is_empty(BackendMessageHandler.handler_state(handler_state, :action_queue))
+    test "answers a Parse the backend already has once nothing is left before it" do
+      {backend_send, backend_recv} = sockpair()
+      {client_send, client_recv} = sockpair()
+      statement_name = "server_stmt"
+      parse_pkt = <<?P, 27::32, statement_name::binary, 0, "select 1", 0, 0, 0>>
+      from = {self(), make_ref()}
+
+      data =
+        busy_data(%{
+          sock: {:gen_tcp, backend_send},
+          client_sock: {:gen_tcp, client_send},
+          prepared_statements_storage: BackendStorage.LRU,
+          prepared_statements: BackendStorage.LRU.put(BackendStorage.LRU.new(), statement_name)
+        })
+        |> expecting(1, [:ps])
+
+      assert {:keep_state, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:handle_ps_pkts, [{:parse_pkt, statement_name, parse_pkt}]},
+                 :busy,
+                 data
+               )
+
+      assert {:ok, <<?1, 4::32>>} = :gen_tcp.recv(client_recv, 0, 1000)
+      assert {:error, :timeout} = :gen_tcp.recv(backend_recv, 0, 50)
+      assert pending(new_data) == []
     end
   end
 
@@ -1385,7 +1406,7 @@ defmodule Supavisor.DbHandlerTest do
                  data
                )
 
-      assert pending(data) == [?Q, ?P, ?B, ?E, ?S]
+      assert pending(data) == [?Q, {:intercept, ?P}, ?B, ?E, ?S]
     end
   end
 
