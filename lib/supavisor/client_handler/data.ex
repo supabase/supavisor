@@ -30,6 +30,7 @@ defmodule Supavisor.ClientHandler.Data do
     :proxy_type,
     :query_start,
     :last_query,
+    :query_type,
     :timeout,
     :ps,
     :stream_state,

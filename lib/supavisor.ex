@@ -296,16 +296,28 @@ defmodule Supavisor do
     body = [{{:"$2", :"$3"}}]
 
     case Registry.select(@registry, [{match, [], body}]) do
-      [{pool, _}] ->
-        pool
+      [] ->
+        nil
 
-      [_ | _] = pools ->
+      pools ->
         # transform [{pid1, :read}, {pid2, :read}, {pid3, :write}]
         # to %{read: [pid1, pid2], write: [pid3]}
         Enum.group_by(pools, &elem(&1, 1), &elem(&1, 0))
+    end
+  end
 
-      _ ->
-        nil
+  @doc "Picks a single pool pid from a cluster's multi-pool map."
+  @spec select_pool(%{atom() => [pid()]}, :read | :write | nil) :: {pid(), :read | :write}
+  def select_pool(pool, :read) when is_map(pool) do
+    case pool do
+      %{read: [_ | _] = reads} -> {Enum.random(reads), :read}
+      %{write: [_ | _] = writes} -> {Enum.random(writes), :write}
+    end
+  end
+
+  def select_pool(pool, _) when is_map(pool) do
+    case pool do
+      %{write: [_ | _] = writes} -> {Enum.random(writes), :write}
     end
   end
 
