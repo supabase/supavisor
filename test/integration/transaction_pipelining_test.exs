@@ -856,6 +856,44 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
+  # Postgres answers a COPY that fails on bad data right away, and ignores the CopyData the
+  # client keeps sending. The backend is idle then, but a CopyData only partly forwarded to
+  # it must be finished there.
+  test "finishes a partly forwarded CopyData on its backend after the COPY fails", %{
+    tenant: tenant
+  } do
+    sock = connect(tenant)
+    <<first::binary-size(8), rest::binary>> = copy_data("2\n3\n4\n")
+
+    :ok =
+      :gen_tcp.send(sock, [
+        query("CREATE TEMP TABLE pipelining_copy (a int)"),
+        query("COPY pipelining_copy FROM STDIN"),
+        copy_data("oops\n"),
+        first
+      ])
+
+    pkts = recv_rfqs(sock, 2)
+    assert error_codes(pkts) == ["22P02"]
+    assert statuses(pkts) == [?I, ?I]
+
+    # The pool hands out the most recently returned backend, so the holder gets the one
+    # that received the first part of the CopyData.
+    holder = connect(tenant)
+    :ok = :gen_tcp.send(holder, query("BEGIN"))
+    assert statuses(recv_rfqs(holder, 1)) == [?T]
+
+    :ok = :gen_tcp.send(sock, [rest, @copy_done, query("SELECT 1")])
+
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [["1"]]
+    refute_more(sock)
+
+    :ok = :gen_tcp.close(holder)
+    assert_released(tenant)
+  end
+
   defp connect(tenant) do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     port = Application.get_env(:supavisor, :proxy_port_transaction)
