@@ -7,8 +7,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   - Execute (E), Sync (S), FunctionCall (F), CopyDone (c), CopyFail (f): forwarded unchanged
 
   It also records the messages forwarded in each write, so the DbHandler can follow the
-  backend through them (see `Supavisor.Protocol.BackendMessageHandler`). Prepared statement
-  packets are recorded as `:ps`, since the DbHandler decides what is sent for them.
+  backend through them (see `Supavisor.Protocol.BackendConnection`). Prepared statement
+  packets are recorded as `{:ps, tag}`, since the DbHandler decides what is sent for them.
   """
 
   @behaviour Supavisor.Protocol.MessageHandler
@@ -61,7 +61,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
     end
     |> case do
       {:ok, new_ps_state, pkt} when is_tuple(pkt) ->
-        {:ok, record(%{state | prepared_statements: new_ps_state}, :ps), pkt}
+        {:ok, record(%{state | prepared_statements: new_ps_state}, {:ps, tag}), pkt}
 
       {:ok, new_ps_state, pkt} ->
         {:ok, record(%{state | prepared_statements: new_ps_state}, tag), pkt}

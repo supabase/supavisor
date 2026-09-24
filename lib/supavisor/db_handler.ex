@@ -28,9 +28,7 @@ defmodule Supavisor.DbHandler do
 
   require Logger
   require Supavisor
-  require Supavisor.Protocol.BackendMessageHandler, as: BackendMessageHandler
   require Supavisor.Protocol.Server, as: Server
-  require Supavisor.Protocol.MessageStreamer, as: MessageStreamer
 
   alias Supavisor.ConnectionParameters
   alias Supavisor.Errors.CheckoutError
@@ -46,9 +44,8 @@ defmodule Supavisor.DbHandler do
     HandlerHelpers,
     Helpers,
     Monitoring.Telem,
-    Protocol.BackendMessageHandler,
+    Protocol.BackendConnection,
     Protocol.Debug,
-    Protocol.MessageStreamer,
     Protocol.Server
   }
 
@@ -65,7 +62,6 @@ defmodule Supavisor.DbHandler do
   @sock_closed [:tcp_closed, :ssl_closed]
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
-  @cleanup_buffer_limit 65_536
   @connect_cooldown_ms 2_500
   @authentication_timeout_ms 15_000
   @tls_send_chunk_size 8192
@@ -123,7 +119,7 @@ defmodule Supavisor.DbHandler do
   The ClientHandler should send this *before* forwarding the messages, so it reaches the
   DbHandler before the responses do.
   """
-  @spec expect_messages(pid(), pos_integer(), [byte() | :ps]) :: :ok
+  @spec expect_messages(pid(), pos_integer(), [byte() | {:ps, byte()}]) :: :ok
   def expect_messages(pid, write_seq, tags),
     do: :gen_statem.cast(pid, {:expect_messages, write_seq, tags})
 
@@ -235,14 +231,11 @@ defmodule Supavisor.DbHandler do
       nonce: nil,
       server_proof: nil,
       stats: %{},
-      prepared_statements_storage: storage_mod,
-      prepared_statements: storage_mod.new(),
       proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
       client_ip: Map.get(config, :client_ip),
-      stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
-      backend_message_streaming: true,
+      backend: BackendConnection.new(storage_mod),
       mode: config.mode,
       replica_type: config.replica_type,
       caller: nil,
@@ -448,13 +441,13 @@ defmodule Supavisor.DbHandler do
   end
 
   # the process received message from db while idle
-  def handle_event(:info, {proto, _, bin}, :idle, %{backend_message_streaming: true} = data)
+  def handle_event(:info, {proto, _, bin}, :idle, %{backend: backend} = data)
       when proto in @proto do
     Logger.debug("DbHandler: Got db response when idle")
 
-    {:ok, updated_data, _packets} = process_backend_streaming(bin, data)
+    {backend, _to_send, _synced?} = BackendConnection.recv(backend, bin)
 
-    {:keep_state, updated_data}
+    {:keep_state, %{data | backend: backend}}
   end
 
   # hot code reload compat: remove after full rollout
@@ -464,10 +457,8 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:cast, {:expect_messages, write_seq, tags}, _state, data) do
-    stream_state =
-      MessageStreamer.update_state(data.stream_state, &BackendMessageHandler.expect(&1, tags))
-
-    {:keep_state, %{data | stream_state: stream_state, write_seq: write_seq}}
+    backend = BackendConnection.sent(data.backend, tags)
+    {:keep_state, %{data | backend: backend, write_seq: write_seq}}
   end
 
   # Casts from the ClientHandler arrive in order, so a matching write_seq means nothing
@@ -495,11 +486,10 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
-    {:ok, data, to_send} = process_backend_streaming(bin, data)
-
     # A batch is done when the backend has processed every message forwarded to it
     # and is idle, not mid-transaction.
-    {batch_done?, data} = take_synced(data)
+    {backend, to_send, batch_done?} = BackendConnection.recv(data.backend, bin)
+    data = %{data | backend: backend}
 
     # db_status is enqueued in the ClientHandler's mailbox before the final
     # ReadyForQuery reaches the client socket, so the ClientHandler usually releases
@@ -537,19 +527,13 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:info, {proto, _, bin}, :waiting_cleanup, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
-    buffered_bin = data.pending_bin <> bin
+    {backend, _to_send, done?} = BackendConnection.recv(data.backend, bin)
 
-    cond do
-      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
-        new_data = %{data | caller: nil, waiting_cleanup: nil, pending_bin: nil}
-        {:next_state, :idle, new_data, {:reply, data.waiting_cleanup, :ok}}
-
-      byte_size(buffered_bin) > @cleanup_buffer_limit ->
-        Logger.error("DbHandler: Cleanup buffer limit exceeded, shutting down")
-        {:stop, :normal}
-
-      true ->
-        {:keep_state, %{data | pending_bin: buffered_bin}}
+    if done? do
+      new_data = %{data | backend: backend, caller: nil, waiting_cleanup: nil}
+      {:next_state, :idle, new_data, {:reply, data.waiting_cleanup, :ok}}
+    else
+      {:keep_state, %{data | backend: backend}}
     end
   end
 
@@ -571,10 +555,11 @@ defmodule Supavisor.DbHandler do
         query =
           Server.extended_query("SELECT set_config('application_name', $1, false)", [app_name])
 
+        backend = BackendConnection.query(data.backend, query)
         :ok = HandlerHelpers.sock_send(data.sock, query)
 
         {:next_state, :setting_application_name,
-         Map.merge(data, %{set_app_name_from: from, pending_bin: <<>>}),
+         Map.merge(data, %{backend: backend, set_app_name_from: from}),
          {:state_timeout, 5_000, :set_application_name_timeout}}
 
       true ->
@@ -582,22 +567,16 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  # Swallow the SET application_name response so it never reaches the client.
+  # The query's responses never reach the client.
   def handle_event(:info, {proto, _, bin}, :setting_application_name, data)
       when proto in @proto do
-    buffered_bin = data.pending_bin <> bin
+    {backend, _to_send, done?} = BackendConnection.recv(data.backend, bin)
 
-    cond do
-      String.ends_with?(buffered_bin, Server.ready_for_query()) ->
-        {:next_state, :busy, %{data | pending_bin: nil, set_app_name_from: nil},
-         {:reply, data.set_app_name_from, :ok}}
-
-      byte_size(buffered_bin) > @cleanup_buffer_limit ->
-        Logger.error("DbHandler: application_name buffer limit exceeded, shutting down")
-        {:stop, :normal}
-
-      true ->
-        {:keep_state, %{data | pending_bin: buffered_bin}}
+    if done? do
+      {:next_state, :busy, %{data | backend: backend, set_app_name_from: nil},
+       {:reply, data.set_app_name_from, :ok}}
+    else
+      {:keep_state, %{data | backend: backend}}
     end
   end
 
@@ -612,26 +591,15 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
-    {sent, resolved, data} = Enum.reduce(pkts, {[], [], data}, &handle_write_pkt/2)
-    {close_pkts, prepared_statements} = evict_exceeding(data)
-
-    # The closes go after the whole write, and so do their responses. Nothing else is
-    # expected yet, since the ClientHandler waits for this call before its next write.
-    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
-    {handler_state, due} = BackendMessageHandler.resolve_ps(handler_state, Enum.reverse(resolved))
-
-    handler_state =
-      BackendMessageHandler.expect(handler_state, Enum.map(close_pkts, fn _ -> {:intercept, ?C} end))
-
-    stream_state = MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
+    {backend, to_backend, due, evicted} = BackendConnection.write(data.backend, pkts)
+    if evicted > 0, do: Telem.prepared_statements_evicted(evicted, data.id)
 
     send_result = if due == [], do: :ok, else: client_send(data, due)
 
     case send_result do
       :ok ->
-        :ok = HandlerHelpers.sock_send(data.sock, [Enum.reverse(sent), close_pkts])
-        data = %{data | stream_state: stream_state, prepared_statements: prepared_statements}
-        {:keep_state, data, {:reply, from, :ok}}
+        :ok = HandlerHelpers.sock_send(data.sock, to_backend)
+        {:keep_state, %{data | backend: backend}, {:reply, from, :ok}}
 
       # The client missed a response, so the connection can't go on.
       {:error, reason} ->
@@ -671,11 +639,7 @@ defmodule Supavisor.DbHandler do
         send(caller, {:parameter_status, bin_ps})
       end
 
-      stream_state =
-        MessageStreamer.update_state(data.stream_state, &BackendMessageHandler.reset_sync/1)
-
-      {:next_state, :busy,
-       %{data | client_sock: sock, caller: caller, stream_state: stream_state, write_seq: 0},
+      {:next_state, :busy, %{data | client_sock: sock, caller: caller, write_seq: 0},
        {:reply, from, {:ok, data.sock}}}
     else
       {:keep_state_and_data, :postpone}
@@ -702,10 +666,11 @@ defmodule Supavisor.DbHandler do
       state in [:idle, :busy] ->
         Logger.debug("DbHandler: Starting cleanup, sending DISCARD ALL")
         msg = :pgo_protocol.encode_query_message("DISCARD ALL")
+        backend = BackendConnection.query(data.backend, msg)
         :ok = HandlerHelpers.sock_send(data.sock, msg)
 
         {:next_state, :waiting_cleanup,
-         Map.merge(data, %{waiting_cleanup: from, pending_bin: <<>>}),
+         Map.merge(data, %{backend: backend, waiting_cleanup: from}),
          {:state_timeout, 5_000, :cleanup_timeout}}
 
       true ->
@@ -1077,13 +1042,6 @@ defmodule Supavisor.DbHandler do
     :ok
   end
 
-  defp take_synced(data) do
-    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
-    {synced?, handler_state} = BackendMessageHandler.take_synced(handler_state)
-    stream_state = MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
-    {synced?, %{data | stream_state: stream_state}}
-  end
-
   # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's
   # buffer that pqReadData doesn't drain; the client then polls the socket
   # for data that's already arrived. Keeping records within libpq's 8KB
@@ -1119,95 +1077,7 @@ defmodule Supavisor.DbHandler do
 
   defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
-  # Plain packets were already expected by the ClientHandler with their own tags. Each
-  # prepared statement packet was expected as `:ps`, resolved to the tags of what it sent.
-  # Both lists are built reversed.
-  defp handle_write_pkt(bin, {sent, resolved, data}) when is_binary(bin),
-    do: {[bin | sent], resolved, data}
-
-  defp handle_write_pkt(pkt, {sent, resolved, data}) do
-    {pkts, tags, data} = handle_prepared_statement_pkt(pkt, data)
-    {Enum.reverse(pkts, sent), [tags | resolved], data}
-  end
-
-  # If the prepared statement exists for us, it exists for the server, so we just send the
-  # packet to the socket. If it doesn't, we must send the parse pkt first.
-  #
-  # A replayed Parse's response is intercepted, otherwise the client would receive an
-  # unexpected message.
-  defp handle_prepared_statement_pkt(
-         {packet_type, stmt_name, <<tag, _::binary>> = pkt, parse_pkt},
-         data
-       )
-       when packet_type in [:bind_pkt, :describe_pkt] do
-    storage_mod = data.prepared_statements_storage
-
-    if storage_mod.member?(data.prepared_statements, stmt_name) do
-      {[pkt], [tag],
-       %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
-    else
-      {[parse_pkt, pkt], [{:intercept, ?P}, tag],
-       %{data | prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)}}
-    end
-  end
-
-  defp handle_prepared_statement_pkt({:close_pkt, stmt_name, pkt}, data) do
-    storage_mod = data.prepared_statements_storage
-
-    {[pkt], [?C],
-     %{data | prepared_statements: storage_mod.delete(data.prepared_statements, stmt_name)}}
-  end
-
-  # If we stop generating unique id per statement, and instead do deterministic ids,
-  # we need to potentially drop parse pkts and return a parse response
-  defp handle_prepared_statement_pkt({:parse_pkt, stmt_name, pkt}, data) do
-    storage_mod = data.prepared_statements_storage
-
-    # Not sent: the ParseComplete is answered by us, in the Parse's place.
-    if storage_mod.member?(data.prepared_statements, stmt_name) do
-      {[], [:parse_complete],
-       %{data | prepared_statements: storage_mod.touch(data.prepared_statements, stmt_name)}}
-    else
-      {[pkt], [?P],
-       %{data | prepared_statements: storage_mod.put(data.prepared_statements, stmt_name)}}
-    end
-  end
-
-  defp evict_exceeding(%{
-         prepared_statements: prepared_statements,
-         prepared_statements_storage: storage_mod,
-         id: id
-       }) do
-    limit = PreparedStatements.backend_limit()
-
-    if storage_mod.size(prepared_statements) >= limit do
-      count = div(limit, 5)
-      {evicted, prepared_statements} = storage_mod.evict(prepared_statements, count)
-      close_pkts = Enum.map(evicted, &PreparedStatements.build_close_pkt/1)
-      Telem.prepared_statements_evicted(length(evicted), id)
-
-      {close_pkts, prepared_statements}
-    else
-      {[], prepared_statements}
-    end
-  end
-
-  defp process_backend_streaming(bin, data) do
-    case MessageStreamer.handle_packets(data.stream_state, bin) do
-      {:ok, new_stream_state, packets} ->
-        {:ok, %{data | stream_state: new_stream_state}, packets}
-
-      err ->
-        err
-    end
-  end
-
-  defp last_fatal_error(%{backend_message_streaming: true} = data) do
-    BackendMessageHandler.handler_state(
-      MessageStreamer.stream_state(data.stream_state, :handler_state),
-      :fatal_error
-    )
-  end
+  defp last_fatal_error(%{backend: backend}), do: BackendConnection.fatal_error(backend)
 
   # hot code reload compat: remove after full rollout
   defp last_fatal_error(_data), do: nil

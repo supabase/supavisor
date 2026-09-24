@@ -140,10 +140,12 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       assert forwarded(stream_state, bin) == [?c]
     end
 
-    test "records a translated prepared statement packet as :ps", %{stream_state: stream_state} do
+    test "records a translated prepared statement packet with its tag", %{
+      stream_state: stream_state
+    } do
       bin = <<?P, 18::32, "s1", 0, "select 1", 0, 0::16>> <> <<?S, 4::32>>
 
-      assert forwarded(stream_state, bin) == [:ps, ?S]
+      assert forwarded(stream_state, bin) == [{:ps, ?P}, ?S]
     end
 
     test "records a message only once it is fully framed across writes", %{

@@ -782,6 +782,39 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
+  # The first client's Parse is skipped after the error, so the backend never creates the
+  # statement. The second client lands on the same backend with the same statement, and
+  # its Parse must still be sent.
+  @tag named_prepared_statements: true
+  test "sends a Parse again after the backend skipped it", %{tenant: tenant} do
+    sock = connect(tenant)
+
+    :ok =
+      :gen_tcp.send(sock, [
+        extended("SELECT 1/0"),
+        parse("stmt", "SELECT 42"),
+        bind("", "stmt", []),
+        execute(""),
+        @sync
+      ])
+
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == ["22012"]
+    :ok = :gen_tcp.close(sock)
+    assert_released(tenant)
+
+    sock = connect(tenant)
+
+    :ok =
+      :gen_tcp.send(sock, [parse("stmt", "SELECT 42"), bind("", "stmt", []), execute(""), @sync])
+
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [["42"]]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
   defp connect(tenant) do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     port = Application.get_env(:supavisor, :proxy_port_transaction)
