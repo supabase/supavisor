@@ -815,6 +815,46 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
+  # On a backend without the statement, the Parse sent ahead of the first Bind is skipped
+  # after the error. The second Bind comes after the Sync, in the same write, so it's sent
+  # before the backend's answer shows the statement was never created.
+  @tag named_prepared_statements: true
+  test "prepares a statement again after the Sync that follows its skipped Parse", %{
+    tenant: tenant
+  } do
+    name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+    sock = connect(tenant)
+
+    :ok = :gen_tcp.send(sock, [parse(name, "SELECT 42"), @sync, query("SELECT pg_backend_pid()")])
+    assert [[backend_pid]] = rows(recv_rfqs(sock, 2))
+
+    # The pool hands out the most recently returned backend, so the holder takes the one
+    # with the statement.
+    holder = connect(tenant)
+    :ok = :gen_tcp.send(holder, [query("BEGIN"), query("SELECT pg_backend_pid()")])
+    assert rows(recv_rfqs(holder, 2)) == [[backend_pid]]
+
+    :ok =
+      :gen_tcp.send(sock, [
+        execute("missing_portal"),
+        bind("", name, []),
+        execute(""),
+        @sync,
+        bind("", name, []),
+        execute(""),
+        @sync
+      ])
+
+    pkts = recv_rfqs(sock, 2)
+    assert error_codes(pkts) == ["34000"]
+    assert rows(pkts) == [["42"]]
+    assert statuses(pkts) == [?I, ?I]
+    refute_more(sock)
+
+    :ok = :gen_tcp.close(holder)
+    assert_released(tenant)
+  end
+
   defp connect(tenant) do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     port = Application.get_env(:supavisor, :proxy_port_transaction)
