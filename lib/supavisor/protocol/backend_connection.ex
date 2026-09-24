@@ -30,7 +30,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   ## Queue
 
   Each message the backend still has to answer is queued as `{message, disposition, name}`,
-  `name` being the prepared statement it creates or closes:
+  `name` being the prepared statement it uses, creates or closes:
 
   - `:forward`: sent by the client, its responses go to the client.
   - `:intercept`: a Parse or Close sent by Supavisor to manage prepared statements. Its
@@ -47,6 +47,11 @@ defmodule Supavisor.Protocol.BackendConnection do
   its Close is sent. If the backend fails the Parse or skips either message, that is undone.
   Packets sent before the backend's answer arrives may still fail with it, since whether it
   would succeed wasn't known when they were sent.
+
+  Undoing each skipped message on its own can leave the record wrong when a statement has
+  more than one unanswered Parse or Close. The backend's next error about the statement
+  corrects it. A Parse failing with 42P05 records the statement, and a Bind or Describe
+  failing with 26000 forgets it.
   """
 
   require Record
@@ -211,9 +216,9 @@ defmodule Supavisor.Protocol.BackendConnection do
     {tag, message} = if type == :bind_pkt, do: {?B, :bind}, else: {?D, :describe}
 
     if storage.member?(statements, name) do
-      {tag, [pkt], [{message, :forward, nil}], storage.touch(statements, name)}
+      {tag, [pkt], [{message, :forward, name}], storage.touch(statements, name)}
     else
-      {tag, [parse_pkt, pkt], [{:parse, :intercept, name}, {message, :forward, nil}],
+      {tag, [parse_pkt, pkt], [{:parse, :intercept, name}, {message, :forward, name}],
        storage.put(statements, name)}
     end
   end
@@ -368,7 +373,7 @@ defmodule Supavisor.Protocol.BackendConnection do
     end
   end
 
-  defp step(backend(state: state, queue: queue) = t, tag, _payload) when answering(state) do
+  defp step(backend(state: state, queue: queue) = t, tag, payload) when answering(state) do
     case {tag, :queue.peek(queue)} do
       {?1, {:value, {:parse, _, _}}} ->
         pop(t)
@@ -391,8 +396,9 @@ defmodule Supavisor.Protocol.BackendConnection do
       {?G, {:value, {:query, _, _}}} ->
         backend(pop(t), state: {:copy_in, :simple})
 
-      {?E, {:value, {message, _, _}}} when message in @extended ->
-        backend(skip(t), state: :ignore_till_sync)
+      {?E, {:value, {message, _, _} = entry}} when message in @extended ->
+        code = Server.decode_error_response(payload)["C"]
+        t |> skip() |> reconcile_statement(entry, code) |> backend(state: :ignore_till_sync)
 
       _ ->
         t
@@ -470,4 +476,22 @@ defmodule Supavisor.Protocol.BackendConnection do
 
     backend(t, queue: queue, statements: statements)
   end
+
+  defp reconcile_statement(
+         backend(storage: storage, statements: statements) = t,
+         {:parse, _, name},
+         "42P05"
+       )
+       when is_binary(name),
+       do: backend(t, statements: storage.put(statements, name))
+
+  defp reconcile_statement(
+         backend(storage: storage, statements: statements) = t,
+         {message, _, name},
+         "26000"
+       )
+       when message in [:bind, :describe] and is_binary(name),
+       do: backend(t, statements: storage.delete(statements, name))
+
+  defp reconcile_statement(t, _entry, _code), do: t
 end

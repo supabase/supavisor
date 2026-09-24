@@ -1221,14 +1221,14 @@ defmodule Supavisor.DbHandlerTest do
 
       assert pending(new_data) == [
                {:parse, :intercept, statement_name},
-               {:describe, :forward, nil}
+               {:describe, :forward, statement_name}
              ]
 
       assert {:keep_state, after_parse} =
                Db.handle_event(:info, {:tcp, :sock, <<?1, 4::32>>}, :busy, new_data)
 
       assert {:error, :timeout} = :gen_tcp.recv(client_recv, 0, 50)
-      assert pending(after_parse) == [{:describe, :forward, nil}]
+      assert pending(after_parse) == [{:describe, :forward, statement_name}]
     end
 
     test "sends only describe when the named statement exists on the backend" do
@@ -1251,7 +1251,7 @@ defmodule Supavisor.DbHandlerTest do
                )
 
       assert {:ok, ^describe_pkt} = :gen_tcp.recv(backend_recv, 0, 1000)
-      assert pending(new_data) == [{:describe, :forward, nil}]
+      assert pending(new_data) == [{:describe, :forward, statement_name}]
     end
 
     test "answers a Parse the backend already has once nothing is left before it" do
@@ -1466,7 +1466,7 @@ defmodule Supavisor.DbHandlerTest do
       assert pending(data) == [
                {:query, :forward, nil},
                {:parse, :intercept, statement_name},
-               {:bind, :forward, nil},
+               {:bind, :forward, statement_name},
                {:execute, :forward, nil},
                {:sync, :forward, nil}
              ]
@@ -1498,9 +1498,9 @@ defmodule Supavisor.DbHandlerTest do
 
       assert pending(data) == [
                {:parse, :intercept, statement_name},
-               {:bind, :forward, nil},
+               {:bind, :forward, statement_name},
                {:execute, :forward, nil},
-               {:bind, :forward, nil},
+               {:bind, :forward, statement_name},
                {:execute, :forward, nil},
                {:sync, :forward, nil}
              ]
@@ -1539,7 +1539,7 @@ defmodule Supavisor.DbHandlerTest do
                for(i <- 1..evicted_count, do: {:close, :intercept, "old_#{i}"}) ++
                  [
                    {:parse, :intercept, statement_name},
-                   {:bind, :forward, nil},
+                   {:bind, :forward, statement_name},
                    {:sync, :forward, nil}
                  ]
     end

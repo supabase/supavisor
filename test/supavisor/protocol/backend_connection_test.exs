@@ -332,7 +332,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
       assert queue(backend) == [
                {:parse, :intercept, "s1"},
-               forward(:bind),
+               {:bind, :forward, "s1"},
                forward(:execute),
                forward(:sync)
              ]
@@ -348,14 +348,19 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       {backend, to_backend, [], 0} = write(new(), [{:ps, ?D}, ?S], [describe("s1"), "s"])
 
       assert IO.iodata_to_binary(to_backend) == "parse(s1)describe(s1)s"
-      assert queue(backend) == [{:parse, :intercept, "s1"}, forward(:describe), forward(:sync)]
+
+      assert queue(backend) == [
+               {:parse, :intercept, "s1"},
+               {:describe, :forward, "s1"},
+               forward(:sync)
+             ]
     end
 
     test "a Bind for a statement the backend has is sent alone" do
       {backend, to_backend, [], 0} = write(new(["s1"]), [{:ps, ?B}, ?S], [bind("s1"), "s"])
 
       assert IO.iodata_to_binary(to_backend) == "bind(s1)s"
-      assert queue(backend) == [forward(:bind), forward(:sync)]
+      assert queue(backend) == [{:bind, :forward, "s1"}, forward(:sync)]
     end
 
     test "a statement sent earlier in the same write isn't sent again" do
@@ -366,9 +371,9 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
       assert queue(backend) == [
                {:parse, :intercept, "s1"},
-               forward(:bind),
+               {:bind, :forward, "s1"},
                forward(:execute),
-               forward(:bind),
+               {:bind, :forward, "s1"},
                forward(:execute),
                forward(:sync)
              ]
@@ -479,7 +484,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
       assert queue(backend) ==
                Enum.map(evicted, &{:close, :intercept, &1}) ++
-                 [{:parse, :intercept, "s1"}, forward(:bind), forward(:sync)]
+                 [{:parse, :intercept, "s1"}, {:bind, :forward, "s1"}, forward(:sync)]
 
       responses =
         String.duplicate(close_complete(), count) <>
@@ -628,6 +633,46 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
                BackendConnection.recv(backend, bind_complete() <> error("23505") <> z(?I))
 
       assert LRU.member?(statements(backend), "s1")
+    end
+
+    test "a Parse failing because the statement exists records it" do
+      backend = BackendConnection.sent(new(["s1"]), [?B, ?E])
+      tags = [{:ps, ?C}, ?S, {:ps, ?B}, ?E, ?S]
+      pkts = [close("s1"), "s", bind("s1"), "e", "s"]
+      {backend, to_backend, [], 0} = write(backend, tags, pkts)
+
+      assert IO.iodata_to_binary(to_backend) == "close(s1)sparse(s1)bind(s1)es"
+
+      responses = bind_complete() <> error("23505") <> z(?I) <> error("42P05") <> z(?I)
+      assert {backend, out, true} = BackendConnection.recv(backend, responses)
+      assert IO.iodata_to_binary(out) == responses
+      assert LRU.member?(statements(backend), "s1")
+
+      {_backend, to_backend, [], 0} = write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+      assert IO.iodata_to_binary(to_backend) == "bind(s1)s"
+    end
+
+    test "a Bind failing because the statement doesn't exist forgets it" do
+      backend = BackendConnection.sent(new(), [?B, ?E])
+
+      {backend, to_backend, [], 0} =
+        write(backend, [{:ps, ?P}, {:ps, ?C}, ?S], [parse("s1"), close("s1"), "s"])
+
+      assert IO.iodata_to_binary(to_backend) == "parse(s1)close(s1)s"
+
+      assert {backend, _out, true} =
+               BackendConnection.recv(backend, bind_complete() <> error("23505") <> z(?I))
+
+      assert LRU.member?(statements(backend), "s1")
+
+      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+
+      assert {backend, out, true} = BackendConnection.recv(backend, error("26000") <> z(?I))
+      assert IO.iodata_to_binary(out) == error("26000") <> z(?I)
+      refute LRU.member?(statements(backend), "s1")
+
+      {_backend, to_backend, [], 0} = write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+      assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)s"
     end
   end
 
