@@ -348,6 +348,16 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       run([recv(z(?I), true)])
     end
 
+    test "take_synced reports a ReadyForQuery only once" do
+      {:ok, stream_state, _pkts} =
+        MessageStreamer.handle_packets(MessageStreamer.new_stream_state(BackendMessageHandler), z(?I))
+
+      hs = MessageStreamer.stream_state(stream_state, :handler_state)
+
+      assert {true, hs} = BackendMessageHandler.take_synced(hs)
+      assert {false, _hs} = BackendMessageHandler.take_synced(hs)
+    end
+
     test "reset_sync forgets what was expected" do
       state =
         BackendMessageHandler.init_state()
@@ -451,7 +461,7 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
         hs = MessageStreamer.stream_state(stream_state, :handler_state)
 
         assert BackendMessageHandler.synced?(hs) == synced?,
-               "after #{inspect(bin)}: pending #{inspect(:queue.to_list(BackendMessageHandler.handler_state(hs, :pending)))}, mode #{inspect(BackendMessageHandler.handler_state(hs, :mode))}"
+               "after #{inspect(bin)}: pending #{inspect(:queue.to_list(BackendMessageHandler.handler_state(hs, :pending)))}, phase #{inspect(BackendMessageHandler.handler_state(hs, :phase))}"
 
         stream_state
     end)

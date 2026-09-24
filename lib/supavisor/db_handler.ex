@@ -1077,18 +1077,10 @@ defmodule Supavisor.DbHandler do
     :ok
   end
 
-  # Only a ReadyForQuery can complete a batch, so its status is consumed here and a
-  # later chunk without one can't complete it again.
   defp take_synced(data) do
     handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
-    synced? = BackendMessageHandler.synced?(handler_state)
-
-    stream_state =
-      MessageStreamer.update_state(
-        data.stream_state,
-        &BackendMessageHandler.handler_state(&1, last_rfq_status: nil)
-      )
-
+    {synced?, handler_state} = BackendMessageHandler.take_synced(handler_state)
+    stream_state = MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
     {synced?, %{data | stream_state: stream_state}}
   end
 

@@ -33,10 +33,13 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   require Record
   require Supavisor.Protocol.Server, as: Server
 
+  # `phase` is what the backend is doing with the messages it reads: `:normal`,
+  # `:ignore_till_sync` after an error in an extended protocol message, or
+  # `{:copy_in, :simple | :extended}` during a COPY FROM STDIN.
   Record.defrecord(:handler_state,
     fatal_error: nil,
     pending: :queue.new(),
-    mode: :normal,
+    phase: :normal,
     last_rfq_status: nil
   )
 
@@ -87,12 +90,18 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   Whether the backend processed every queued message and is idle outside a transaction.
   """
   def synced?(state) do
-    :queue.is_empty(handler_state(state, :pending)) and handler_state(state, :mode) == :normal and
+    :queue.is_empty(handler_state(state, :pending)) and handler_state(state, :phase) == :normal and
       handler_state(state, :last_rfq_status) == ?I
   end
 
+  @doc """
+  Like `synced?/1`, but consumes the ReadyForQuery that synced it, so a later chunk without
+  one can't report the same batch as synced again.
+  """
+  def take_synced(state), do: {synced?(state), handler_state(state, last_rfq_status: nil)}
+
   def reset_sync(state),
-    do: handler_state(state, pending: :queue.new(), mode: :normal, last_rfq_status: nil)
+    do: handler_state(state, pending: :queue.new(), phase: :normal, last_rfq_status: nil)
 
   @impl true
   def handle_message(state, ?E, len, payload) do
@@ -112,33 +121,39 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
 
   defp track(state, tag, payload) do
     {state, before} = advance(state)
-    mode = handler_state(state, :mode)
+    phase = handler_state(state, :phase)
     pending = handler_state(state, :pending)
     head = :queue.peek(pending)
+    intercepted? = intercepted?(phase, tag, head)
 
-    {state, intercepted?} =
-      case track(mode, tag, payload, pending, sent_tag(head)) do
-        {mode, pending, status} ->
-          intercepted? = tag in [?1, ?3] and match?({:value, {:intercept, _}}, head)
-
-          {handler_state(state, mode: mode, pending: pending, last_rfq_status: status),
-           intercepted?}
+    state =
+      case step(phase, tag, payload, pending, sent_tag(head)) do
+        {phase, pending, status} ->
+          handler_state(state, phase: phase, pending: pending, last_rfq_status: status)
 
         :keep ->
-          {state, false}
+          state
       end
 
     {state, after_pkts} = advance(state)
     {state, before, intercepted?, after_pkts}
   end
 
+  # The response to a Parse or Close sent by Supavisor, which the client must not see.
+  defp intercepted?(:normal, ?1, {:value, {:intercept, ?P}}), do: true
+  defp intercepted?(:normal, ?3, {:value, {:intercept, ?C}}), do: true
+  defp intercepted?(_phase, _tag, _head), do: false
+
   defp sent_tag({:value, {:intercept, tag}}), do: {:value, tag}
   defp sent_tag(head), do: head
 
-  # In normal mode, CopyDone and CopyFail are ignored by the backend, and a Parse that
+  # In the normal phase, CopyDone and CopyFail are ignored by the backend, and a Parse that
   # wasn't sent is answered as soon as it's next.
+  #
+  # Only a ReadyForQuery can leave the backend synced. A ParseComplete answered after it
+  # belongs to a new extended protocol batch, still waiting for its Sync.
   defp advance(state) do
-    if handler_state(state, :mode) == :normal,
+    if handler_state(state, :phase) == :normal,
       do: advance(state, handler_state(state, :pending), []),
       else: {state, []}
   end
@@ -157,7 +172,10 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
     end
   end
 
-  defp track(:normal, ?Z, <<status>>, pending, head) do
+  # Moves the backend past the messages a response completes. Returns the new phase, the
+  # messages still pending and the ReadyForQuery status, or `:keep` when the response
+  # completes none.
+  defp step(:normal, ?Z, <<status>>, pending, head) do
     case head do
       :empty -> {:normal, pending, status}
       {:value, tag} when tag in [?S, ?Q, ?F] -> {:normal, :queue.drop(pending), status}
@@ -165,38 +183,38 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
     end
   end
 
-  defp track(:normal, ?1, _, pending, {:value, ?P}), do: {:normal, :queue.drop(pending), nil}
-  defp track(:normal, ?2, _, pending, {:value, ?B}), do: {:normal, :queue.drop(pending), nil}
-  defp track(:normal, ?3, _, pending, {:value, ?C}), do: {:normal, :queue.drop(pending), nil}
+  defp step(:normal, ?1, _, pending, {:value, ?P}), do: {:normal, :queue.drop(pending), nil}
+  defp step(:normal, ?2, _, pending, {:value, ?B}), do: {:normal, :queue.drop(pending), nil}
+  defp step(:normal, ?3, _, pending, {:value, ?C}), do: {:normal, :queue.drop(pending), nil}
 
-  defp track(:normal, tag, _, pending, {:value, ?D}) when tag in [?T, ?n],
+  defp step(:normal, tag, _, pending, {:value, ?D}) when tag in [?T, ?n],
     do: {:normal, :queue.drop(pending), nil}
 
-  defp track(:normal, tag, _, pending, {:value, ?E}) when tag in [?C, ?I, ?s],
+  defp step(:normal, tag, _, pending, {:value, ?E}) when tag in [?C, ?I, ?s],
     do: {:normal, :queue.drop(pending), nil}
 
-  defp track(:normal, ?G, _, pending, {:value, ?E}),
+  defp step(:normal, ?G, _, pending, {:value, ?E}),
     do: {{:copy_in, :extended}, :queue.drop(pending), nil}
 
-  defp track(:normal, ?G, _, pending, {:value, ?Q}),
+  defp step(:normal, ?G, _, pending, {:value, ?Q}),
     do: {{:copy_in, :simple}, :queue.drop(pending), nil}
 
-  defp track(:normal, ?E, _, pending, {:value, head}) when head in @extended,
+  defp step(:normal, ?E, _, pending, {:value, head}) when head in @extended,
     do: {:ignore_till_sync, :queue.drop(pending), nil}
 
-  defp track(:ignore_till_sync, ?Z, <<status>>, pending, _head),
+  defp step(:ignore_till_sync, ?Z, <<status>>, pending, _head),
     do: {:normal, drop_through(pending, [?S]), status}
 
-  defp track({:copy_in, kind}, ?C, _, pending, _head),
+  defp step({:copy_in, kind}, ?C, _, pending, _head),
     do: {:normal, end_copy(kind, drop_through(pending, [?c])), nil}
 
-  defp track({:copy_in, :extended}, ?E, _, pending, _head),
+  defp step({:copy_in, :extended}, ?E, _, pending, _head),
     do: {:ignore_till_sync, drop_copy_syncs(pending), nil}
 
-  defp track({:copy_in, :simple}, ?E, _, pending, _head),
+  defp step({:copy_in, :simple}, ?E, _, pending, _head),
     do: {:normal, end_copy(:simple, drop_copy_syncs(pending)), nil}
 
-  defp track(_mode, _tag, _payload, _pending, _head), do: :keep
+  defp step(_phase, _tag, _payload, _pending, _head), do: :keep
 
   # A simple Query still owes its ReadyForQuery once the COPY is over.
   defp end_copy(:simple, pending), do: :queue.in_r(?Q, pending)
