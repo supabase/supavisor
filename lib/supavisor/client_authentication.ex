@@ -267,7 +267,7 @@ defmodule Supavisor.ClientAuthentication do
             error
         end
 
-      {:error} = error ->
+      {:error, _} = error ->
         error
     end
   end
