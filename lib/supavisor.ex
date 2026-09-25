@@ -470,6 +470,42 @@ defmodule Supavisor do
     %{host: host, port: :ranch.get_port({:pg_proxy_internal, mode, shard})}
   end
 
+  @doc false
+  def pools_count_local(tenant, user) do
+    match_id =
+      id(
+        type: :_,
+        tenant: tenant,
+        user: user,
+        mode: :_,
+        db: :_,
+        search_path: :_,
+        upstream_tls: :_
+      )
+
+    Registry.select(Supavisor.Registry.Tenants, [
+      {{{:manager, match_id}, :"$1", :_}, [], [:"$1"]}
+    ])
+    |> Enum.count()
+  end
+
+  @doc """
+  Counts pools for a given `tenant` and `user` across the cluster
+  """
+  @spec pools_count_global(String.t(), String.t(), timeout()) :: non_neg_integer()
+  def pools_count_global(tenant, user, timeout \\ :infinity, nodes \\ [node() | Node.list()]) do
+    nodes
+    |> :erpc.multicall(__MODULE__, :pools_count_local, [tenant, user], timeout)
+    |> Enum.sum_by(fn
+      {:ok, count} ->
+        count
+
+      error ->
+        Logger.error("Counting pools failure: #{inspect(error)}")
+        0
+    end)
+  end
+
   def inspect_id(id, opts \\ %Inspect.Opts{})
 
   def inspect_id(

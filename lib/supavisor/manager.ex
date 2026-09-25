@@ -3,10 +3,13 @@ defmodule Supavisor.Manager do
   The Manager is responsible for managing the config and parameter status for a pool
   """
 
-  use GenServer
+  @shutdown_timeout :timer.seconds(5)
+  use GenServer, shutdown: @shutdown_timeout
+
   require Logger
   require Supavisor
 
+  alias Supavisor.ClientAuthentication
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
   alias Supavisor.Helpers
@@ -17,6 +20,8 @@ defmodule Supavisor.Manager do
   }
 
   @check_timeout 120_000
+  @pools_count_timeout :timer.seconds(2)
+  @invalidate_client_authentication_timeout :timer.seconds(2)
 
   @doc """
   Starts the pool manager
@@ -467,11 +472,27 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
-  def terminate(_reason, _state) do
+  def terminate(_reason, state) do
+    Supavisor.id(tenant: tenant, user: user) = state.id
+
+    if not other_pools_for_tenant_and_user?(tenant, user) do
+      Logger.info("Invalidating client authentication globally")
+
+      ClientAuthentication.invalidate_global(
+        tenant,
+        user,
+        @invalidate_client_authentication_timeout
+      )
+    end
+
     :ok
   end
 
   ## Internal functions
+
+  defp other_pools_for_tenant_and_user?(tenant, user) do
+    Supavisor.pools_count_global(tenant, user, @pools_count_timeout) > 1
+  end
 
   defp check_subscribers do
     Process.send_after(

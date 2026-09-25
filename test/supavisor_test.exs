@@ -130,4 +130,12 @@ defmodule SupavisorTest do
       assert log =~ "user=user"
     end
   end
+
+  describe "pools_count_global/2-4" do
+    test "counts pools locally"
+
+    test "returns 0 if there're no pools"
+
+    test "returns 0 and an error on failure"
+  end
 end
