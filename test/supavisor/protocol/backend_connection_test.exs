@@ -37,6 +37,36 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert IO.iodata_to_binary(out) == second <> command_complete("SELECT 1") <> z(?I)
     end
 
+    test "forwards the same bytes however the reads are split" do
+      backend =
+        new()
+        |> BackendConnection.query(simple_query("DISCARD ALL"))
+        |> BackendConnection.client_write([?P, ?B, ?D, ?E, ?S])
+
+      internal = command_complete("DISCARD ALL") <> z(?I)
+
+      forwarded =
+        parse_complete() <>
+          bind_complete() <>
+          row_description() <>
+          data_row("a") <>
+          data_row(String.duplicate("b", 20)) <>
+          data_row("c") <> command_complete("SELECT 3") <> z(?I)
+
+      responses = internal <> forwarded
+
+      assert {_backend, [^forwarded], true} = BackendConnection.recv(backend, responses)
+
+      for at <- 0..byte_size(responses) do
+        <<first::binary-size(at), second::binary>> = responses
+        {backend, first_out, _} = BackendConnection.recv(backend, first)
+        {backend, second_out, _} = BackendConnection.recv(backend, second)
+
+        assert IO.iodata_to_binary([first_out, second_out]) == forwarded, "split at #{at}"
+        assert BackendConnection.synced?(backend), "split at #{at}"
+      end
+    end
+
     test "records a FATAL error" do
       backend = BackendConnection.client_write(new(), [?Q])
       fatal = msg(?E, <<"SFATAL", 0, "C57P01", 0, "Mbye", 0, 0>>)

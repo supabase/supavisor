@@ -227,9 +227,13 @@ defmodule Supavisor.Protocol.BackendConnection do
   """
   @spec recv(t(), binary()) :: {t(), iodata(), boolean()}
   def recv(backend(buffer: buffer) = backend, data) do
-    {backend, out, synced?} =
-      parse_input(backend(backend, buffer: <<>>), buffer <> data, [], false)
+    # Appending to an empty buffer would still copy `data`.
+    {backend, data} =
+      if buffer == <<>>,
+        do: {backend, data},
+        else: {backend(backend, buffer: <<>>), buffer <> data}
 
+    {backend, out, synced?} = parse_input(backend, data)
     {backend, Enum.reverse(out), synced?}
   end
 
@@ -312,43 +316,107 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   ## Backend messages
 
-  defp parse_input(backend(streaming: {bytes_left, forward?}) = backend, data, out, synced?) do
-    case data do
-      <<part::binary-size(bytes_left), rest::binary>> ->
-        out = maybe_forward(out, part, forward?)
-        parse_input(backend(backend, streaming: nil), rest, out, synced?)
+  # What goes to the client is cut out of `data` in ranges. Consecutive messages that go to the
+  # client share a range, so usually the client gets `data` itself.
 
-      part ->
-        streaming = {bytes_left - byte_size(part), forward?}
-        {backend(backend, streaming: streaming), maybe_forward(out, part, forward?), synced?}
+  defp parse_input(backend(streaming: nil) = backend, data),
+    do: parse_input(backend, data, data, 0, nil, [], false)
+
+  defp parse_input(backend(streaming: {bytes_left, forward?}) = backend, data) do
+    case data do
+      <<_::binary-size(bytes_left), rest::binary>> ->
+        from = if forward?, do: 0, else: nil
+        parse_input(backend(backend, streaming: nil), data, rest, bytes_left, from, [], false)
+
+      _ ->
+        streaming = {bytes_left - byte_size(data), forward?}
+        {backend(backend, streaming: streaming), maybe_forward([], data, forward?), false}
     end
   end
 
+  # `rest` starts at `pos` in `data`. `from` is where the range to forward starts, or nil if
+  # there is none yet.
   defp parse_input(
          backend,
-         <<type, len::32, body::binary-size(len - 4), rest::binary>> = data,
+         data,
+         <<type, len::32, body::binary-size(len - 4), rest::binary>>,
+         pos,
+         from,
          out,
          synced?
        )
        when type in @tracked_messages do
-    out = maybe_forward(out, binary_part(data, 0, len + 1), forward?(backend, type))
+    next = pos + len + 1
+    forward? = forward?(backend, type)
     {backend, fake_responses} = backend |> handle_message(type, body) |> pop_unanswered()
-    out = Enum.reverse(fake_responses, out)
-    parse_input(backend, rest, out, synced? or (type == @ready_for_query and synced?(backend)))
+
+    {from, out} =
+      case {forward?, fake_responses} do
+        {true, []} ->
+          {from || pos, out}
+
+        {true, _} ->
+          {nil, Enum.reverse(fake_responses, forward_range(out, data, from || pos, next))}
+
+        {false, _} ->
+          {nil, Enum.reverse(fake_responses, forward_range(out, data, from, pos))}
+      end
+
+    synced? = synced? or (type == @ready_for_query and synced?(backend))
+    parse_input(backend, data, rest, next, from, out, synced?)
   end
 
-  # A message that doesn't move the backend along is streamed through without waiting for the
-  # whole message.
-  defp parse_input(backend, <<type, len::32, _::binary>> = data, out, synced?)
+  # A message that doesn't move the backend along, like DataRow, doesn't change where the next
+  # one goes, so a run of them is forwarded or dropped as one.
+  defp parse_input(
+         backend,
+         data,
+         <<type, len::32, _::binary-size(len - 4), rest::binary>>,
+         pos,
+         from,
+         out,
+         synced?
+       )
        when type not in @tracked_messages do
-    streaming = {len + 1, forward?(backend, type)}
-    parse_input(backend(backend, streaming: streaming), data, out, synced?)
+    {rest, next} = skip_untracked(rest, pos + len + 1)
+
+    {from, out} =
+      if forward?(backend, type),
+        do: {from || pos, out},
+        else: {nil, forward_range(out, data, from, pos)}
+
+    parse_input(backend, data, rest, next, from, out, synced?)
   end
 
-  defp parse_input(backend, <<>>, out, synced?), do: {backend, out, synced?}
+  # One that isn't all here yet is streamed through without waiting for the rest.
+  defp parse_input(backend, data, <<type, len::32, rest::binary>>, pos, from, out, synced?)
+       when type not in @tracked_messages do
+    forward? = forward?(backend, type)
 
-  defp parse_input(backend, partial, out, synced?),
-    do: {backend(backend, buffer: partial), out, synced?}
+    out =
+      if forward?,
+        do: forward_range(out, data, from || pos, byte_size(data)),
+        else: forward_range(out, data, from, pos)
+
+    streaming = {len - 4 - byte_size(rest), forward?}
+    {backend(backend, streaming: streaming), out, synced?}
+  end
+
+  defp parse_input(backend, data, <<>>, pos, from, out, synced?),
+    do: {backend, forward_range(out, data, from, pos), synced?}
+
+  defp parse_input(backend, data, partial, pos, from, out, synced?),
+    do: {backend(backend, buffer: partial), forward_range(out, data, from, pos), synced?}
+
+  defp skip_untracked(<<type, len::32, _::binary-size(len - 4), rest::binary>>, pos)
+       when type not in @tracked_messages,
+       do: skip_untracked(rest, pos + len + 1)
+
+  defp skip_untracked(rest, pos), do: {rest, pos}
+
+  defp forward_range(out, _data, nil, _to), do: out
+  defp forward_range(out, data, 0, to) when to == byte_size(data), do: [data | out]
+  defp forward_range(out, data, from, to), do: [binary_part(data, from, to - from) | out]
 
   defp maybe_forward(out, part, true), do: [part | out]
   defp maybe_forward(out, _part, false), do: out
