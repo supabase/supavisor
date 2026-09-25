@@ -470,6 +470,45 @@ defmodule Supavisor do
     %{host: host, port: :ranch.get_port({:pg_proxy_internal, mode, shard})}
   end
 
+  @doc false
+  def pools_local(tenant, user) do
+    match_id =
+      id(
+        type: :_,
+        tenant: tenant,
+        user: user,
+        mode: :_,
+        db: :_,
+        search_path: :_,
+        upstream_tls: :_
+      )
+
+    Registry.select(Supavisor.Registry.Tenants, [
+      {{{:manager, match_id}, :"$1", :_}, [], [:"$1"]}
+    ])
+  end
+
+  @doc """
+  Lists the manager pids for a given `tenant` and `user` across the cluster.
+  """
+  @spec pools_global(String.t(), String.t(), timeout()) :: {:ok, [pid()]} | :error
+  def pools_global(tenant, user, timeout \\ :infinity, nodes \\ [node() | Node.list()]) do
+    nodes
+    |> :erpc.multicall(__MODULE__, :pools_local, [tenant, user], timeout)
+    |> Enum.zip(nodes)
+    |> Enum.reduce({:ok, []}, fn
+      {{:ok, pids}, _node}, {:ok, acc} ->
+        {:ok, pids ++ acc}
+
+      {{:ok, _}, _}, :error ->
+        :error
+
+      {error, node}, _acc ->
+        Logger.error("Listing pools failure: #{inspect(error)} (#{node})")
+        :error
+    end)
+  end
+
   def inspect_id(id, opts \\ %Inspect.Opts{})
 
   def inspect_id(

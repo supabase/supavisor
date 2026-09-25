@@ -178,11 +178,31 @@ defmodule Supavisor.ClientAuthentication do
   Invalidates cached secrets for a tenant/user across the cluster.
   """
   @spec invalidate_global(String.t(), String.t()) :: :ok
-  def invalidate_global(tenant_external_id, db_user) do
-    :erpc.multicall([Node.self() | Node.list()], __MODULE__, :invalidate_local, [
-      tenant_external_id,
-      db_user
-    ])
+  def invalidate_global(
+        tenant_external_id,
+        db_user,
+        timeout \\ :infinity,
+        # for testing only
+        nodes \\ [Node.self() | Node.list()]
+      ) do
+    nodes
+    |> :erpc.multicall(
+      __MODULE__,
+      :invalidate_local,
+      [
+        tenant_external_id,
+        db_user
+      ],
+      timeout
+    )
+    |> Enum.zip(nodes)
+    |> Enum.each(
+      &if not match?({{:ok, _}, _node}, &1),
+        do:
+          Logger.error(
+            "Client authentication invalidation failure: #{inspect(elem(&1, 0))} (#{elem(&1, 1)})"
+          )
+    )
 
     :ok
   end
@@ -239,8 +259,12 @@ defmodule Supavisor.ClientAuthentication do
                tenant.auth_query,
                Supavisor.id(id, :user)
              ) do
-          {:ok, sasl_secrets} -> {:ok, ValidationSecrets.from_sasl_secrets(sasl_secrets)}
-          {:error, _} = error -> error
+          {:ok, sasl_secrets} ->
+            {:ok, ValidationSecrets.from_sasl_secrets(sasl_secrets)}
+
+          {:error, reason} = error ->
+            Logger.error("One-off user secret fetch failed: #{inspect(reason)}")
+            error
         end
 
       {:error, _} = error ->

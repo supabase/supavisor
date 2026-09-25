@@ -3,10 +3,13 @@ defmodule Supavisor.Manager do
   The Manager is responsible for managing the config and parameter status for a pool
   """
 
-  use GenServer
+  @shutdown_timeout :timer.seconds(5)
+  use GenServer, shutdown: @shutdown_timeout
+
   require Logger
   require Supavisor
 
+  alias Supavisor.ClientAuthentication
   alias Supavisor.Protocol.Server
   alias Supavisor.Tenants
   alias Supavisor.Helpers
@@ -17,6 +20,8 @@ defmodule Supavisor.Manager do
   }
 
   @check_timeout 120_000
+  @pools_count_timeout :timer.seconds(2)
+  @invalidate_client_authentication_timeout :timer.seconds(2)
 
   @doc """
   Starts the pool manager
@@ -467,11 +472,42 @@ defmodule Supavisor.Manager do
   end
 
   @impl true
-  def terminate(_reason, _state) do
-    :ok
+  def terminate(_reason, state) do
+    md = Logger.metadata()
+    Supavisor.id(tenant: tenant, user: user) = state.id
+    manager_pid = self()
+
+    Task.Supervisor.start_child(Supavisor.TaskSupervisor, fn ->
+      Logger.metadata(md)
+      maybe_invalidate_after_shutdown(tenant, user, manager_pid)
+    end)
   end
 
   ## Internal functions
+
+  @doc false
+  @spec maybe_invalidate_after_shutdown(String.t(), String.t(), pid()) :: :ok
+  def maybe_invalidate_after_shutdown(
+        tenant,
+        user,
+        manager_pid
+      ) do
+    case Supavisor.pools_global(tenant, user, @pools_count_timeout) do
+      {:ok, pids} ->
+        if Enum.reject(pids, &(&1 == manager_pid)) == [] do
+          Logger.info("Invalidating client authentication globally")
+
+          ClientAuthentication.invalidate_global(
+            tenant,
+            user,
+            @invalidate_client_authentication_timeout
+          )
+        end
+
+      :error ->
+        :ok
+    end
+  end
 
   defp check_subscribers do
     Process.send_after(
