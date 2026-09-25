@@ -17,7 +17,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "waits for the rest of a message it tracks" do
       <<first::binary-size(3), second::binary>> = z(?I)
-      backend = BackendConnection.sent(new(), [?Q])
+      backend = BackendConnection.client_write(new(), [?Q])
 
       assert {backend, [], false} = BackendConnection.recv(backend, first)
       assert {_backend, out, true} = BackendConnection.recv(backend, second)
@@ -27,7 +27,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     test "streams a message it doesn't track without waiting for the rest" do
       row = data_row(String.duplicate("x", 100))
       <<first::binary-size(40), second::binary>> = row
-      backend = BackendConnection.sent(new(), [?Q])
+      backend = BackendConnection.client_write(new(), [?Q])
 
       assert {backend, [^first], false} = BackendConnection.recv(backend, first)
 
@@ -38,7 +38,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "records a FATAL error" do
-      backend = BackendConnection.sent(new(), [?Q])
+      backend = BackendConnection.client_write(new(), [?Q])
       fatal = msg(?E, <<"SFATAL", 0, "C57P01", 0, "Mbye", 0, 0>>)
 
       assert {backend, _out, false} = BackendConnection.recv(backend, fatal)
@@ -46,19 +46,19 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "doesn't record a plain error as fatal" do
-      backend = BackendConnection.sent(new(), [?Q])
+      backend = BackendConnection.client_write(new(), [?Q])
 
       assert {backend, _out, false} = BackendConnection.recv(backend, error("22012"))
       assert BackendConnection.fatal_error(backend) == nil
     end
   end
 
-  # Each step either records a plain client write (`sent`) or feeds a backend message
+  # Each step either records a plain client write (`client_write`) or feeds a backend message
   # (`recv`) along with whether it should leave the backend synced.
   describe "following the backend through forwarded messages" do
     test "a simple query syncs on its ReadyForQuery" do
       run([
-        sent([?Q]),
+        client_write([?Q]),
         recv(row_description(), false),
         recv(command_complete("SELECT 1"), false),
         recv(z(?I), true)
@@ -66,19 +66,19 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "pipelined simple queries sync on the last ReadyForQuery" do
-      run([sent([?Q, ?Q]), recv(z(?I), false), recv(z(?I), true)])
+      run([client_write([?Q, ?Q]), recv(z(?I), false), recv(z(?I), true)])
     end
 
     test "a transaction block doesn't sync" do
       backend =
-        run([sent([?Q]), recv(command_complete("BEGIN"), false), recv(z(?T), false)])
+        run([client_write([?Q]), recv(command_complete("BEGIN"), false), recv(z(?T), false)])
 
       assert BackendConnection.backend(backend, :state) == :in_transaction
     end
 
     test "an extended batch syncs on its Sync" do
       run([
-        sent([?P, ?B, ?E, ?S]),
+        client_write([?P, ?B, ?E, ?S]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(command_complete("SELECT 1"), false),
@@ -88,18 +88,18 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "an extended batch without its Sync doesn't sync until the Sync" do
       run([
-        sent([?P, ?B, ?E]),
+        client_write([?P, ?B, ?E]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(command_complete("SELECT 1"), false),
-        sent([?S]),
+        client_write([?S]),
         recv(z(?I), true)
       ])
     end
 
     test "a Describe completes with RowDescription or NoData" do
       run([
-        sent([?P, ?D, ?B, ?D, ?E, ?S]),
+        client_write([?P, ?D, ?B, ?D, ?E, ?S]),
         recv(parse_complete(), false),
         recv(parameter_description(), false),
         recv(row_description(), false),
@@ -112,7 +112,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "Execute completes with EmptyQueryResponse or PortalSuspended" do
       run([
-        sent([?B, ?E, ?B, ?E, ?S]),
+        client_write([?B, ?E, ?B, ?E, ?S]),
         recv(bind_complete(), false),
         recv(empty_query(), false),
         recv(bind_complete(), false),
@@ -123,25 +123,25 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a Close completes with CloseComplete and a FunctionCall with ReadyForQuery" do
       run([
-        sent([?C, ?S, ?F]),
+        client_write([?C, ?S, ?F]),
         recv(close_complete(), false),
         recv(z(?I), false),
         recv(z(?I), true)
       ])
     end
 
-    test "an error in an extended message skips the Query before the Sync" do
+    test "an error in an extended message ignores the Query before the Sync" do
       run([
-        sent([?P, ?B, ?E, ?Q, ?S]),
+        client_write([?P, ?B, ?E, ?Q, ?S]),
         recv(parse_complete(), false),
         recv(error("22012"), false),
         recv(z(?I), true)
       ])
     end
 
-    test "an error in a Query after a completed Execute doesn't skip" do
+    test "an error in a Query after a completed Execute doesn't ignore the Sync" do
       run([
-        sent([?P, ?B, ?E, ?Q, ?S]),
+        client_write([?P, ?B, ?E, ?Q, ?S]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(command_complete("SELECT 1"), false),
@@ -151,23 +151,28 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       ])
     end
 
-    test "messages sent after the error are skipped too" do
+    test "messages sent after the error are ignored too" do
       run([
-        sent([?P, ?B, ?E]),
+        client_write([?P, ?B, ?E]),
         recv(parse_complete(), false),
         recv(error("22012"), false),
-        sent([?Q, ?F, ?S]),
+        client_write([?Q, ?F, ?S]),
         recv(z(?I), true)
       ])
     end
 
-    test "an error in a simple query doesn't skip the next one" do
-      run([sent([?Q, ?Q]), recv(error("22012"), false), recv(z(?I), false), recv(z(?I), true)])
+    test "an error in a simple query doesn't ignore the next one" do
+      run([
+        client_write([?Q, ?Q]),
+        recv(error("22012"), false),
+        recv(z(?I), false),
+        recv(z(?I), true)
+      ])
     end
 
     test "an error on Sync is followed by its ReadyForQuery" do
       run([
-        sent([?P, ?B, ?E, ?S]),
+        client_write([?P, ?B, ?E, ?S]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(command_complete("INSERT 0 1"), false),
@@ -178,7 +183,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a simple Query closes an extended batch left without a Sync" do
       run([
-        sent([?P, ?B, ?E, ?Q]),
+        client_write([?P, ?B, ?E, ?Q]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(command_complete("SELECT 1"), false),
@@ -189,11 +194,11 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "an extended COPY ignores every Sync sent during copy-in" do
       run([
-        sent([?P, ?B, ?E, ?S, ?S, ?S, ?S, ?S]),
+        client_write([?P, ?B, ?E, ?S, ?S, ?S, ?S, ?S]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(copy_in(), false),
-        sent([?c, ?S]),
+        client_write([?c, ?S]),
         recv(command_complete("COPY 2"), false),
         recv(z(?I), true)
       ])
@@ -201,7 +206,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "an extended COPY that fails to start answers every Sync" do
       run([
-        sent([?P, ?B, ?E, ?S, ?c, ?S]),
+        client_write([?P, ?B, ?E, ?S, ?c, ?S]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(error("42P01"), false),
@@ -212,11 +217,11 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "an extended COPY ended by CopyFail answers the Sync after it" do
       run([
-        sent([?P, ?B, ?E, ?S]),
+        client_write([?P, ?B, ?E, ?S]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(copy_in(), false),
-        sent([?f, ?S]),
+        client_write([?f, ?S]),
         recv(error("57014"), false),
         recv(z(?I), true)
       ])
@@ -224,21 +229,21 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "an extended COPY failing on bad data answers the Sync after CopyDone" do
       run([
-        sent([?P, ?B, ?E, ?S]),
+        client_write([?P, ?B, ?E, ?S]),
         recv(parse_complete(), false),
         recv(bind_complete(), false),
         recv(copy_in(), false),
         recv(error("22P02"), false),
-        sent([?c, ?S]),
+        client_write([?c, ?S]),
         recv(z(?I), true)
       ])
     end
 
     test "a simple COPY ignores a Sync sent during copy-in" do
       run([
-        sent([?Q, ?S]),
+        client_write([?Q, ?S]),
         recv(copy_in(), false),
-        sent([?c]),
+        client_write([?c]),
         recv(command_complete("COPY 2"), false),
         recv(z(?I), true)
       ])
@@ -247,22 +252,22 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     test "a simple COPY failing on bad data syncs on the CopyDone or CopyFail sent after it" do
       for copy_end <- [?c, ?f] do
         run([
-          sent([?Q]),
+          client_write([?Q]),
           recv(copy_in(), false),
           recv(error("22P02"), false),
           recv(z(?I), false),
-          sent([copy_end], true)
+          client_write([copy_end], true)
         ])
       end
     end
 
     test "a simple COPY failing on bad data answers messages sent after its CopyDone" do
       run([
-        sent([?Q]),
+        client_write([?Q]),
         recv(copy_in(), false),
         recv(error("22P02"), false),
         recv(z(?I), false),
-        sent([?c, ?Q], false),
+        client_write([?c, ?Q], false),
         recv(command_complete("SELECT 1"), false),
         recv(z(?I), true)
       ])
@@ -270,9 +275,9 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a simple COPY failing on bad data syncs on the Query's ReadyForQuery after CopyDone" do
       run([
-        sent([?Q]),
+        client_write([?Q]),
         recv(copy_in(), false),
-        sent([?c]),
+        client_write([?c]),
         recv(error("22P02"), false),
         recv(z(?I), true)
       ])
@@ -280,10 +285,10 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a multi-statement Query with a COPY syncs after all statements" do
       run([
-        sent([?Q]),
+        client_write([?Q]),
         recv(command_complete("SELECT 1"), false),
         recv(copy_in(), false),
-        sent([?c]),
+        client_write([?c]),
         recv(command_complete("COPY 2"), false),
         recv(command_complete("SELECT 1"), false),
         recv(z(?I), true)
@@ -291,7 +296,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "CopyDone and CopyFail outside a COPY are ignored" do
-      run([sent([?c, ?f, ?S]), recv(z(?I), true)])
+      run([client_write([?c, ?f, ?S]), recv(z(?I), true)])
     end
 
     test "a ReadyForQuery with nothing expected syncs" do
@@ -299,13 +304,13 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a ReadyForQuery is reported only once" do
-      run([sent([?Q]), recv(z(?I), true), recv(<<?N, 5::32, 0>>, false)])
+      run([client_write([?Q]), recv(z(?I), true), recv(<<?N, 5::32, 0>>, false)])
     end
   end
 
   describe "prepared statement writes" do
     test "a write is parked until its packets are decided" do
-      backend = BackendConnection.sent(new(), [{:ps, ?B}, ?E, ?S])
+      backend = BackendConnection.client_write(new(), [{:ps, ?B}, ?E, ?S])
 
       assert queue(backend) == []
       assert BackendConnection.backend(backend, :state) == :idle
@@ -314,14 +319,14 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     test "responses to earlier writes are followed while a write is parked" do
       backend =
         new()
-        |> BackendConnection.sent([?Q])
-        |> BackendConnection.sent([{:ps, ?B}, ?E, ?S])
+        |> BackendConnection.client_write([?Q])
+        |> BackendConnection.client_write([{:ps, ?B}, ?E, ?S])
 
       assert {backend, out, false} = BackendConnection.recv(backend, z(?I))
       assert IO.iodata_to_binary(out) == z(?I)
 
       {backend, to_backend, [], 0} =
-        BackendConnection.write(backend, [bind("s1"), "execute", "sync"])
+        BackendConnection.send_parked_write(backend, [bind("s1"), "execute", "sync"])
 
       assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)executesync"
 
@@ -334,12 +339,12 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a Bind or Describe for a statement the backend doesn't have sends its Parse first" do
       for {tag, pkt, message} <- [{?B, bind("s1"), :bind}, {?D, describe("s1"), :describe}] do
-        {backend, to_backend, [], 0} = write(new(), [{:ps, tag}, ?S], [pkt, "s"])
+        {backend, to_backend, [], 0} = send_parked_write(new(), [{:ps, tag}, ?S], [pkt, "s"])
 
         assert IO.iodata_to_binary(to_backend) == "parse(s1)#{message}(s1)s"
 
         assert queue(backend) == [
-                 {:parse, :intercept, "s1"},
+                 {:parse, :skip, "s1"},
                  {message, :forward, "s1"},
                  forward(:sync)
                ]
@@ -349,7 +354,8 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a Bind for a statement the backend has is sent alone" do
-      {backend, to_backend, [], 0} = write(new(["s1"]), [{:ps, ?B}, ?S], [bind("s1"), "s"])
+      {backend, to_backend, [], 0} =
+        send_parked_write(new(["s1"]), [{:ps, ?B}, ?S], [bind("s1"), "s"])
 
       assert IO.iodata_to_binary(to_backend) == "bind(s1)s"
       assert queue(backend) == [{:bind, :forward, "s1"}, forward(:sync)]
@@ -357,12 +363,14 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a statement sent earlier in the same write isn't sent again" do
       pkts = [bind("s1"), "e", bind("s1"), "e", "s"]
-      {backend, to_backend, [], 0} = write(new(), [{:ps, ?B}, ?E, {:ps, ?B}, ?E, ?S], pkts)
+
+      {backend, to_backend, [], 0} =
+        send_parked_write(new(), [{:ps, ?B}, ?E, {:ps, ?B}, ?E, ?S], pkts)
 
       assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)ebind(s1)es"
 
       assert queue(backend) == [
-               {:parse, :intercept, "s1"},
+               {:parse, :skip, "s1"},
                {:bind, :forward, "s1"},
                forward(:execute),
                {:bind, :forward, "s1"},
@@ -376,7 +384,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
             {["s1"], ?P, parse("s1"), parse_complete()},
             {[], ?C, close("s1"), close_complete()}
           ] do
-        {backend, to_backend, due, 0} = write(new(statements), [{:ps, tag}], [pkt])
+        {backend, to_backend, due, 0} = send_parked_write(new(statements), [{:ps, tag}], [pkt])
 
         assert IO.iodata_to_binary(to_backend) == ""
         assert IO.iodata_to_binary(due) == reply
@@ -385,17 +393,19 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a ParseComplete answered after a ReadyForQuery belongs to the next batch" do
-      backend = BackendConnection.sent(new(["s1"]), [?Q])
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?P}], [parse("s1")])
+      backend = BackendConnection.client_write(new(["s1"]), [?Q])
+      {backend, _to_backend, [], 0} = send_parked_write(backend, [{:ps, ?P}], [parse("s1")])
 
       assert {backend, out, false} = BackendConnection.recv(backend, z(?I))
       assert IO.iodata_to_binary(out) == z(?I) <> parse_complete()
       assert BackendConnection.backend(backend, :state) == :busy
     end
 
-    test "a Parse not sent is skipped after an error like the backend would" do
-      backend = BackendConnection.sent(new(["s1"]), [?P])
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?P}, ?B, ?S], [parse("s1"), "b", "s"])
+    test "a Parse not sent is ignored after an error, as the backend would" do
+      backend = BackendConnection.client_write(new(["s1"]), [?P])
+
+      {backend, _to_backend, [], 0} =
+        send_parked_write(backend, [{:ps, ?P}, ?B, ?S], [parse("s1"), "b", "s"])
 
       assert {backend, out, true} = BackendConnection.recv(backend, error("42601") <> z(?I))
       assert IO.iodata_to_binary(out) == error("42601") <> z(?I)
@@ -403,7 +413,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "an earlier client Parse's response isn't taken by a later intercept" do
-      {backend, _to_backend, [], 0} = write(new(), [?P, {:ps, ?B}], ["p", bind("s1")])
+      {backend, _to_backend, [], 0} = send_parked_write(new(), [?P, {:ps, ?B}], ["p", bind("s1")])
 
       responses = parse_complete() <> parse_complete() <> bind_complete()
       assert {_backend, out, false} = BackendConnection.recv(backend, responses)
@@ -411,7 +421,8 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a Close forgets the statement" do
-      {backend, to_backend, [], 0} = write(new(["s1"]), [{:ps, ?C}, ?S], [close("s1"), "s"])
+      {backend, to_backend, [], 0} =
+        send_parked_write(new(["s1"]), [{:ps, ?C}, ?S], [close("s1"), "s"])
 
       assert IO.iodata_to_binary(to_backend) == "close(s1)s"
       refute LRU.member?(statements(backend), "s1")
@@ -421,8 +432,10 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a Close for a statement the backend doesn't have is answered after the responses before it" do
-      backend = BackendConnection.sent(new(), [?Q])
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?C}, ?S], [close("s1"), "s"])
+      backend = BackendConnection.client_write(new(), [?Q])
+
+      {backend, _to_backend, [], 0} =
+        send_parked_write(backend, [{:ps, ?C}, ?S], [close("s1"), "s"])
 
       assert {backend, out, false} = BackendConnection.recv(backend, z(?I))
       assert IO.iodata_to_binary(out) == z(?I) <> close_complete()
@@ -431,19 +444,23 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "tags that don't match the packets are a bug" do
-      backend = BackendConnection.sent(new(), [{:ps, ?B}])
+      backend = BackendConnection.client_write(new(), [{:ps, ?B}])
 
-      assert_raise FunctionClauseError, fn -> BackendConnection.write(backend, [parse("s1")]) end
+      assert_raise FunctionClauseError, fn ->
+        BackendConnection.send_parked_write(backend, [parse("s1")])
+      end
     end
 
     test "a write without a parked one is a bug" do
-      assert_raise FunctionClauseError, fn -> BackendConnection.write(new(), [bind("s1")]) end
+      assert_raise FunctionClauseError, fn ->
+        BackendConnection.send_parked_write(new(), [bind("s1")])
+      end
     end
 
     test "a plain write while one is parked is a bug" do
-      backend = BackendConnection.sent(new(), [{:ps, ?B}])
+      backend = BackendConnection.client_write(new(), [{:ps, ?B}])
 
-      assert_raise FunctionClauseError, fn -> BackendConnection.sent(backend, [?S]) end
+      assert_raise FunctionClauseError, fn -> BackendConnection.client_write(backend, [?S]) end
     end
   end
 
@@ -455,15 +472,16 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "are sent and consumed ahead of the write", %{old: old, evicted: evicted} do
-      {backend, to_backend, [], count} = write(new(old), [{:ps, ?B}, ?S], [bind("s1"), "s"])
+      {backend, to_backend, [], count} =
+        send_parked_write(new(old), [{:ps, ?B}, ?S], [bind("s1"), "s"])
 
       closes = Enum.map_join(evicted, &PreparedStatements.build_close_pkt/1)
       assert count == length(evicted)
       assert IO.iodata_to_binary(to_backend) == closes <> "parse(s1)bind(s1)s"
 
       assert queue(backend) ==
-               Enum.map(evicted, &{:close, :intercept, &1}) ++
-                 [{:parse, :intercept, "s1"}, {:bind, :forward, "s1"}, forward(:sync)]
+               Enum.map(evicted, &{:close, :skip, &1}) ++
+                 [{:parse, :skip, "s1"}, {:bind, :forward, "s1"}, forward(:sync)]
 
       responses =
         String.duplicate(close_complete(), count) <>
@@ -476,7 +494,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a statement the write needs is sent again", %{old: old, evicted: evicted} do
       {_backend, to_backend, [], _count} =
-        write(new(old), [{:ps, ?B}, ?S], [bind("old_1"), "s"])
+        send_parked_write(new(old), [{:ps, ?B}, ?S], [bind("old_1"), "s"])
 
       closes = Enum.map_join(evicted, &PreparedStatements.build_close_pkt/1)
       assert IO.iodata_to_binary(to_backend) == closes <> "parse(old_1)bind(old_1)s"
@@ -484,7 +502,9 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "a client Close after them keeps its response", %{old: old} do
       tags = [{:ps, ?C}, {:ps, ?B}]
-      {backend, _to_backend, [], count} = write(new(old), tags, [close("old_150"), bind("s1")])
+
+      {backend, _to_backend, [], count} =
+        send_parked_write(new(old), tags, [close("old_150"), bind("s1")])
 
       responses =
         String.duplicate(close_complete(), count) <>
@@ -496,11 +516,11 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "go right before the first prepared statement packet", %{old: old, evicted: evicted} do
       {backend, _out, false} =
-        new(old) |> BackendConnection.sent([?Q]) |> BackendConnection.recv(copy_in())
+        new(old) |> BackendConnection.client_write([?Q]) |> BackendConnection.recv(copy_in())
 
       tags = [?c, ?S, {:ps, ?B}, ?E, ?S]
       pkts = ["copy_done", "sync", bind("s1"), "execute", "sync"]
-      {backend, to_backend, [], count} = write(backend, tags, pkts)
+      {backend, to_backend, [], count} = send_parked_write(backend, tags, pkts)
 
       closes = Enum.map_join(evicted, &PreparedStatements.build_close_pkt/1)
 
@@ -523,7 +543,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
     test "don't happen below the limit", %{old: old} do
       {_backend, to_backend, [], 0} =
-        write(new(tl(old)), [{:ps, ?B}, ?S], [bind("s1"), "s"])
+        send_parked_write(new(tl(old)), [{:ps, ?B}, ?S], [bind("s1"), "s"])
 
       assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)s"
     end
@@ -532,7 +552,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
   describe "statements the backend didn't create or close" do
     test "a failed Parse, sent by Supavisor or the client, is forgotten, its error forwarded" do
       for {tag, pkt} <- [{?B, bind("s1")}, {?P, parse("s1")}] do
-        {backend, _to_backend, [], 0} = write(new(), [{:ps, tag}, ?S], [pkt, "s"])
+        {backend, _to_backend, [], 0} = send_parked_write(new(), [{:ps, tag}, ?S], [pkt, "s"])
 
         assert {backend, out, true} = BackendConnection.recv(backend, error("42P01") <> z(?I))
         assert IO.iodata_to_binary(out) == error("42P01") <> z(?I)
@@ -540,10 +560,10 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       end
     end
 
-    test "a Parse skipped after an earlier error is forgotten" do
+    test "a Parse ignored after an earlier error is forgotten" do
       tags = [{:ps, ?B}, ?E, {:ps, ?B}, ?E, ?S]
       pkts = [bind("x"), "e", bind("s1"), "e", "s"]
-      {backend, to_backend, [], 0} = write(new(["x"]), tags, pkts)
+      {backend, to_backend, [], 0} = send_parked_write(new(["x"]), tags, pkts)
 
       assert IO.iodata_to_binary(to_backend) == "bind(x)eparse(s1)bind(s1)es"
 
@@ -554,11 +574,14 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert LRU.member?(statements(backend), "x")
     end
 
-    test "a Close skipped after an error, sent or not, leaves the statements as they were" do
+    test "a Close ignored after an error, sent or not, leaves the statements as they were" do
       for had_statement? <- [false, true] do
         before = if had_statement?, do: ["s1"], else: []
-        backend = BackendConnection.sent(new(before), [?B, ?E])
-        {backend, _to_backend, [], 0} = write(backend, [{:ps, ?C}, ?S], [close("s1"), "s"])
+        backend = BackendConnection.client_write(new(before), [?B, ?E])
+
+        {backend, _to_backend, [], 0} =
+          send_parked_write(backend, [{:ps, ?C}, ?S], [close("s1"), "s"])
+
         refute LRU.member?(statements(backend), "s1")
 
         responses = bind_complete() <> error("23505") <> z(?I)
@@ -569,10 +592,10 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a Parse failing because the statement exists records it" do
-      backend = BackendConnection.sent(new(["s1"]), [?B, ?E])
+      backend = BackendConnection.client_write(new(["s1"]), [?B, ?E])
       tags = [{:ps, ?C}, ?S, {:ps, ?B}, ?E, ?S]
       pkts = [close("s1"), "s", bind("s1"), "e", "s"]
-      {backend, to_backend, [], 0} = write(backend, tags, pkts)
+      {backend, to_backend, [], 0} = send_parked_write(backend, tags, pkts)
 
       assert IO.iodata_to_binary(to_backend) == "close(s1)sparse(s1)bind(s1)es"
 
@@ -581,15 +604,17 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert IO.iodata_to_binary(out) == responses
       assert LRU.member?(statements(backend), "s1")
 
-      {_backend, to_backend, [], 0} = write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+      {_backend, to_backend, [], 0} =
+        send_parked_write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+
       assert IO.iodata_to_binary(to_backend) == "bind(s1)s"
     end
 
     test "a Bind failing because the statement doesn't exist forgets it" do
-      backend = BackendConnection.sent(new(), [?B, ?E])
+      backend = BackendConnection.client_write(new(), [?B, ?E])
 
       {backend, to_backend, [], 0} =
-        write(backend, [{:ps, ?P}, {:ps, ?C}, ?S], [parse("s1"), close("s1"), "s"])
+        send_parked_write(backend, [{:ps, ?P}, {:ps, ?C}, ?S], [parse("s1"), close("s1"), "s"])
 
       assert IO.iodata_to_binary(to_backend) == "parse(s1)close(s1)s"
 
@@ -598,13 +623,16 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
       assert LRU.member?(statements(backend), "s1")
 
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+      {backend, _to_backend, [], 0} =
+        send_parked_write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
 
       assert {backend, out, true} = BackendConnection.recv(backend, error("26000") <> z(?I))
       assert IO.iodata_to_binary(out) == error("26000") <> z(?I)
       refute LRU.member?(statements(backend), "s1")
 
-      {_backend, to_backend, [], 0} = write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+      {_backend, to_backend, [], 0} =
+        send_parked_write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+
       assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)s"
     end
   end
@@ -648,7 +676,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       backend =
         new()
         |> BackendConnection.query(simple_query("DISCARD ALL"))
-        |> BackendConnection.sent([?Q])
+        |> BackendConnection.client_write([?Q])
 
       responses = command_complete("DISCARD ALL") <> z(?I) <> data_row("x") <> z(?I)
 
@@ -665,11 +693,11 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     )
   end
 
-  defp write(backend, tags, pkts) do
-    backend |> BackendConnection.sent(tags) |> BackendConnection.write(pkts)
+  defp send_parked_write(backend, tags, pkts) do
+    backend |> BackendConnection.client_write(tags) |> BackendConnection.send_parked_write(pkts)
   end
 
-  defp queue(backend), do: :queue.to_list(BackendConnection.backend(backend, :queue))
+  defp queue(backend), do: :queue.to_list(BackendConnection.backend(backend, :requests))
   defp statements(backend), do: BackendConnection.backend(backend, :statements)
   defp forward(message), do: {message, :forward, nil}
 
@@ -678,17 +706,17 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
   defp describe(name), do: {:describe_pkt, name, "describe(#{name})", "parse(#{name})"}
   defp close(name), do: {:close_pkt, name, "close(#{name})"}
 
-  defp sent(tags), do: {:sent, tags}
-  defp sent(tags, synced?), do: {:sent, tags, synced?}
+  defp client_write(tags), do: {:client_write, tags}
+  defp client_write(tags, synced?), do: {:client_write, tags, synced?}
   defp recv(bin, synced?), do: {:recv, bin, synced?}
 
   defp run(steps) do
     Enum.reduce(steps, new(), fn
-      {:sent, tags}, backend ->
-        BackendConnection.sent(backend, tags)
+      {:client_write, tags}, backend ->
+        BackendConnection.client_write(backend, tags)
 
-      {:sent, tags, synced?}, backend ->
-        backend = BackendConnection.sent(backend, tags)
+      {:client_write, tags, synced?}, backend ->
+        backend = BackendConnection.client_write(backend, tags)
 
         assert BackendConnection.synced?(backend) == synced?,
                "after #{inspect(tags)}: queue #{inspect(queue(backend))}, state #{inspect(BackendConnection.backend(backend, :state))}"

@@ -1376,7 +1376,7 @@ defmodule Supavisor.DbHandlerTest do
     data
   end
 
-  defp pending(data), do: :queue.to_list(BackendConnection.backend(data.backend, :queue))
+  defp pending(data), do: :queue.to_list(BackendConnection.backend(data.backend, :requests))
 
   defp statements(data), do: BackendConnection.backend(data.backend, :statements)
 

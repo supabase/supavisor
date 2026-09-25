@@ -450,7 +450,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event(:cast, {:expect_messages, write_seq, tags}, _state, data) do
-    backend = BackendConnection.sent(data.backend, tags)
+    backend = BackendConnection.client_write(data.backend, tags)
 
     # The CopyDone or CopyFail ending a failed COPY gets no response, so it's the write
     # itself that syncs the backend.
@@ -581,7 +581,7 @@ defmodule Supavisor.DbHandler do
   end
 
   def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
-    {backend, to_backend, due, evicted} = BackendConnection.write(data.backend, pkts)
+    {backend, to_backend, due, evicted} = BackendConnection.send_parked_write(data.backend, pkts)
     if evicted > 0, do: Telem.prepared_statements_evicted(evicted, data.id)
 
     send_result = if due == [], do: :ok, else: client_send(data, due)

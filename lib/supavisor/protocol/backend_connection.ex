@@ -1,27 +1,31 @@
 defmodule Supavisor.Protocol.BackendConnection do
   @moduledoc """
-  A pure model of a backend connection: the frontend messages the backend still has to
-  answer, what it's doing with the messages it reads, and the prepared statements it has.
+  A pure model of a backend connection: the requests the backend still has to answer, what it
+  does with the messages it reads, and the prepared statements it has.
 
   The DbHandler drives it with:
 
-  - `sent/2`: the ClientHandler is writing these messages straight to the backend socket.
-    A write with prepared statement packets (`{:ps, tag}`) is parked until `write/2`.
-  - `write/2`: the parked write, which goes through the DbHandler. What is actually sent for
-    each prepared statement packet depends on the statements the backend has.
+  - `client_write/2`: the ClientHandler is writing these messages straight to the backend
+    socket. A write with prepared statement packets (`{:ps, tag}`) is parked until
+    `send_parked_write/2`.
+  - `send_parked_write/2`: the parked write, which goes through the DbHandler. What is
+    actually sent for each prepared statement packet depends on the statements the backend
+    has.
   - `query/2`: a query Supavisor runs for itself. None of its responses reach the client.
   - `recv/2`: bytes from the backend. Returns what to forward to the client, and whether the
-    backend became idle with every message answered.
+    backend became idle with every request answered.
 
   ## States
 
-  - `:idle`: every message answered, outside a transaction.
-  - `:in_transaction`: every message answered, inside a transaction block.
+  - `:idle`: every request answered, outside a transaction.
+  - `:in_transaction`: every request answered, inside a transaction block.
   - `:busy`: waiting for responses.
-  - `:ignore_till_sync`: an extended protocol message failed, so the backend skips everything
-    until the next Sync.
+  - `:ignore_till_sync`: an extended query message failed, so the backend ignores every
+    message until the next Sync.
   - `{:copy_in, :simple | :extended}`: a COPY FROM STDIN, during which the backend ignores
     Syncs until CopyDone or CopyFail.
+
+  In `:idle`, `:in_transaction` and `:busy`, the backend answers each message in turn.
 
   A COPY that fails on bad data is over for the backend, but not for the client, which keeps
   sending CopyData until its CopyDone or CopyFail. The backend isn't synced until that arrives.
@@ -29,28 +33,29 @@ defmodule Supavisor.Protocol.BackendConnection do
   A Sync interleaved between CopyData messages of a COPY that then fails on bad data is
   assumed to have been ignored. Whether the backend read it before failing isn't observable.
 
-  ## Queue
+  ## Requests
 
-  Each message the backend still has to answer is queued as `{message, disposition, name}`,
-  `name` being the prepared statement it uses, creates or closes:
+  Each message the backend still has to answer is queued as a request,
+  `{message, action, name}`. `name` is the prepared statement it uses, creates or closes. The
+  action says what happens to its responses:
 
-  - `:forward`: sent by the client, its responses go to the client.
-  - `:intercept`: a Parse or Close sent by Supavisor to manage prepared statements. Its
-    ParseComplete or CloseComplete is consumed. An error goes to the client, since its next
+  - `:forward`: sent by the client. Its responses go to the client.
+  - `:skip`: a Parse or Close sent by Supavisor to manage prepared statements. Its
+    ParseComplete or CloseComplete is dropped. An error goes to the client, since its next
     messages depended on it.
-  - `:synthesize`: a Parse not sent because the backend already has the statement, or a Close
+  - `:fake`: a Parse not sent because the backend already has the statement, or a Close
     not sent because it doesn't. Its ParseComplete or CloseComplete is made up once every
-    message before it has been answered.
-  - `:internal`: part of a `query/2`. Every response is consumed.
+    request before it has been answered.
+  - `:internal`: part of a `query/2`. Every response is dropped.
 
   ## Prepared statements
 
   A statement is recorded when its Parse is sent, so later packets see it, and forgotten when
-  its Close is sent. If the backend fails the Parse or skips either message, that is undone.
+  its Close is sent. If the backend fails the Parse or ignores either message, that is undone.
   Packets sent before the backend's answer arrives may still fail with it, since whether it
   would succeed wasn't known when they were sent.
 
-  Undoing each skipped message on its own can leave the record wrong when a statement has
+  Undoing each ignored message on its own can leave the record wrong when a statement has
   more than one unanswered Parse or Close. The backend's next error about the statement
   corrects it. A Parse failing with 42P05 records the statement, and a Bind or Describe
   failing with 26000 forgets it.
@@ -63,14 +68,14 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   Record.defrecord(:backend,
     state: :idle,
-    queue: :queue.new(),
-    announced: nil,
+    requests: :queue.new(),
+    parked_write: nil,
     storage: nil,
     statements: nil,
     fatal_error: nil,
     buffer: <<>>,
-    in_flight: nil,
-    copy_end_due: false
+    streaming: nil,
+    client_in_copy: false
   )
 
   @type state() ::
@@ -88,30 +93,60 @@ defmodule Supavisor.Protocol.BackendConnection do
           | :copy_done
           | :copy_fail
 
-  @type entry() ::
-          {message(), :forward | :intercept | :synthesize | :internal,
-           PreparedStatements.statement_name() | nil}
+  @type action() :: :forward | :skip | :fake | :internal
+
+  @type request() :: {message(), action(), PreparedStatements.statement_name() | nil}
 
   @type t() ::
           record(:backend,
             state: state(),
-            queue: :queue.queue(entry()),
-            announced: [byte() | {:ps, byte()}] | nil,
+            requests: :queue.queue(request()),
+            parked_write: [byte() | {:ps, byte()}] | nil,
             storage: module(),
             statements: term(),
             fatal_error: map() | nil,
             buffer: binary(),
-            in_flight: {non_neg_integer(), forward? :: boolean()} | nil,
-            copy_end_due: boolean()
+            streaming: {bytes_left :: non_neg_integer(), forward? :: boolean()} | nil,
+            client_in_copy: boolean()
           )
 
-  @tracked [?1, ?2, ?3, ?T, ?n, ?C, ?I, ?s, ?G, ?Z, ?E]
-  @extended [:parse, :bind, :close, :describe, :execute]
+  @parse_complete ?1
+  @bind_complete ?2
+  @close_complete ?3
+  @row_description ?T
+  @no_data ?n
+  @command_complete ?C
+  @empty_query_response ?I
+  @portal_suspended ?s
+  @copy_in_response ?G
+  @ready_for_query ?Z
+  @error_response ?E
 
-  defguardp answering(state) when state in [:idle, :in_transaction, :busy]
+  # Any other backend message, like DataRow, doesn't move the backend along.
+  @tracked_messages [
+    @parse_complete,
+    @bind_complete,
+    @close_complete,
+    @row_description,
+    @no_data,
+    @command_complete,
+    @empty_query_response,
+    @portal_suspended,
+    @copy_in_response,
+    @ready_for_query,
+    @error_response
+  ]
+
+  @extended_query_messages [:parse, :bind, :close, :describe, :execute]
+
+  @duplicate_pstatement "42P05"
+  @undefined_pstatement "26000"
+
+  defguardp is_answering(state) when state in [:idle, :in_transaction, :busy]
 
   @spec new(module()) :: t()
-  def new(storage), do: backend(storage: storage, statements: storage.new(), queue: :queue.new())
+  def new(storage),
+    do: backend(storage: storage, statements: storage.new(), requests: :queue.new())
 
   @spec fatal_error(t()) :: map() | nil
   def fatal_error(backend(fatal_error: error)), do: error
@@ -119,138 +154,162 @@ defmodule Supavisor.Protocol.BackendConnection do
   @doc """
   Records the messages of a client write, in order, before they reach the backend.
   """
-  @spec sent(t(), [byte() | {:ps, byte()}]) :: t()
-  def sent(backend(announced: nil) = t, tags) do
-    {t, tags} = take_copy_end(t, tags)
+  @spec client_write(t(), [byte() | {:ps, byte()}]) :: t()
+  def client_write(backend(parked_write: nil) = backend, tags) do
+    {backend, tags} = drop_copy_end(backend, tags)
 
     if Enum.any?(tags, &match?({:ps, _}, &1)) do
-      backend(t, announced: tags)
+      backend(backend, parked_write: tags)
     else
-      {t, []} = t |> enqueue(Enum.map(tags, &forwarded/1)) |> advance()
-      t
+      {backend, []} =
+        backend |> add_requests(Enum.map(tags, &client_request/1)) |> pop_unanswered()
+
+      backend
     end
   end
 
   @doc """
   Decides what is sent for the parked write's packets.
 
-  Returns what to send to the backend, the ParseCompletes already due to the client, and how
-  many statements were evicted to make room.
+  Returns what to send to the backend, the responses already due to the client, and how many
+  statements were evicted to make room.
   """
-  @spec write(t(), [binary() | PreparedStatements.handled_pkt()]) ::
+  @spec send_parked_write(t(), [binary() | PreparedStatements.handled_pkt()]) ::
           {t(), iodata(), iodata(), non_neg_integer()}
-  def write(backend(announced: announced, storage: storage) = t, pkts) when is_list(announced) do
+  def send_parked_write(
+        backend(parked_write: tags, storage: storage, statements: statements) = backend,
+        pkts
+      )
+      when is_list(tags) do
     limit = PreparedStatements.backend_limit()
-    statements = backend(t, :statements)
 
     # Room is made before the packets are decided, so the write sends a Parse again for any
-    # statement it needs that was closed.
+    # statement it needs that was evicted.
     {evicted, statements} =
       if storage.size(statements) >= limit,
         do: storage.evict(statements, div(limit, 5)),
         else: {[], statements}
 
-    closes =
-      {Enum.map(evicted, &PreparedStatements.build_close_pkt/1),
-       Enum.map(evicted, &{:close, :intercept, &1})}
+    # The Closes go right before the first prepared statement packet. The client only sends it
+    # where the backend accepts it, e.g. not during a COPY, and whatever ends its batch flushes
+    # their responses too.
+    {plain_pkts, pkts} = Enum.split_while(pkts, &is_binary/1)
+    {plain_tags, tags} = Enum.split_while(tags, &is_integer/1)
+    close_pkts = Enum.map(evicted, &PreparedStatements.build_close_pkt/1)
+    close_requests = Enum.map(evicted, &{:close, :skip, &1})
 
-    {sent, prepared, statements, _closes} =
-      Enum.reduce(pkts, {[], [], statements, closes}, &prepare(&1, &2, storage))
+    {to_send, prepared, statements} = prepare_pkts(pkts, statements, storage, [], [])
 
-    entries = substitute(announced, Enum.reverse(prepared), [])
+    requests =
+      Enum.map(plain_tags, &client_request/1) ++
+        close_requests ++ write_requests(tags, prepared, [])
 
-    {t, due} =
-      t
-      |> backend(announced: nil, statements: statements)
-      |> enqueue(entries)
-      |> advance()
+    {backend, fake_responses} =
+      backend
+      |> backend(parked_write: nil, statements: statements)
+      |> add_requests(requests)
+      |> pop_unanswered()
 
-    {t, Enum.reverse(sent), due, length(evicted)}
+    {backend, [plain_pkts, close_pkts | to_send], fake_responses, length(evicted)}
   end
 
   @doc """
   Records a query Supavisor is about to send for itself.
   """
   @spec query(t(), iodata()) :: t()
-  def query(t, msgs), do: enqueue(t, internal(IO.iodata_to_binary(msgs), []))
+  def query(backend, msgs),
+    do: add_requests(backend, internal_requests(IO.iodata_to_binary(msgs), []))
 
   @doc """
   Follows the backend through its messages.
 
   Returns what to forward to the client, and whether the backend became idle, outside a
-  transaction, with every message answered and no write parked.
+  transaction, with every request answered and no write parked.
   """
   @spec recv(t(), binary()) :: {t(), iodata(), boolean()}
-  def recv(backend(buffer: buffer) = t, bin) do
-    {t, out, synced?} = frame(backend(t, buffer: <<>>), buffer <> bin, [], false)
-    {t, Enum.reverse(out), synced?}
+  def recv(backend(buffer: buffer) = backend, data) do
+    {backend, out, synced?} =
+      parse_input(backend(backend, buffer: <<>>), buffer <> data, [], false)
+
+    {backend, Enum.reverse(out), synced?}
   end
 
   @doc """
-  Returns whether the backend is idle, outside a transaction, with every message answered and
+  Returns whether the backend is idle, outside a transaction, with every request answered and
   no write parked.
   """
   @spec synced?(t()) :: boolean()
-  def synced?(backend(state: state, announced: announced, copy_end_due: copy_end_due)),
-    do: state == :idle and announced == nil and not copy_end_due
+  def synced?(backend(state: state, parked_write: parked_write, client_in_copy: client_in_copy)),
+    do: state == :idle and parked_write == nil and not client_in_copy
 
-  defp prepare(bin, {sent, prepared, statements, closes}, _storage) when is_binary(bin),
-    do: {[bin | sent], prepared, statements, closes}
+  ## Client writes
 
-  # The Closes go right before the first prepared statement packet. The client only sends it
-  # where the backend accepts it, e.g. not during a COPY, and whatever ends its batch flushes
-  # their responses too.
-  defp prepare(pkt, {sent, prepared, statements, {close_pkts, close_entries}}, storage) do
-    {tag, bins, entries, statements} = prepare_pkt(pkt, statements, storage)
+  defp prepare_pkts([pkt | pkts], statements, storage, to_send, prepared) when is_binary(pkt),
+    do: prepare_pkts(pkts, statements, storage, [pkt | to_send], prepared)
 
-    {Enum.reverse(close_pkts ++ bins, sent), [{tag, close_entries ++ entries} | prepared],
-     statements, {[], []}}
+  defp prepare_pkts([pkt | pkts], statements, storage, to_send, prepared) do
+    {tag, pkt_to_send, requests, statements} = prepare_pkt(pkt, statements, storage)
+    prepared = [{tag, requests} | prepared]
+    prepare_pkts(pkts, statements, storage, [pkt_to_send | to_send], prepared)
   end
 
-  defp prepare_pkt({type, name, pkt, parse_pkt}, statements, storage)
-       when type in [:bind_pkt, :describe_pkt] do
-    {tag, message} = if type == :bind_pkt, do: {?B, :bind}, else: {?D, :describe}
+  defp prepare_pkts([], statements, _storage, to_send, prepared),
+    do: {Enum.reverse(to_send), Enum.reverse(prepared), statements}
 
-    if storage.member?(statements, name) do
-      {tag, [pkt], [{message, :forward, name}], storage.touch(statements, name)}
-    else
-      {tag, [parse_pkt, pkt], [{:parse, :intercept, name}, {message, :forward, name}],
-       storage.put(statements, name)}
-    end
-  end
+  defp prepare_pkt({:bind_pkt, name, pkt, parse_pkt}, statements, storage),
+    do: prepare_statement_use(?B, name, pkt, parse_pkt, statements, storage)
+
+  defp prepare_pkt({:describe_pkt, name, pkt, parse_pkt}, statements, storage),
+    do: prepare_statement_use(?D, name, pkt, parse_pkt, statements, storage)
 
   defp prepare_pkt({:parse_pkt, name, pkt}, statements, storage) do
-    if storage.member?(statements, name) do
-      {?P, [], [{:parse, :synthesize, name}], storage.touch(statements, name)}
-    else
-      {?P, [pkt], [{:parse, :forward, name}], storage.put(statements, name)}
-    end
+    if storage.member?(statements, name),
+      do: {?P, [], [{:parse, :fake, name}], storage.touch(statements, name)},
+      else: {?P, pkt, [{:parse, :forward, name}], storage.put(statements, name)}
   end
 
   defp prepare_pkt({:close_pkt, name, pkt}, statements, storage) do
+    if storage.member?(statements, name),
+      do: {?C, pkt, [{:close, :forward, name}], storage.delete(statements, name)},
+      else: {?C, [], [{:close, :fake, name}], statements}
+  end
+
+  # A Bind or Describe for a statement the backend doesn't have sends its Parse first.
+  defp prepare_statement_use(tag, name, pkt, parse_pkt, statements, storage) do
+    request = {message(tag), :forward, name}
+
     if storage.member?(statements, name) do
-      {?C, [pkt], [{:close, :forward, name}], storage.delete(statements, name)}
+      {tag, pkt, [request], storage.touch(statements, name)}
     else
-      {?C, [], [{:close, :synthesize, name}], statements}
+      requests = [{:parse, :skip, name}, request]
+      {tag, [parse_pkt, pkt], requests, storage.put(statements, name)}
     end
   end
 
-  defp substitute([{:ps, tag} | tags], [{tag, entries} | prepared], acc),
-    do: substitute(tags, prepared, Enum.reverse(entries, acc))
+  defp write_requests([{:ps, tag} | tags], [{tag, requests} | prepared], acc),
+    do: write_requests(tags, prepared, Enum.reverse(requests, acc))
 
-  defp substitute([tag | tags], prepared, acc) when is_integer(tag),
-    do: substitute(tags, prepared, [forwarded(tag) | acc])
+  defp write_requests([tag | tags], prepared, acc) when is_integer(tag),
+    do: write_requests(tags, prepared, [client_request(tag) | acc])
 
-  defp substitute([], [], acc), do: Enum.reverse(acc)
+  defp write_requests([], [], acc), do: Enum.reverse(acc)
 
-  defp internal(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, acc),
-    do: internal(rest, [{message!(tag), :internal, nil} | acc])
+  # The backend ignores the CopyDone or CopyFail that ends a COPY that already failed.
+  defp drop_copy_end(backend(client_in_copy: true) = backend, tags) do
+    case Enum.split_while(tags, &(&1 not in [?c, ?f])) do
+      {before, [_copy_end | rest]} -> {backend(backend, client_in_copy: false), before ++ rest}
+      {_, []} -> {backend, tags}
+    end
+  end
 
-  defp internal(<<>>, acc), do: Enum.reverse(acc)
+  defp drop_copy_end(backend, tags), do: {backend, tags}
 
-  defp forwarded(tag), do: {message!(tag), :forward, nil}
+  defp client_request(tag), do: {message(tag), :forward, nil}
 
-  defp message!(tag), do: message(tag) || raise("untracked message #{<<tag>>}")
+  defp internal_requests(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, acc),
+    do: internal_requests(rest, [{message(tag), :internal, nil} | acc])
+
+  defp internal_requests(<<>>, acc), do: Enum.reverse(acc)
 
   defp message(?P), do: :parse
   defp message(?B), do: :bind
@@ -262,237 +321,265 @@ defmodule Supavisor.Protocol.BackendConnection do
   defp message(?F), do: :function_call
   defp message(?c), do: :copy_done
   defp message(?f), do: :copy_fail
-  defp message(_tag), do: nil
+  defp message(tag), do: raise("untracked message #{<<tag>>}")
 
-  defp enqueue(t, []), do: t
+  ## Backend messages
 
-  defp enqueue(backend(state: state, queue: queue) = t, entries) do
-    state = if answering(state), do: :busy, else: state
-    backend(t, state: state, queue: :queue.join(queue, :queue.from_list(entries)))
-  end
-
-  # The backend ignores CopyDone and CopyFail outside a COPY, and a Parse or Close that wasn't
-  # sent is answered as soon as it's next. Its response belongs to a new extended protocol
-  # batch, still waiting for its Sync.
-  defp advance(backend(state: state, queue: queue) = t) when answering(state),
-    do: advance(t, queue, [])
-
-  defp advance(t), do: {t, []}
-
-  defp advance(t, queue, due) do
-    case :queue.peek(queue) do
-      {:value, {message, _, _}} when message in [:copy_done, :copy_fail] ->
-        advance(t, :queue.drop(queue), due)
-
-      {:value, {:parse, :synthesize, _}} ->
-        advance(backend(t, state: :busy), :queue.drop(queue), [
-          Server.parse_complete_message() | due
-        ])
-
-      {:value, {:close, :synthesize, _}} ->
-        advance(backend(t, state: :busy), :queue.drop(queue), [
-          Server.close_complete_message() | due
-        ])
-
-      _ ->
-        {backend(t, queue: queue), Enum.reverse(due)}
-    end
-  end
-
-  defp frame(backend(in_flight: {remaining, forward?}) = t, bin, out, synced?) do
-    case bin do
-      <<part::binary-size(remaining), rest::binary>> ->
-        frame(backend(t, in_flight: nil), rest, keep(out, forward?, part), synced?)
+  defp parse_input(backend(streaming: {bytes_left, forward?}) = backend, data, out, synced?) do
+    case data do
+      <<part::binary-size(bytes_left), rest::binary>> ->
+        out = maybe_forward(out, part, forward?)
+        parse_input(backend(backend, streaming: nil), rest, out, synced?)
 
       part ->
-        in_flight = {remaining - byte_size(part), forward?}
-        {backend(t, in_flight: in_flight), keep(out, forward?, part), synced?}
+        streaming = {bytes_left - byte_size(part), forward?}
+        {backend(backend, streaming: streaming), maybe_forward(out, part, forward?), synced?}
     end
   end
 
-  defp frame(t, <<tag, len::32, payload::binary-size(len - 4), rest::binary>> = bin, out, synced?)
-       when tag in @tracked do
-    {t, out} = handle(t, tag, payload, binary_part(bin, 0, len + 1), out)
-    frame(t, rest, out, synced? or (tag == ?Z and synced?(t)))
+  defp parse_input(
+         backend,
+         <<type, len::32, body::binary-size(len - 4), rest::binary>> = data,
+         out,
+         synced?
+       )
+       when type in @tracked_messages do
+    out = maybe_forward(out, binary_part(data, 0, len + 1), forward?(backend, type))
+    {backend, fake_responses} = backend |> handle_message(type, body) |> pop_unanswered()
+    out = Enum.reverse(fake_responses, out)
+    parse_input(backend, rest, out, synced? or (type == @ready_for_query and synced?(backend)))
   end
 
-  # Messages that don't move the backend along, like DataRow, are streamed through without
-  # waiting for the whole message.
-  defp frame(t, <<tag, len::32, _::binary>> = bin, out, synced?) when tag not in @tracked,
-    do: frame(backend(t, in_flight: {len + 1, not internal_head?(t)}), bin, out, synced?)
-
-  defp frame(t, <<>>, out, synced?), do: {t, out, synced?}
-  defp frame(t, partial, out, synced?), do: {backend(t, buffer: partial), out, synced?}
-
-  defp keep(out, true, part), do: [part | out]
-  defp keep(out, false, _part), do: out
-
-  defp handle(t, tag, payload, pkt, out) do
-    t = if tag == ?E, do: record_fatal(t, payload), else: t
-    forward? = forward?(t, tag)
-    {t, due} = t |> step(tag, payload) |> advance()
-    {t, Enum.reverse(due, keep(out, forward?, pkt))}
+  # A message that doesn't move the backend along is streamed through without waiting for the
+  # whole message.
+  defp parse_input(backend, <<type, len::32, _::binary>> = data, out, synced?)
+       when type not in @tracked_messages do
+    streaming = {len + 1, forward?(backend, type)}
+    parse_input(backend(backend, streaming: streaming), data, out, synced?)
   end
 
-  defp record_fatal(t, payload) do
-    error = Server.decode_error_response(payload)
-    if error["S"] in ["FATAL", "PANIC"], do: backend(t, fatal_error: error), else: t
-  end
+  defp parse_input(backend, <<>>, out, synced?), do: {backend, out, synced?}
 
-  defp forward?(backend(state: state, queue: queue) = t, tag) do
-    case {tag, :queue.peek(queue)} do
-      {?1, {:value, {:parse, :intercept, _}}} when answering(state) -> false
-      {?3, {:value, {:close, :intercept, _}}} when answering(state) -> false
-      _ -> not internal_head?(t)
+  defp parse_input(backend, partial, out, synced?),
+    do: {backend(backend, buffer: partial), out, synced?}
+
+  defp maybe_forward(out, part, true), do: [part | out]
+  defp maybe_forward(out, _part, false), do: out
+
+  # Where a message goes depends on the request it answers, the one at the head.
+  defp forward?(backend(state: state) = backend, type) do
+    case head_request(backend) do
+      {_, :internal, _} -> false
+      {:parse, :skip, _} when type == @parse_complete and is_answering(state) -> false
+      {:close, :skip, _} when type == @close_complete and is_answering(state) -> false
+      _ -> true
     end
   end
 
-  defp internal_head?(backend(queue: queue)),
-    do: match?({:value, {_, :internal, _}}, :queue.peek(queue))
+  defp handle_message(backend, type, body) do
+    backend = if type == @error_response, do: record_fatal_error(backend, body), else: backend
 
-  defp step(backend(state: state, queue: queue) = t, ?Z, <<status>>) when answering(state) do
-    case :queue.peek(queue) do
-      :empty ->
-        ready(t, status)
+    case backend(backend, :state) do
+      state when is_answering(state) -> answering(backend, type, body)
+      :ignore_till_sync -> ignoring_till_sync(backend, type, body)
+      {:copy_in, mode} -> copy_in(backend, mode, type, body)
+    end
+  end
 
-      {:value, {message, _, _}} when message in [:sync, :query, :function_call] ->
-        ready(pop(t), status)
+  defp record_fatal_error(backend, body) do
+    error = Server.decode_error_response(body)
+    if error["S"] in ["FATAL", "PANIC"], do: backend(backend, fatal_error: error), else: backend
+  end
+
+  # A response completes the request at the head if that's the request it answers.
+  defp answering(backend, @parse_complete, _body), do: pop_request(backend, :parse)
+  defp answering(backend, @bind_complete, _body), do: pop_request(backend, :bind)
+  defp answering(backend, @close_complete, _body), do: pop_request(backend, :close)
+
+  defp answering(backend, type, _body) when type in [@row_description, @no_data],
+    do: pop_request(backend, :describe)
+
+  defp answering(backend, type, _body)
+       when type in [@command_complete, @empty_query_response, @portal_suspended],
+       do: pop_request(backend, :execute)
+
+  defp answering(backend, @copy_in_response, _body) do
+    case head_request(backend) do
+      {:execute, _, _} -> backend(pop_request(backend), state: {:copy_in, :extended})
+      {:query, _, _} -> backend(pop_request(backend), state: {:copy_in, :simple})
+      _ -> backend
+    end
+  end
+
+  defp answering(backend, @ready_for_query, <<status>>) do
+    case head_request(backend) do
+      nil ->
+        ready_for_query(backend, status)
+
+      {message, _, _} when message in [:sync, :query, :function_call] ->
+        backend |> pop_request() |> ready_for_query(status)
 
       _ ->
-        t
+        backend
     end
   end
 
-  defp step(backend(state: state, queue: queue) = t, tag, payload) when answering(state) do
-    case {tag, :queue.peek(queue)} do
-      {?1, {:value, {:parse, _, _}}} ->
-        pop(t)
-
-      {?2, {:value, {:bind, _, _}}} ->
-        pop(t)
-
-      {?3, {:value, {:close, _, _}}} ->
-        pop(t)
-
-      {tag, {:value, {:describe, _, _}}} when tag in [?T, ?n] ->
-        pop(t)
-
-      {tag, {:value, {:execute, _, _}}} when tag in [?C, ?I, ?s] ->
-        pop(t)
-
-      {?G, {:value, {:execute, _, _}}} ->
-        backend(pop(t), state: {:copy_in, :extended})
-
-      {?G, {:value, {:query, _, _}}} ->
-        backend(pop(t), state: {:copy_in, :simple})
-
-      {?E, {:value, {message, _, _} = entry}} when message in @extended ->
-        code = Server.decode_error_response(payload)["C"]
-        t |> skip() |> reconcile_statement(entry, code) |> backend(state: :ignore_till_sync)
+  defp answering(backend, @error_response, body) do
+    case head_request(backend) do
+      {message, _, _} = request when message in @extended_query_messages ->
+        code = Server.decode_error_response(body)["C"]
+        backend = backend |> discard_request() |> reconcile_statement(request, code)
+        backend(backend, state: :ignore_till_sync)
 
       _ ->
-        t
+        backend
     end
   end
 
-  defp step(backend(state: :ignore_till_sync) = t, ?Z, <<status>>),
-    do: t |> skip_through(:sync) |> ready(status)
+  defp ignoring_till_sync(backend, @ready_for_query, <<status>>),
+    do: backend |> pop_requests_through(:sync) |> ready_for_query(status)
 
-  defp step(backend(state: {:copy_in, kind}) = t, ?C, _payload),
-    do: t |> skip_through(:copy_done) |> end_copy(kind)
+  defp ignoring_till_sync(backend, _type, _body), do: backend
 
-  defp step(backend(state: {:copy_in, :extended}) = t, ?E, _payload),
-    do: backend(skip_copy_syncs(t), state: :ignore_till_sync)
+  defp copy_in(backend, mode, @command_complete, _body),
+    do: backend |> pop_requests_through(:copy_done) |> leave_copy_in(mode)
 
-  defp step(backend(state: {:copy_in, :simple}) = t, ?E, _payload),
-    do: t |> skip_copy_syncs() |> end_copy(:simple)
+  defp copy_in(backend, :extended, @error_response, _body),
+    do: backend(discard_copy_in_requests(backend), state: :ignore_till_sync)
 
-  defp step(t, _tag, _payload), do: t
+  defp copy_in(backend, :simple, @error_response, _body),
+    do: backend |> discard_copy_in_requests() |> leave_copy_in(:simple)
 
-  defp ready(backend(queue: queue) = t, status) do
+  defp copy_in(backend, _mode, _type, _body), do: backend
+
+  defp ready_for_query(backend(requests: requests) = backend, status) do
     state =
       cond do
-        not :queue.is_empty(queue) -> :busy
+        not :queue.is_empty(requests) -> :busy
         status == ?I -> :idle
         true -> :in_transaction
       end
 
-    backend(t, state: state)
+    backend(backend, state: state)
   end
 
   # A simple Query still owes its ReadyForQuery once the COPY is over.
-  defp end_copy(backend(queue: queue) = t, :simple),
-    do: backend(t, state: :busy, queue: :queue.in_r({:query, :forward, nil}, queue))
+  defp leave_copy_in(backend(requests: requests) = backend, :simple),
+    do: backend(backend, state: :busy, requests: :queue.in_r({:query, :forward, nil}, requests))
 
-  defp end_copy(t, :extended), do: backend(t, state: :busy)
+  defp leave_copy_in(backend, :extended), do: backend(backend, state: :busy)
 
-  # Syncs sent during copy-in were ignored, and so is the CopyDone or CopyFail after them.
-  defp skip_copy_syncs(backend(queue: queue) = t) do
-    case :queue.peek(queue) do
-      {:value, {:sync, _, _}} -> t |> skip() |> skip_copy_syncs()
-      {:value, {message, _, _}} when message in [:copy_done, :copy_fail] -> skip(t)
-      {:value, _} -> t
-      :empty -> backend(t, copy_end_due: true)
+  # The Syncs sent during copy-in were ignored, and so is the CopyDone or CopyFail after them.
+  # The client may not have sent that yet.
+  defp discard_copy_in_requests(backend) do
+    case head_request(backend) do
+      {:sync, _, _} -> backend |> discard_request() |> discard_copy_in_requests()
+      {message, _, _} when message in [:copy_done, :copy_fail] -> discard_request(backend)
+      nil -> backend(backend, client_in_copy: true)
+      _ -> backend
     end
   end
 
-  # The backend ignores the CopyDone or CopyFail ending a COPY that already failed.
-  defp take_copy_end(backend(copy_end_due: true) = t, tags) do
-    case Enum.split_while(tags, &(&1 not in [?c, ?f])) do
-      {before, [_copy_end | rest]} -> {backend(t, copy_end_due: false), before ++ rest}
-      {_, []} -> {t, tags}
+  ## Requests
+
+  defp add_requests(backend, []), do: backend
+
+  defp add_requests(backend(state: state, requests: requests) = backend, new_requests) do
+    state = if is_answering(state), do: :busy, else: state
+    requests = :queue.join(requests, :queue.from_list(new_requests))
+    backend(backend, state: state, requests: requests)
+  end
+
+  defp head_request(backend(requests: requests)) do
+    case :queue.peek(requests) do
+      {:value, request} -> request
+      :empty -> nil
     end
   end
 
-  defp take_copy_end(t, tags), do: {t, tags}
+  defp pop_request(backend(requests: requests) = backend),
+    do: backend(backend, requests: :queue.drop(requests))
 
-  defp skip_through(backend(queue: queue) = t, message) do
-    case :queue.peek(queue) do
-      {:value, {^message, _, _}} -> skip(t)
-      {:value, _} -> t |> skip() |> skip_through(message)
-      :empty -> t
+  defp pop_request(backend, message) do
+    case head_request(backend) do
+      {^message, _, _} -> pop_request(backend)
+      _ -> backend
     end
   end
 
-  defp pop(backend(queue: queue) = t), do: backend(t, queue: :queue.drop(queue))
+  # The backend answered the first `message`, and ignored every request before it.
+  defp pop_requests_through(backend, message) do
+    case head_request(backend) do
+      {^message, _, _} -> pop_request(backend)
+      nil -> backend
+      _ -> backend |> discard_request() |> pop_requests_through(message)
+    end
+  end
 
-  # The backend didn't carry out the message at the head, so its effect on the statements
-  # it has is undone.
-  defp skip(backend(queue: queue, storage: storage, statements: statements) = t) do
-    {{:value, entry}, queue} = :queue.out(queue)
+  # The backend ignores a CopyDone or CopyFail outside a COPY, and a Parse or Close that wasn't
+  # sent is answered as soon as it's next. Its response belongs to a new extended protocol
+  # batch, still waiting for its Sync.
+  defp pop_unanswered(backend(state: state, requests: requests) = backend)
+       when is_answering(state),
+       do: pop_unanswered(backend, requests, [])
+
+  defp pop_unanswered(backend), do: {backend, []}
+
+  defp pop_unanswered(backend, requests, fake_responses) do
+    case :queue.peek(requests) do
+      {:value, {message, _, _}} when message in [:copy_done, :copy_fail] ->
+        pop_unanswered(backend, :queue.drop(requests), fake_responses)
+
+      {:value, {:parse, :fake, _}} ->
+        fake_responses = [Server.parse_complete_message() | fake_responses]
+        pop_unanswered(backend(backend, state: :busy), :queue.drop(requests), fake_responses)
+
+      {:value, {:close, :fake, _}} ->
+        fake_responses = [Server.close_complete_message() | fake_responses]
+        pop_unanswered(backend(backend, state: :busy), :queue.drop(requests), fake_responses)
+
+      _ ->
+        {backend(backend, requests: requests), Enum.reverse(fake_responses)}
+    end
+  end
+
+  # The backend didn't carry out the request at the head, so its effect on the statements is
+  # undone.
+  defp discard_request(
+         backend(requests: requests, storage: storage, statements: statements) = backend
+       ) do
+    {{:value, request}, requests} = :queue.out(requests)
 
     statements =
-      case entry do
-        {:parse, disposition, name}
-        when disposition in [:forward, :intercept] and is_binary(name) ->
+      case request do
+        {:parse, action, name} when action in [:forward, :skip] and is_binary(name) ->
           storage.delete(statements, name)
 
-        {:close, disposition, name}
-        when disposition in [:forward, :intercept] and is_binary(name) ->
+        {:close, action, name} when action in [:forward, :skip] and is_binary(name) ->
           storage.put(statements, name)
 
         _ ->
           statements
       end
 
-    backend(t, queue: queue, statements: statements)
+    backend(backend, requests: requests, statements: statements)
   end
 
   defp reconcile_statement(
-         backend(storage: storage, statements: statements) = t,
+         backend(storage: storage, statements: statements) = backend,
          {:parse, _, name},
-         "42P05"
+         @duplicate_pstatement
        )
        when is_binary(name),
-       do: backend(t, statements: storage.put(statements, name))
+       do: backend(backend, statements: storage.put(statements, name))
 
   defp reconcile_statement(
-         backend(storage: storage, statements: statements) = t,
+         backend(storage: storage, statements: statements) = backend,
          {message, _, name},
-         "26000"
+         @undefined_pstatement
        )
        when message in [:bind, :describe] and is_binary(name),
-       do: backend(t, statements: storage.delete(statements, name))
+       do: backend(backend, statements: storage.delete(statements, name))
 
-  defp reconcile_statement(t, _entry, _code), do: t
+  defp reconcile_statement(backend, _request, _code), do: backend
 end
