@@ -226,16 +226,14 @@ defmodule Supavisor.Protocol.BackendConnection do
   transaction, with every request answered and no write parked.
   """
   @spec recv(t(), binary()) :: {t(), iodata(), boolean()}
-  def recv(backend(buffer: buffer) = backend, data) do
-    # Appending to an empty buffer would still copy `data`.
-    {backend, data} =
-      if buffer == <<>>,
-        do: {backend, data},
-        else: {backend(backend, buffer: <<>>), buffer <> data}
-
+  def recv(backend(buffer: <<>>) = backend, data) do
     {backend, out, synced?} = parse_input(backend, data)
     {backend, Enum.reverse(out), synced?}
   end
+
+  # Appending to an empty buffer would still copy `data`.
+  def recv(backend(buffer: buffer) = backend, data),
+    do: recv(backend(backend, buffer: <<>>), buffer <> data)
 
   @doc """
   Returns whether the backend is idle, outside a transaction, with every request answered and
@@ -347,20 +345,13 @@ defmodule Supavisor.Protocol.BackendConnection do
        )
        when type in @tracked_messages do
     next = pos + len + 1
-    forward? = forward?(backend, type)
+    {from, out} = forward(out, data, from, pos, forward?(backend, type))
     {backend, fake_responses} = backend |> handle_message(type, body) |> pop_unanswered()
 
     {from, out} =
-      case {forward?, fake_responses} do
-        {true, []} ->
-          {from || pos, out}
-
-        {true, _} ->
-          {nil, Enum.reverse(fake_responses, forward_range(out, data, from || pos, next))}
-
-        {false, _} ->
-          {nil, Enum.reverse(fake_responses, forward_range(out, data, from, pos))}
-      end
+      if fake_responses == [],
+        do: {from, out},
+        else: {nil, Enum.reverse(fake_responses, forward_range(out, data, from, next))}
 
     synced? = synced? or (type == @ready_for_query and synced?(backend))
     parse_input(backend, data, rest, next, from, out, synced?)
@@ -378,13 +369,8 @@ defmodule Supavisor.Protocol.BackendConnection do
          synced?
        )
        when type not in @tracked_messages do
+    {from, out} = forward(out, data, from, pos, forward?(backend, type))
     {rest, next} = skip_untracked(rest, pos + len + 1)
-
-    {from, out} =
-      if forward?(backend, type),
-        do: {from || pos, out},
-        else: {nil, forward_range(out, data, from, pos)}
-
     parse_input(backend, data, rest, next, from, out, synced?)
   end
 
@@ -392,12 +378,8 @@ defmodule Supavisor.Protocol.BackendConnection do
   defp parse_input(backend, data, <<type, len::32, rest::binary>>, pos, from, out, synced?)
        when type not in @tracked_messages do
     forward? = forward?(backend, type)
-
-    out =
-      if forward?,
-        do: forward_range(out, data, from || pos, byte_size(data)),
-        else: forward_range(out, data, from, pos)
-
+    {from, out} = forward(out, data, from, pos, forward?)
+    out = forward_range(out, data, from, byte_size(data))
     streaming = {len - 4 - byte_size(rest), forward?}
     {backend(backend, streaming: streaming), out, synced?}
   end
@@ -413,6 +395,10 @@ defmodule Supavisor.Protocol.BackendConnection do
        do: skip_untracked(rest, pos + len + 1)
 
   defp skip_untracked(rest, pos), do: {rest, pos}
+
+  # Extends the range to forward over the message at `pos`, or ends it before.
+  defp forward(out, _data, from, pos, true), do: {from || pos, out}
+  defp forward(out, data, from, pos, false), do: {nil, forward_range(out, data, from, pos)}
 
   defp forward_range(out, _data, nil, _to), do: out
   defp forward_range(out, data, 0, to) when to == byte_size(data), do: [data | out]
