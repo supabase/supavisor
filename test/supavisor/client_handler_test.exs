@@ -175,7 +175,7 @@ defmodule Supavisor.ClientHandlerTest do
   end
 
   describe "handle_event/4 :busy message expectation" do
-    test "forwards the forwarded messages to the DbHandler in transaction mode" do
+    setup do
       {db_sock, _recv} = sockpair()
 
       data = %{
@@ -187,6 +187,10 @@ defmodule Supavisor.ClientHandlerTest do
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
+      {:ok, data: data}
+    end
+
+    test "forwards the forwarded messages to the DbHandler in transaction mode", %{data: data} do
       batch =
         <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">> <> <<?Q, 12::32, "SELECT 3">>
 
@@ -196,40 +200,7 @@ defmodule Supavisor.ClientHandlerTest do
       assert_received {:"$gen_cast", {:expect_messages, 1, [?Q, ?Q, ?Q]}}
     end
 
-    test "forwards an extended batch without its Sync" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        write_seq: 0,
-        tracked_seq: 0,
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
-
-      batch =
-        <<?P, 16::32, 0, "select 1", 0, 0, 0>> <>
-          <<?B, 12::32, 0, 0, 0, 0, 0, 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
-
-      assert {:keep_state, _data} =
-               @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
-
-      assert_received {:"$gen_cast", {:expect_messages, 1, [?P, ?B, ?E]}}
-    end
-
-    test "forwards each write's messages separately" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        write_seq: 0,
-        tracked_seq: 0,
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
-
+    test "forwards each write's messages separately", %{data: data} do
       batch = <<?P, 16::32, 0, "select 1", 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
 
       assert {:keep_state, data} =
@@ -243,17 +214,8 @@ defmodule Supavisor.ClientHandlerTest do
       assert_received {:"$gen_cast", {:expect_messages, 2, [?S]}}
     end
 
-    test "announces a write without tracked messages" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        write_seq: 4,
-        tracked_seq: 2,
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
+    test "announces a write without tracked messages", %{data: data} do
+      data = %{data | write_seq: 4, tracked_seq: 2}
 
       assert {:keep_state, data} =
                @subject.handle_event(:info, {:tcp, :sock, <<?d, 6::32, "1\n">>}, :busy, data)
@@ -263,17 +225,8 @@ defmodule Supavisor.ClientHandlerTest do
       assert_received {:"$gen_cast", {:expect_messages, 5, []}}
     end
 
-    test "does not send an expectation in session mode" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :session,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        write_seq: 0,
-        tracked_seq: 0,
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
+    test "does not send an expectation in session mode", %{data: data} do
+      data = %{data | mode: :session}
 
       batch = <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">>
 

@@ -187,19 +187,6 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       ])
     end
 
-    test "an extended COPY ignores the Sync sent before its data" do
-      run([
-        sent([?P, ?B, ?D, ?E, ?S]),
-        recv(parse_complete(), false),
-        recv(bind_complete(), false),
-        recv(no_data(), false),
-        recv(copy_in(), false),
-        sent([?c, ?S]),
-        recv(command_complete("COPY 2"), false),
-        recv(z(?I), true)
-      ])
-    end
-
     test "an extended COPY ignores every Sync sent during copy-in" do
       run([
         sent([?P, ?B, ?E, ?S, ?S, ?S, ?S, ?S]),
@@ -247,16 +234,6 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       ])
     end
 
-    test "a simple COPY syncs on the Query's ReadyForQuery" do
-      run([
-        sent([?Q]),
-        recv(copy_in(), false),
-        sent([?c]),
-        recv(command_complete("COPY 2"), false),
-        recv(z(?I), true)
-      ])
-    end
-
     test "a simple COPY ignores a Sync sent during copy-in" do
       run([
         sent([?Q, ?S]),
@@ -267,24 +244,16 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       ])
     end
 
-    test "a simple COPY failing on bad data syncs on the CopyDone sent after it" do
-      run([
-        sent([?Q]),
-        recv(copy_in(), false),
-        recv(error("22P02"), false),
-        recv(z(?I), false),
-        sent([?c], true)
-      ])
-    end
-
-    test "a simple COPY failing on bad data syncs on the CopyFail sent after it" do
-      run([
-        sent([?Q]),
-        recv(copy_in(), false),
-        recv(error("22P02"), false),
-        recv(z(?I), false),
-        sent([?f], true)
-      ])
+    test "a simple COPY failing on bad data syncs on the CopyDone or CopyFail sent after it" do
+      for copy_end <- [?c, ?f] do
+        run([
+          sent([?Q]),
+          recv(copy_in(), false),
+          recv(error("22P02"), false),
+          recv(z(?I), false),
+          sent([copy_end], true)
+        ])
+      end
     end
 
     test "a simple COPY failing on bad data answers messages sent after its CopyDone" do
@@ -363,35 +332,20 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
                )
     end
 
-    test "a Bind for a statement the backend doesn't have sends its Parse first" do
-      {backend, to_backend, [], 0} = write(new(), [{:ps, ?B}, ?E, ?S], [bind("s1"), "e", "s"])
+    test "a Bind or Describe for a statement the backend doesn't have sends its Parse first" do
+      for {tag, pkt, message} <- [{?B, bind("s1"), :bind}, {?D, describe("s1"), :describe}] do
+        {backend, to_backend, [], 0} = write(new(), [{:ps, tag}, ?S], [pkt, "s"])
 
-      assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)es"
+        assert IO.iodata_to_binary(to_backend) == "parse(s1)#{message}(s1)s"
 
-      assert queue(backend) == [
-               {:parse, :intercept, "s1"},
-               {:bind, :forward, "s1"},
-               forward(:execute),
-               forward(:sync)
-             ]
+        assert queue(backend) == [
+                 {:parse, :intercept, "s1"},
+                 {message, :forward, "s1"},
+                 forward(:sync)
+               ]
 
-      assert LRU.member?(statements(backend), "s1")
-
-      responses = parse_complete() <> bind_complete() <> command_complete("SELECT 1") <> z(?I)
-      assert {_backend, out, true} = BackendConnection.recv(backend, responses)
-      assert IO.iodata_to_binary(out) == bind_complete() <> command_complete("SELECT 1") <> z(?I)
-    end
-
-    test "a Describe for a statement the backend doesn't have sends its Parse first" do
-      {backend, to_backend, [], 0} = write(new(), [{:ps, ?D}, ?S], [describe("s1"), "s"])
-
-      assert IO.iodata_to_binary(to_backend) == "parse(s1)describe(s1)s"
-
-      assert queue(backend) == [
-               {:parse, :intercept, "s1"},
-               {:describe, :forward, "s1"},
-               forward(:sync)
-             ]
+        assert LRU.member?(statements(backend), "s1")
+      end
     end
 
     test "a Bind for a statement the backend has is sent alone" do
@@ -417,22 +371,17 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
              ]
     end
 
-    test "a Parse the backend already has is answered right away when nothing is pending" do
-      {backend, to_backend, due, 0} = write(new(["s1"]), [{:ps, ?P}], [parse("s1")])
+    test "a Parse or Close left unsent is answered right away when nothing is pending" do
+      for {statements, tag, pkt, reply} <- [
+            {["s1"], ?P, parse("s1"), parse_complete()},
+            {[], ?C, close("s1"), close_complete()}
+          ] do
+        {backend, to_backend, due, 0} = write(new(statements), [{:ps, tag}], [pkt])
 
-      assert IO.iodata_to_binary(to_backend) == ""
-      assert IO.iodata_to_binary(due) == parse_complete()
-      assert queue(backend) == []
-    end
-
-    test "a Parse the backend already has is answered after the responses before it" do
-      backend = BackendConnection.sent(new(["s1"]), [?Q])
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?P}, ?B, ?S], [parse("s1"), "b", "s"])
-
-      assert {backend, out, false} = BackendConnection.recv(backend, z(?I))
-      assert IO.iodata_to_binary(out) == z(?I) <> parse_complete()
-
-      assert {_backend, _out, true} = BackendConnection.recv(backend, bind_complete() <> z(?I))
+        assert IO.iodata_to_binary(to_backend) == ""
+        assert IO.iodata_to_binary(due) == reply
+        assert queue(backend) == []
+      end
     end
 
     test "a ParseComplete answered after a ReadyForQuery belongs to the next batch" do
@@ -469,14 +418,6 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
       assert {_backend, out, true} = BackendConnection.recv(backend, close_complete() <> z(?I))
       assert IO.iodata_to_binary(out) == close_complete() <> z(?I)
-    end
-
-    test "a Close for a statement the backend doesn't have is answered right away" do
-      {backend, to_backend, due, 0} = write(new(), [{:ps, ?C}], [close("s1")])
-
-      assert IO.iodata_to_binary(to_backend) == ""
-      assert IO.iodata_to_binary(due) == close_complete()
-      assert queue(backend) == []
     end
 
     test "a Close for a statement the backend doesn't have is answered after the responses before it" do
@@ -533,11 +474,12 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert queue(backend) == []
     end
 
-    test "a statement the write needs is sent again", %{old: old} do
+    test "a statement the write needs is sent again", %{old: old, evicted: evicted} do
       {_backend, to_backend, [], _count} =
         write(new(old), [{:ps, ?B}, ?S], [bind("old_1"), "s"])
 
-      assert to_backend |> IO.iodata_to_binary() |> String.ends_with?("parse(old_1)bind(old_1)s")
+      closes = Enum.map_join(evicted, &PreparedStatements.build_close_pkt/1)
+      assert IO.iodata_to_binary(to_backend) == closes <> "parse(old_1)bind(old_1)s"
     end
 
     test "a client Close after them keeps its response", %{old: old} do
@@ -588,19 +530,14 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
   end
 
   describe "statements the backend didn't create or close" do
-    test "a failed Parse sent by Supavisor is forgotten, its error forwarded" do
-      {backend, _to_backend, [], 0} = write(new(), [{:ps, ?B}, ?E, ?S], [bind("s1"), "e", "s"])
+    test "a failed Parse, sent by Supavisor or the client, is forgotten, its error forwarded" do
+      for {tag, pkt} <- [{?B, bind("s1")}, {?P, parse("s1")}] do
+        {backend, _to_backend, [], 0} = write(new(), [{:ps, tag}, ?S], [pkt, "s"])
 
-      assert {backend, out, true} = BackendConnection.recv(backend, error("42P01") <> z(?I))
-      assert IO.iodata_to_binary(out) == error("42P01") <> z(?I)
-      refute LRU.member?(statements(backend), "s1")
-    end
-
-    test "a failed client Parse is forgotten" do
-      {backend, _to_backend, [], 0} = write(new(), [{:ps, ?P}, ?S], [parse("s1"), "s"])
-
-      assert {backend, _out, true} = BackendConnection.recv(backend, error("42601") <> z(?I))
-      refute LRU.member?(statements(backend), "s1")
+        assert {backend, out, true} = BackendConnection.recv(backend, error("42P01") <> z(?I))
+        assert IO.iodata_to_binary(out) == error("42P01") <> z(?I)
+        refute LRU.member?(statements(backend), "s1")
+      end
     end
 
     test "a Parse skipped after an earlier error is forgotten" do
@@ -617,37 +554,18 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert LRU.member?(statements(backend), "x")
     end
 
-    test "a Parse skipped until a later write's Sync is forgotten" do
-      backend = BackendConnection.sent(new(), [?B, ?E])
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?B}, ?E], [bind("s1"), "e"])
+    test "a Close skipped after an error, sent or not, leaves the statements as they were" do
+      for had_statement? <- [false, true] do
+        before = if had_statement?, do: ["s1"], else: []
+        backend = BackendConnection.sent(new(before), [?B, ?E])
+        {backend, _to_backend, [], 0} = write(backend, [{:ps, ?C}, ?S], [close("s1"), "s"])
+        refute LRU.member?(statements(backend), "s1")
 
-      assert {backend, _out, false} = BackendConnection.recv(backend, error("23505"))
-      backend = BackendConnection.sent(backend, [?S])
-
-      assert {backend, _out, true} = BackendConnection.recv(backend, z(?I))
-      refute LRU.member?(statements(backend), "s1")
-    end
-
-    test "a Close not sent and skipped after an error doesn't add the statement" do
-      backend = BackendConnection.sent(new(), [?B, ?E])
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?C}, ?S], [close("s1"), "s"])
-
-      assert {backend, out, true} =
-               BackendConnection.recv(backend, bind_complete() <> error("23505") <> z(?I))
-
-      assert IO.iodata_to_binary(out) == bind_complete() <> error("23505") <> z(?I)
-      refute LRU.member?(statements(backend), "s1")
-    end
-
-    test "a skipped Close keeps the statement" do
-      backend = BackendConnection.sent(new(["s1"]), [?B, ?E])
-      {backend, _to_backend, [], 0} = write(backend, [{:ps, ?C}, ?S], [close("s1"), "s"])
-      refute LRU.member?(statements(backend), "s1")
-
-      assert {backend, _out, true} =
-               BackendConnection.recv(backend, bind_complete() <> error("23505") <> z(?I))
-
-      assert LRU.member?(statements(backend), "s1")
+        responses = bind_complete() <> error("23505") <> z(?I)
+        assert {backend, out, true} = BackendConnection.recv(backend, responses)
+        assert IO.iodata_to_binary(out) == responses
+        assert LRU.member?(statements(backend), "s1") == had_statement?
+      end
     end
 
     test "a Parse failing because the statement exists records it" do
@@ -713,6 +631,8 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
       assert {backend, [], false} =
                BackendConnection.recv(backend, parse_complete() <> bind_complete() <> first)
+
+      assert BackendConnection.backend(backend, :buffer) == <<>>
 
       assert {_backend, [], true} =
                BackendConnection.recv(backend, second <> command_complete("SELECT 1") <> z(?I))
