@@ -473,25 +473,40 @@ defmodule Supavisor.Manager do
 
   @impl true
   def terminate(_reason, state) do
+    md = Logger.metadata()
     Supavisor.id(tenant: tenant, user: user) = state.id
+    manager_pid = self()
 
-    if not other_pools_for_tenant_and_user?(tenant, user) do
-      Logger.info("Invalidating client authentication globally")
-
-      ClientAuthentication.invalidate_global(
-        tenant,
-        user,
-        @invalidate_client_authentication_timeout
-      )
-    end
-
-    :ok
+    Task.Supervisor.start_child(Supavisor.TaskSupervisor, fn ->
+      Logger.metadata(md)
+      maybe_invalidate_after_shutdown(tenant, user, manager_pid)
+    end)
   end
 
   ## Internal functions
 
-  defp other_pools_for_tenant_and_user?(tenant, user) do
-    Supavisor.pools_count_global(tenant, user, @pools_count_timeout) > 1
+  @doc false
+  @spec maybe_invalidate_after_shutdown(String.t(), String.t(), pid()) :: :ok
+  def maybe_invalidate_after_shutdown(
+        tenant,
+        user,
+        manager_pid
+      ) do
+    case Supavisor.pools_global(tenant, user, @pools_count_timeout) do
+      {:ok, pids} ->
+        if Enum.reject(pids, &(&1 == manager_pid)) == [] do
+          Logger.info("Invalidating client authentication globally")
+
+          ClientAuthentication.invalidate_global(
+            tenant,
+            user,
+            @invalidate_client_authentication_timeout
+          )
+        end
+
+      :error ->
+        :ok
+    end
   end
 
   defp check_subscribers do

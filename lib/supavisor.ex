@@ -471,7 +471,7 @@ defmodule Supavisor do
   end
 
   @doc false
-  def pools_count_local(tenant, user) do
+  def pools_local(tenant, user) do
     match_id =
       id(
         type: :_,
@@ -486,24 +486,26 @@ defmodule Supavisor do
     Registry.select(Supavisor.Registry.Tenants, [
       {{{:manager, match_id}, :"$1", :_}, [], [:"$1"]}
     ])
-    |> Enum.count()
   end
 
   @doc """
-  Count pools for a given `tenant` and `user` across the cluster
+  Lists the manager pids for a given `tenant` and `user` across the cluster.
   """
-  @spec pools_count_global(String.t(), String.t(), timeout()) :: non_neg_integer()
-  def pools_count_global(tenant, user, timeout \\ :infinity, nodes \\ [node() | Node.list()]) do
+  @spec pools_global(String.t(), String.t(), timeout()) :: {:ok, [pid()]} | :error
+  def pools_global(tenant, user, timeout \\ :infinity, nodes \\ [node() | Node.list()]) do
     nodes
-    |> :erpc.multicall(__MODULE__, :pools_count_local, [tenant, user], timeout)
+    |> :erpc.multicall(__MODULE__, :pools_local, [tenant, user], timeout)
     |> Enum.zip(nodes)
-    |> Enum.sum_by(fn
-      {{:ok, count}, _node} ->
-        count
+    |> Enum.reduce({:ok, []}, fn
+      {{:ok, pids}, _node}, {:ok, acc} ->
+        {:ok, pids ++ acc}
 
-      {error, node} ->
-        Logger.error("Counting pools failure: #{inspect(error)} (#{node})")
-        0
+      {{:ok, _}, _}, :error ->
+        :error
+
+      {error, node}, _acc ->
+        Logger.error("Listing pools failure: #{inspect(error)} (#{node})")
+        :error
     end)
   end
 

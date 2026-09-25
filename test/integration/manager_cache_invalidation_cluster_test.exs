@@ -3,11 +3,13 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
 
   require Supavisor
 
+  @moduletag integration: true
+
   alias Supavisor.ClientAuthentication
   alias Supavisor.Manager
+  alias Supavisor.Support.ClientAuthenticationHelpers
   alias Supavisor.Support.Cluster
   alias Supavisor.Support.Cluster.PortConfig
-  alias Supavisor.Support.ClientAuthenticationHelpers
   alias Supavisor.Support.ManagerTestHelpers
 
   defp id(tenant, user, mode \\ :transaction) do
@@ -48,7 +50,7 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
       )
 
   defp start_sibling_manager(node, sibling_id) do
-    Node.spawn(node, ManagerTestHelpers, :sibling_loop, [sibling_id, self()])
+    Node.spawn_link(node, ManagerTestHelpers, :sibling_loop, [sibling_id, self()])
 
     receive do
       :registered ->
@@ -58,16 +60,42 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
     end
   end
 
-  # `Manager.terminate/2` is called directly below, bypassing `start_link/1` — but in
-  # production the terminating manager is still registered in the Registry while its own
-  # `terminate/2` runs (deregistration only happens once the process actually exits, which
-  # is after `terminate/2` returns). Register the id under test on the primary node to
-  # mirror that, so `pools_count_global/2,3` sees the same count it would in production.
-  defp register_self(id) do
-    {:ok, _} = Registry.register(Supavisor.Registry.Tenants, {:manager, id}, nil)
+  defp simulate_shutdown(self_id) do
+    parent = self()
+
+    spawn(fn ->
+      Logger.metadata(
+        project: Supavisor.id(self_id, :tenant),
+        user: Supavisor.id(self_id, :user),
+        type: Supavisor.id(self_id, :type),
+        db_name: Supavisor.id(self_id, :db)
+      )
+
+      {:ok, _} = Registry.register(Supavisor.Registry.Tenants, {:manager, self_id}, nil)
+      {:ok, invalidation_task_pid} = Manager.terminate(:shutdown, %{id: self_id})
+      send(parent, {:task_pid, invalidation_task_pid})
+    end)
+
+    task_pid =
+      receive do
+        {:task_pid, task_pid} ->
+          task_pid
+      after
+        500 ->
+          flunk("timeout waiting for the task invalidation pid")
+      end
+
+    ref = Process.monitor(task_pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^task_pid, _reason} ->
+        :ok
+    after
+      500 ->
+        flunk("timeout waiting for the cache invalidation task to finish")
+    end
   end
 
-  @tag cluster: true
   test "does not invalidate the cache when a sibling pool for the same tenant+user runs on another node" do
     {:ok, peer, node} = start_test_node1()
     Node.connect(node)
@@ -77,11 +105,10 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
     user = "user1"
     self_id = id(tenant, user, :transaction)
 
-    register_self(self_id)
     start_sibling_manager(node, id(tenant, user, :session))
     seed_caches(tenant, user, peer)
 
-    Manager.terminate(:shutdown, %{id: self_id})
+    simulate_shutdown(self_id)
 
     assert {:ok, _} = ClientAuthentication.get_validation_secrets(tenant, user)
 
@@ -89,7 +116,6 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
              :peer.call(peer, ClientAuthentication, :get_validation_secrets, [tenant, user])
   end
 
-  @tag cluster: true
   test "invalidates the cache even when a pool for a different user (same tenant) runs on another node" do
     {:ok, peer, node} = start_test_node2()
     Node.connect(node)
@@ -100,11 +126,10 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
     other_user = "user2"
     self_id = id(tenant, user)
 
-    register_self(self_id)
     start_sibling_manager(node, id(tenant, other_user))
     seed_caches(tenant, user, peer)
 
-    Manager.terminate(:shutdown, %{id: self_id})
+    simulate_shutdown(self_id)
 
     assert {:error, :not_found} = ClientAuthentication.get_validation_secrets(tenant, user)
 

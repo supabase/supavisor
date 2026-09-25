@@ -21,7 +21,7 @@ defmodule Supavisor.Support.ManagerTestHelpers do
     send(test_pid, :registered)
 
     receive do
-      :stop -> :ok
+      :never_die -> :ok
     end
   end
 end
