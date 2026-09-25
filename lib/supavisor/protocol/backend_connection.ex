@@ -10,7 +10,6 @@ defmodule Supavisor.Protocol.BackendConnection do
   - `write/2`: the parked write, which goes through the DbHandler. What is actually sent for
     each prepared statement packet depends on the statements the backend has.
   - `query/2`: a query Supavisor runs for itself. None of its responses reach the client.
-  - `evict/2`: closes statements to make room for new ones.
   - `recv/2`: bytes from the backend. Returns what to forward to the client, and whether the
     backend became idle with every message answered.
 
@@ -170,24 +169,6 @@ defmodule Supavisor.Protocol.BackendConnection do
   end
 
   @doc """
-  Closes up to `count` statements, picked by the storage.
-
-  Returns the Closes to send and how many statements they close. Their responses are only
-  flushed by a later Sync or Flush.
-  """
-  @spec evict(t(), pos_integer()) :: {t(), iodata(), non_neg_integer()}
-  def evict(backend(storage: storage, statements: statements) = t, count) do
-    {evicted, statements} = storage.evict(statements, count)
-
-    t =
-      t
-      |> backend(statements: statements)
-      |> enqueue(Enum.map(evicted, &{:close, :intercept, &1}))
-
-    {t, Enum.map(evicted, &PreparedStatements.build_close_pkt/1), length(evicted)}
-  end
-
-  @doc """
   Records a query Supavisor is about to send for itself.
   """
   @spec query(t(), iodata()) :: t()
@@ -204,6 +185,14 @@ defmodule Supavisor.Protocol.BackendConnection do
     {t, out, synced?} = frame(backend(t, buffer: <<>>), buffer <> bin, [], false)
     {t, Enum.reverse(out), synced?}
   end
+
+  @doc """
+  Returns whether the backend is idle, outside a transaction, with every message answered and
+  no write parked.
+  """
+  @spec synced?(t()) :: boolean()
+  def synced?(backend(state: state, announced: announced, copy_end_due: copy_end_due)),
+    do: state == :idle and announced == nil and not copy_end_due
 
   defp prepare(bin, {sent, prepared, statements, closes}, _storage) when is_binary(bin),
     do: {[bin | sent], prepared, statements, closes}
@@ -254,16 +243,14 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   defp substitute([], [], acc), do: Enum.reverse(acc)
 
-  defp internal(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, acc) do
-    case message(tag) do
-      nil -> internal(rest, acc)
-      message -> internal(rest, [{message, :internal, nil} | acc])
-    end
-  end
+  defp internal(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, acc),
+    do: internal(rest, [{message!(tag), :internal, nil} | acc])
 
   defp internal(<<>>, acc), do: Enum.reverse(acc)
 
-  defp forwarded(tag), do: {message(tag) || raise("untracked message #{<<tag>>}"), :forward, nil}
+  defp forwarded(tag), do: {message!(tag), :forward, nil}
+
+  defp message!(tag), do: message(tag) || raise("untracked message #{<<tag>>}")
 
   defp message(?P), do: :parse
   defp message(?B), do: :bind
@@ -336,15 +323,6 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   defp frame(t, <<>>, out, synced?), do: {t, out, synced?}
   defp frame(t, partial, out, synced?), do: {backend(t, buffer: partial), out, synced?}
-
-  @doc """
-  Returns whether the backend is idle, outside a transaction, with every message answered and
-  no write parked.
-  """
-  # A parked write is on its way to the backend, so it isn't done yet.
-  @spec synced?(t()) :: boolean()
-  def synced?(backend(state: state, announced: announced, copy_end_due: copy_end_due)),
-    do: state == :idle and announced == nil and not copy_end_due
 
   defp keep(out, true, part), do: [part | out]
   defp keep(out, false, _part), do: out

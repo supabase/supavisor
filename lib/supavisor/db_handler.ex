@@ -441,19 +441,12 @@ defmodule Supavisor.DbHandler do
   end
 
   # the process received message from db while idle
-  def handle_event(:info, {proto, _, bin}, :idle, %{backend: backend} = data)
-      when proto in @proto do
+  def handle_event(:info, {proto, _, bin}, :idle, data) when proto in @proto do
     Logger.debug("DbHandler: Got db response when idle")
 
-    {backend, _to_send, _synced?} = BackendConnection.recv(backend, bin)
+    {backend, _to_send, _synced?} = BackendConnection.recv(data.backend, bin)
 
     {:keep_state, %{data | backend: backend}}
-  end
-
-  # hot code reload compat: remove after full rollout
-  def handle_event(:info, {proto, _, _bin}, :idle, _data) when proto in @proto do
-    Logger.debug("DbHandler: Got db response when idle")
-    :keep_state_and_data
   end
 
   def handle_event(:cast, {:expect_messages, write_seq, tags}, _state, data) do
@@ -511,20 +504,11 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
         {:stop, :normal}
 
+      # In transaction mode, checked in once the ClientHandler releases us.
       :ok ->
-        if batch_done? do
-          case data.mode do
-            # Checked in once the ClientHandler releases us.
-            :transaction ->
-              {:keep_state, data}
-
-            :proxy ->
-              {:keep_state, data}
-
-            :session ->
-              {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-              {:keep_state, %{data | stats: stats}}
-          end
+        if batch_done? and data.mode == :session do
+          {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
+          {:keep_state, %{data | stats: stats}}
         else
           {:keep_state, data}
         end
@@ -1084,9 +1068,6 @@ defmodule Supavisor.DbHandler do
   defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
   defp last_fatal_error(%{backend: backend}), do: BackendConnection.fatal_error(backend)
-
-  # hot code reload compat: remove after full rollout
-  defp last_fatal_error(_data), do: nil
 
   defp get_connection_params_with_secrets(conn_params, id) do
     case Supavisor.UpstreamAuthentication.get_upstream_auth_secrets(id) do

@@ -587,29 +587,6 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
   end
 
-  describe "evict/2" do
-    test "closes statements picked by the storage" do
-      {backend, closes, 1} = BackendConnection.evict(new(["s1", "s2"]), 1)
-
-      assert IO.iodata_to_binary(closes) == PreparedStatements.build_close_pkt("s1")
-      assert queue(backend) == [{:close, :intercept, "s1"}]
-      refute LRU.member?(statements(backend), "s1")
-      assert LRU.member?(statements(backend), "s2")
-    end
-
-    test "consumes the CloseComplete" do
-      {backend, _closes, 1} = BackendConnection.evict(new(["s1"]), 1)
-
-      assert {backend, [], false} = BackendConnection.recv(backend, close_complete())
-      assert queue(backend) == []
-    end
-
-    test "closes nothing when the backend has no statements" do
-      assert {backend, [], 0} = BackendConnection.evict(new(), 1)
-      assert queue(backend) == []
-    end
-  end
-
   describe "statements the backend didn't create or close" do
     test "a failed Parse sent by Supavisor is forgotten, its error forwarded" do
       {backend, _to_backend, [], 0} = write(new(), [{:ps, ?B}, ?E, ?S], [bind("s1"), "e", "s"])
