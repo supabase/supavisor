@@ -296,6 +296,16 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         assert_released(tenant)
       end
 
+      test "releases after a BEGIN..COMMIT pipelined in one write", %{tenant: tenant} do
+        sock = connect(tenant)
+
+        :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1"), query("COMMIT")])
+
+        assert statuses(recv_rfqs(sock, 3)) == [?T, ?T, ?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
       test "keeps the backend for a simple protocol transaction across writes", %{tenant: tenant} do
         sock = connect(tenant)
 
@@ -341,6 +351,41 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         :ok = :gen_tcp.send(sock, query("ROLLBACK"))
 
         assert statuses(recv_rfqs(sock, 1)) == [?I]
+        refute_more(sock)
+        assert_released(tenant)
+      end
+
+      test "keeps the backend for an extended protocol transaction across writes", %{
+        tenant: tenant
+      } do
+        sock = connect(tenant)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            extended("BEGIN"),
+            @sync,
+            extended("SELECT pg_backend_pid()"),
+            @sync
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert statuses(pkts) == [?T, ?T]
+        assert [[backend_pid]] = rows(pkts)
+        assert checked_out(tenant) == 1
+
+        Process.sleep(100)
+
+        :ok =
+          :gen_tcp.send(sock, [
+            extended("SELECT pg_backend_pid()"),
+            @sync,
+            extended("COMMIT"),
+            @sync
+          ])
+
+        pkts = recv_rfqs(sock, 2)
+        assert rows(pkts) == [[backend_pid]]
+        assert statuses(pkts) == [?T, ?I]
         refute_more(sock)
         assert_released(tenant)
       end

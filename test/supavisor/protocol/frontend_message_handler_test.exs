@@ -148,6 +148,19 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       assert forwarded(stream_state, bin) == [{:ps, ?P}, ?S]
     end
 
+    test "records a message only once it is fully framed across writes", %{
+      stream_state: stream_state
+    } do
+      <<first::binary-size(3), second::binary>> = <<?S, 4::32>>
+
+      {:ok, stream_state, _} = MessageStreamer.handle_packets(stream_state, first)
+      hs = MessageStreamer.stream_state(stream_state, :handler_state)
+      assert {[], hs} = FrontendMessageHandler.take_forwarded(hs)
+
+      stream_state = MessageStreamer.stream_state(stream_state, handler_state: hs)
+      assert forwarded(stream_state, second) == [?S]
+    end
+
     test "take_forwarded clears what was recorded", %{stream_state: stream_state} do
       {:ok, stream_state, _} = MessageStreamer.handle_packets(stream_state, <<?S, 4::32>>)
       hs = MessageStreamer.stream_state(stream_state, :handler_state)

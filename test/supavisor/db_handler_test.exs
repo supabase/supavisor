@@ -1181,6 +1181,27 @@ defmodule Supavisor.DbHandlerTest do
       assert {:error, :timeout} = :gen_tcp.recv(client_recv, 0, 50)
     end
 
+    test "sends only describe when the named statement exists on the backend" do
+      {backend_send, backend_recv} = sockpair()
+      describe_pkt = <<?D, 17::32, ?S, @statement_name::binary, 0>>
+      from = {self(), make_ref()}
+
+      data =
+        busy_data(%{sock: {:gen_tcp, backend_send}, backend: backend_with([@statement_name])})
+        |> expecting(1, [{:ps, ?D}])
+
+      assert {:keep_state, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:handle_ps_pkts, [{:describe_pkt, @statement_name, describe_pkt, @parse_pkt}]},
+                 :busy,
+                 data
+               )
+
+      assert {:ok, ^describe_pkt} = :gen_tcp.recv(backend_recv, 0, 1000)
+      assert pending(new_data) == [{:describe, :forward, @statement_name}]
+    end
+
     test "answers a Parse the backend already has once nothing is left before it" do
       {backend_send, backend_recv} = sockpair()
       {client_send, client_recv} = sockpair()

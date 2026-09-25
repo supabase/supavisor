@@ -574,6 +574,19 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert LRU.member?(statements(backend), "x")
     end
 
+    test "a Parse ignored until a later write's Sync is forgotten" do
+      backend = BackendConnection.client_write(new(), [?B, ?E])
+
+      {backend, _to_backend, [], 0} =
+        send_parked_write(backend, [{:ps, ?B}, ?E], [bind("s1"), "e"])
+
+      assert {backend, _out, false} = BackendConnection.recv(backend, error("23505"))
+      backend = BackendConnection.client_write(backend, [?S])
+
+      assert {backend, _out, true} = BackendConnection.recv(backend, z(?I))
+      refute LRU.member?(statements(backend), "s1")
+    end
+
     test "a Close ignored after an error, sent or not, leaves the statements as they were" do
       for had_statement? <- [false, true] do
         before = if had_statement?, do: ["s1"], else: []
