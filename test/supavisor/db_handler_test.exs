@@ -912,7 +912,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event({:call, from}, :cleanup, :idle, data)
 
       assert new_data.waiting_cleanup == from
-      assert pending(new_data) == [{:query, :internal, nil}]
+      assert pending(new_data) == [{?Q, :internal, nil}]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
       assert message =~ "DISCARD ALL"
@@ -937,7 +937,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event({:call, from}, :cleanup, :busy, data)
 
       assert new_data.waiting_cleanup == from
-      assert pending(new_data) == [{:query, :internal, nil}]
+      assert pending(new_data) == [{?Q, :internal, nil}]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
       assert message =~ "DISCARD ALL"
@@ -1064,10 +1064,10 @@ defmodule Supavisor.DbHandlerTest do
       assert new_data.set_app_name_from == from
 
       assert pending(new_data) == [
-               {:parse, :internal, nil},
-               {:bind, :internal, nil},
-               {:execute, :internal, nil},
-               {:sync, :internal, nil}
+               {?P, :internal, nil},
+               {?B, :internal, nil},
+               {?E, :internal, nil},
+               {?S, :internal, nil}
              ]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
@@ -1199,7 +1199,7 @@ defmodule Supavisor.DbHandlerTest do
                )
 
       assert {:ok, ^describe_pkt} = :gen_tcp.recv(backend_recv, 0, 1000)
-      assert pending(new_data) == [{:describe, :forward, @statement_name}]
+      assert pending(new_data) == [{?D, :forward, @statement_name}]
     end
 
     test "answers a Parse the backend already has once nothing is left before it" do
@@ -1291,10 +1291,10 @@ defmodule Supavisor.DbHandlerTest do
       data = busy_data() |> expecting(1, [?P, ?B]) |> expecting(2, [?E, ?S])
 
       assert pending(data) == [
-               {:parse, :forward, nil},
-               {:bind, :forward, nil},
-               {:execute, :forward, nil},
-               {:sync, :forward, nil}
+               {?P, :forward, nil},
+               {?B, :forward, nil},
+               {?E, :forward, nil},
+               {?S, :forward, nil}
              ]
 
       assert data.write_seq == 2

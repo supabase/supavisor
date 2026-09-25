@@ -338,15 +338,15 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a Bind or Describe for a statement the backend doesn't have sends its Parse first" do
-      for {tag, pkt, message} <- [{?B, bind("s1"), :bind}, {?D, describe("s1"), :describe}] do
+      for {tag, pkt, message} <- [{?B, bind("s1"), "bind"}, {?D, describe("s1"), "describe"}] do
         {backend, to_backend, [], 0} = send_parked_write(new(), [{:ps, tag}, ?S], [pkt, "s"])
 
         assert IO.iodata_to_binary(to_backend) == "parse(s1)#{message}(s1)s"
 
         assert queue(backend) == [
-                 {:parse, :skip, "s1"},
-                 {message, :forward, "s1"},
-                 forward(:sync)
+                 {?P, :skip, "s1"},
+                 {tag, :forward, "s1"},
+                 forward(?S)
                ]
 
         assert LRU.member?(statements(backend), "s1")
@@ -358,7 +358,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
         send_parked_write(new(["s1"]), [{:ps, ?B}, ?S], [bind("s1"), "s"])
 
       assert IO.iodata_to_binary(to_backend) == "bind(s1)s"
-      assert queue(backend) == [{:bind, :forward, "s1"}, forward(:sync)]
+      assert queue(backend) == [{?B, :forward, "s1"}, forward(?S)]
     end
 
     test "a statement sent earlier in the same write isn't sent again" do
@@ -370,12 +370,12 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)ebind(s1)es"
 
       assert queue(backend) == [
-               {:parse, :skip, "s1"},
-               {:bind, :forward, "s1"},
-               forward(:execute),
-               {:bind, :forward, "s1"},
-               forward(:execute),
-               forward(:sync)
+               {?P, :skip, "s1"},
+               {?B, :forward, "s1"},
+               forward(?E),
+               {?B, :forward, "s1"},
+               forward(?E),
+               forward(?S)
              ]
     end
 
@@ -480,8 +480,8 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       assert IO.iodata_to_binary(to_backend) == closes <> "parse(s1)bind(s1)s"
 
       assert queue(backend) ==
-               Enum.map(evicted, &{:close, :skip, &1}) ++
-                 [{:parse, :skip, "s1"}, {:bind, :forward, "s1"}, forward(:sync)]
+               Enum.map(evicted, &{?C, :skip, &1}) ++
+                 [{?P, :skip, "s1"}, {?B, :forward, "s1"}, forward(?S)]
 
       responses =
         String.duplicate(close_complete(), count) <>

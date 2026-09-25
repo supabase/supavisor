@@ -81,21 +81,9 @@ defmodule Supavisor.Protocol.BackendConnection do
   @type state() ::
           :idle | :in_transaction | :busy | :ignore_till_sync | {:copy_in, :simple | :extended}
 
-  @type message() ::
-          :parse
-          | :bind
-          | :close
-          | :describe
-          | :execute
-          | :sync
-          | :query
-          | :function_call
-          | :copy_done
-          | :copy_fail
-
   @type action() :: :forward | :skip | :fake | :internal
 
-  @type request() :: {message(), action(), PreparedStatements.statement_name() | nil}
+  @type request() :: {byte(), action(), PreparedStatements.statement_name() | nil}
 
   @type t() ::
           record(:backend,
@@ -109,6 +97,17 @@ defmodule Supavisor.Protocol.BackendConnection do
             streaming: {bytes_left :: non_neg_integer(), forward? :: boolean()} | nil,
             client_in_copy: boolean()
           )
+
+  @parse ?P
+  @bind ?B
+  @close ?C
+  @describe ?D
+  @execute ?E
+  @sync ?S
+  @query ?Q
+  @function_call ?F
+  @copy_done ?c
+  @copy_fail ?f
 
   @parse_complete ?1
   @bind_complete ?2
@@ -137,7 +136,7 @@ defmodule Supavisor.Protocol.BackendConnection do
     @error_response
   ]
 
-  @extended_query_messages [:parse, :bind, :close, :describe, :execute]
+  @extended_query_messages [@parse, @bind, @close, @describe, @execute]
 
   @duplicate_pstatement "42P05"
   @undefined_pstatement "26000"
@@ -196,7 +195,7 @@ defmodule Supavisor.Protocol.BackendConnection do
     {plain_pkts, pkts} = Enum.split_while(pkts, &is_binary/1)
     {plain_tags, tags} = Enum.split_while(tags, &is_integer/1)
     close_pkts = Enum.map(evicted, &PreparedStatements.build_close_pkt/1)
-    close_requests = Enum.map(evicted, &{:close, :skip, &1})
+    close_requests = Enum.map(evicted, &{@close, :skip, &1})
 
     {to_send, prepared, statements} = prepare_pkts(pkts, statements, storage, [], [])
 
@@ -257,31 +256,31 @@ defmodule Supavisor.Protocol.BackendConnection do
     do: {Enum.reverse(to_send), Enum.reverse(prepared), statements}
 
   defp prepare_pkt({:bind_pkt, name, pkt, parse_pkt}, statements, storage),
-    do: prepare_statement_use(?B, name, pkt, parse_pkt, statements, storage)
+    do: prepare_statement_use(@bind, name, pkt, parse_pkt, statements, storage)
 
   defp prepare_pkt({:describe_pkt, name, pkt, parse_pkt}, statements, storage),
-    do: prepare_statement_use(?D, name, pkt, parse_pkt, statements, storage)
+    do: prepare_statement_use(@describe, name, pkt, parse_pkt, statements, storage)
 
   defp prepare_pkt({:parse_pkt, name, pkt}, statements, storage) do
     if storage.member?(statements, name),
-      do: {?P, [], [{:parse, :fake, name}], storage.touch(statements, name)},
-      else: {?P, pkt, [{:parse, :forward, name}], storage.put(statements, name)}
+      do: {@parse, [], [{@parse, :fake, name}], storage.touch(statements, name)},
+      else: {@parse, pkt, [{@parse, :forward, name}], storage.put(statements, name)}
   end
 
   defp prepare_pkt({:close_pkt, name, pkt}, statements, storage) do
     if storage.member?(statements, name),
-      do: {?C, pkt, [{:close, :forward, name}], storage.delete(statements, name)},
-      else: {?C, [], [{:close, :fake, name}], statements}
+      do: {@close, pkt, [{@close, :forward, name}], storage.delete(statements, name)},
+      else: {@close, [], [{@close, :fake, name}], statements}
   end
 
   # A Bind or Describe for a statement the backend doesn't have sends its Parse first.
   defp prepare_statement_use(tag, name, pkt, parse_pkt, statements, storage) do
-    request = {message(tag), :forward, name}
+    request = {tag, :forward, name}
 
     if storage.member?(statements, name) do
       {tag, pkt, [request], storage.touch(statements, name)}
     else
-      requests = [{:parse, :skip, name}, request]
+      requests = [{@parse, :skip, name}, request]
       {tag, [parse_pkt, pkt], requests, storage.put(statements, name)}
     end
   end
@@ -296,7 +295,7 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   # The backend ignores the CopyDone or CopyFail that ends a COPY that already failed.
   defp drop_copy_end(backend(client_in_copy: true) = backend, tags) do
-    case Enum.split_while(tags, &(&1 not in [?c, ?f])) do
+    case Enum.split_while(tags, &(&1 not in [@copy_done, @copy_fail])) do
       {before, [_copy_end | rest]} -> {backend(backend, client_in_copy: false), before ++ rest}
       {_, []} -> {backend, tags}
     end
@@ -304,24 +303,12 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   defp drop_copy_end(backend, tags), do: {backend, tags}
 
-  defp client_request(tag), do: {message(tag), :forward, nil}
+  defp client_request(tag), do: {tag, :forward, nil}
 
   defp internal_requests(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, acc),
-    do: internal_requests(rest, [{message(tag), :internal, nil} | acc])
+    do: internal_requests(rest, [{tag, :internal, nil} | acc])
 
   defp internal_requests(<<>>, acc), do: Enum.reverse(acc)
-
-  defp message(?P), do: :parse
-  defp message(?B), do: :bind
-  defp message(?C), do: :close
-  defp message(?D), do: :describe
-  defp message(?E), do: :execute
-  defp message(?S), do: :sync
-  defp message(?Q), do: :query
-  defp message(?F), do: :function_call
-  defp message(?c), do: :copy_done
-  defp message(?f), do: :copy_fail
-  defp message(tag), do: raise("untracked message #{<<tag>>}")
 
   ## Backend messages
 
@@ -370,8 +357,8 @@ defmodule Supavisor.Protocol.BackendConnection do
   defp forward?(backend(state: state) = backend, type) do
     case head_request(backend) do
       {_, :internal, _} -> false
-      {:parse, :skip, _} when type == @parse_complete and is_answering(state) -> false
-      {:close, :skip, _} when type == @close_complete and is_answering(state) -> false
+      {@parse, :skip, _} when type == @parse_complete and is_answering(state) -> false
+      {@close, :skip, _} when type == @close_complete and is_answering(state) -> false
       _ -> true
     end
   end
@@ -392,21 +379,21 @@ defmodule Supavisor.Protocol.BackendConnection do
   end
 
   # A response completes the request at the head if that's the request it answers.
-  defp answering(backend, @parse_complete, _body), do: pop_request(backend, :parse)
-  defp answering(backend, @bind_complete, _body), do: pop_request(backend, :bind)
-  defp answering(backend, @close_complete, _body), do: pop_request(backend, :close)
+  defp answering(backend, @parse_complete, _body), do: pop_request(backend, @parse)
+  defp answering(backend, @bind_complete, _body), do: pop_request(backend, @bind)
+  defp answering(backend, @close_complete, _body), do: pop_request(backend, @close)
 
   defp answering(backend, type, _body) when type in [@row_description, @no_data],
-    do: pop_request(backend, :describe)
+    do: pop_request(backend, @describe)
 
   defp answering(backend, type, _body)
        when type in [@command_complete, @empty_query_response, @portal_suspended],
-       do: pop_request(backend, :execute)
+       do: pop_request(backend, @execute)
 
   defp answering(backend, @copy_in_response, _body) do
     case head_request(backend) do
-      {:execute, _, _} -> backend(pop_request(backend), state: {:copy_in, :extended})
-      {:query, _, _} -> backend(pop_request(backend), state: {:copy_in, :simple})
+      {@execute, _, _} -> backend(pop_request(backend), state: {:copy_in, :extended})
+      {@query, _, _} -> backend(pop_request(backend), state: {:copy_in, :simple})
       _ -> backend
     end
   end
@@ -416,7 +403,7 @@ defmodule Supavisor.Protocol.BackendConnection do
       nil ->
         ready_for_query(backend, status)
 
-      {message, _, _} when message in [:sync, :query, :function_call] ->
+      {message, _, _} when message in [@sync, @query, @function_call] ->
         backend |> pop_request() |> ready_for_query(status)
 
       _ ->
@@ -437,12 +424,12 @@ defmodule Supavisor.Protocol.BackendConnection do
   end
 
   defp ignoring_till_sync(backend, @ready_for_query, <<status>>),
-    do: backend |> pop_requests_through(:sync) |> ready_for_query(status)
+    do: backend |> pop_requests_through(@sync) |> ready_for_query(status)
 
   defp ignoring_till_sync(backend, _type, _body), do: backend
 
   defp copy_in(backend, mode, @command_complete, _body),
-    do: backend |> pop_requests_through(:copy_done) |> leave_copy_in(mode)
+    do: backend |> pop_requests_through(@copy_done) |> leave_copy_in(mode)
 
   defp copy_in(backend, :extended, @error_response, _body),
     do: backend(discard_copy_in_requests(backend), state: :ignore_till_sync)
@@ -465,7 +452,7 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   # A simple Query still owes its ReadyForQuery once the COPY is over.
   defp leave_copy_in(backend(requests: requests) = backend, :simple),
-    do: backend(backend, state: :busy, requests: :queue.in_r({:query, :forward, nil}, requests))
+    do: backend(backend, state: :busy, requests: :queue.in_r({@query, :forward, nil}, requests))
 
   defp leave_copy_in(backend, :extended), do: backend(backend, state: :busy)
 
@@ -473,8 +460,8 @@ defmodule Supavisor.Protocol.BackendConnection do
   # The client may not have sent that yet.
   defp discard_copy_in_requests(backend) do
     case head_request(backend) do
-      {:sync, _, _} -> backend |> discard_request() |> discard_copy_in_requests()
-      {message, _, _} when message in [:copy_done, :copy_fail] -> discard_request(backend)
+      {@sync, _, _} -> backend |> discard_request() |> discard_copy_in_requests()
+      {message, _, _} when message in [@copy_done, @copy_fail] -> discard_request(backend)
       nil -> backend(backend, client_in_copy: true)
       _ -> backend
     end
@@ -527,14 +514,14 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   defp pop_unanswered(backend, requests, fake_responses) do
     case :queue.peek(requests) do
-      {:value, {message, _, _}} when message in [:copy_done, :copy_fail] ->
+      {:value, {message, _, _}} when message in [@copy_done, @copy_fail] ->
         pop_unanswered(backend, :queue.drop(requests), fake_responses)
 
-      {:value, {:parse, :fake, _}} ->
+      {:value, {@parse, :fake, _}} ->
         fake_responses = [Server.parse_complete_message() | fake_responses]
         pop_unanswered(backend(backend, state: :busy), :queue.drop(requests), fake_responses)
 
-      {:value, {:close, :fake, _}} ->
+      {:value, {@close, :fake, _}} ->
         fake_responses = [Server.close_complete_message() | fake_responses]
         pop_unanswered(backend(backend, state: :busy), :queue.drop(requests), fake_responses)
 
@@ -552,10 +539,10 @@ defmodule Supavisor.Protocol.BackendConnection do
 
     statements =
       case request do
-        {:parse, action, name} when action in [:forward, :skip] and is_binary(name) ->
+        {@parse, action, name} when action in [:forward, :skip] and is_binary(name) ->
           storage.delete(statements, name)
 
-        {:close, action, name} when action in [:forward, :skip] and is_binary(name) ->
+        {@close, action, name} when action in [:forward, :skip] and is_binary(name) ->
           storage.put(statements, name)
 
         _ ->
@@ -567,7 +554,7 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   defp reconcile_statement(
          backend(storage: storage, statements: statements) = backend,
-         {:parse, _, name},
+         {@parse, _, name},
          @duplicate_pstatement
        )
        when is_binary(name),
@@ -578,7 +565,7 @@ defmodule Supavisor.Protocol.BackendConnection do
          {message, _, name},
          @undefined_pstatement
        )
-       when message in [:bind, :describe] and is_binary(name),
+       when message in [@bind, @describe] and is_binary(name),
        do: backend(backend, statements: storage.delete(statements, name))
 
   defp reconcile_statement(backend, _request, _code), do: backend
