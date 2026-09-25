@@ -3,10 +3,10 @@ defmodule Supavisor.ManagerTest do
 
   require Supavisor
   import ExUnit.CaptureLog, only: [capture_log: 1]
+  import Supavisor.Support.ClientAuthenticationHelpers
+
   alias Supavisor.ClientAuthentication
-  alias Supavisor.ClientAuthentication.ValidationSecrets
   alias Supavisor.Manager
-  alias Supavisor.Secrets.PasswordSecrets
 
   defp id(tenant, user, opts \\ []) do
     Supavisor.id(
@@ -18,13 +18,6 @@ defmodule Supavisor.ManagerTest do
       upstream_tls: opts[:tls] || false,
       search_path: opts[:search_path] || nil
     )
-  end
-
-  defp seed_cache(tenant, user) do
-    secrets =
-      ValidationSecrets.from_password_secrets(%PasswordSecrets{user: user, password: "pw"})
-
-    ClientAuthentication.put_validation_secrets(tenant, user, secrets)
   end
 
   # `Manager.terminate/2` is called directly below, bypassing `start_link/1` — but in

@@ -132,10 +132,32 @@ defmodule SupavisorTest do
   end
 
   describe "pools_count_global/2-4" do
-    test "counts pools locally"
+    test "counts pools locally" do
+      tenant = "pools_count_test_#{System.unique_integer([:positive])}"
+      user = "user1"
 
-    test "returns 0 if there're no pools"
+      for mode <- [:transaction, :session] do
+        id = Supavisor.id(type: :single, tenant: tenant, user: user, mode: mode, db: "postgres")
+        {:ok, _} = Registry.register(Supavisor.Registry.Tenants, {:manager, id}, nil)
+      end
 
-    test "returns 0 and an error on failure"
+      assert Supavisor.pools_count_global(tenant, user) == 2
+    end
+
+    test "returns 0 if there're no pools" do
+      assert Supavisor.pools_count_global("nonexistent_tenant", "nonexistent_user") == 0
+    end
+
+    test "count pools locally and logs an error on RPC failure" do
+      tenant = "pools_count_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      id = Supavisor.id(type: :single, tenant: tenant, user: user, mode: :session, db: "postgres")
+      {:ok, _} = Registry.register(Supavisor.Registry.Tenants, {:manager, id}, nil)
+
+      assert capture_log(fn ->
+               assert Supavisor.pools_count_global(tenant, user, :infinity, [node(), :nonexistent]) ==
+                        1
+             end) =~ ~r"Counting pools failure.*(nonexistent)"
+    end
   end
 end

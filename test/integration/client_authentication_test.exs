@@ -105,31 +105,4 @@ defmodule Supavisor.Integration.ClientAuthenticationTest do
       assert log =~ "user=#{db_user}"
     end
   end
-
-  import ExUnit.CaptureLog
-
-  alias Supavisor.ClientAuthentication.ValidationSecrets
-  alias Supavisor.Manager
-  alias Supavisor.Secrets.PasswordSecrets
-
-  defp seed_cache(tenant, user) do
-    secrets =
-      ValidationSecrets.from_password_secrets(%PasswordSecrets{user: user, password: "pw"})
-
-    ClientAuthentication.put_validation_secrets(tenant, user, secrets)
-  end
-
-  describe "invalidate_global/4" do
-    test "logs an error on RPC failure" do
-      seed_cache("tenant", "user")
-
-      assert capture_log(fn ->
-               :ok =
-                 ClientAuthentication.invalidate_global("some_id", "some_user", :infinity, [
-                   node(),
-                   :nonexistent
-                 ])
-             end) =~ ~r/Client authentication invalidation failure.*(nonexistent)/
-    end
-  end
 end

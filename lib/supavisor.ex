@@ -490,18 +490,19 @@ defmodule Supavisor do
   end
 
   @doc """
-  Counts pools for a given `tenant` and `user` across the cluster
+  Count pools for a given `tenant` and `user` across the cluster
   """
   @spec pools_count_global(String.t(), String.t(), timeout()) :: non_neg_integer()
   def pools_count_global(tenant, user, timeout \\ :infinity, nodes \\ [node() | Node.list()]) do
     nodes
     |> :erpc.multicall(__MODULE__, :pools_count_local, [tenant, user], timeout)
+    |> Enum.zip(nodes)
     |> Enum.sum_by(fn
-      {:ok, count} ->
+      {{:ok, count}, _node} ->
         count
 
-      error ->
-        Logger.error("Counting pools failure: #{inspect(error)}")
+      {error, node} ->
+        Logger.error("Counting pools failure: #{inspect(error)} (#{node})")
         0
     end)
   end

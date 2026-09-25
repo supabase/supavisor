@@ -4,11 +4,10 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
   require Supavisor
 
   alias Supavisor.ClientAuthentication
-  alias Supavisor.ClientAuthentication.ValidationSecrets
   alias Supavisor.Manager
-  alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Support.Cluster
   alias Supavisor.Support.Cluster.PortConfig
+  alias Supavisor.Support.ClientAuthenticationHelpers
   alias Supavisor.Support.ManagerTestHelpers
 
   defp id(tenant, user, mode \\ :transaction) do
@@ -16,8 +15,7 @@ defmodule Supavisor.Integration.ManagerCacheInvalidationClusterTest do
   end
 
   defp seed_caches(tenant, user, peer) do
-    secrets =
-      ValidationSecrets.from_password_secrets(%PasswordSecrets{user: user, password: "pw"})
+    secrets = ClientAuthenticationHelpers.build_validation_secrets(user)
 
     ClientAuthentication.put_validation_secrets(tenant, user, secrets)
     :peer.call(peer, ClientAuthentication, :put_validation_secrets, [tenant, user, secrets])
