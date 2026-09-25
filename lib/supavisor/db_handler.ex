@@ -458,6 +458,12 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:cast, {:expect_messages, write_seq, tags}, _state, data) do
     backend = BackendConnection.sent(data.backend, tags)
+
+    # The CopyDone or CopyFail ending a failed COPY gets no response, so it's the write
+    # itself that syncs the backend.
+    if not BackendConnection.synced?(data.backend) and BackendConnection.synced?(backend),
+      do: ClientHandler.db_status(data.caller, :ready_for_query, write_seq)
+
     {:keep_state, %{data | backend: backend, write_seq: write_seq}}
   end
 

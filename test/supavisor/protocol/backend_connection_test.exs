@@ -267,8 +267,46 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       ])
     end
 
-    test "a simple COPY failing on bad data syncs on the Query's ReadyForQuery" do
-      run([sent([?Q]), recv(copy_in(), false), recv(error("22P02"), false), recv(z(?I), true)])
+    test "a simple COPY failing on bad data syncs on the CopyDone sent after it" do
+      run([
+        sent([?Q]),
+        recv(copy_in(), false),
+        recv(error("22P02"), false),
+        recv(z(?I), false),
+        sent([?c], true)
+      ])
+    end
+
+    test "a simple COPY failing on bad data syncs on the CopyFail sent after it" do
+      run([
+        sent([?Q]),
+        recv(copy_in(), false),
+        recv(error("22P02"), false),
+        recv(z(?I), false),
+        sent([?f], true)
+      ])
+    end
+
+    test "a simple COPY failing on bad data answers messages sent after its CopyDone" do
+      run([
+        sent([?Q]),
+        recv(copy_in(), false),
+        recv(error("22P02"), false),
+        recv(z(?I), false),
+        sent([?c, ?Q], false),
+        recv(command_complete("SELECT 1"), false),
+        recv(z(?I), true)
+      ])
+    end
+
+    test "a simple COPY failing on bad data syncs on the Query's ReadyForQuery after CopyDone" do
+      run([
+        sent([?Q]),
+        recv(copy_in(), false),
+        sent([?c]),
+        recv(error("22P02"), false),
+        recv(z(?I), true)
+      ])
     end
 
     test "a multi-statement Query with a COPY syncs after all statements" do
@@ -744,12 +782,21 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
   defp close(name), do: {:close_pkt, name, "close(#{name})"}
 
   defp sent(tags), do: {:sent, tags}
+  defp sent(tags, synced?), do: {:sent, tags, synced?}
   defp recv(bin, synced?), do: {:recv, bin, synced?}
 
   defp run(steps) do
     Enum.reduce(steps, new(), fn
       {:sent, tags}, backend ->
         BackendConnection.sent(backend, tags)
+
+      {:sent, tags, synced?}, backend ->
+        backend = BackendConnection.sent(backend, tags)
+
+        assert BackendConnection.synced?(backend) == synced?,
+               "after #{inspect(tags)}: queue #{inspect(queue(backend))}, state #{inspect(BackendConnection.backend(backend, :state))}"
+
+        backend
 
       {:recv, bin, synced?}, backend ->
         {backend, _out, actual} = BackendConnection.recv(backend, bin)

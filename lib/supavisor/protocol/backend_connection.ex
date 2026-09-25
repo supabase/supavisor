@@ -24,6 +24,9 @@ defmodule Supavisor.Protocol.BackendConnection do
   - `{:copy_in, :simple | :extended}`: a COPY FROM STDIN, during which the backend ignores
     Syncs until CopyDone or CopyFail.
 
+  A COPY that fails on bad data is over for the backend, but not for the client, which keeps
+  sending CopyData until its CopyDone or CopyFail. The backend isn't synced until that arrives.
+
   A Sync interleaved between CopyData messages of a COPY that then fails on bad data is
   assumed to have been ignored. Whether the backend read it before failing isn't observable.
 
@@ -67,7 +70,8 @@ defmodule Supavisor.Protocol.BackendConnection do
     statements: nil,
     fatal_error: nil,
     buffer: <<>>,
-    in_flight: nil
+    in_flight: nil,
+    copy_end_due: false
   )
 
   @type state() ::
@@ -98,7 +102,8 @@ defmodule Supavisor.Protocol.BackendConnection do
             statements: term(),
             fatal_error: map() | nil,
             buffer: binary(),
-            in_flight: {non_neg_integer(), forward? :: boolean()} | nil
+            in_flight: {non_neg_integer(), forward? :: boolean()} | nil,
+            copy_end_due: boolean()
           )
 
   @tracked [?1, ?2, ?3, ?T, ?n, ?C, ?I, ?s, ?G, ?Z, ?E]
@@ -117,6 +122,8 @@ defmodule Supavisor.Protocol.BackendConnection do
   """
   @spec sent(t(), [byte() | {:ps, byte()}]) :: t()
   def sent(backend(announced: nil) = t, tags) do
+    {t, tags} = take_copy_end(t, tags)
+
     if Enum.any?(tags, &match?({:ps, _}, &1)) do
       backend(t, announced: tags)
     else
@@ -330,9 +337,14 @@ defmodule Supavisor.Protocol.BackendConnection do
   defp frame(t, <<>>, out, synced?), do: {t, out, synced?}
   defp frame(t, partial, out, synced?), do: {backend(t, buffer: partial), out, synced?}
 
+  @doc """
+  Returns whether the backend is idle, outside a transaction, with every message answered and
+  no write parked.
+  """
   # A parked write is on its way to the backend, so it isn't done yet.
-  defp synced?(backend(state: state, announced: announced)),
-    do: state == :idle and announced == nil
+  @spec synced?(t()) :: boolean()
+  def synced?(backend(state: state, announced: announced, copy_end_due: copy_end_due)),
+    do: state == :idle and announced == nil and not copy_end_due
 
   defp keep(out, true, part), do: [part | out]
   defp keep(out, false, _part), do: out
@@ -441,9 +453,20 @@ defmodule Supavisor.Protocol.BackendConnection do
     case :queue.peek(queue) do
       {:value, {:sync, _, _}} -> t |> skip() |> skip_copy_syncs()
       {:value, {message, _, _}} when message in [:copy_done, :copy_fail] -> skip(t)
-      _ -> t
+      {:value, _} -> t
+      :empty -> backend(t, copy_end_due: true)
     end
   end
+
+  # The backend ignores the CopyDone or CopyFail ending a COPY that already failed.
+  defp take_copy_end(backend(copy_end_due: true) = t, tags) do
+    case Enum.split_while(tags, &(&1 not in [?c, ?f])) do
+      {before, [_copy_end | rest]} -> {backend(t, copy_end_due: false), before ++ rest}
+      {_, []} -> {t, tags}
+    end
+  end
+
+  defp take_copy_end(t, tags), do: {t, tags}
 
   defp skip_through(backend(queue: queue) = t, message) do
     case :queue.peek(queue) do

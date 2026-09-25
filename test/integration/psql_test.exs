@@ -4,6 +4,7 @@ defmodule Supavisor.Integration.PsqlTest do
   import Supavisor.Asserts
 
   require Supavisor
+  require Supavisor.Protocol.BackendConnection, as: BackendConnection
 
   @moduletag :integration
 
@@ -31,6 +32,48 @@ defmodule Supavisor.Integration.PsqlTest do
 
     output = recv_until(psql, "COMMIT\n")
     assert output =~ "COPY 2\n2\n"
+
+    assert_eventually(10, 100, fn -> elem(:sys.get_state(client_handler()), 0) == :idle end)
+
+    Port.close(psql)
+  end
+
+  # psql doesn't read the ErrorResponse of a failed COPY until it has sent its CopyDone, and
+  # flushes the data every 8KB, so the COPY fails on the backend while the script is paused.
+  test "keeps the backend of a failed COPY until its CopyDone" do
+    psql = start_psql()
+
+    Port.command(psql, """
+    \\set ON_ERROR_STOP off
+    DROP TABLE IF EXISTS psql_copy_fail;
+    CREATE TABLE psql_copy_fail (a int);
+    COPY psql_copy_fail FROM STDIN;
+    oops
+    #{String.duplicate("1\n", 10_000)}\
+    """)
+
+    recv_until(psql, "CREATE TABLE\n")
+
+    assert_eventually(10, 100, fn ->
+      case :sys.get_state(client_handler()) do
+        {:busy, %{db_connection: {_pool, db_pid, _sock}}} ->
+          {_state, %{backend: backend}} = :sys.get_state(db_pid)
+          BackendConnection.backend(backend, :state) == :idle
+
+        _ ->
+          false
+      end
+    end)
+
+    Port.command(psql, """
+    \\.
+    SELECT 1;
+    DROP TABLE psql_copy_fail;
+    """)
+
+    output = recv_until(psql, "DROP TABLE\n")
+    assert output =~ ~s(invalid input syntax for type integer: "oops")
+    assert output =~ ~r/\n1\nDROP TABLE\n$/
 
     assert_eventually(10, 100, fn -> elem(:sys.get_state(client_handler()), 0) == :idle end)
 
