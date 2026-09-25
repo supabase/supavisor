@@ -112,7 +112,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   defguardp answering(state) when state in [:idle, :in_transaction, :busy]
 
   @spec new(module()) :: t()
-  def new(storage), do: backend(storage: storage, statements: storage.new())
+  def new(storage), do: backend(storage: storage, statements: storage.new(), queue: :queue.new())
 
   @spec fatal_error(t()) :: map() | nil
   def fatal_error(backend(fatal_error: error)), do: error
