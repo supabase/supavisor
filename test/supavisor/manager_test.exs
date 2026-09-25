@@ -46,7 +46,7 @@ defmodule Supavisor.ManagerTest do
         db_name: Supavisor.id(self_id, :db)
       )
 
-      register(self_id)
+      {:ok, _} = Registry.register(Supavisor.Registry.Tenants, {:manager, self_id}, nil)
       {:ok, invalidation_task_pid} = Manager.terminate(:shutdown, %{id: self_id})
       send(parent, {:task_pid, invalidation_task_pid})
     end)
