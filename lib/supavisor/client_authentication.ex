@@ -259,11 +259,15 @@ defmodule Supavisor.ClientAuthentication do
                tenant.auth_query,
                Supavisor.id(id, :user)
              ) do
-          {:ok, sasl_secrets} -> {:ok, ValidationSecrets.from_sasl_secrets(sasl_secrets)}
-          {:error, _} = error -> error
+          {:ok, sasl_secrets} ->
+            {:ok, ValidationSecrets.from_sasl_secrets(sasl_secrets)}
+
+          {:error, reason} = error ->
+            Logger.error("One-off user secret fetch failed: #{inspect(reason)}")
+            error
         end
 
-      {:error, _} = error ->
+      {:error} = error ->
         error
     end
   end
