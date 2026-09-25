@@ -75,8 +75,12 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def callback_mode, do: [:handle_event_function, :state_enter]
 
-  @spec db_status(pid(), :ready_for_query) :: :ok
-  def db_status(pid, status), do: :gen_statem.cast(pid, {:db_status, status})
+  @doc """
+  Tells the ClientHandler the backend is idle after processing every write up to `write_seq`.
+  """
+  @spec db_status(pid(), :ready_for_query, non_neg_integer()) :: :ok
+  def db_status(pid, status, write_seq),
+    do: :gen_statem.cast(pid, {:db_status, status, write_seq})
 
   @spec send_error_and_terminate(pid(), iodata()) :: :ok
   def send_error_and_terminate(pid, error_message),
@@ -543,12 +547,29 @@ defmodule Supavisor.ClientHandler do
   end
 
   # emulate handle_cast
-  def handle_event(:cast, {:db_status, :ready_for_query}, :busy, data) do
+  # A write with tracked messages was forwarded after the one the backend caught up
+  # with, so the backend isn't done yet. Another db_status follows once it is.
+  def handle_event(:cast, {:db_status, :ready_for_query, write_seq}, :busy, data)
+      when write_seq < data.tracked_seq do
+    :keep_state_and_data
+  end
+
+  # Later writes without tracked messages get no reply and can't change the backend's
+  # state, so the backend is done with them too.
+  def handle_event(:cast, {:db_status, :ready_for_query, _write_seq}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
-    # In transaction mode the DbHandler checks itself back into the pool once
-    # it finishes forwarding the response; we only drop our reference to it.
-    db_connection = if data.mode == :transaction, do: nil, else: data.db_connection
+    # In transaction mode the DbHandler waits for us to release it, since only we
+    # know nothing else was forwarded to it.
+    db_connection =
+      case data do
+        %{mode: :transaction, db_connection: {_pool, db_pid, _sock}} ->
+          DbHandler.release(db_pid, data.write_seq)
+          nil
+
+        _ ->
+          data.db_connection
+      end
 
     {_, stats} =
       if data.local,
@@ -561,7 +582,7 @@ defmodule Supavisor.ClientHandler do
      handle_actions(data)}
   end
 
-  def handle_event(:cast, {:db_status, :ready_for_query}, :idle, _) do
+  def handle_event(:cast, {:db_status, :ready_for_query, _write_seq}, :idle, _) do
     :keep_state_and_data
   end
 
@@ -689,10 +710,10 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  # Sync when idle and no db_connection - return sync directly
+  # Lone sync when idle and no db_connection - return sync directly
   def handle_event(
         _kind,
-        {proto, _, <<?S, 4::32, _::binary>>},
+        {proto, _, <<?S, 4::32>>},
         :idle,
         %{db_connection: nil} = data
       )
@@ -907,34 +928,34 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, new_stream_state, pkts} <-
            ProtocolHelpers.process_client_packets(data_to_send, data.mode, data),
-         {:ok, new_stream_state} <- maybe_expect_ready_for_query(data, new_stream_state),
+         data = maybe_expect_messages(%{data | stream_state: new_stream_state}),
          :ok <- sock_send(pkts, data) do
-      {:ok, %{data | stream_state: new_stream_state}}
+      {:ok, data}
     else
       {:error, exception} ->
         {:error, exception}
     end
   end
 
-  defp maybe_expect_ready_for_query(
-         %{mode: :transaction, db_connection: {_pool, db_pid, _sock}},
-         stream_state
-       ) do
-    {count, open_batch?, stream_state} = handle_rfq_producers(stream_state)
-    DbHandler.expect_ready_for_query(db_pid, count, open_batch?)
-    {:ok, stream_state}
+  # Every write is announced, even one without tracked messages, so the DbHandler
+  # can't be released while any of it is in flight.
+  defp maybe_expect_messages(%{mode: :transaction, db_connection: {_pool, db_pid, _sock}} = data) do
+    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
+    {forwarded, handler_state} = FrontendMessageHandler.take_forwarded(handler_state)
+    write_seq = data.write_seq + 1
+    tracked_seq = if forwarded == [], do: data.tracked_seq, else: write_seq
+    DbHandler.expect_messages(db_pid, write_seq, forwarded)
+
+    %{
+      data
+      | write_seq: write_seq,
+        tracked_seq: tracked_seq,
+        stream_state:
+          MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
+    }
   end
 
-  defp maybe_expect_ready_for_query(_data, stream_state), do: {:ok, stream_state}
-
-  defp handle_rfq_producers(stream_state) do
-    handler_state = MessageStreamer.stream_state(stream_state, :handler_state)
-
-    # The count is per write, so it is reset on read. `open_batch?` outlives the
-    # write that opened the batch and is only cleared by the client's Sync.
-    {handler_state.rfq_producers, handler_state.open_batch?,
-     MessageStreamer.update_state(stream_state, fn s -> %{s | rfq_producers: 0} end)}
-  end
+  defp maybe_expect_messages(data), do: data
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
@@ -984,28 +1005,11 @@ defmodule Supavisor.ClientHandler do
   defp sock_send(bin_or_pkts, data) do
     {_pool, db_handler, db_sock} = data.db_connection
 
-    case bin_or_pkts do
-      pkts when is_list(pkts) ->
-        # Chunking to ensure we send bigger packets
-        pkts
-        |> Enum.chunk_by(&is_tuple/1)
-        |> Enum.reduce_while(:ok, fn chunk, _acc ->
-          case chunk do
-            [t | _] = prepared_pkts when is_tuple(t) ->
-              Supavisor.DbHandler.handle_prepared_statement_pkts(db_handler, prepared_pkts)
-
-            bins ->
-              HandlerHelpers.sock_send(db_sock, bins)
-          end
-          |> case do
-            :ok -> {:cont, :ok}
-            error -> {:halt, error}
-          end
-        end)
-
-      bin ->
-        HandlerHelpers.sock_send(elem(data.db_connection, 2), bin)
-    end
+    # A write with prepared statement packets goes whole through the DbHandler, so it
+    # reaches the backend in order.
+    if is_list(bin_or_pkts) and Enum.any?(bin_or_pkts, &is_tuple/1),
+      do: DbHandler.handle_prepared_statement_pkts(db_handler, bin_or_pkts),
+      else: HandlerHelpers.sock_send(db_sock, bin_or_pkts)
   end
 
   @spec timeout_subscribe_or_terminate(map()) :: :gen_statem.handle_event_result()

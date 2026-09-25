@@ -43,6 +43,8 @@ defmodule Supavisor.ClientHandler.Data do
     :max_clients,
     :pool_ranch,
     :use_jit_flow,
+    write_seq: 0,
+    tracked_seq: 0,
     invalid_options: []
   ]
 end

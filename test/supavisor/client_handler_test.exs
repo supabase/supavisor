@@ -4,6 +4,8 @@ defmodule Supavisor.ClientHandlerTest do
   alias Supavisor.Protocol.FrontendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
 
+  require Supavisor
+
   @subject Supavisor.ClientHandler
 
   defp sockpair do
@@ -172,88 +174,119 @@ defmodule Supavisor.ClientHandlerTest do
     end
   end
 
-  describe "handle_event/4 :busy ReadyForQuery expectation" do
-    test "forwards the expected ReadyForQuery count to the DbHandler in transaction mode" do
+  describe "handle_event/4 :busy message expectation" do
+    setup do
       {db_sock, _recv} = sockpair()
 
       data = %{
         mode: :transaction,
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
+        write_seq: 0,
+        tracked_seq: 0,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
-      # Three pipelined simple queries produce three ReadyForQuery replies.
+      {:ok, data: data}
+    end
+
+    test "forwards the forwarded messages to the DbHandler in transaction mode", %{data: data} do
       batch =
         <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">> <> <<?Q, 12::32, "SELECT 3">>
 
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 3, false}}
+      assert_received {:"$gen_cast", {:expect_messages, 1, [?Q, ?Q, ?Q]}}
     end
 
-    test "reports an extended batch left open without its Sync" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
-
-      # Parse/Bind/Execute with no Sync: no ReadyForQuery is expected, but the
-      # backend is left holding the batch.
-      batch =
-        <<?P, 16::32, 0, "select 1", 0, 0, 0>> <>
-          <<?B, 12::32, 0, 0, 0, 0, 0, 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
-
-      assert {:keep_state, _data} =
-               @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
-
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 0, true}}
-    end
-
-    test "a Sync closes a previously open batch" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
-
+    test "forwards each write's messages separately", %{data: data} do
       batch = <<?P, 16::32, 0, "select 1", 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
 
       assert {:keep_state, data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 0, true}}
+      assert_received {:"$gen_cast", {:expect_messages, 1, [?P, ?E]}}
 
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, <<?S, 4::32>>}, :busy, data)
 
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 1, false}}
+      assert_received {:"$gen_cast", {:expect_messages, 2, [?S]}}
     end
 
-    test "does not send an expectation in session mode" do
-      {db_sock, _recv} = sockpair()
+    test "announces a write without tracked messages", %{data: data} do
+      data = %{data | write_seq: 4, tracked_seq: 2}
 
-      data = %{
-        mode: :session,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
+      assert {:keep_state, data} =
+               @subject.handle_event(:info, {:tcp, :sock, <<?d, 6::32, "1\n">>}, :busy, data)
+
+      assert data.write_seq == 5
+      assert data.tracked_seq == 2
+      assert_received {:"$gen_cast", {:expect_messages, 5, []}}
+    end
+
+    test "does not send an expectation in session mode", %{data: data} do
+      data = %{data | mode: :session}
 
       batch = <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">>
 
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      refute_received {:"$gen_cast", {:expect_ready_for_query, _count, _open_batch?}}
+      refute_received {:"$gen_cast", {:expect_messages, _write_seq, _tags}}
+    end
+  end
+
+  describe "handle_event/4 :busy db_status" do
+    setup do
+      {db_sock, _recv} = sockpair()
+
+      data = %{
+        mode: :transaction,
+        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
+        write_seq: 3,
+        tracked_seq: 3,
+        local: true,
+        stats: %{},
+        query_start: System.monotonic_time(),
+        heartbeat_interval: 0,
+        idle_timeout: 0,
+        id:
+          Supavisor.id(
+            type: :single,
+            tenant: "tenant",
+            user: "user",
+            mode: :transaction,
+            db: "postgres"
+          )
+      }
+
+      {:ok, data: data}
+    end
+
+    test "releases the DbHandler when it caught up with the latest write", %{data: data} do
+      assert {:next_state, :idle, data, _actions} =
+               @subject.handle_event(:cast, {:db_status, :ready_for_query, 3}, :busy, data)
+
+      assert data.db_connection == nil
+      assert_received {:"$gen_cast", {:release, 3}}
+    end
+
+    test "releases the DbHandler when only untracked writes followed", %{data: data} do
+      data = %{data | write_seq: 5}
+
+      assert {:next_state, :idle, data, _actions} =
+               @subject.handle_event(:cast, {:db_status, :ready_for_query, 3}, :busy, data)
+
+      assert data.db_connection == nil
+      assert_received {:"$gen_cast", {:release, 5}}
+    end
+
+    test "stays busy when a later write is still in flight", %{data: data} do
+      assert :keep_state_and_data =
+               @subject.handle_event(:cast, {:db_status, :ready_for_query, 2}, :busy, data)
+
+      refute_received {:"$gen_cast", {:release, _write_seq}}
     end
   end
 end
