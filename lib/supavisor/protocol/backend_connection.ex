@@ -66,6 +66,16 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   alias Supavisor.Protocol.PreparedStatements
 
+  @compile {:inline,
+            head_request: 1,
+            forward?: 2,
+            handle_message: 3,
+            pop_request: 1,
+            pop_request: 2,
+            pop_unanswered: 1,
+            ready_for_query: 2,
+            synced?: 1}
+
   Record.defrecord(:backend,
     state: :idle,
     requests: :queue.new(),
