@@ -154,7 +154,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
           {:ok, term()} | {:error, Exception.t()}
   defp decode_password_message(message_type, bin, _context) do
     case Server.decode_password_message(bin, message_type) do
-      {:ok, %{tag: :password_message, payload: {_, _} = payload}, _} ->
+      {:ok, {_, _} = payload, _} ->
         {:ok, payload}
 
       {:ok, other, _} ->
