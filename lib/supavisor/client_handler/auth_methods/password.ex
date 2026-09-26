@@ -112,6 +112,11 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
       {:ok, %{tag: :password_message, payload: {:cleartext_password, password}}, _} ->
         {:ok, IO.iodata_to_binary(password)}
 
+      # We asked for a cleartext password, so a password that starts with "md5"
+      # (decoded as an MD5 response) is still the cleartext password.
+      {:ok, %{tag: :password_message, payload: {:md5, password}}, _} ->
+        {:ok, password}
+
       {:ok, other, _} ->
         {:error,
          %Supavisor.Errors.AuthProtocolError{
