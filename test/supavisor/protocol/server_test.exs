@@ -370,12 +370,12 @@ defmodule Supavisor.Protocol.ServerTest do
     end
   end
 
-  test "decode password message payloads" do
+  test "decode_password_message/2 with SASLInitialResponse" do
     payload = <<"SCRAM-SHA-256", 0, 0, 0, 0, 1, "n,,", "p=tls-server-end-point,,m=abc,r=def">>
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
     assert {:ok, %Server.Pkt{tag: :password_message, payload: result}, ""} =
-             Server.decode_pkt(packet)
+             Server.decode_password_message(packet, :sasl_initial_response)
 
     assert {:scram_sha_256,
             %{"p" => "tls-server-end-point", "m" => "abc", "r" => "def", "c" => "biws"}} = result
@@ -384,7 +384,7 @@ defmodule Supavisor.Protocol.ServerTest do
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
     assert {:ok, %Server.Pkt{tag: :password_message, payload: result}, ""} =
-             Server.decode_pkt(packet)
+             Server.decode_password_message(packet, :sasl_initial_response)
 
     assert {:scram_sha_256,
             %{"p" => "tls-server-end-point", "m" => "abc", "r" => "def", "c" => "eSws"}} = result
@@ -393,26 +393,16 @@ defmodule Supavisor.Protocol.ServerTest do
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
     assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
-             Server.decode_pkt(packet)
+             Server.decode_password_message(packet, :sasl_initial_response)
 
-    payload = "md5abcdef\0"
-    packet = <<112, byte_size(payload) + 4::32, payload::binary>>
-
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: {:md5, "md5abcdef"}}, ""} =
-             Server.decode_pkt(packet)
-
-    payload = "md5abcdef"
+    payload = "secret\0"
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
     assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
-             Server.decode_pkt(packet)
+             Server.decode_password_message(packet, :sasl_initial_response)
+  end
 
-    payload = "invalid"
-    packet = <<112, byte_size(payload) + 4::32, payload::binary>>
-
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
-             Server.decode_pkt(packet)
-
+  test "decode_password_message/2 with SASLResponse" do
     payload = "p=value1,r=value2"
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
@@ -420,7 +410,43 @@ defmodule Supavisor.Protocol.ServerTest do
             %Server.Pkt{
               tag: :password_message,
               payload: {:first_msg_response, %{"p" => "value1", "r" => "value2"}}
-            }, ""} = Server.decode_pkt(packet)
+            }, ""} = Server.decode_password_message(packet, :sasl_response)
+
+    payload = "invalid"
+    packet = <<112, byte_size(payload) + 4::32, payload::binary>>
+
+    assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
+             Server.decode_password_message(packet, :sasl_response)
+  end
+
+  test "decode_password_message/2 with PasswordMessage" do
+    for password <- ["secret", "md5-prefixed-password", "p=value1,r=value2", ""] do
+      payload = password <> "\0"
+      packet = <<112, byte_size(payload) + 4::32, payload::binary>>
+
+      assert {:ok,
+              %Server.Pkt{tag: :password_message, payload: {:cleartext_password, ^password}},
+              ""} = Server.decode_password_message(packet, :password)
+    end
+
+    for payload <- ["no_null_terminator", "two\0strings\0"] do
+      packet = <<112, byte_size(payload) + 4::32, payload::binary>>
+
+      assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
+               Server.decode_password_message(packet, :password)
+    end
+  end
+
+  test "decode_password_message/2 with other messages" do
+    packet = <<?Z, 5::32, ?I>>
+
+    assert {:ok, %Server.Pkt{tag: :ready_for_query, payload: :idle}, ""} =
+             Server.decode_password_message(packet, :password)
+
+    assert {:error, :incomplete} =
+             Server.decode_password_message(<<112, 10::32, "abc">>, :password)
+
+    assert {:error, :bad_packet} = Server.decode_password_message(<<>>, :password)
   end
 
   test "decode row description message" do
