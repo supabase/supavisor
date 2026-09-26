@@ -100,6 +100,25 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       assert <<?B, _len::32, 0, "server_stmt", 0, 0, 0, 0, 0, 0, 0, 0>> = result_bin
     end
 
+    test "bind message keeps a named portal" do
+      parse_pkt =
+        <<?P, 27::32, "server_stmt", 0, "select 1", 0, 0, 0>>
+
+      prepared_statement = %PreparedStatement{name: "server_stmt", parse_pkt: parse_pkt}
+      {:ok, client_statements} = Storage.put(Storage.new(), "test_stmt", prepared_statement)
+
+      payload = <<"portal1", 0, "test_stmt", 0, 0, 0, 0, 0, 0, 0>>
+      len = byte_size(payload) + 4
+
+      {:ok, _client_statements, result} =
+        PreparedStatements.handle_bind_message(client_statements, len, payload)
+
+      assert {:bind_pkt, "server_stmt", result_bin, ^parse_pkt} = result
+
+      expected_payload = <<"portal1", 0, "server_stmt", 0, 0, 0, 0, 0, 0, 0>>
+      assert result_bin == <<?B, byte_size(expected_payload) + 4::32, expected_payload::binary>>
+    end
+
     test "describe message updates statement name" do
       parse_pkt =
         <<?P, 27::32, "server_stmt", 0, "select 1", 0, 0, 0>>
