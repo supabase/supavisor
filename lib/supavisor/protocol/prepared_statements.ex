@@ -115,7 +115,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
           {:ok, Storage.t(), pkt() | handled_pkt()}
           | {:error, Supavisor.Errors.PreparedStatementNotFoundError.t()}
   def handle_bind_message(client_statements, len, payload) do
-    {_portal_name, after_portal} = extract_null_terminated_string(payload)
+    {portal_name, after_portal} = extract_null_terminated_string(payload)
 
     case extract_null_terminated_string(after_portal) do
       {"", _} ->
@@ -127,7 +127,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
             new_len = len + (byte_size(server_side_name) - byte_size(client_side_name))
 
             new_bin =
-              <<?B, new_len::32, 0, server_side_name::binary, 0,
+              <<?B, new_len::32, portal_name::binary, 0, server_side_name::binary, 0,
                 packet_after_client_name::binary>>
 
             {:ok, client_statements, {:bind_pkt, server_side_name, new_bin, parse_pkt}}

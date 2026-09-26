@@ -44,6 +44,20 @@ defmodule Supavisor.Integration.PreparedStatementsTest do
     assert {:ok, _, %{rows: _}} = Postgrex.execute(conn, query, ["private"])
   end
 
+  test "streams a named statement through a named portal", %{conns: [conn | _]} do
+    # Postgrex.stream binds to a named portal and fetches it in chunks
+    assert {:ok, rows} =
+             Postgrex.transaction(conn, fn conn ->
+               query = Postgrex.prepare!(conn, "q_stream", "SELECT generate_series(1, 10)")
+
+               conn
+               |> Postgrex.stream(query, [], max_rows: 3)
+               |> Enum.flat_map(& &1.rows)
+             end)
+
+    assert rows == Enum.map(1..10, &[&1])
+  end
+
   test "prepared statement limit (client)", %{conns: [conn | _]} do
     limit = PreparedStatements.client_limit()
 
