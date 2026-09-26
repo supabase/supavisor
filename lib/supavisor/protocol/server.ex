@@ -97,6 +97,25 @@ defmodule Supavisor.Protocol.Server do
 
   def decode_pkt(_), do: {:error, :bad_packet}
 
+  @doc """
+  Decodes a message sent by the client in response to an authentication request.
+
+  The 'p' message type is shared by PasswordMessage, SASLInitialResponse and
+  SASLResponse. Its contents can only be interpreted knowing which one was
+  requested, so the caller passes the expected type.
+  """
+  @spec decode_password_message(binary(), :password | :sasl_initial_response | :sasl_response) ::
+          {:ok, Pkt.t(), binary()} | {:error, :bad_packet} | {:error, :incomplete}
+  def decode_password_message(bin, expected) do
+    case decode_pkt(bin) do
+      {:ok, %Pkt{tag: :password_message, bin: <<?p, _len::32, payload::binary>>} = pkt, rest} ->
+        {:ok, %{pkt | payload: decode_password_payload(expected, payload)}, rest}
+
+      other ->
+        other
+    end
+  end
+
   @spec decode_string(binary()) :: {:ok, binary(), binary()} | {:error, :not_null_terminated}
   def decode_string(bin) do
     case :binary.match(bin, <<0>>) do
@@ -389,10 +408,20 @@ defmodule Supavisor.Protocol.Server do
   defp decode_payload(tag, payload) when tag in [:error_response, :notice_response],
     do: decode_error_response(payload)
 
-  @spec decode_payload(:password_message, binary()) ::
-          {:scram_sha_256, map()} | {:md5, binary()} | :undefined
-  defp decode_payload(
-         :password_message,
+  defp decode_payload(_, _), do: :undefined
+
+  @spec decode_password_payload(:password, binary()) :: {:cleartext_password, binary()} | :undefined
+  defp decode_password_payload(:password, bin) do
+    case :binary.split(bin, <<0>>) do
+      [password, ""] -> {:cleartext_password, password}
+      _ -> :undefined
+    end
+  end
+
+  @spec decode_password_payload(:sasl_initial_response, binary()) ::
+          {:scram_sha_256, map()} | :undefined
+  defp decode_password_payload(
+         :sasl_initial_response,
          <<"SCRAM-SHA-256", 0, _::32, channel::binary-3, bin::binary>>
        ) do
     case kv_to_map(bin) do
@@ -410,30 +439,16 @@ defmodule Supavisor.Protocol.Server do
     end
   end
 
-  defp decode_payload(:password_message, "md5" <> _ = bin) do
-    case :binary.split(bin, <<0>>) do
-      [digest, ""] -> {:md5, digest}
-      _ -> :undefined
+  defp decode_password_payload(:sasl_initial_response, _bin), do: :undefined
+
+  @spec decode_password_payload(:sasl_response, binary()) ::
+          {:first_msg_response, map()} | :undefined
+  defp decode_password_payload(:sasl_response, bin) do
+    case kv_to_map(bin) do
+      {:ok, map} -> {:first_msg_response, map}
+      {:error, _} -> :undefined
     end
   end
-
-  @spec decode_payload(:password_message, binary()) ::
-          {:first_msg_response, map()} | {:cleartext_password, binary()} | :undefined
-  defp decode_payload(:password_message, bin) do
-    # cleartext passwords will be null terminated, scram messages not
-    case :binary.split(bin, <<0>>) do
-      [password, ""] ->
-        {:cleartext_password, password}
-
-      _ ->
-        case kv_to_map(bin) do
-          {:ok, map} -> {:first_msg_response, map}
-          {:error, _} -> :undefined
-        end
-    end
-  end
-
-  defp decode_payload(_, _), do: :undefined
 
   @spec kv_to_map(binary()) :: {:ok, map()} | {:error, String.t()}
   defp kv_to_map(bin) do

@@ -110,7 +110,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
           {:ok, iodata(), SASLSecrets.t() | PasswordSecrets.t()} | {:error, Exception.t()}
   def handle_scram_final(%Context{signatures: %{server: server_signature}} = context, bin) do
     with {:ok, {:first_msg_response, %{"p" => p}}} <-
-           decode_password_message(:first_msg_response, bin, context),
+           decode_password_message(:sasl_response, bin, context),
          {:ok, client_key} <- validate_scram_proof(context, p) do
       message = Server.exchange_message(:final, "v=#{Base.encode64(server_signature)}")
       final_secrets = resolve_final_secrets(context, client_key)
@@ -145,16 +145,16 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
           {:ok, {binary(), binary(), binary()}} | {:error, Exception.t()}
   defp decode_scram_first(bin, context) do
     with {:ok, {:scram_sha_256, %{"n" => user, "r" => nonce, "c" => channel}}} <-
-           decode_password_message(:scram_sha_256, bin, context) do
+           decode_password_message(:sasl_initial_response, bin, context) do
       {:ok, {user, nonce, channel}}
     end
   end
 
-  @spec decode_password_message(atom(), binary(), Context.t()) ::
+  @spec decode_password_message(:sasl_initial_response | :sasl_response, binary(), Context.t()) ::
           {:ok, term()} | {:error, Exception.t()}
-  defp decode_password_message(expected_type, bin, _context) do
-    case Server.decode_pkt(bin) do
-      {:ok, %{tag: :password_message, payload: {^expected_type, _} = payload}, _} ->
+  defp decode_password_message(message_type, bin, _context) do
+    case Server.decode_password_message(bin, message_type) do
+      {:ok, %{tag: :password_message, payload: {_, _} = payload}, _} ->
         {:ok, payload}
 
       {:ok, other, _} ->

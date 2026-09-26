@@ -79,7 +79,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Jit do
   end
 
   defp decode_password(bin, _context) do
-    case Server.decode_pkt(bin) do
+    case Server.decode_password_message(bin, :password) do
       {:ok, %{tag: :password_message, payload: {:cleartext_password, password}}, _} ->
         {:ok, IO.iodata_to_binary(password)}
 
