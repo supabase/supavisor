@@ -857,7 +857,6 @@ defmodule Supavisor.ClientHandler do
   defp forwardable_peer_ip(peer_ip), do: peer_ip
 
   defp handle_auth_failure(exception, data) do
-    AuthMethods.handle_auth_failure(data.auth_context, exception)
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
     Error.terminate_with_error(data, exception, :handshake)
   end
