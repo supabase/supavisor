@@ -4,9 +4,11 @@ defmodule Supavisor do
   require Logger
 
   alias Supavisor.{
+    Errors.PoolTerminatingError,
     Errors.TenantBannedError,
     Helpers,
     Manager,
+    Protocol.Server,
     Tenants
   }
 
@@ -92,9 +94,17 @@ defmodule Supavisor do
     end
   end
 
-  def async_stop(id) do
+  @doc """
+  Stops the tenant supervisor `sup` asynchronously.
+  """
+  @spec async_stop(pid) :: DynamicSupervisor.on_start_child()
+  def async_stop(sup) do
     Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
-      stop(id)
+      try do
+        Supervisor.stop(sup)
+      catch
+        :exit, :noproc -> :ok
+      end
     end)
   end
 
@@ -374,9 +384,27 @@ defmodule Supavisor do
 
   @spec try_start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
   def try_start_local_pool(id, secrets, log_level) do
-    if count_pools(id(id, :tenant)) < @max_pools,
-      do: start_local_pool(id, secrets, log_level),
-      else: {:error, %Supavisor.Errors.MaxPoolsReachedError{}}
+    cond do
+      local_pool_shutting_down?(id) ->
+        {:error, %PoolTerminatingError{underlying_error: Server.cannot_connect_now()}}
+
+      count_pools(id(id, :tenant)) >= @max_pools ->
+        {:error, %Supavisor.Errors.MaxPoolsReachedError{}}
+
+      true ->
+        start_local_pool(id, secrets, log_level)
+    end
+  end
+
+  # A shutting down tenant supervisor is de-registered from :syn by its
+  # Terminator, but keeps its local registrations until it exits.
+  @spec local_pool_shutting_down?(id) :: boolean()
+  defp local_pool_shutting_down?(id(tenant: tenant) = id) do
+    registered = get_global_sup(id)
+
+    Supavisor.Registry.TenantSups
+    |> Registry.lookup(tenant)
+    |> Enum.any?(fn {pid, sup_id} -> sup_id == id and pid != registered end)
   end
 
   @spec start_local_pool(id, secrets, atom()) :: {:ok, pid} | {:error, any}
