@@ -312,6 +312,25 @@ if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
        }}
 end
 
+burst_limit_enable =
+  case System.get_env("SUPAVISOR_LOG_BURST_LIMIT_ENABLE") do
+    nil -> true
+    v -> v in ~w(true 1)
+  end
+
+burst_limit_max_count =
+  System.get_env("SUPAVISOR_LOG_BURST_LIMIT_MAX_COUNT", "500") |> String.to_integer()
+
+burst_limit_window_time =
+  System.get_env("SUPAVISOR_LOG_BURST_LIMIT_WINDOW_TIME", "1000") |> String.to_integer()
+
+config :logger, :default_handler,
+  config: [
+    burst_limit_enable: burst_limit_enable,
+    burst_limit_max_count: burst_limit_max_count,
+    burst_limit_window_time: burst_limit_window_time
+  ]
+
 config :logger,
   backends: [:console]
 
