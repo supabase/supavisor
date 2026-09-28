@@ -97,7 +97,8 @@ defmodule Supavisor.Integration.ClientAuthenticationTest do
 
       log =
         capture_log([level: :warning], fn ->
-          assert :ok = ClientAuthentication.handle_wrong_password(id, tenant, manager_secrets)
+          assert {:error, :rate_limited} =
+                   ClientAuthentication.handle_wrong_password(id, tenant, manager_secrets)
         end)
 
       assert log =~ "ClientHandler: Cache refresh rate-limited, skipping secret check"
