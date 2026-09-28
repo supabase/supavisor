@@ -44,7 +44,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
   alias Supavisor.ClientAuthentication
   alias Supavisor.Helpers
   alias Supavisor.Protocol.Server
-  alias Supavisor.Secrets.{PasswordSecrets, SASLSecrets}
+  alias Supavisor.Secrets.{ManagerSecrets, PasswordSecrets, SASLSecrets}
 
   require Supavisor
 
@@ -137,7 +137,23 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
     if Helpers.hash(client_key) == context.secret.stored_key do
       {:ok, client_key}
     else
-      {:error, %Supavisor.Errors.WrongPasswordError{user: context.db_user}}
+      {:error, wrong_password_error(context)}
+    end
+  end
+
+  defp wrong_password_error(%{tenant: %{require_user: true}} = context) do
+    %Supavisor.Errors.WrongPasswordError{user: context.db_user}
+  end
+
+  # The exchange was performed with the cached salt, so the proof can't be checked
+  # against refreshed secrets. We can only tell the client that the password changed.
+  defp wrong_password_error(context) do
+    manager_secrets = ManagerSecrets.from_manager_user(context.user)
+
+    case ClientAuthentication.handle_wrong_password(context.id, context.tenant, manager_secrets) do
+      {:changed, _new_secrets} -> %Supavisor.Errors.PasswordChangedError{user: context.db_user}
+      :noop -> %Supavisor.Errors.WrongPasswordError{user: context.db_user}
+      {:error, _reason} -> %Supavisor.Errors.WrongPasswordError{user: context.db_user}
     end
   end
 

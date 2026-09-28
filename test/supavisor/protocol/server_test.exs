@@ -202,6 +202,21 @@ defmodule Supavisor.Protocol.ServerTest do
                "FATAL", 0, ?V, "FATAL", 0, 0>>
   end
 
+  test "encode_notice_message/1" do
+    message = %{
+      "S" => "NOTICE",
+      "V" => "NOTICE",
+      "C" => "22023",
+      "M" => ~s(parameter "jit" requires a Boolean value)
+    }
+
+    result = Server.encode_notice_message(message) |> IO.iodata_to_binary()
+
+    assert result ==
+             <<?N, 0, 0, 0, 70, ?C, "22023", 0, ?M, ~s(parameter "jit" requires a Boolean value),
+               0, ?S, "NOTICE", 0, ?V, "NOTICE", 0, 0>>
+  end
+
   test "scram_request/0" do
     assert Server.scram_request() ==
              <<82, 0, 0, 0, 23, 0, 0, 0, 10, 83, 67, 82, 65, 77, 45, 83, 72, 65, 45, 50, 53, 54,

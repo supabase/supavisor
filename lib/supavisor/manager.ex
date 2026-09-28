@@ -108,14 +108,20 @@ defmodule Supavisor.Manager do
   Initiates graceful shutdown of the pool.
 
   Sends admin shutdown message to all clients and stops accepting new connections.
-  Blocks until all clients have disconnected or timeout is reached.
+  Blocks until all clients have disconnected or `drain_timeout` is reached.
 
-  If timeout is reached, remaining clients are forcefully terminated with an error.
+  If `drain_timeout` is reached, remaining clients are forcefully terminated with
+  an error.
+
+  `call_timeout` bounds the whole call. The manager only arms its own
+  `drain_timeout` once it picks the message up, so a manager that is busy in
+  another `handle_call` can take longer than `drain_timeout` to reply. It must be
+  larger than `drain_timeout`.
   """
-  @spec graceful_shutdown(pid | Supavisor.id(), timeout()) :: :ok
-  def graceful_shutdown(manager_or_id, timeout) do
+  @spec graceful_shutdown(pid | Supavisor.id(), timeout(), timeout()) :: :ok
+  def graceful_shutdown(manager_or_id, drain_timeout, call_timeout) do
     manager = resolve_manager(manager_or_id)
-    GenServer.call(manager, {:graceful_shutdown, timeout}, :infinity)
+    GenServer.call(manager, {:graceful_shutdown, drain_timeout}, call_timeout)
   end
 
   @doc """

@@ -40,7 +40,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
 
   alias Supavisor.ClientAuthentication
   alias Supavisor.Protocol.Server
-  alias Supavisor.Secrets.PasswordSecrets
+  alias Supavisor.Secrets.{ManagerSecrets, PasswordSecrets}
 
   require Supavisor
 
@@ -80,28 +80,45 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
     end
   end
 
+  # The cached secrets may be stale if the password was changed upstream. Since we
+  # have the cleartext password, we can check it against the refreshed secrets.
   defp validate_password(password, ctx) do
-    with {:ok, %{password_secrets: password_secrets, sasl_secrets: sasl_secrets}} <-
+    with {:ok, secrets} <-
            ClientAuthentication.fetch_validation_secrets(ctx.id, ctx.tenant, ctx.user) do
-      if password_secrets && Plug.Crypto.secure_compare(password, password_secrets.password) do
-        :ok
-      else
-        salted_password =
-          :pgo_scram.hi(
-            :pgo_sasl_prep_profile.validate([password]),
-            sasl_secrets.salt,
-            sasl_secrets.iterations
-          )
-
-        client_key = :pgo_scram.hmac(salted_password, "Client Key")
-        computed_stored_key = :pgo_scram.h(client_key)
-
-        if computed_stored_key == sasl_secrets.stored_key do
-          :ok
-        else
-          {:error, %Supavisor.Errors.WrongPasswordError{user: ctx.db_user}}
-        end
+      cond do
+        password_matches?(password, secrets) -> :ok
+        password_matches_refreshed?(password, ctx) -> :ok
+        true -> {:error, %Supavisor.Errors.WrongPasswordError{user: ctx.db_user}}
       end
+    end
+  end
+
+  defp password_matches_refreshed?(password, ctx) do
+    manager_secrets = ManagerSecrets.from_manager_user(ctx.user)
+
+    case ClientAuthentication.handle_wrong_password(ctx.id, ctx.tenant, manager_secrets) do
+      {:changed, new_secrets} -> password_matches?(password, new_secrets)
+      :noop -> false
+      {:error, _reason} -> false
+    end
+  end
+
+  defp password_matches?(password, %{
+         password_secrets: password_secrets,
+         sasl_secrets: sasl_secrets
+       }) do
+    if password_secrets && Plug.Crypto.secure_compare(password, password_secrets.password) do
+      true
+    else
+      salted_password =
+        :pgo_scram.hi(
+          PgSASLprep.scram_normalize(password),
+          sasl_secrets.salt,
+          sasl_secrets.iterations
+        )
+
+      client_key = :pgo_scram.hmac(salted_password, "Client Key")
+      :pgo_scram.h(client_key) == sasl_secrets.stored_key
     end
   end
 

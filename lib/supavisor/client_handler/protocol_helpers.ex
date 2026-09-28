@@ -24,7 +24,8 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     HandlerHelpers,
     Helpers,
     Protocol.MessageStreamer,
-    Protocol.Client
+    Protocol.Client,
+    Protocol.StartupOptions
   }
 
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
@@ -46,38 +47,37 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @doc """
   Parses and validates startup packet data.
 
-  Returns parsed user info, application name, and log level if successful.
+  Returns parsed user info, application name, log level, and list of invalid options.
   """
   @spec parse_startup_packet(binary()) ::
-          {:ok, startup_message_data(), String.t() | nil, Logger.level() | nil}
+          {:ok, startup_message_data(), String.t() | nil, Logger.level() | nil,
+           [{String.t(), String.t()}]}
           | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
-         {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}} <-
-           extract_and_validate_user_info(hello.payload) do
+         {options, invalid} = StartupOptions.validate(hello.payload["options"] || %{}),
+         {:ok, user_info} <- extract_and_validate_user_info(hello.payload, options) do
       Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
       app_name = normalize_app_name(hello.payload["application_name"])
-      log_level = extract_log_level(hello)
+      log_level = options["log_level"]
 
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
-       app_name, log_level}
+      {:ok, user_info, app_name, log_level, invalid}
     end
   end
 
   @doc """
   Extracts and validates user information from startup payload.
   """
-  @spec extract_and_validate_user_info(map()) ::
+  @spec extract_and_validate_user_info(map(), map()) ::
           {:ok, startup_message_data()}
           | {:error, InvalidUserInfoError.t()}
-  def extract_and_validate_user_info(payload) do
+  def extract_and_validate_user_info(payload, options) do
     {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(payload)
 
     if Helpers.validate_name(user) and (is_nil(db_name) or Helpers.validate_name(db_name)) do
-      options = payload["options"] || %{}
       search_path = payload["search_path"] || options["search_path"]
-      jit = options["jit"] == "true"
-      client_tls = options["client_tls"] && options["client_tls"] == "true"
+      jit = Map.get(options, "jit", false)
+      client_tls = Map.get(options, "client_tls")
       # Set by a peer node when it forwards a proxied connection; carries the
       # original client's IP. Only honored on local listeners, see effective_peer_ip/3.
       client_ip = options["client_ip"]
@@ -148,22 +148,4 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     Logger.debug("ClientHandler: Invalid application name #{inspect(name)}")
     ""
   end
-
-  @doc """
-  Extracts log level from startup message options.
-
-  Returns atom log level or nil if not specified or invalid.
-  """
-  @spec extract_log_level(map()) :: atom() | nil
-  def extract_log_level(%{payload: %{"options" => options}}) do
-    level = options["log_level"] && String.to_existing_atom(options["log_level"])
-
-    if level in [:debug, :info, :notice, :warning, :error] do
-      level
-    else
-      nil
-    end
-  end
-
-  def extract_log_level(_), do: nil
 end

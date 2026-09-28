@@ -120,10 +120,14 @@ defmodule Supavisor.DbHandler do
 
   The ClientHandler should send this *before* forwarding the messages that produce them,
   so the count reaches the DbHandler before the responses do.
+
+  `open_batch?` reports whether the client left an extended protocol batch
+  waiting for its Sync. The connection cannot be released while that is true,
+  since the backend is still holding the batch.
   """
-  @spec expect_ready_for_query(pid(), pos_integer()) :: :ok
-  def expect_ready_for_query(pid, count),
-    do: :gen_statem.cast(pid, {:expect_ready_for_query, count})
+  @spec expect_ready_for_query(pid(), non_neg_integer(), boolean()) :: :ok
+  def expect_ready_for_query(pid, count, open_batch?),
+    do: :gen_statem.cast(pid, {:expect_ready_for_query, count, open_batch?})
 
   @doc """
   Attempts to clean up session state by sending DISCARD ALL to the database.
@@ -238,6 +242,7 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       client_sock: nil,
       expected_rfq: 0,
+      open_batch?: false,
       pool: pool,
       terminating_error: nil,
       manager_ref: nil,
@@ -453,8 +458,8 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:cast, {:expect_ready_for_query, count}, _state, data) do
-    {:keep_state, %{data | expected_rfq: data.expected_rfq + count}}
+  def handle_event(:cast, {:expect_ready_for_query, count, open_batch?}, _state, data) do
+    {:keep_state, %{data | expected_rfq: data.expected_rfq + count, open_batch?: open_batch?}}
   end
 
   # forward the message to the client
@@ -466,9 +471,10 @@ defmodule Supavisor.DbHandler do
     {count, last_status, data} = handle_ready_for_query(data)
 
     # A batch is done when we have received the expected number of `ReadyForQuery`
-    # messages and the last status is idle and not mid-transaction.
+    # messages, the last status is idle and not mid-transaction, and the client
+    # is not holding an extended protocol batch open awaiting its Sync.
     outstanding = data.expected_rfq - count
-    batch_done? = outstanding <= 0 and last_status == ?I
+    batch_done? = outstanding <= 0 and last_status == ?I and not data.open_batch?
     data = %{data | expected_rfq: max(outstanding, 0)}
 
     # db_status must be enqueued in the ClientHandler's mailbox before the final

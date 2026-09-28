@@ -161,6 +161,7 @@ defmodule Supavisor.DbHandlerTest do
       id: make_id(),
       stats: %{},
       expected_rfq: 0,
+      open_batch?: false,
       backend_message_streaming: true,
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler)
     }
@@ -1306,14 +1307,50 @@ defmodule Supavisor.DbHandlerTest do
       data = busy_data()
 
       assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 2}, :busy, data)
+               Db.handle_event(:cast, {:expect_ready_for_query, 2, false}, :busy, data)
 
       assert data.expected_rfq == 2
 
       assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 3}, :busy, data)
+               Db.handle_event(:cast, {:expect_ready_for_query, 3, false}, :busy, data)
 
       assert data.expected_rfq == 5
+    end
+
+    test "expect_ready_for_query cast tracks whether a batch is left open" do
+      data = busy_data()
+
+      assert {:keep_state, data} =
+               Db.handle_event(:cast, {:expect_ready_for_query, 0, true}, :busy, data)
+
+      assert data.open_batch?
+
+      assert {:keep_state, data} =
+               Db.handle_event(:cast, {:expect_ready_for_query, 1, false}, :busy, data)
+
+      refute data.open_batch?
+    end
+
+    test "does not check in while the client holds an extended batch open" do
+      data = %{busy_data() | expected_rfq: 1, open_batch?: true, mode: :transaction}
+
+      rfq = <<?Z, 5::32, ?I>>
+
+      assert {:keep_state, data} = Db.handle_event(:info, {:tcp, :sock, rfq}, :busy, data)
+
+      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert data.caller
+    end
+
+    test "checks in once the batch is closed" do
+      data = %{busy_data() | expected_rfq: 1, open_batch?: false, mode: :transaction}
+
+      rfq = <<?Z, 5::32, ?I>>
+
+      assert {:next_state, :idle, _data} =
+               Db.handle_event(:info, {:tcp, :sock, rfq}, :busy, data)
+
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
     end
   end
 end

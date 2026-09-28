@@ -4,9 +4,15 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
 
   - Parse (P), Bind (B), Close (C), Describe (D): PreparedStatements
   - Simple Query (Q): SimpleQueryHandler
-  - Sync (S), FunctionCall (F): forwarded unchanged
+  - Execute (E), Sync (S), FunctionCall (F): forwarded unchanged
 
   It also counts the number of messages that produce a `ReadyForQuery` response from the backend.
+
+  Extended protocol messages only reach a transaction boundary once the client
+  sends a Sync, so `open_batch?` tracks whether one is still pending. The
+  backend keeps such a batch buffered and waits for the Sync, so the connection
+  must not be released while this is set, even if every response so far has
+  already arrived.
   """
 
   @behaviour Supavisor.Protocol.MessageHandler
@@ -17,13 +23,14 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   @rfq_producers [?Q, ?S, ?F]
 
   @impl true
-  def handled_message_types, do: [?P, ?B, ?C, ?D, ?Q, ?S, ?F]
+  def handled_message_types, do: [?P, ?B, ?C, ?D, ?E, ?Q, ?S, ?F]
 
   @impl true
   def init_state do
     %{
       prepared_statements: PreparedStatements.init_storage(),
       rfq_producers: 0,
+      open_batch?: false,
       # Prepared statements feature flag:
       translate?: true
     }
@@ -31,7 +38,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
 
   @impl true
   def handle_message(%{translate?: false} = state, tag, len, payload) do
-    {:ok, count_rfq_producer(state, tag), <<tag, len::32, payload::binary>>}
+    {:ok, state |> count_rfq_producer(tag) |> track_open_batch(tag),
+     <<tag, len::32, payload::binary>>}
   end
 
   def handle_message(state, tag, len, payload) do
@@ -51,13 +59,13 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       ?Q ->
         SimpleQueryHandler.handle_simple_query_message(state.prepared_statements, len, payload)
 
-      tag when tag in [?S, ?F] ->
+      tag when tag in [?E, ?S, ?F] ->
         {:ok, state.prepared_statements, <<tag, len::32, payload::binary>>}
     end
     |> case do
       {:ok, new_ps_state, result} ->
         new_state = %{state | prepared_statements: new_ps_state}
-        {:ok, count_rfq_producer(new_state, tag), result}
+        {:ok, new_state |> count_rfq_producer(tag) |> track_open_batch(tag), result}
 
       error ->
         error
@@ -68,4 +76,14 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
     do: %{state | rfq_producers: state.rfq_producers + 1}
 
   defp count_rfq_producer(state, _tag), do: state
+
+  # Extended protocol messages leave the backend holding a batch until a Sync
+  # reaches it. Simple Query and FunctionCall produce a ReadyForQuery of their
+  # own and are unrelated to the extended protocol, so they leave this untouched.
+  defp track_open_batch(state, tag) when tag in [?P, ?B, ?E, ?D, ?C],
+    do: %{state | open_batch?: true}
+
+  defp track_open_batch(state, ?S), do: %{state | open_batch?: false}
+
+  defp track_open_batch(state, _tag), do: state
 end

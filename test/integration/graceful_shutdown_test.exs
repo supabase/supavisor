@@ -63,7 +63,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
     %{id: id, db_conf: db_conf}
   end
 
-  describe "Manager.graceful_shutdown/2" do
+  describe "Manager.graceful_shutdown/3" do
     test "returns :ok  when no clients connected", %{id: id, db_conf: db_conf} do
       proxy = start_proxy(db_conf)
 
@@ -75,7 +75,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       assert :ok = wait_until(fn -> get_client_count(id) == 0 end)
 
       # Graceful shutdown should return immediately
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
     end
 
     test "waits for idle clients to disconnect", %{id: id, db_conf: db_conf} do
@@ -88,7 +88,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       ref = Process.monitor(client_pid)
 
       # Graceful shutdown blocks until client disconnects
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
 
       # Client handler should have been terminated
       assert_received {:DOWN, ^ref, :process, ^client_pid, :normal}
@@ -113,7 +113,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       # Start graceful shutdown
       shutdown_task =
         Task.async(fn ->
-          Manager.graceful_shutdown(id, 5000)
+          Manager.graceful_shutdown(id, 5000, 6000)
         end)
 
       # Query should complete (graceful shutdown waits for busy clients)
@@ -141,7 +141,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       ref = Process.monitor(client_pid)
 
       # Terminate should happen fast, regardless of ongoing query
-      assert :ok = Manager.graceful_shutdown(id, 100)
+      assert :ok = Manager.graceful_shutdown(id, 100, 1000)
       assert_receive {:DOWN, ^ref, :process, ^client_pid, _reason}, 1000
 
       assert {:error, %Postgrex.Error{postgres: %{code: :admin_shutdown}}} =
@@ -158,7 +158,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
 
       # Mock Supavisor.stop to not stop the pool, so we guarantee that the pool didn't
-      # terminate yet at the point we call Manager.graceful_shutdown/2
+      # terminate yet at the point we call Manager.graceful_shutdown/3
       :meck.new(Supavisor, [:passthrough])
 
       :meck.expect(Supavisor, :stop, fn _id ->
@@ -174,7 +174,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       assert :ok = wait_until(fn -> :sys.get_state(manager).terminating_error != nil end)
 
       # Graceful shutdown should return immediately since already terminating
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
     after
       :meck.unload(Supavisor)
     end
@@ -202,7 +202,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
         end
 
       # Graceful shutdown should terminate all clients
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
 
       # All client handlers should have been terminated
       for pid <- client_pids do
@@ -219,7 +219,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       # Start graceful shutdown (won't complete until client disconnects)
       shutdown_task =
         Task.async(fn ->
-          Manager.graceful_shutdown(id, 5000)
+          Manager.graceful_shutdown(id, 5000, 6000)
         end)
 
       # Wait for manager to be terminating

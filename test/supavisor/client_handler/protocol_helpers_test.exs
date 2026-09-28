@@ -4,29 +4,44 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
   alias Supavisor.ClientHandler.ProtocolHelpers
   alias Supavisor.Protocol.StartupOptions
 
-  describe "extract_and_validate_user_info/1" do
+  describe "parse_startup_packet/1" do
+    test "drops an invalid option and reports it" do
+      bin = startup_packet([{"user", "postgres.some_tenant"}, {"options", "-c jit=maybe"}])
+
+      assert {:ok, {_type, {"postgres", "some_tenant", _db, _sp, false, _tls, _ip}}, _app, _log,
+              [{"jit", "maybe"}]} = ProtocolHelpers.parse_startup_packet(bin)
+    end
+
+    test "accepts and type-converts valid options" do
+      bin = startup_packet([{"user", "postgres.some_tenant"}, {"options", "-c jit=1"}])
+
+      assert {:ok, {_type, {"postgres", "some_tenant", _db, _sp, true, _tls, _ip}}, _app, _log,
+              []} =
+               ProtocolHelpers.parse_startup_packet(bin)
+    end
+  end
+
+  describe "extract_and_validate_user_info/2" do
     test "returns nil client_ip when the option is absent" do
-      payload = %{"user" => "postgres.some_tenant", "options" => %{"jit" => "true"}}
+      payload = %{"user" => "postgres.some_tenant"}
 
       assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, true, nil, nil}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload)
+               ProtocolHelpers.extract_and_validate_user_info(payload, %{"jit" => true})
     end
 
     test "returns nil client_ip when there are no options" do
       payload = %{"user" => "postgres.some_tenant"}
 
       assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, false, nil, nil}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload)
+               ProtocolHelpers.extract_and_validate_user_info(payload, %{})
     end
 
     test "extracts client_ip alongside jit and client_tls" do
-      payload = %{
-        "user" => "postgres.some_tenant",
-        "options" => %{"jit" => "true", "client_tls" => "true", "client_ip" => "203.0.113.9"}
-      }
+      payload = %{"user" => "postgres.some_tenant"}
+      options = %{"jit" => true, "client_tls" => true, "client_ip" => "203.0.113.9"}
 
       assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, true, true, "203.0.113.9"}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload)
+               ProtocolHelpers.extract_and_validate_user_info(payload, options)
     end
 
     test "round-trips client_ip through the startup options wire format" do
@@ -39,10 +54,11 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
           "client_ip" => "2001:db8::1"
         })
 
-      payload = %{"user" => "postgres.some_tenant", "options" => StartupOptions.parse(encoded)}
+      {options, []} = StartupOptions.validate(StartupOptions.parse(encoded))
+      payload = %{"user" => "postgres.some_tenant"}
 
       assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, true, true, "2001:db8::1"}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload)
+               ProtocolHelpers.extract_and_validate_user_info(payload, options)
     end
   end
 
@@ -72,5 +88,11 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
                "expected fallback for #{inspect(bad)}"
       end
     end
+  end
+
+  # Builds a StartupMessage wire packet from key/value pairs.
+  defp startup_packet(pairs) do
+    body = Enum.map(pairs, fn {k, v} -> [k, <<0>>, v, <<0>>] end)
+    IO.iodata_to_binary([<<0::32, 0, 3, 0, 0>>, body, <<0>>])
   end
 end
