@@ -41,6 +41,7 @@ priv/native/*
 /.pre-commit-config.yaml
 *.coverdata
 /tmp
+mise.local.toml
 
 # Generated JIT test certificates
 priv/jit/postgres/certs/*.crt
