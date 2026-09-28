@@ -14,9 +14,7 @@ config :supavisor,
   metrics_disabled: System.get_env("METRICS_DISABLED") == "true",
   switch_active_count: System.get_env("SWITCH_ACTIVE_COUNT", "100") |> String.to_integer(),
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "20") |> String.to_integer(),
-  # How long a client waits for a free slot before being rejected with EMAXCONN.
-  # The total budget (retries * backoff) must stay well below the handshake state
-  # timeout, otherwise the client is dropped without an error message.
+  # Worst-case wait (retries * backoff * 1.25 with jitter) must stay well below the 5s handshake timeout.
   admission_retries: System.get_env("ADMISSION_RETRIES", "5") |> String.to_integer(),
   admission_backoff: System.get_env("ADMISSION_BACKOFF", "300") |> String.to_integer()
 

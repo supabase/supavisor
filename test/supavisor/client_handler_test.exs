@@ -76,7 +76,7 @@ defmodule Supavisor.ClientHandlerTest do
     setup do
       %{
         exception: MaxConnectionsError.new(:transaction, 2),
-        retry_event: {:hello, {:single, {"user", "tenant", "postgres", nil, false, false}}},
+        retry_event: {:hello, {:single, {"user", "tenant", "postgres", nil, false, false, nil}}},
         budget: Application.get_env(:supavisor, :admission_retries)
       }
     end

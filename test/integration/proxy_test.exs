@@ -491,9 +491,7 @@ defmodule Supavisor.Integration.ProxyTest do
         send(test_pid, {:waiter, result})
       end)
 
-      # Give the third connection time to hit the limit and start waiting, then free a
-      # slot well inside its budget. Before waiting was introduced this connection would
-      # already have been rejected.
+      # Let the third connection hit the limit and start waiting before freeing a slot.
       Process.sleep(50)
       GenServer.stop(conn)
 
@@ -521,8 +519,6 @@ defmodule Supavisor.Integration.ProxyTest do
 
       assert_receive {^ref, [:supavisor, :client, :admission, :rejected]}, 1_000
 
-      # The throttle: the client is held rather than being rejected immediately, which is
-      # what slows down a client reconnecting in a tight loop.
       retries = Application.get_env(:supavisor, :admission_retries)
       backoff = Application.get_env(:supavisor, :admission_backoff)
       assert elapsed >= retries * div(backoff, 2) * 1_000
