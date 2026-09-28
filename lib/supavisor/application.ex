@@ -92,11 +92,7 @@ defmodule Supavisor.Application do
         )
       end
 
-    :syn.add_node_to_scopes([:tenants, :availability_zone])
-
-    :syn.join(:availability_zone, Application.get_env(:supavisor, :availability_zone), self(),
-      node: node()
-    )
+    :syn.add_node_to_scopes([:tenants, :availability_zone, :accepting_pools])
 
     Supavisor.CircuitBreaker.init()
     Supavisor.ConnectBackoff.init()
@@ -149,9 +145,20 @@ defmodule Supavisor.Application do
         children
       else
         children ++
-          [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner] ++
+          [
+            {Supavisor.SchedulerUtilization,
+             interval: Application.fetch_env!(:supavisor, :prom_poll_rate)},
+            PromEx,
+            Supavisor.TenantsMetrics,
+            Supavisor.MetricsCleaner
+          ] ++
           metrics_pusher_children()
       end
+
+    # These two must be last, in this order. NodeMembership is terminated
+    # first, so other nodes stop placing new pools here. The Drainer follows,
+    # draining every local pool before the client listeners are torn down.
+    children = children ++ [Supavisor.Drainer, Supavisor.NodeMembership]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

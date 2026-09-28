@@ -80,6 +80,9 @@ This document provides a categorized list of all environment variables used in S
 | -------------------------------- | ----------------------- | ------------- | ----------------------- |
 | `SUPAVISOR_LOG_FILE_PATH`        | Path to log file        | -             | No                      |
 | `SUPAVISOR_LOG_FORMAT`           | Log format (json/text)  | `text`        | No                      |
+| `SUPAVISOR_LOG_BURST_LIMIT_ENABLE` | Enable burst-limit overload protection on the `:default` logger handler | `true` | No |
+| `SUPAVISOR_LOG_BURST_LIMIT_MAX_COUNT` | Max log events the `:default` logger handler writes per burst-limit window | `500` | No |
+| `SUPAVISOR_LOG_BURST_LIMIT_WINDOW_TIME` | Burst-limit window size for the `:default` logger handler, in milliseconds | `1000` | No |
 | `LOGS_ENGINE`                    | Logging engine to use   | -             | No                      |
 | `LOGFLARE_API_KEY`               | Logflare API key        | -             | Yes (if using Logflare) |
 | `LOGFLARE_SOURCE_ID`             | Logflare source ID      | -             | Yes (if using Logflare) |

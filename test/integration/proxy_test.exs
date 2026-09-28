@@ -582,12 +582,14 @@ defmodule Supavisor.Integration.ProxyTest do
 
     P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
 
-    # First attempt with new password should fail (cache not updated yet)
+    # First attempt with new password fails: the SCRAM exchange used the stale salt,
+    # but the client is told that the password was changed
     assert {:error,
             %Postgrex.Error{
               postgres: %{
                 code: :invalid_password,
-                message: "password authentication failed for user \"" <> _,
+                message: "password authentication failed for user \"dev_postgres\"",
+                hint: "The password for this user was recently changed. Retry the connection.",
                 severity: "FATAL",
                 pg_code: "28P01"
               }
@@ -602,6 +604,66 @@ defmodule Supavisor.Integration.ProxyTest do
     # First connection should still be up: we don't terminate the pool anymore when the secrets change
     assert [%Postgrex.Result{rows: [["1"]]}] =
              P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    :gen_statem.stop(first_conn)
+    :gen_statem.stop(second_conn)
+  end
+
+  test "change role password with cleartext auth retries against new secrets" do
+    SSLHelper.setup_downstream_certs()
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
+
+    on_exit(fn ->
+      {:ok, origin} =
+        Postgrex.start_link(
+          hostname: db_conf[:hostname],
+          port: db_conf[:port],
+          database: db_conf[:database],
+          username: db_conf[:username],
+          password: db_conf[:password]
+        )
+
+      P.query!(origin, "alter user dev_postgres_password_test with password 'postgres';", [])
+    end)
+
+    connect = fn password ->
+      opts = [
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        username: "dev_postgres_password_test.is_manager",
+        password: password,
+        ssl: [verify: :verify_none]
+      ]
+
+      with {:error, {error, _}} <- start_supervised({SingleConnection, opts}) do
+        {:error, error}
+      end
+    end
+
+    assert {:ok, first_conn} = connect.(db_conf[:password])
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    P.query!(origin, "alter user dev_postgres_password_test with password 'postgres_new';", [])
+
+    # The cleartext password is checked against the refreshed secrets, so the first
+    # attempt with the new password succeeds
+    assert {:ok, second_conn} = connect.("postgres_new")
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(second_conn, {:query, "select 1;"})
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"dev_postgres_password_test\"",
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
+            }} = connect.(db_conf[:password])
 
     :gen_statem.stop(first_conn)
     :gen_statem.stop(second_conn)

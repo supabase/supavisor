@@ -42,10 +42,12 @@ defmodule Supavisor.ClientAuthentication do
           | {:error, Supavisor.Errors.CircuitBreakerError.t()}
           | {:error, Supavisor.Errors.AuthQueryError.t()}
           | {:error, :no_auth_config}
-  def fetch_validation_secrets(_id, %{require_user: true} = tenant, user) do
+  def fetch_validation_secrets(id, %{require_user: true} = tenant, user) do
     # Even though this is pure computation, we cache for memoization. Computing the
     # SASL secrets from the password can be CPU expensive.
     cache_fetch_validation_secrets(tenant.external_id, user.db_user, fn ->
+      Logger.metadata(project: tenant.external_id, user: Supavisor.id(id, :user))
+
       secrets =
         ValidationSecrets.from_password_secrets(%PasswordSecrets{
           user: user.db_user,
@@ -65,8 +67,10 @@ defmodule Supavisor.ClientAuthentication do
     }
 
     cache_fetch_validation_secrets(tenant.external_id, db_user, fn ->
+      Logger.metadata(project: tenant.external_id, user: Supavisor.id(id, :user))
+
       case fetch_secrets_from_database(id, tenant, manager_secrets) do
-        {:ok, secrets} -> {:commit, secrets, ttl: @default_secrets_ttl}
+        {:ok, secrets, _cache} -> {:commit, secrets, ttl: @default_secrets_ttl}
         {:error, _} = error -> {:ignore, error}
       end
     end)
@@ -76,31 +80,34 @@ defmodule Supavisor.ClientAuthentication do
   Handles wrong passwords.
 
   Checks if validation secrets have changed and updates them if necessary. If they
-  changed, also invalidates upstream auth secrets.
+  changed, also invalidates upstream auth secrets and returns the new secrets. Returns
+  `:noop` if the secrets are unchanged, or `{:error, reason}` if they couldn't be checked
+  (e.g. `{:error, :rate_limited}`).
 
   Shouldn't be used for `require_user = true` tenants.
   """
   @spec handle_wrong_password(Supavisor.id(), Supavisor.Tenants.Tenant.t(), ManagerSecrets.t()) ::
-          :ok
+          {:changed, ValidationSecrets.t()} | :noop | {:error, term()}
   def handle_wrong_password(id, tenant, %ManagerSecrets{} = manager_secrets) do
     with :ok <- RefreshLimiter.check(id),
-         {:ok, new_secrets} <- fetch_secrets_from_database(id, tenant, manager_secrets),
-         :changed <- refresh_if_changed(tenant.external_id, Supavisor.id(id, :user), new_secrets) do
+         {:ok, new_secrets, :changed} <- fetch_secrets_from_database(id, tenant, manager_secrets) do
       Logger.warning(
         "ClientHandler: Validation secrets changed, cache updated, deleting upstream auth"
       )
 
       true = UpstreamAuthentication.delete_upstream_auth_secrets(id)
-      :ok
+      {:changed, new_secrets}
     else
-      {:error, :rate_limited} ->
-        Logger.debug("ClientHandler: Cache refresh rate-limited, skipping secret check")
+      {:error, :rate_limited} = error ->
+        Logger.warning("ClientHandler: Cache refresh rate-limited, skipping secret check")
+        error
 
-      {:error, reason} ->
+      {:error, reason} = error ->
         Logger.error("ClientHandler: Auth secrets check error: #{inspect(reason)}")
+        error
 
-      :noop ->
-        :ok
+      {:ok, _secrets, :noop} ->
+        :noop
     end
   end
 
@@ -208,9 +215,9 @@ defmodule Supavisor.ClientAuthentication do
   # We should either remove it or make that more explicit
   defp fetch_secrets_from_database(id, tenant, manager_secrets) do
     with :ok <- Supavisor.CircuitBreaker.check(tenant.external_id, :get_secrets),
-         {:ok, secrets} <-
+         {:ok, secrets, cache} <-
            fetch_from_secret_checker_or_auth_query(id, tenant, manager_secrets) do
-      {:ok, secrets}
+      {:ok, secrets, cache}
     else
       {:error, %Supavisor.Errors.CircuitBreakerError{}} = error ->
         error
@@ -221,9 +228,10 @@ defmodule Supavisor.ClientAuthentication do
     end
   end
 
+  # Both paths store the fetched secrets in the cache, and return whether they changed it.
   defp fetch_from_secret_checker_or_auth_query(id, tenant, manager_secrets) do
     case Supavisor.SecretChecker.get_secrets(id) do
-      {:ok, _} = ok ->
+      {:ok, _secrets, _cache} = ok ->
         ok
 
       {:error, :not_started} ->
@@ -235,8 +243,13 @@ defmodule Supavisor.ClientAuthentication do
                tenant.auth_query,
                Supavisor.id(id, :user)
              ) do
-          {:ok, sasl_secrets} -> {:ok, ValidationSecrets.from_sasl_secrets(sasl_secrets)}
-          {:error, _} = error -> error
+          {:ok, sasl_secrets} ->
+            secrets = ValidationSecrets.from_sasl_secrets(sasl_secrets)
+            cache = refresh_if_changed(tenant.external_id, Supavisor.id(id, :user), secrets)
+            {:ok, secrets, cache}
+
+          {:error, _} = error ->
+            error
         end
 
       {:error, _} = error ->

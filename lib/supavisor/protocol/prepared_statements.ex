@@ -15,9 +15,9 @@ defmodule Supavisor.Protocol.PreparedStatements do
   as each gets mapped to a unique server-side name generated from the statement's hash
   (like "sv_9d8sad98sahzlxkc...").
 
-  Parse statements are cached in storage. When a `Bind` message is processed, the module
-  retrieves and attaches the corresponding `Parse` message, providing the DbHandler with
-  all necessary information to prepare the statement when needed.
+  Parse statements are cached in storage. When a `Bind` or named statement `Describe` message
+  is processed, the module retrieves and attaches the corresponding `Parse` message, providing
+  the DbHandler with all necessary information to prepare the statement when needed.
 
   ## Limits and Safety
 
@@ -40,7 +40,7 @@ defmodule Supavisor.Protocol.PreparedStatements do
           {:parse_pkt, statement_name(), pkt()}
           | {:bind_pkt, statement_name(), bind_pkt :: pkt(), parse_pkt :: pkt()}
           | {:close_pkt, statement_name(), pkt()}
-          | {:describe_pkt, statement_name(), pkt()}
+          | {:describe_pkt, statement_name(), describe_pkt :: pkt(), parse_pkt :: pkt()}
           | pkt()
 
   @backend_limit 200
@@ -186,10 +186,10 @@ defmodule Supavisor.Protocol.PreparedStatements do
 
       {?S, _} ->
         case Storage.get(client_statements, name) do
-          %PreparedStatement{name: server_name} ->
+          %PreparedStatement{name: server_name, parse_pkt: parse_pkt} ->
             new_len = len + (byte_size(server_name) - byte_size(name))
             new_bin = <<?D, new_len::32, ?S, server_name::binary, 0>>
-            {:ok, client_statements, {:describe_pkt, server_name, new_bin}}
+            {:ok, client_statements, {:describe_pkt, server_name, new_bin, parse_pkt}}
 
           nil ->
             {:error, %Supavisor.Errors.PreparedStatementNotFoundError{name: name}}

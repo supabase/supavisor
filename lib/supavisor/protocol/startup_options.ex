@@ -1,11 +1,10 @@
 defmodule Supavisor.Protocol.StartupOptions do
   @moduledoc """
-  Parses the PostgreSQL `options` startup parameter.
+  Handles the PostgreSQL `options` startup parameter.
 
-  The `options` field in a StartupMessage contains a single string with
-  command-line arguments. This module tokenizes that string (respecting
-  backslash escapes per `pg_split_opts`) and extracts `-c name=value`
-  and `--name=value` GUC settings into a map.
+  The `options` field in a StartupMessage is a single string of command-line
+  arguments (`-c name=value` / `--name=value` GUC settings). This module handles
+  parsing, validation, and serialization of that string.
   """
 
   # All characters matched by C's isspace(): space, tab, newline,
@@ -81,6 +80,102 @@ defmodule Supavisor.Protocol.StartupOptions do
 
   # Skip unrecognized tokens
   defp parse_tokens([_ | rest], acc), do: parse_tokens(rest, acc)
+
+  # Supavisor specific startup options schema.
+  @schema %{
+    "jit" => :boolean,
+    "client_tls" => :boolean,
+    "search_path" => :string,
+    "log_level" => {:enum, [:debug, :info, :notice, :warning, :error]}
+  }
+
+  @doc """
+  Validates and type-converts a parsed options map against the known schema.
+
+  ## Examples
+
+      iex> Supavisor.Protocol.StartupOptions.validate(%{"jit" => "1", "work_mem" => "64MB"})
+      {%{"jit" => true, "work_mem" => "64MB"}, []}
+
+      iex> Supavisor.Protocol.StartupOptions.validate(%{"jit" => "maybe"})
+      {%{}, [{"jit", "maybe"}]}
+
+  """
+  @spec validate(map()) :: {map(), [{String.t(), String.t()}]}
+  def validate(opts) do
+    Enum.reduce(opts, {%{}, []}, fn {name, value}, {options, invalid} ->
+      case @schema do
+        %{^name => type} ->
+          case cast(type, value) do
+            {:ok, cast} -> {Map.put(options, name, cast), invalid}
+            :error -> {options, [{name, value} | invalid]}
+          end
+
+        _ ->
+          {Map.put(options, name, value), invalid}
+      end
+    end)
+  end
+
+  # PostgreSQL parameter type casting.
+  # Ref: https://www.postgresql.org/docs/current/config-setting.html#CONFIG-SETTING-NAMES-VALUES
+  defp cast(:boolean, value) do
+    down = String.downcase(value)
+
+    cond do
+      down != "" and String.starts_with?("true", down) -> {:ok, true}
+      down != "" and String.starts_with?("false", down) -> {:ok, false}
+      down != "" and String.starts_with?("yes", down) -> {:ok, true}
+      down != "" and String.starts_with?("no", down) -> {:ok, false}
+      # "o" alone is ambiguous (on/off), so PG requires 2+ chars: "of" -> off.
+      byte_size(down) >= 2 and String.starts_with?("on", down) -> {:ok, true}
+      byte_size(down) >= 2 and String.starts_with?("off", down) -> {:ok, false}
+      down == "1" -> {:ok, true}
+      down == "0" -> {:ok, false}
+      true -> :error
+    end
+  end
+
+  defp cast({:enum, allowed}, value) do
+    down = String.downcase(value)
+
+    case Enum.find(allowed, fn atom -> Atom.to_string(atom) == down end) do
+      nil -> :error
+      atom -> {:ok, atom}
+    end
+  end
+
+  defp cast(:string, value), do: {:ok, value}
+
+  @doc """
+  Builds a `NoticeResponse` field map for an invalid option.
+
+  ## Examples
+
+      iex> Supavisor.Protocol.StartupOptions.invalid_option_notice({"jit", "maybe"})
+      %{"S" => "NOTICE", "V" => "NOTICE", "C" => "22023",
+        "M" => ~s(parameter "jit" requires a Boolean value)}
+
+  """
+  @spec invalid_option_notice({String.t(), String.t()}) :: map()
+  def invalid_option_notice({name, value}) do
+    base = %{"S" => "NOTICE", "V" => "NOTICE", "C" => "22023"}
+
+    case @schema do
+      %{^name => :boolean} ->
+        Map.put(base, "M", ~s(parameter "#{name}" requires a Boolean value))
+
+      %{^name => {:enum, allowed}} ->
+        hint = "Available values: " <> Enum.map_join(allowed, ", ", &Atom.to_string/1) <> "."
+
+        base
+        |> Map.put("M", ~s(invalid value for parameter "#{name}": "#{value}"))
+        |> Map.put("H", hint)
+
+      _ ->
+        Map.put(base, "M", ~s(invalid value for parameter "#{name}": "#{value}"))
+    end
+  end
 
   @doc """
   Encodes a map of GUC settings into a PostgreSQL startup `options` string.

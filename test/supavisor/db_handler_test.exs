@@ -10,8 +10,11 @@ defmodule Supavisor.DbHandlerTest do
   alias Supavisor.DbHandler, as: Db
   alias Supavisor.Protocol.BackendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
+  alias Supavisor.Protocol.PreparedStatements.BackendStorage
   alias Supavisor.Protocol.Server
 
+  require BackendMessageHandler
+  require MessageStreamer
   require Supavisor
 
   # import Mock
@@ -158,6 +161,7 @@ defmodule Supavisor.DbHandlerTest do
       id: make_id(),
       stats: %{},
       expected_rfq: 0,
+      open_batch?: false,
       backend_message_streaming: true,
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler)
     }
@@ -1163,6 +1167,83 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
+  describe "handle_event/4 prepared statement packets" do
+    test "replays a missing parse before a named statement describe" do
+      {backend_send, backend_recv} = sockpair()
+      {client_send, client_recv} = sockpair()
+      statement_name = "server_stmt"
+      parse_pkt = <<?P, 27::32, statement_name::binary, 0, "select 1", 0, 0, 0>>
+      describe_pkt = <<?D, 17::32, ?S, statement_name::binary, 0>>
+      from = {self(), make_ref()}
+
+      data =
+        busy_data(%{
+          sock: {:gen_tcp, backend_send},
+          client_sock: {:gen_tcp, client_send},
+          prepared_statements_storage: BackendStorage.LRU,
+          prepared_statements: BackendStorage.LRU.new()
+        })
+
+      assert {:keep_state, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:handle_ps_pkts, [{:describe_pkt, statement_name, describe_pkt, parse_pkt}]},
+                 :busy,
+                 data
+               )
+
+      assert {:ok, sent} = :gen_tcp.recv(backend_recv, 0, 1000)
+      assert sent == parse_pkt <> describe_pkt
+
+      assert BackendStorage.LRU.member?(new_data.prepared_statements, statement_name)
+
+      handler_state = MessageStreamer.stream_state(new_data.stream_state, :handler_state)
+
+      assert :queue.to_list(BackendMessageHandler.handler_state(handler_state, :action_queue)) ==
+               [{:intercept, :parse}]
+
+      assert {:keep_state, after_parse} =
+               Db.handle_event(:info, {:tcp, :sock, <<?1, 4::32>>}, :busy, new_data)
+
+      assert {:error, :timeout} = :gen_tcp.recv(client_recv, 0, 50)
+
+      handler_state = MessageStreamer.stream_state(after_parse.stream_state, :handler_state)
+      assert :queue.is_empty(BackendMessageHandler.handler_state(handler_state, :action_queue))
+    end
+
+    test "sends only describe when the named statement exists on the backend" do
+      {backend_send, backend_recv} = sockpair()
+      statement_name = "server_stmt"
+      parse_pkt = <<?P, 27::32, statement_name::binary, 0, "select 1", 0, 0, 0>>
+      describe_pkt = <<?D, 17::32, ?S, statement_name::binary, 0>>
+      from = {self(), make_ref()}
+
+      prepared_statements =
+        BackendStorage.LRU.new()
+        |> BackendStorage.LRU.put(statement_name)
+
+      data =
+        busy_data(%{
+          sock: {:gen_tcp, backend_send},
+          prepared_statements_storage: BackendStorage.LRU,
+          prepared_statements: prepared_statements
+        })
+
+      assert {:keep_state, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event(
+                 {:call, from},
+                 {:handle_ps_pkts, [{:describe_pkt, statement_name, describe_pkt, parse_pkt}]},
+                 :busy,
+                 data
+               )
+
+      assert {:ok, ^describe_pkt} = :gen_tcp.recv(backend_recv, 0, 1000)
+
+      handler_state = MessageStreamer.stream_state(new_data.stream_state, :handler_state)
+      assert :queue.is_empty(BackendMessageHandler.handler_state(handler_state, :action_queue))
+    end
+  end
+
   describe "handle_event/4 :busy ReadyForQuery batching" do
     test "releases the backend once the single expected ReadyForQuery arrives" do
       data = busy_data(%{expected_rfq: 1})
@@ -1226,14 +1307,50 @@ defmodule Supavisor.DbHandlerTest do
       data = busy_data()
 
       assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 2}, :busy, data)
+               Db.handle_event(:cast, {:expect_ready_for_query, 2, false}, :busy, data)
 
       assert data.expected_rfq == 2
 
       assert {:keep_state, data} =
-               Db.handle_event(:cast, {:expect_ready_for_query, 3}, :busy, data)
+               Db.handle_event(:cast, {:expect_ready_for_query, 3, false}, :busy, data)
 
       assert data.expected_rfq == 5
+    end
+
+    test "expect_ready_for_query cast tracks whether a batch is left open" do
+      data = busy_data()
+
+      assert {:keep_state, data} =
+               Db.handle_event(:cast, {:expect_ready_for_query, 0, true}, :busy, data)
+
+      assert data.open_batch?
+
+      assert {:keep_state, data} =
+               Db.handle_event(:cast, {:expect_ready_for_query, 1, false}, :busy, data)
+
+      refute data.open_batch?
+    end
+
+    test "does not check in while the client holds an extended batch open" do
+      data = %{busy_data() | expected_rfq: 1, open_batch?: true, mode: :transaction}
+
+      rfq = <<?Z, 5::32, ?I>>
+
+      assert {:keep_state, data} = Db.handle_event(:info, {:tcp, :sock, rfq}, :busy, data)
+
+      refute_received {:"$gen_cast", {:db_status, :ready_for_query}}
+      assert data.caller
+    end
+
+    test "checks in once the batch is closed" do
+      data = %{busy_data() | expected_rfq: 1, open_batch?: false, mode: :transaction}
+
+      rfq = <<?Z, 5::32, ?I>>
+
+      assert {:next_state, :idle, _data} =
+               Db.handle_event(:info, {:tcp, :sock, rfq}, :busy, data)
+
+      assert_received {:"$gen_cast", {:db_status, :ready_for_query}}
     end
   end
 end
