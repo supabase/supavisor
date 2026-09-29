@@ -103,6 +103,7 @@ defmodule Supavisor.Application do
       [
         {Cachex, name: Supavisor.Cache},
         Supavisor.ErlSysMon,
+        Supavisor.Logger.BurstDropCounter,
         Supavisor.Health,
         Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,
