@@ -348,7 +348,7 @@ defmodule Supavisor.DbHandler do
         Supavisor.Manager.shutdown_with_error(data.id, error)
 
       :graceful_shutdown_pool when not data.proxy ->
-        Supavisor.async_stop(data.id)
+        Supavisor.Manager.stop_pool(data.id)
 
       _ ->
         :ok

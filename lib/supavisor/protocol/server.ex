@@ -196,6 +196,16 @@ defmodule Supavisor.Protocol.Server do
     }
   end
 
+  @spec cannot_connect_now :: map()
+  def cannot_connect_now do
+    %{
+      "S" => "FATAL",
+      "V" => "FATAL",
+      "C" => "57P03",
+      "M" => "pool is not accepting connections"
+    }
+  end
+
   @spec scram_request :: iodata()
   def scram_request, do: @scram_request
 
