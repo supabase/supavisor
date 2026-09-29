@@ -9,6 +9,31 @@ defmodule Supavisor.SynHandler do
   require Supavisor
 
   @impl true
+  def on_process_registered(
+        :tenants,
+        Supavisor.id(
+          type: type,
+          tenant: tenant,
+          user: user,
+          mode: mode,
+          db: db
+        ),
+        pid,
+        _,
+        _
+      ) do
+    Logger.metadata(
+      project: tenant,
+      user: user,
+      type: type,
+      mode: mode,
+      db_name: db
+    )
+
+    Supavisor.register_tenant_db_user_for_pool(tenant, user, pid)
+  end
+
+  @impl true
   def on_process_unregistered(
         :tenants,
         Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db, search_path: _) =
@@ -17,13 +42,20 @@ defmodule Supavisor.SynHandler do
         _meta,
         reason
       ) do
-    Logger.debug("Process unregistered: #{Supavisor.inspect_id(id)} #{inspect(reason)}", %{
+    Logger.metadata(
       project: tenant,
       user: user,
+      type: type,
       mode: mode,
-      db_name: db,
-      type: type
-    })
+      db_name: db
+    )
+
+    if not Supavisor.tenant_db_user_registered?(tenant, user) do
+      Supavisor.ClientAuthentication.invalidate_local(tenant, user)
+      Logger.info("Invalidating client authentication cache")
+    end
+
+    Logger.debug("Process unregistered: #{Supavisor.inspect_id(id)} #{inspect(reason)}")
   end
 
   @impl true

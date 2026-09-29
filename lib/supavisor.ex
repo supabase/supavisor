@@ -509,6 +509,28 @@ defmodule Supavisor do
     end)
   end
 
+  @doc """
+  Joins a `pool_pid` to the `:tenants` process groups under the `{tenant, db_user}` key
+
+  The `scope` param is only exposed for testing.
+  """
+  @spec register_tenant_db_user_for_pool(String.t(), String.t(), pid()) ::
+          :ok | {:error, reason :: term()}
+  def register_tenant_db_user_for_pool(tenant, db_user, pool_pid) do
+    with {:error, reason} = err <- :syn.join(:tenants, {tenant, db_user}, pool_pid) do
+      Logger.error("Failed to register pool #{inspect(pool_pid)} in :tenants: #{inspect(reason)}")
+      err
+    end
+  end
+
+  @doc """
+  Count the pools joined to the `tenants` process group under the `{tenant, db_user}` key
+  """
+  @spec tenant_db_user_registered?(String.t(), String.t()) :: boolean()
+  def tenant_db_user_registered?(tenant, db_user) do
+    :syn.member_count(:tenants, {tenant, db_user}) > 0
+  end
+
   def inspect_id(id, opts \\ %Inspect.Opts{})
 
   def inspect_id(

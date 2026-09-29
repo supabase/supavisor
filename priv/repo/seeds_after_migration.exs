@@ -228,6 +228,28 @@ end
   end
 end)
 
+# Create tenant for the secret invalidation cluster test
+if !Tenants.get_tenant_by_external_id("secret_invalidation_tenant") do
+  {:ok, _} =
+    %{
+      db_host: db_conf[:hostname],
+      db_port: db_conf[:port],
+      db_database: db_conf[:database],
+      default_parameter_status: %{},
+      external_id: "secret_invalidation_tenant",
+      require_user: true,
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 1,
+          "mode_type" => "transaction"
+        }
+      ]
+    }
+    |> Tenants.create_tenant()
+end
+
 # Create cluster test tenants for integration tests
 for i <- 1..10 do
   tenant_id = "cluster_pool_tenant_#{i}"
