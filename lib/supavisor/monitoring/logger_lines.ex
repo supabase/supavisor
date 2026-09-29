@@ -1,5 +1,8 @@
 defmodule Supavisor.PromEx.Plugins.LoggerLines do
-  @moduledoc "This module defines the PromEx plugin for logger burst-limit overload metrics."
+  @moduledoc """
+  This module defines the PromEx plugin for logger line-count and burst-limit
+  overload metrics.
+  """
 
   use PromEx.Plugin
 
@@ -16,8 +19,8 @@ defmodule Supavisor.PromEx.Plugins.LoggerLines do
         ),
         sum(
           [:supavisor, :logger, :burst_limit, :dropped, :total],
-          event_name: [:supavisor, :logger, :burst_limit, :dropped],
-          measurement: :count,
+          event_name: [:supavisor, :logger, :lines],
+          measurement: :dropped,
           description:
             "Estimated number of log events dropped by the logger's burst-limit overload protection."
         )

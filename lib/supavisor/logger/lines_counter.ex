@@ -14,8 +14,7 @@ defmodule Supavisor.Logger.LinesCounter do
 
   use GenServer
 
-  @lines_event [:supavisor, :logger, :lines]
-  @dropped_event [:supavisor, :logger, :burst_limit, :dropped]
+  @event [:supavisor, :logger, :lines]
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -64,13 +63,8 @@ defmodule Supavisor.Logger.LinesCounter do
     :counters.sub(ref, 1, count)
 
     if count > 0 do
-      :telemetry.execute(@lines_event, %{count: count}, %{})
-    end
-
-    dropped = max(count - max_count(), 0)
-
-    if dropped > 0 do
-      :telemetry.execute(@dropped_event, %{count: dropped}, %{})
+      dropped = max(count - max_count(), 0)
+      :telemetry.execute(@event, %{count: count, dropped: dropped}, %{})
     end
 
     schedule_tick()
