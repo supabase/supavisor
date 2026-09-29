@@ -75,7 +75,14 @@ defmodule Supavisor.Integration.RebalanceTest do
     assert zoned_tenant in moved
     assert length(moved) < length(@tenants)
 
-    %{conn: build_conn(), db_conf: db_conf, proxies: proxies, sups: sups, moved: moved}
+    %{
+      conn: build_conn(),
+      db_conf: db_conf,
+      proxies: proxies,
+      sups: sups,
+      moved: moved,
+      zoned_tenant: zoned_tenant
+    }
   end
 
   test "dry run lists the pools to move without moving them", %{
@@ -145,9 +152,68 @@ defmodule Supavisor.Integration.RebalanceTest do
     end
   end
 
+  test "places cluster pools on the node they would be moved to", %{
+    db_conf: db_conf,
+    zoned_tenant: zoned_tenant
+  } do
+    # Hashing alone places this cluster on this node, while its only replica is
+    # in the peer's zone
+    cluster_alias =
+      1..100
+      |> Enum.map(&"rebalance_cluster_#{&1}")
+      |> Enum.find(&(:erlang.phash2(&1, 2) == index_of(node())))
+
+    {:ok, cluster} =
+      Tenants.create_cluster(%{
+        active: true,
+        alias: cluster_alias,
+        cluster_tenants: [
+          %{
+            type: "write",
+            cluster_alias: cluster_alias,
+            tenant_external_id: zoned_tenant,
+            active: true
+          }
+        ]
+      })
+
+    id =
+      Supavisor.id(
+        type: :cluster,
+        tenant: cluster_alias,
+        user: db_conf[:username],
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    on_exit(fn ->
+      {:ok, _} = Tenants.delete_cluster(cluster)
+      Supavisor.del_all_cache(cluster_alias)
+
+      # A pool on the peer is gone with it
+      with sup when is_pid(sup) and node(sup) == node() <- Supavisor.get_global_sup(id) do
+        Supervisor.stop(sup)
+      end
+    end)
+
+    proxy =
+      start_proxy(cluster_alias, db_conf, db_conf[:username] <> ".cluster." <> cluster_alias)
+
+    query_result = P.query(proxy, "SELECT 1", [])
+    assert node(Supavisor.get_global_sup(id)) == node()
+    assert {:ok, %P.Result{rows: [[1]]}} = query_result
+
+    result = Supavisor.rebalance(dry_run: true)
+
+    for node <- [node(), @peer_node] do
+      assert {:ok, moves} = result[node]
+      refute List.keymember?(moves, id, 0)
+    end
+  end
+
   defp index_of(node), do: [node(), @peer_node] |> Enum.sort() |> Enum.find_index(&(&1 == node))
 
-  defp start_proxy(tenant, db_conf) do
+  defp start_proxy(tenant, db_conf, username \\ nil) do
     {:ok, proxy} =
       start_supervised(
         {P,
@@ -155,7 +221,7 @@ defmodule Supavisor.Integration.RebalanceTest do
          port: Application.get_env(:supavisor, :proxy_port_transaction),
          database: db_conf[:database],
          password: db_conf[:password],
-         username: db_conf[:username] <> "." <> tenant,
+         username: username || db_conf[:username] <> "." <> tenant,
          backoff_min: 100,
          backoff_max: 500},
         id: {:proxy, tenant}
