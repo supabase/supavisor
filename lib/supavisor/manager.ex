@@ -3,8 +3,7 @@ defmodule Supavisor.Manager do
   The Manager is responsible for managing the config and parameter status for a pool
   """
 
-  @shutdown_timeout :timer.seconds(5)
-  use GenServer, shutdown: @shutdown_timeout
+  use GenServer
 
   require Logger
   require Supavisor
