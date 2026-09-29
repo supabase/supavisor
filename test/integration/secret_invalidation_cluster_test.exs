@@ -5,8 +5,8 @@ defmodule Supavisor.Integration.SecretInvalidationClusterTest do
   import Supavisor.Asserts
 
   alias Supavisor.ClientAuthentication
-  alias Supavisor.Support.Cluster
   alias Supavisor.Support.ClientAuthenticationHelpers
+  alias Supavisor.Support.Cluster
 
   @moduletag cluster: true
 

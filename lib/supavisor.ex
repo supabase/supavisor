@@ -471,9 +471,7 @@ defmodule Supavisor do
   end
 
   @doc """
-  Joins a `pool_pid` to the `:tenants` process groups under the `{tenant, db_user}` key
-
-  The `scope` param is only exposed for testing.
+  Join a `pool_pid` to the `:tenants` process groups under the `{tenant, db_user}` key
   """
   @spec register_tenant_db_user_for_pool(String.t(), String.t(), pid()) ::
           :ok | {:error, reason :: term()}
