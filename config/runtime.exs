@@ -267,7 +267,9 @@ if config_env() != :test do
   config :supavisor, Supavisor.FeatureFlag, %{
     "named_prepared_statements" =>
       Supavisor.Helpers.get_env_bool("NAMED_PREPARED_STATEMENTS_ENABLED", false),
-    "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false)
+    "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false),
+    "check_simple_query_prepare" =>
+      Supavisor.Helpers.get_env_bool("CHECK_SIMPLE_QUERY_PREPARE_ENABLED", false)
   }
 
   config :supavisor, Supavisor.Repo,

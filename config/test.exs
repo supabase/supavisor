@@ -65,7 +65,8 @@ config :supavisor, Supavisor.Vault,
 config :supavisor, Supavisor.FeatureFlag, %{
   "test_global_flag" => true,
   "test_disabled_flag" => false,
-  "override_test" => true
+  "override_test" => true,
+  "check_simple_query_prepare" => true
 }
 
 # Print only warnings and errors during test

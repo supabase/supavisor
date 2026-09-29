@@ -18,6 +18,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     Errors.StartupMessageError,
     Errors.MaxPreparedStatementsError,
     Errors.PreparedStatementNotFoundError,
+    Errors.SessionLeakError,
     Errors.SimpleQueryNotSupportedError,
     Errors.DuplicatePreparedStatementError,
     FeatureFlag,
@@ -33,6 +34,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @type packet_processing_result ::
           {:ok, MessageStreamer.stream_state(), [PreparedStatements.handled_pkt()] | binary()}
           | {:error, MaxPreparedStatementsError.t()}
+          | {:error, SessionLeakError.t()}
           | {:error, SimpleQueryNotSupportedError.t()}
           | {:error, DuplicatePreparedStatementError.t()}
           | {:error, PreparedStatementNotFoundError.t()}
@@ -123,8 +125,19 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
       ) do
     translate? = FeatureFlag.enabled?(tenant_feature_flags, "named_prepared_statements")
 
+    check_simple_query_prepare? =
+      FeatureFlag.enabled?(tenant_feature_flags, "check_simple_query_prepare")
+
     stream_state =
-      MessageStreamer.update_state(data.stream_state, &%{&1 | translate?: translate?})
+      MessageStreamer.update_state(
+        data.stream_state,
+        &%{
+          &1
+          | translate?: translate?,
+            leak_action: data.txn_mode_leak_action,
+            check_simple_query_prepare?: check_simple_query_prepare?
+        }
+      )
 
     MessageStreamer.handle_packets(stream_state, bin)
   end
