@@ -103,7 +103,8 @@ defmodule Supavisor do
       try do
         Supervisor.stop(sup)
       catch
-        :exit, :noproc -> :ok
+        :exit, {:noproc, _} -> :ok
+        :exit, {{:normal, _}, _} -> :ok
       end
     end)
   end
