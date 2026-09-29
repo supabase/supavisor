@@ -2,7 +2,7 @@ defmodule Supavisor.TenantsTest do
   use Supavisor.DataCase
 
   alias Supavisor.Tenants
-  alias Supavisor.Tenants.{Cluster, Tenant, User}
+  alias Supavisor.Tenants.{Cluster, ClusterTenants, Tenant, User}
 
   alias Supavisor.Errors.{
     MultipleTenantUsersError,
@@ -367,6 +367,17 @@ defmodule Supavisor.TenantsTest do
       cluster = cluster_fixture()
       assert {:ok, %Cluster{}} = Tenants.delete_cluster(cluster)
       assert_raise Ecto.NoResultsError, fn -> Tenants.get_cluster!(cluster.id) end
+    end
+
+    test "get_cluster_config/2 returns the tenants of the cluster, with the user" do
+      cluster_fixture()
+
+      assert [
+               %ClusterTenants{
+                 cluster_alias: "some_alias",
+                 tenant: %Tenant{external_id: "proxy_tenant1", users: [%User{db_user: "postgres"}]}
+               }
+             ] = Tenants.get_cluster_config("some_alias", "postgres")
     end
 
     test "change_cluster/1 returns a cluster changeset" do

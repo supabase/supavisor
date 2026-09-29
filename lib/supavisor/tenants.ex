@@ -247,6 +247,10 @@ defmodule Supavisor.Tenants do
         )
         |> Repo.all()
         |> Enum.reduce_while({nil, []}, &process_cluster/2)
+        |> case do
+          {:error, _} = error -> error
+          {_require_user, clusters} -> clusters
+        end
 
       _ ->
         {:error, :not_found}
