@@ -380,6 +380,27 @@ defmodule Supavisor.TenantsTest do
              ] = Tenants.get_cluster_config("some_alias", "postgres")
     end
 
+    test "get_cluster_config/2 returns the tenants of the given cluster only" do
+      cluster_fixture()
+
+      cluster_fixture(%{
+        alias: "other_alias",
+        cluster_tenants: [
+          %{
+            type: "write",
+            cluster_alias: "other_alias",
+            tenant_external_id: "proxy_tenant_ps_enabled",
+            active: true
+          }
+        ]
+      })
+
+      assert [%ClusterTenants{tenant_external_id: "proxy_tenant_ps_enabled"}] =
+               Tenants.get_cluster_config("other_alias", "postgres")
+
+      assert Tenants.get_cluster_config("nonexistent_alias", "postgres") == {:error, :not_found}
+    end
+
     test "change_cluster/1 returns a cluster changeset" do
       cluster = cluster_fixture()
       assert %Ecto.Changeset{} = Tenants.change_cluster(cluster)

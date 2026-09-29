@@ -236,7 +236,7 @@ defmodule Supavisor.Tenants do
 
   @spec get_cluster_config(String.t(), String.t()) :: [ClusterTenants.t()] | {:error, any()}
   def get_cluster_config(external_id, user) do
-    case Repo.all(ClusterTenants, cluster_alias: external_id) do
+    case Repo.all(from(ct in ClusterTenants, where: ct.cluster_alias == ^external_id)) do
       [%{cluster_alias: cluster_alias, active: true} | _] ->
         user = from(u in User, where: u.db_user == ^user)
         tenant = from(t in Tenant, preload: [users: ^user])
