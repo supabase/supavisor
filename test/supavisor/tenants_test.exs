@@ -375,7 +375,10 @@ defmodule Supavisor.TenantsTest do
       assert [
                %ClusterTenants{
                  cluster_alias: "some_alias",
-                 tenant: %Tenant{external_id: "proxy_tenant1", users: [%User{db_user: "postgres"}]}
+                 tenant: %Tenant{
+                   external_id: "proxy_tenant1",
+                   users: [%User{db_user: "postgres"}]
+                 }
                }
              ] = Tenants.get_cluster_config("some_alias", "postgres")
     end

@@ -1,26 +1,18 @@
 defmodule Supavisor.Integration.RebalanceTest do
-  # Not in the SQL sandbox, so that tenant updates are visible to the peer and
-  # don't hold row locks it would wait on
-  use ExUnit.Case, async: false
+  use SupavisorWeb.ConnCase, async: false
 
   require Supavisor
 
-  import Phoenix.ConnTest
-  import Phoenix.VerifiedRoutes
-  import Plug.Conn
   import Supavisor.Asserts
-  import SupavisorWeb.ConnCase, only: [assert_schema: 2]
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
   alias Supavisor.Tenants
 
-  @endpoint SupavisorWeb.Endpoint
-  @router SupavisorWeb.Router
-
   @moduletag cluster: true
 
-  @tenants for i <- 1..10, do: "cluster_pool_tenant_#{i}"
+  @tenants for i <- 1..10, do: "rebalance_tenant_#{i}"
   @peer_name :rebalance_peer
   @peer_node :"rebalance_peer@127.0.0.1"
   # The only node in this zone is the peer, see `Supavisor.Support.Cluster`
@@ -38,16 +30,20 @@ defmodule Supavisor.Integration.RebalanceTest do
     zoned_tenant =
       Enum.find(@tenants, &(:erlang.phash2(&1, 2) == index_of(node())))
 
-    {:ok, _} =
-      zoned_tenant
-      |> Tenants.get_tenant_by_external_id()
-      |> Tenants.update_tenant(%{availability_zone: @peer_zone})
+    # Outside the sandbox, so that the peer sees the tenants
+    Sandbox.unboxed_run(Supavisor.Repo, fn ->
+      for tenant <- @tenants do
+        Tenants.delete_tenant_by_external_id(tenant)
+
+        availability_zone = if tenant == zoned_tenant, do: @peer_zone
+        {:ok, _} = create_tenant(tenant, db_conf, availability_zone)
+      end
+    end)
 
     on_exit(fn ->
-      {:ok, _} =
-        zoned_tenant
-        |> Tenants.get_tenant_by_external_id()
-        |> Tenants.update_tenant(%{availability_zone: nil})
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        for tenant <- @tenants, do: Tenants.delete_tenant_by_external_id(tenant)
+      end)
     end)
 
     proxies = Map.new(@tenants, &{&1, start_proxy(&1, db_conf)})
@@ -76,7 +72,6 @@ defmodule Supavisor.Integration.RebalanceTest do
     assert length(moved) < length(@tenants)
 
     %{
-      conn: build_conn(),
       db_conf: db_conf,
       proxies: proxies,
       sups: sups,
@@ -164,18 +159,20 @@ defmodule Supavisor.Integration.RebalanceTest do
       |> Enum.find(&(:erlang.phash2(&1, 2) == index_of(node())))
 
     {:ok, cluster} =
-      Tenants.create_cluster(%{
-        active: true,
-        alias: cluster_alias,
-        cluster_tenants: [
-          %{
-            type: "write",
-            cluster_alias: cluster_alias,
-            tenant_external_id: zoned_tenant,
-            active: true
-          }
-        ]
-      })
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        Tenants.create_cluster(%{
+          active: true,
+          alias: cluster_alias,
+          cluster_tenants: [
+            %{
+              type: "write",
+              cluster_alias: cluster_alias,
+              tenant_external_id: zoned_tenant,
+              active: true
+            }
+          ]
+        })
+      end)
 
     id =
       Supavisor.id(
@@ -187,7 +184,7 @@ defmodule Supavisor.Integration.RebalanceTest do
       )
 
     on_exit(fn ->
-      {:ok, _} = Tenants.delete_cluster(cluster)
+      {:ok, _} = Sandbox.unboxed_run(Supavisor.Repo, fn -> Tenants.delete_cluster(cluster) end)
       Supavisor.del_all_cache(cluster_alias)
 
       # A pool on the peer is gone with it
@@ -212,6 +209,27 @@ defmodule Supavisor.Integration.RebalanceTest do
   end
 
   defp index_of(node), do: [node(), @peer_node] |> Enum.sort() |> Enum.find_index(&(&1 == node))
+
+  # No default parameter status, so that the pools never update the tenant
+  defp create_tenant(tenant, db_conf, availability_zone) do
+    Tenants.create_tenant(%{
+      db_host: to_string(db_conf[:hostname]),
+      db_port: db_conf[:port],
+      db_database: db_conf[:database],
+      default_parameter_status: %{},
+      external_id: tenant,
+      require_user: true,
+      availability_zone: availability_zone,
+      users: [
+        %{
+          "db_user" => db_conf[:username],
+          "db_password" => db_conf[:password],
+          "pool_size" => 5,
+          "mode_type" => "transaction"
+        }
+      ]
+    })
+  end
 
   defp start_proxy(tenant, db_conf, username \\ nil) do
     {:ok, proxy} =
