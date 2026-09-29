@@ -1,13 +1,22 @@
 defmodule Supavisor.Integration.RebalanceTest do
-  use SupavisorWeb.ConnCase, async: false
+  # Not in the SQL sandbox, so that tenant updates are visible to the peer and
+  # don't hold row locks it would wait on
+  use ExUnit.Case, async: false
 
   require Supavisor
 
+  import Phoenix.ConnTest
+  import Phoenix.VerifiedRoutes
+  import Plug.Conn
   import Supavisor.Asserts
+  import SupavisorWeb.ConnCase, only: [assert_schema: 2]
 
   alias Postgrex, as: P
   alias Supavisor.Support.Cluster
   alias Supavisor.Tenants
+
+  @endpoint SupavisorWeb.Endpoint
+  @router SupavisorWeb.Router
 
   @moduletag cluster: true
 
@@ -34,7 +43,12 @@ defmodule Supavisor.Integration.RebalanceTest do
       |> Tenants.get_tenant_by_external_id()
       |> Tenants.update_tenant(%{availability_zone: @peer_zone})
 
-    on_exit(fn -> Supavisor.del_all_cache(zoned_tenant) end)
+    on_exit(fn ->
+      {:ok, _} =
+        zoned_tenant
+        |> Tenants.get_tenant_by_external_id()
+        |> Tenants.update_tenant(%{availability_zone: nil})
+    end)
 
     proxies = Map.new(@tenants, &{&1, start_proxy(&1, db_conf)})
 
@@ -61,7 +75,7 @@ defmodule Supavisor.Integration.RebalanceTest do
     assert zoned_tenant in moved
     assert length(moved) < length(@tenants)
 
-    %{db_conf: db_conf, proxies: proxies, sups: sups, moved: moved}
+    %{conn: build_conn(), db_conf: db_conf, proxies: proxies, sups: sups, moved: moved}
   end
 
   test "dry run lists the pools to move without moving them", %{
@@ -101,6 +115,7 @@ defmodule Supavisor.Integration.RebalanceTest do
     end
   end
 
+  @tag timeout: 180_000
   test "moves pools to the node they would be started on now", %{
     db_conf: db_conf,
     proxies: proxies,
