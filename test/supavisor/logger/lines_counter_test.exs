@@ -1,9 +1,10 @@
-defmodule Supavisor.Logger.BurstDropCounterTest do
+defmodule Supavisor.Logger.LinesCounterTest do
   use ExUnit.Case, async: false
 
-  @subject Supavisor.Logger.BurstDropCounter
-  @event [:supavisor, :logger, :burst_limit, :dropped]
-  @test_name :burst_drop_counter_test
+  @subject Supavisor.Logger.LinesCounter
+  @lines_event [:supavisor, :logger, :lines]
+  @dropped_event [:supavisor, :logger, :burst_limit, :dropped]
+  @test_name :lines_counter_test
 
   setup do
     original_enable = Application.get_env(:supavisor, :logger_burst_limit_enable)
@@ -27,10 +28,10 @@ defmodule Supavisor.Logger.BurstDropCounterTest do
     %{pid: pid, ref: ref}
   end
 
-  defp attach_telemetry(pid) do
+  defp attach_telemetry(pid, event) do
     :telemetry.attach(
-      "burst-drop-counter-test-#{inspect(pid)}",
-      @event,
+      "burst-drop-counter-test-#{inspect(event)}-#{inspect(pid)}",
+      event,
       fn _event, measurements, _meta, %{test_pid: test_pid} ->
         send(test_pid, {:telemetry, measurements})
       end,
@@ -46,11 +47,11 @@ defmodule Supavisor.Logger.BurstDropCounterTest do
     assert :counters.get(ref, 1) == 2
   end
 
-  test "tick does not fire telemetry when the count is at or below max_count", %{
+  test "tick does not fire dropped telemetry when the count is at or below max_count", %{
     pid: pid,
     ref: ref
   } do
-    attach_telemetry(pid)
+    attach_telemetry(pid, @dropped_event)
 
     for _ <- 1..5, do: @subject.count(:log_event, ref)
 
@@ -59,11 +60,11 @@ defmodule Supavisor.Logger.BurstDropCounterTest do
     refute_receive {:telemetry, _}, 200
   end
 
-  test "tick fires telemetry with the excess when the count exceeds max_count", %{
+  test "tick fires dropped telemetry with the excess when the count exceeds max_count", %{
     pid: pid,
     ref: ref
   } do
-    attach_telemetry(pid)
+    attach_telemetry(pid, @dropped_event)
 
     for _ <- 1..8, do: @subject.count(:log_event, ref)
 
@@ -76,13 +77,34 @@ defmodule Supavisor.Logger.BurstDropCounterTest do
     pid: pid,
     ref: ref
   } do
-    attach_telemetry(pid)
+    attach_telemetry(pid, @dropped_event)
 
     for _ <- 1..8, do: @subject.count(:log_event, ref)
     send(pid, :tick)
     assert_receive {:telemetry, %{count: 3}}, 200
 
     send(pid, :tick)
+    refute_receive {:telemetry, _}, 200
+  end
+
+  test "tick fires lines telemetry with the exact count, regardless of max_count", %{
+    pid: pid,
+    ref: ref
+  } do
+    attach_telemetry(pid, @lines_event)
+
+    for _ <- 1..3, do: @subject.count(:log_event, ref)
+
+    send(pid, :tick)
+
+    assert_receive {:telemetry, %{count: 3}}, 200
+  end
+
+  test "tick does not fire lines telemetry when nothing was counted", %{pid: pid} do
+    attach_telemetry(pid, @lines_event)
+
+    send(pid, :tick)
+
     refute_receive {:telemetry, _}, 200
   end
 

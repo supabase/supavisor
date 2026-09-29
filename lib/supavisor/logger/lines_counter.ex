@@ -1,19 +1,21 @@
-defmodule Supavisor.Logger.BurstDropCounter do
+defmodule Supavisor.Logger.LinesCounter do
   @moduledoc """
-  Estimates how many log events the `:default` logger handler's burst-limit
-  overload protection drops.
+  Counts log events reaching the `:default` logger handler, and estimates how
+  many its burst-limit overload protection drops.
 
-  OTP gives no notification when a burst-limit drop happens and keeps no
-  accessible running total, so this mirrors the same window/threshold
-  independently: a `:logger` handler filter tallies every event reaching
-  `:default`, and on each tick (matching `burst_limit_window_time`) whatever
-  exceeds `burst_limit_max_count` is reported as the estimated drop count for
-  that window via `:telemetry`.
+  A `:logger` handler filter tallies every event reaching `:default`; on each
+  tick (matching `burst_limit_window_time`) the tally is reported as-is (the
+  exact number of log lines logged), and separately, whatever exceeds
+  `burst_limit_max_count` is reported as the estimated number dropped that
+  window — an estimate, not an exact count, since OTP gives no notification
+  when a burst-limit drop happens and keeps no accessible running total to
+  read instead.
   """
 
   use GenServer
 
-  @event [:supavisor, :logger, :burst_limit, :dropped]
+  @lines_event [:supavisor, :logger, :lines]
+  @dropped_event [:supavisor, :logger, :burst_limit, :dropped]
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -61,10 +63,14 @@ defmodule Supavisor.Logger.BurstDropCounter do
     # it just rolls into the next window.
     :counters.sub(ref, 1, count)
 
+    if count > 0 do
+      :telemetry.execute(@lines_event, %{count: count}, %{})
+    end
+
     dropped = max(count - max_count(), 0)
 
     if dropped > 0 do
-      :telemetry.execute(@event, %{count: dropped}, %{})
+      :telemetry.execute(@dropped_event, %{count: dropped}, %{})
     end
 
     schedule_tick()
