@@ -75,7 +75,7 @@ defmodule Supavisor.ClientHandler.AuthMethods.SCRAM do
              context.tenant,
              context.user
            ) do
-      message = Server.exchange_first_message(nonce, secret.salt)
+      message = Server.exchange_first_message(nonce, secret.salt, secret.iterations)
       server_first_parts = Helpers.parse_server_first(message, nonce)
 
       signatures =
