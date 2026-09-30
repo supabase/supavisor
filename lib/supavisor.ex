@@ -473,9 +473,9 @@ defmodule Supavisor do
   @doc """
   Join a `pool_pid` to the `:tenants` process groups under the `{tenant, db_user}` key
   """
-  @spec register_tenant_db_user_for_pool(String.t(), String.t(), pid()) ::
+  @spec join_tenant_pool(String.t(), String.t(), pid()) ::
           :ok | {:error, reason :: term()}
-  def register_tenant_db_user_for_pool(tenant, db_user, pool_pid) do
+  def join_tenant_pool(tenant, db_user, pool_pid) do
     with {:error, reason} = err <- :syn.join(:tenants, {tenant, db_user}, pool_pid) do
       Logger.error("Failed to register pool #{inspect(pool_pid)} in :tenants: #{inspect(reason)}")
       err
@@ -483,11 +483,13 @@ defmodule Supavisor do
   end
 
   @doc """
-  Count the pools joined to the `tenants` process group under the `{tenant, db_user}` key
+  Return pids of the pools joined to the `tenants` process group under the `{tenant, db_user}` key
   """
-  @spec tenant_db_user_registered?(String.t(), String.t()) :: boolean()
-  def tenant_db_user_registered?(tenant, db_user) do
-    :syn.member_count(:tenants, {tenant, db_user}) > 0
+  @spec tenant_pools(String.t(), String.t()) :: [pid()]
+  def tenant_pools(tenant, db_user) do
+    :tenants
+    |> :syn.members({tenant, db_user})
+    |> Enum.map(fn {pid, _meta} -> pid end)
   end
 
   def inspect_id(id, opts \\ %Inspect.Opts{})

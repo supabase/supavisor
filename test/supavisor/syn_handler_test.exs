@@ -123,11 +123,11 @@ defmodule Supavisor.SynHandlerTest do
       id = build_id(tenant, user)
       pid = fake_pid()
 
-      refute Supavisor.tenant_db_user_registered?(tenant, user)
+      assert [] == Supavisor.tenant_pools(tenant, user)
 
       SynHandler.on_process_registered(:tenants, id, pid, nil, nil)
 
-      assert Supavisor.tenant_db_user_registered?(tenant, user)
+      assert [pid] == Supavisor.tenant_pools(tenant, user)
     end
   end
 
@@ -143,7 +143,7 @@ defmodule Supavisor.SynHandlerTest do
           SynHandler.on_process_unregistered(:tenants, id, self(), nil, :shutdown)
         end)
 
-      assert log =~ "Invalidating client authentication"
+      assert log =~ "invalidated client authentication"
       assert log =~ "project=#{tenant}"
       assert log =~ "user=#{user}"
 
@@ -155,7 +155,7 @@ defmodule Supavisor.SynHandlerTest do
       user = "user1"
       id = build_id(tenant, user, mode: :transaction, db: "postgres")
 
-      Supavisor.register_tenant_db_user_for_pool(tenant, user, fake_pid())
+      Supavisor.join_tenant_pool(tenant, user, fake_pid())
       seed_cache(tenant, user)
 
       SynHandler.on_process_unregistered(:tenants, id, self(), nil, :shutdown)
@@ -169,12 +169,49 @@ defmodule Supavisor.SynHandlerTest do
       other_user = "user2"
       id = build_id(tenant, user)
 
-      Supavisor.register_tenant_db_user_for_pool(tenant, other_user, fake_pid())
+      Supavisor.join_tenant_pool(tenant, other_user, fake_pid())
       seed_cache(tenant, user)
 
       SynHandler.on_process_unregistered(:tenants, id, self(), nil, :shutdown)
 
       assert {:error, :not_found} = ClientAuthentication.get_validation_secrets(tenant, user)
+    end
+
+    test "invalidates even if the unregistering pid is still a residual member of its own pg group" do
+      # :syn's registry (keyed by `id`) and its pg group (keyed by {tenant, user}) are
+      # monitored by two independent :syn processes. When a pool dies, the registry's
+      # callback can run before the pg group has processed its own DOWN for the same
+      # pid, so the dying pid can still show up as a "member" of its own group here.
+      tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      id = build_id(tenant, user)
+
+      Supavisor.join_tenant_pool(tenant, user, self())
+      seed_cache(tenant, user)
+
+      SynHandler.on_process_unregistered(:tenants, id, self(), nil, :shutdown)
+
+      assert {:error, :not_found} = ClientAuthentication.get_validation_secrets(tenant, user)
+    end
+
+    test "does not invalidate if fails to check liveness of a remote pool" do
+      tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      id = build_id(tenant, user)
+
+      Supavisor.join_tenant_pool(tenant, user, self())
+      Supavisor.join_tenant_pool(tenant, user, fake_pid())
+      seed_cache(tenant, user)
+
+      log =
+        capture_log(fn ->
+          SynHandler.on_process_unregistered(:tenants, id, self(), nil, :test_rpc_failure)
+        end)
+
+      assert log =~ "Couldn't check liveness"
+      assert log =~ "assuming alive"
+
+      assert {:ok, _} = ClientAuthentication.get_validation_secrets(tenant, user)
     end
   end
 

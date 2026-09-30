@@ -30,7 +30,7 @@ defmodule Supavisor.SynHandler do
       db_name: db
     )
 
-    Supavisor.register_tenant_db_user_for_pool(tenant, user, pid)
+    Supavisor.join_tenant_pool(tenant, user, pid)
   end
 
   @impl true
@@ -38,7 +38,7 @@ defmodule Supavisor.SynHandler do
         :tenants,
         Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db, search_path: _) =
           id,
-        _pid,
+        pid,
         _meta,
         reason
       ) do
@@ -50,9 +50,9 @@ defmodule Supavisor.SynHandler do
       db_name: db
     )
 
-    if not Supavisor.tenant_db_user_registered?(tenant, user) do
+    if not other_pool_alive?(tenant, user, pid, reason) do
       Supavisor.ClientAuthentication.invalidate_local(tenant, user)
-      Logger.info("Invalidating client authentication cache")
+      Logger.info("SynHandler: invalidated client authentication cache")
     end
 
     Logger.debug("Process unregistered: #{Supavisor.inspect_id(id)} #{inspect(reason)}")
@@ -115,5 +115,45 @@ defmodule Supavisor.SynHandler do
     end
 
     keep
+  end
+
+  # `excluding_pid` (the pid this unregister callback fires for) is monitored
+  # independently by :syn's registry (for its own `id`) and by its pg group (for
+  # `{tenant, db_user}`), so the group can still list `excluding_pid` itself as a
+  # member for a short while after it dies - the group's own monitor hasn't
+  # processed the death yet. On a multi-node cluster, membership updates for pools
+  # on other nodes also propagate asynchronously, so a sibling that died moments
+  # ago elsewhere can still show up as a member until its removal is received.
+  #
+  # Excluding `excluding_pid` and checking the liveness of whatever remains rules
+  # out both races, instead of trusting group membership alone.
+  #
+  # we pass the reason only for testing purposes
+  @spec other_pool_alive?(String.t(), String.t(), pid(), atom()) :: boolean()
+  defp other_pool_alive?(tenant, db_user, excluding_pid, reason) do
+    tenant
+    |> Supavisor.tenant_pools(db_user)
+    |> Enum.reject(&(&1 == excluding_pid))
+    |> Enum.any?(&pool_alive?(&1, reason))
+  end
+
+  @spec pool_alive?(pid(), atom()) :: boolean()
+  defp pool_alive?(pid, reason) do
+    node = (reason == :test_rpc_failure && :nonexistent) || node(pid)
+
+    :erpc.call(
+      node,
+      Process,
+      :alive?,
+      [pid],
+      5_000
+    )
+  catch
+    kind, reason ->
+      Logger.warning(
+        "SynHandler: Couldn't check liveness of #{inspect(pid)} on #{node(pid)}, assuming alive: #{inspect({kind, reason})}"
+      )
+
+      true
   end
 end

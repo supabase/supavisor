@@ -135,62 +135,85 @@ defmodule SupavisorTest do
     end
   end
 
-  describe "register_tenant_db_user_for_pool/3 and tenant_db_user_registered?/2" do
-    test "registered? is false before anything joins" do
+  describe "join_tenant_pool/3" do
+    test "no pools joined before anything joins" do
       tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
       user = "user1"
 
-      refute Supavisor.tenant_db_user_registered?(tenant, user)
+      assert [] == Supavisor.tenant_pools(tenant, user)
     end
 
-    test "registered? is true after joining a pool pid" do
-      tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
-      user = "user1"
-
-      :ok = Supavisor.register_tenant_db_user_for_pool(tenant, user, fake_pool_pid())
-
-      assert Supavisor.tenant_db_user_registered?(tenant, user)
-    end
-
-    test "registered? goes back to false once the joined pid dies" do
+    test "joined pool shows up after joining" do
       tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
       user = "user1"
       pid = fake_pool_pid()
 
-      :ok = Supavisor.register_tenant_db_user_for_pool(tenant, user, pid)
-      assert Supavisor.tenant_db_user_registered?(tenant, user)
+      :ok = Supavisor.join_tenant_pool(tenant, user, pid)
+
+      assert [pid] == Supavisor.tenant_pools(tenant, user)
+    end
+
+    test "joined pid drops out once it dies" do
+      tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      pid = fake_pool_pid()
+
+      :ok = Supavisor.join_tenant_pool(tenant, user, pid)
+      assert [pid] == Supavisor.tenant_pools(tenant, user)
 
       Process.unlink(pid)
       Process.exit(pid, :kill)
 
-      refute_eventually(fn -> Supavisor.tenant_db_user_registered?(tenant, user) end)
+      assert_eventually(fn -> Supavisor.tenant_pools(tenant, user) == [] end)
     end
 
-    test "registered? stays true while at least one joined pid is alive" do
+    test "other joined pids remain while at least one is alive" do
       tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
       user = "user1"
       pid1 = fake_pool_pid()
       pid2 = fake_pool_pid()
 
-      :ok = Supavisor.register_tenant_db_user_for_pool(tenant, user, pid1)
-      :ok = Supavisor.register_tenant_db_user_for_pool(tenant, user, pid2)
+      :ok = Supavisor.join_tenant_pool(tenant, user, pid1)
+      :ok = Supavisor.join_tenant_pool(tenant, user, pid2)
 
       Process.unlink(pid1)
       Process.exit(pid1, :kill)
 
-      assert_eventually(fn -> Supavisor.tenant_db_user_registered?(tenant, user) end)
+      assert_eventually(fn -> Supavisor.tenant_pools(tenant, user) == [pid2] end)
     end
 
-    test "register return and logs an error if the pool is not alive" do
+    test "returns and logs an error if the pool is not alive" do
       tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
       user = "user1"
       pid = spawn(fn -> :ok end)
       assert_eventually(fn -> not Process.alive?(pid) end)
 
       {:error, :not_alive} =
-        Supavisor.register_tenant_db_user_for_pool(tenant, user, pid)
+        Supavisor.join_tenant_pool(tenant, user, pid)
 
-      refute Supavisor.tenant_db_user_registered?(tenant, user)
+      assert [] == Supavisor.tenant_pools(tenant, user)
+    end
+  end
+
+  describe "tenant_pools/2" do
+    test "empty when nothing has joined" do
+      tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+
+      assert [] == Supavisor.tenant_pools(tenant, user)
+    end
+
+    test "lists every pid joined for {tenant, db_user}" do
+      tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      pid1 = fake_pool_pid()
+      pid2 = fake_pool_pid()
+
+      :ok = Supavisor.join_tenant_pool(tenant, user, pid1)
+      :ok = Supavisor.join_tenant_pool(tenant, user, pid2)
+
+      assert Enum.sort([pid1, pid2]) ==
+               Enum.sort(Supavisor.tenant_pools(tenant, user))
     end
   end
 end
