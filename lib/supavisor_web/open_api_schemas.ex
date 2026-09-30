@@ -387,6 +387,82 @@ defmodule SupavisorWeb.OpenApiSchemas do
     def params, do: {"Clear Network Ban Params", "application/json", __MODULE__}
   end
 
+  defmodule RebalanceParams do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        dry_run: %Schema{
+          type: :boolean,
+          description: "Only list the pools that would be moved",
+          default: false
+        },
+        max_concurrency: %Schema{
+          type: :integer,
+          minimum: 1,
+          description: "Pools stopped at the same time on each node",
+          default: 100
+        }
+      },
+      example: %{dry_run: true, max_concurrency: 100}
+    })
+
+    def params, do: {"Rebalance Params", "application/json", __MODULE__}
+  end
+
+  defmodule RebalanceMove do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        tenant: %Schema{type: :string, description: "External ID"},
+        user: %Schema{type: :string, description: "Database user"},
+        mode: %Schema{type: :string, description: "Pooling mode"},
+        database: %Schema{type: :string, description: "Database name"},
+        from_node: %Schema{type: :string, description: "Node the pool is moved from"},
+        to_node: %Schema{type: :string, description: "Node the pool is moved to"}
+      },
+      required: [:tenant, :user, :mode, :database, :from_node, :to_node]
+    })
+  end
+
+  defmodule Rebalance do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        moves: %Schema{type: :array, items: RebalanceMove},
+        errors: %Schema{
+          type: :object,
+          additionalProperties: %Schema{type: :string},
+          description: "Nodes that failed to rebalance, with the error"
+        }
+      },
+      required: [:moves, :errors],
+      example: %{
+        moves: [
+          %{
+            tenant: "dev_tenant",
+            user: "postgres",
+            mode: "transaction",
+            database: "postgres",
+            from_node: "supavisor@10.0.0.1",
+            to_node: "supavisor@10.0.0.2"
+          }
+        ],
+        errors: %{}
+      }
+    })
+
+    def response, do: {"Rebalance Response", "application/json", __MODULE__}
+  end
+
   defmodule ToggleTenantBan do
     @moduledoc false
     require OpenApiSpex

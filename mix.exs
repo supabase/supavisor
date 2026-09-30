@@ -95,7 +95,8 @@ defmodule Supavisor.MixProject do
       {:excoveralls, ">= 0.0.0", only: [:dev, :test]},
       {:stream_data, "~> 1.0", only: [:dev, :test]},
       # Override needed due to eflambe
-      {:meck, "~> 1.0", only: [:dev, :test], override: true}
+      {:meck, "~> 1.0", only: [:dev, :test], override: true},
+      {:tidewave, "~> 0.9.1", only: [:dev]}
     ]
   end
 
