@@ -170,8 +170,7 @@ defmodule Supavisor.ClientHandler do
       opts = [
         verify: :verify_none,
         certs_keys: certs_keys,
-        sni_fun: fn _hostname -> :undefined end,
-        receiver_spawn_opts: [min_heap_size: 2048]
+        sni_fun: fn _hostname -> :undefined end
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
