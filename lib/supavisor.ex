@@ -208,6 +208,81 @@ defmodule Supavisor do
   end
 
   @doc """
+  Moves every pool in the cluster to the node `determine_node/2` picks for it now.
+
+  A pool stays on the node it started on, even after new nodes join the cluster.
+  Pools started while only part of the cluster was up are therefore concentrated
+  on the first nodes. Running this once all nodes are up spreads them again.
+
+  A pool is moved by stopping its tenant supervisor. Its `Supavisor.Terminator`
+  drains the clients, which then reconnect and start the pool on its new node.
+  Pools are stopped in the background, after this function returns.
+
+  Options:
+
+    * `:dry_run` - only report the pools that would be moved. Defaults to `false`.
+    * `:max_concurrency` - pools stopped at the same time on each node. Defaults to `100`.
+
+  Returns the pools being moved away from each node, with their new node.
+  """
+  @spec rebalance(keyword()) :: %{Node.t() => {:ok, [{id, Node.t()}]} | {:error, term()}}
+  def rebalance(opts \\ []) do
+    opts = Keyword.validate!(opts, dry_run: false, max_concurrency: 100)
+    nodes = [node() | Node.list()]
+
+    results = :erpc.multicall(nodes, Supavisor, :rebalance_local, [opts], 60_000)
+
+    nodes
+    |> Enum.zip(results)
+    |> Map.new(fn
+      {node, {:ok, _moves} = result} -> {node, result}
+      {node, error} -> {node, {:error, error}}
+    end)
+  end
+
+  @doc """
+  Moves the pools of this node whose target node is another one. See `rebalance/1`,
+  which validates `opts`.
+  """
+  @spec rebalance_local(keyword()) :: [{id, Node.t()}]
+  def rebalance_local(opts) do
+    dry_run = Keyword.fetch!(opts, :dry_run)
+
+    moves =
+      for {sup, id} <-
+            Registry.select(Supavisor.Registry.TenantSups, [
+              {{:_, :"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}
+            ]),
+          {^sup, %{availability_zone: availability_zone}} <- [:syn.lookup(:tenants, id)],
+          target = determine_node(id, availability_zone),
+          target != node() do
+        {sup, id, target}
+      end
+
+    Logger.info("Rebalancing #{length(moves)} pools away from this node, dry_run: #{dry_run}")
+
+    if !dry_run do
+      Task.Supervisor.start_child(Supavisor.PoolTerminator, fn ->
+        moves
+        |> Task.async_stream(fn {sup, id, _target} -> stop_for_rebalance(sup, id) end,
+          max_concurrency: Keyword.fetch!(opts, :max_concurrency),
+          timeout: :infinity
+        )
+        |> Stream.run()
+      end)
+    end
+
+    Enum.map(moves, fn {_sup, id, target} -> {id, target} end)
+  end
+
+  defp stop_for_rebalance(sup, id) do
+    Supervisor.stop(sup, :shutdown, 15_000)
+  catch
+    :exit, {:noproc, _} -> :ok
+    :exit, reason -> Logger.error("Failed to stop pool #{inspect_id(id)}: #{inspect(reason)}")
+  end
+
+  @doc """
   Updates credentials for all SecretChecker processes for a tenant across the cluster.
   Used for auth_query mode (require_user: false) to hot-update credentials without restarting pools.
   """
@@ -450,10 +525,23 @@ defmodule Supavisor do
             end
           end)
 
+        availability_zone =
+          case replicas do
+            [%Tenants.Tenant{availability_zone: availability_zone}] -> availability_zone
+            # The replicas of a cluster may be in different zones
+            _ -> nil
+          end
+
         DynamicSupervisor.start_child(
           {:via, PartitionSupervisor, {Supavisor.DynamicSupervisor, id}},
           {Supavisor.TenantSupervisor,
-           %{id: id, replicas: replicas_info, secrets: secrets, log_level: log_level}}
+           %{
+             id: id,
+             replicas: replicas_info,
+             secrets: secrets,
+             log_level: log_level,
+             availability_zone: availability_zone
+           }}
         )
         |> case do
           {:error, {:already_started, pid}} -> {:ok, pid}

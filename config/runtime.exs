@@ -331,6 +331,11 @@ config :logger, :default_handler,
     burst_limit_window_time: burst_limit_window_time
   ]
 
+config :supavisor,
+  logger_burst_limit_enable: burst_limit_enable,
+  logger_burst_limit_max_count: burst_limit_max_count,
+  logger_burst_limit_window_time: burst_limit_window_time
+
 config :logger,
   backends: [:console]
 

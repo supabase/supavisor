@@ -166,8 +166,7 @@ defmodule Supavisor.ClientHandler do
       opts = [
         verify: :verify_none,
         certs_keys: certs_keys,
-        sni_fun: fn _hostname -> :undefined end,
-        receiver_spawn_opts: [min_heap_size: 2048]
+        sni_fun: fn _hostname -> :undefined end
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
@@ -1053,7 +1052,10 @@ defmodule Supavisor.ClientHandler do
       | id: id,
         tenant: info.tenant.external_id,
         tenant_feature_flags: info.tenant.feature_flags,
-        tenant_availability_zone: info.tenant.availability_zone,
+        # Cluster pools are placed without a zone, as their replicas may be in
+        # different ones, see `Supavisor.start_local_pool/3`
+        tenant_availability_zone:
+          if(Supavisor.id(id, :type) == :single, do: info.tenant.availability_zone),
         user: user,
         db_name: db_name,
         timeout: info.user.pool_checkout_timeout,

@@ -305,7 +305,7 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, conn_params) do
           {:ok, sock} ->
-            tenant = if data.proxy, do: Supavisor.id(data.id, :tenant)
+            tenant = if data.proxy, do: proxy_tenant(data.id)
 
             options = %{
               "search_path" => Supavisor.id(data.id, :search_path),
@@ -879,6 +879,13 @@ defmodule Supavisor.DbHandler do
 
     HandlerHelpers.sock_send(sock, msg)
   end
+
+  # The node of the pool parses the user name like the node of the client did
+  @spec proxy_tenant(Supavisor.id()) :: String.t()
+  defp proxy_tenant(Supavisor.id(type: :cluster, tenant: cluster_alias)),
+    do: "cluster." <> cluster_alias
+
+  defp proxy_tenant(Supavisor.id(tenant: tenant)), do: tenant
 
   @spec activate(Supavisor.sock()) :: :ok | {:error, term}
   defp activate({:gen_tcp, sock}) do
