@@ -125,8 +125,8 @@ defmodule Supavisor.ClientHandler.AuthMethods.Password do
   @spec decode_password(binary(), Context.t()) ::
           {:ok, binary()} | {:error, Exception.t()}
   defp decode_password(bin, _context) do
-    case Server.decode_pkt(bin) do
-      {:ok, %{tag: :password_message, payload: {:cleartext_password, password}}, _} ->
+    case Server.decode_password_message(bin, :password) do
+      {:ok, {:cleartext_password, password}, _} ->
         {:ok, IO.iodata_to_binary(password)}
 
       {:ok, other, _} ->
