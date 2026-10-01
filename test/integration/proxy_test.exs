@@ -792,6 +792,55 @@ defmodule Supavisor.Integration.ProxyTest do
     Supavisor.CircuitBreaker.clear({tenant, "127.0.0.1"}, :auth_error)
   end
 
+  test "auth circuit breaker is not checked on proxied connections" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_auth"
+
+    for _ <- 1..10 do
+      Supavisor.CircuitBreaker.record_failure({tenant, "127.0.0.1"}, :auth_error)
+    end
+
+    on_exit(fn -> Supavisor.CircuitBreaker.clear({tenant, "127.0.0.1"}, :auth_error) end)
+
+    assert {:error, %Supavisor.Errors.CircuitBreakerError{operation: :auth_error}} =
+             Supavisor.CircuitBreaker.check({tenant, "127.0.0.1"}, :auth_error)
+
+    internal_port = :ranch.get_port({:pg_proxy_internal, :transaction, 0})
+
+    url =
+      "postgresql://#{db_conf[:username]}.#{tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{internal_port}/postgres"
+
+    assert {:ok, pid} = parse_uri(url) |> single_connection()
+    assert %P.Result{rows: [[1]]} = P.query!(pid, "SELECT 1", [])
+    GenServer.stop(pid)
+  end
+
+  test "auth failures on proxied connections are not recorded in the circuit breaker" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_auth"
+
+    on_exit(fn -> Supavisor.CircuitBreaker.clear({tenant, "127.0.0.1"}, :auth_error) end)
+
+    internal_port = :ranch.get_port({:pg_proxy_internal, :transaction, 0})
+
+    url =
+      "postgresql://#{db_conf[:username]}.#{tenant}:wrong_password@#{db_conf[:hostname]}:#{internal_port}/postgres"
+
+    for _ <- 1..11 do
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :invalid_password,
+                  message: "password authentication failed for user \"" <> _,
+                  severity: "FATAL",
+                  pg_code: "28P01"
+                }
+              }} = parse_uri(url) |> single_connection()
+    end
+
+    assert :ok = Supavisor.CircuitBreaker.check({tenant, "127.0.0.1"}, :auth_error)
+  end
+
   test "handles fatal TLS alert by terminating connection" do
     # Setup SSL certificates for testing
     {:ok, _cert_path, _key_path} = SSLHelper.configure_test_ssl()

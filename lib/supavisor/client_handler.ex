@@ -319,7 +319,7 @@ defmodule Supavisor.ClientHandler do
            AuthMethods.SCRAM.new_context(info, data.id)}
       end
 
-    with :ok <- Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error),
+    with :ok <- check_auth_circuit_breaker(data),
          :ok <- client_sock_send(data, auth_request, :handshake) do
       {:next_state, next_state, %{data | auth_context: auth_context},
        {:timeout, 15_000, :auth_timeout}}
@@ -855,8 +855,18 @@ defmodule Supavisor.ClientHandler do
   defp forwardable_peer_ip("undefined"), do: nil
   defp forwardable_peer_ip(peer_ip), do: peer_ip
 
+  # The auth circuit breaker is owned by the node that accepted the client.
+  # Proxied connections arrive on local listeners and skip it.
+  defp check_auth_circuit_breaker(%{local: true}), do: :ok
+
+  defp check_auth_circuit_breaker(data),
+    do: Supavisor.CircuitBreaker.check({data.tenant, data.peer_ip}, :auth_error)
+
   defp handle_auth_failure(exception, data) do
-    Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
+    if !data.local do
+      Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
+    end
+
     Error.terminate_with_error(data, exception, :handshake)
   end
 
