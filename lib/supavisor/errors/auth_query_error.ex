@@ -13,6 +13,7 @@ defmodule Supavisor.Errors.AuthQueryError do
           | :unsupported_secret_format
           | :parse_error
           | :md5_not_supported
+          | :too_many_iterations
           | :connection_failed
           | :timeout
 
@@ -39,6 +40,9 @@ defmodule Supavisor.Errors.AuthQueryError do
 
   def error_message(%{reason: :md5_not_supported}),
     do: "MD5 secrets are not supported for auth_query, use require_user instead"
+
+  def error_message(%{reason: :too_many_iterations, details: details}),
+    do: "SCRAM secret iteration count #{details}"
 
   def error_message(%{reason: :connection_failed, details: details}),
     do: "auth_query connection failed: #{details}"
