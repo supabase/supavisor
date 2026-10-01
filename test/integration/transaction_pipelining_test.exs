@@ -842,6 +842,32 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
+  # pgx streams CopyData before the COPY is accepted, so a CopyData can be partly forwarded
+  # when the COPY fails to start. The pool hands out the most recently returned backend, so
+  # if the backend were released then, the other client would get the one holding the first
+  # part.
+  test "finishes a partly forwarded CopyData on its backend after the COPY fails to start", %{
+    tenant: tenant
+  } do
+    sock = connect(tenant)
+    <<first::binary-size(7), rest::binary>> = copy_data("aaaaaaaaaa")
+
+    :ok = :gen_tcp.send(sock, [query("COPY pipelining_missing_table FROM STDIN"), first])
+    assert error_codes(recv_rfqs(sock, 1)) == ["42P01"]
+
+    other = connect(tenant)
+    :ok = :gen_tcp.send(other, query("SELECT 1"))
+    assert rows(recv_rfqs(other, 1)) == [["1"]]
+
+    :ok = :gen_tcp.send(sock, [rest, @copy_done, query("SELECT 2")])
+
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [["2"]]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
   defp connect(tenant) do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     port = Application.get_env(:supavisor, :proxy_port_transaction)

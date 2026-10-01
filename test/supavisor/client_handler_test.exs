@@ -4,6 +4,7 @@ defmodule Supavisor.ClientHandlerTest do
   alias Supavisor.Protocol.FrontendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
 
+  require MessageStreamer
   require Supavisor
 
   @subject Supavisor.ClientHandler
@@ -246,6 +247,7 @@ defmodule Supavisor.ClientHandlerTest do
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         write_seq: 3,
         tracked_seq: 3,
+        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
         local: true,
         stats: %{},
         query_start: System.monotonic_time(),
@@ -285,6 +287,16 @@ defmodule Supavisor.ClientHandlerTest do
     test "stays busy when a later write is still in flight", %{data: data} do
       assert :keep_state_and_data =
                @subject.handle_event(:cast, {:db_status, :ready_for_query, 2}, :busy, data)
+
+      refute_received {:"$gen_cast", {:release, _write_seq}}
+    end
+
+    test "stays busy while a message is partly forwarded", %{data: data} do
+      stream_state = MessageStreamer.stream_state(data.stream_state, in_flight_pkt: {?d, 10})
+      data = %{data | stream_state: stream_state}
+
+      assert :keep_state_and_data =
+               @subject.handle_event(:cast, {:db_status, :ready_for_query, 3}, :busy, data)
 
       refute_received {:"$gen_cast", {:release, _write_seq}}
     end

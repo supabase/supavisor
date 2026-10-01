@@ -554,6 +554,19 @@ defmodule Supavisor.ClientHandler do
     :keep_state_and_data
   end
 
+  # The rest of a partly forwarded message must reach the same backend.
+  def handle_event(
+        :cast,
+        {:db_status, :ready_for_query, _write_seq},
+        :busy,
+        %{
+          mode: :transaction,
+          stream_state: MessageStreamer.stream_state(in_flight_pkt: {_tag, _remaining_len})
+        }
+      ) do
+    :keep_state_and_data
+  end
+
   # Later writes without tracked messages get no reply and can't change the backend's
   # state, so the backend is done with them too.
   def handle_event(:cast, {:db_status, :ready_for_query, _write_seq}, :busy, data) do
