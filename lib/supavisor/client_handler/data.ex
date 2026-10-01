@@ -39,6 +39,7 @@ defmodule Supavisor.ClientHandler.Data do
     :connection_start,
     :state_entered_at,
     :subscribe_retries,
+    :admission_retries,
     :client_ready,
     :max_clients,
     :pool_ranch,
