@@ -92,7 +92,7 @@ defmodule Supavisor.Application do
         )
       end
 
-    :syn.add_node_to_scopes([:tenants, :availability_zone, :accepting_pools])
+    :syn.add_node_to_scopes([:tenants, :tenant_pools, :availability_zone, :accepting_pools])
 
     Supavisor.CircuitBreaker.init()
     Supavisor.ConnectBackoff.init()

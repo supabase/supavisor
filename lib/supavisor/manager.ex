@@ -4,6 +4,7 @@ defmodule Supavisor.Manager do
   """
 
   use GenServer
+
   require Logger
   require Supavisor
 

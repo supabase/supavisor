@@ -80,6 +80,34 @@ defmodule Supavisor.Integration.ClientAuthenticationTest do
       assert log =~ "project=#{tenant.external_id}"
       assert log =~ "user=#{db_user}"
     end
+
+    test "logs an error when the one-off auth_query fetch fails", %{
+      tenant: tenant,
+      manager_user: manager_user,
+      db_conf: db_conf
+    } do
+      db_user = "nonexistent_role_#{System.unique_integer([:positive])}"
+
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: tenant.external_id,
+          user: db_user,
+          mode: :transaction,
+          db: db_conf[:database]
+        )
+
+      log =
+        capture_log(fn ->
+          assert {:error, %Supavisor.Errors.AuthQueryError{reason: :user_not_found}} =
+                   ClientAuthentication.fetch_validation_secrets(id, tenant, manager_user)
+        end)
+
+      assert log =~ "One-off user secret fetch failed"
+      assert log =~ "user_not_found"
+      assert log =~ "project=#{tenant.external_id}"
+      assert log =~ "user=#{db_user}"
+    end
   end
 
   describe "handle_wrong_password/3 (RefreshLimiter rate-limited)" do
