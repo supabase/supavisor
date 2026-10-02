@@ -195,13 +195,14 @@ jobs:
         run: epmd -daemon
       - name: Install Node dependencies
         run: 'cd test/integration/js/; npm install'
-      - name: Ensure psql client
+      - name: Install psql client
         run: |
-          if ! command -v psql >/dev/null; then
-            echo "Installing psql client"
-            sudo apt-get update -qq
-            sudo apt-get install -qq -y postgresql-client
-          fi
+          sudo apt-get update -qq
+          sudo apt-get install -qq -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -qq -y postgresql-client-17
+          sudo ln -sf /usr/lib/postgresql/17/bin/psql /usr/local/bin/psql
+          psql --version
       - name: Run tests
         run: mix coveralls.lcov --only integration --trace
       - name: Upload Parallel Coverage Report
