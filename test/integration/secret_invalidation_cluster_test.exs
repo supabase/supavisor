@@ -71,4 +71,45 @@ defmodule Supavisor.Integration.SecretInvalidationClusterTest do
     assert {:ok, _} =
              :peer.call(peer, ClientAuthentication, :get_validation_secrets, [@tenant, @user])
   end
+
+  test "does not invalidate the cache while the last pool for tenant+user is still draining" do
+    {:ok, peer, node} = Cluster.start_node()
+    true = Node.connect(node)
+
+    self_id = id()
+    {:ok, sup} = Supavisor.start(self_id, secret())
+    seed_caches(@tenant, @user, peer)
+
+    # A connected "client" keeps Manager.graceful_shutdown/3 draining until it goes away.
+    subscriber = spawn(fn -> Process.sleep(:infinity) end)
+    {:ok, _} = Supavisor.subscribe(self_id, subscriber)
+    {:ok, _task} = Supavisor.async_stop(sup)
+
+    # Supavisor.Terminator has de-registered the pool from :tenants (routing)...
+    assert_eventually(_repeats = 20, 50, fn -> Supavisor.get_global_sup(self_id) == nil end)
+    # ...but it's still alive and still a :tenant_pools member while draining.
+    assert Process.alive?(sup)
+    assert sup in Supavisor.tenant_pools(@tenant, @user)
+
+    # Give a (wrong) early invalidation time to land, still well inside the 2.5s drain.
+    Process.sleep(500)
+    assert {:ok, _} = ClientAuthentication.get_validation_secrets(@tenant, @user)
+
+    assert {:ok, _} =
+             :peer.call(peer, ClientAuthentication, :get_validation_secrets, [@tenant, @user])
+
+    # Finish the drain: the pool really dies and only now is the cache invalidated everywhere.
+    Process.exit(subscriber, :kill)
+
+    assert_eventually(fn -> not Process.alive?(sup) end)
+
+    assert_eventually(fn ->
+      ClientAuthentication.get_validation_secrets(@tenant, @user) == {:error, :not_found}
+    end)
+
+    assert_eventually(fn ->
+      :peer.call(peer, ClientAuthentication, :get_validation_secrets, [@tenant, @user]) ==
+        {:error, :not_found}
+    end)
+  end
 end
