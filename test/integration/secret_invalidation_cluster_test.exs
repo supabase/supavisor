@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.SecretInvalidationClusterTest do
   use Supavisor.DataCase, async: false
 
   require Supavisor
+  import ExUnit.CaptureLog
   import Supavisor.Asserts
 
   alias Supavisor.ClientAuthentication
@@ -111,5 +112,30 @@ defmodule Supavisor.Integration.SecretInvalidationClusterTest do
       :peer.call(peer, ClientAuthentication, :get_validation_secrets, [@tenant, @user]) ==
         {:error, :not_found}
     end)
+  end
+
+  test "invalidates the cache when the node hosting every pool for tenant+user goes down" do
+    {:ok, peer, node} = Cluster.start_node()
+    true = Node.connect(node)
+
+    {:ok, _} = :peer.call(peer, Supavisor, :start, [id(:transaction), secret()])
+    {:ok, _} = :peer.call(peer, Supavisor, :start, [id(:session), secret()])
+    assert_eventually(fn -> length(Supavisor.tenant_pools(@tenant, @user)) == 2 end)
+
+    secrets = ClientAuthenticationHelpers.build_validation_secrets(@user)
+    ClientAuthentication.put_validation_secrets(@tenant, @user, secrets)
+
+    # :peer's default shutdown halts the node, so both pools leave via the node-down purge,
+    # which calls back before deleting either.
+    log =
+      capture_log([level: :debug], fn ->
+        :peer.stop(peer)
+
+        assert_eventually(fn ->
+          ClientAuthentication.get_validation_secrets(@tenant, @user) == {:error, :not_found}
+        end)
+      end)
+
+    assert log =~ "{:syn_remote_scope_node_down, :tenant_pools,"
   end
 end

@@ -1,6 +1,7 @@
 defmodule Supavisor.SynHandlerTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
+  import Supavisor.Asserts, only: [assert_eventually: 1]
   import Supavisor.Support.ClientAuthenticationHelpers, only: [seed_cache: 2]
   require Logger
   require Supavisor
@@ -169,7 +170,7 @@ defmodule Supavisor.SynHandlerTest do
       assert {:error, :not_found} = ClientAuthentication.get_validation_secrets(tenant, user)
     end
 
-    test "does not invalidate when a sibling pool is still joined for {tenant, user}" do
+    test "keeps the cache while another pool for {tenant, user} is still listed" do
       tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
       user = "user1"
 
@@ -206,7 +207,8 @@ defmodule Supavisor.SynHandlerTest do
       assert {:error, :not_found} = ClientAuthentication.get_validation_secrets(tenant, user)
     end
 
-    test "invalidates even if the leaving pid is still a residual member of its own pg group" do
+    test "ignores the leaving pid if it's still listed" do
+      # Node-down purge calls back before deleting, so the leaving pid can still be listed.
       tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
       user = "user1"
       id = build_id(tenant, user)
@@ -219,7 +221,28 @@ defmodule Supavisor.SynHandlerTest do
       assert {:error, :not_found} = ClientAuthentication.get_validation_secrets(tenant, user)
     end
 
-    test "does not invalidate if fails to check liveness of a remote pool" do
+    test "invalidates once the last of concurrently dying pools has left" do
+      # Leaves are handled serially; whichever is handled last sees an empty group.
+      tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      id = build_id(tenant, user)
+      pids = [fake_pid(), fake_pid()]
+
+      Enum.each(pids, &Supavisor.join_tenant_pool(id, &1))
+      seed_cache(tenant, user)
+
+      for pid <- pids do
+        Process.unlink(pid)
+        Process.exit(pid, :kill)
+      end
+
+      assert_eventually(fn ->
+        ClientAuthentication.get_validation_secrets(tenant, user) == {:error, :not_found}
+      end)
+    end
+
+    # Purge reason with node() as the down node makes local pids act as that node's pools.
+    test "invalidates on node down when every remaining pool was on the down node" do
       tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
       user = "user1"
       id = build_id(tenant, user)
@@ -228,19 +251,23 @@ defmodule Supavisor.SynHandlerTest do
       Supavisor.join_tenant_pool(id, fake_pid())
       seed_cache(tenant, user)
 
-      log =
-        capture_log(fn ->
-          SynHandler.on_process_left(
-            :tenant_pools,
-            {tenant, user},
-            self(),
-            id,
-            :test_rpc_failure
-          )
-        end)
+      reason = {:syn_remote_scope_node_down, :tenant_pools, node()}
+      SynHandler.on_process_left(:tenant_pools, {tenant, user}, self(), id, reason)
 
-      assert log =~ "Couldn't check liveness"
-      assert log =~ "assuming alive"
+      assert {:error, :not_found} = ClientAuthentication.get_validation_secrets(tenant, user)
+    end
+
+    test "keeps the cache on node down when a pool on another node remains" do
+      tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      id = build_id(tenant, user)
+
+      Supavisor.join_tenant_pool(id, self())
+      Supavisor.join_tenant_pool(id, fake_pid())
+      seed_cache(tenant, user)
+
+      reason = {:syn_remote_scope_node_down, :tenant_pools, :"gone@127.0.0.1"}
+      SynHandler.on_process_left(:tenant_pools, {tenant, user}, self(), id, reason)
 
       assert {:ok, _} = ClientAuthentication.get_validation_secrets(tenant, user)
     end

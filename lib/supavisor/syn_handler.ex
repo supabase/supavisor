@@ -24,7 +24,7 @@ defmodule Supavisor.SynHandler do
   def on_process_left(:tenant_pools, {tenant, db_user} = group_name, pid, id, reason) do
     logger_metadata(id)
 
-    if not other_pool_alive?(tenant, db_user, pid, reason) do
+    if last_pool_left?(tenant, db_user, pid, reason) do
       Supavisor.ClientAuthentication.invalidate_local(tenant, db_user)
       Logger.info("SynHandler: invalidated client authentication cache")
     end
@@ -89,45 +89,25 @@ defmodule Supavisor.SynHandler do
     keep
   end
 
-  # `excluding_pid` (the pid this `on_process_left` callback fires for) can still show
-  # up in `Supavisor.tenant_pools/2` at this point: when a whole node goes down, :syn
-  # purges every pid that was on it by calling this callback for each of them *before*
-  # removing any of them from the group table - so while handling one, its doomed
-  # siblings (including itself, on a prior/later iteration) can still be listed.
+  # :syn runs this callback serially in the scope process, after removing the leaving pid
+  # from the group - for local deaths and for remote leaves alike - and every node gets a
+  # callback for every leaving pool. So the last leave handled on a node sees an empty
+  # group; members still listed are pools whose leave this node hasn't handled yet.
   #
-  # Whatever remains after that still isn't necessarily alive: on a multi-node cluster,
-  # membership updates propagate asynchronously, so a sibling that died moments ago on
-  # another node can still show up as a member here until its removal is received. We
-  # check liveness of the remainder rather than trusting group membership alone.
-  #
-  # We pass the reason only for testing purposes.
-  @spec other_pool_alive?(String.t(), String.t(), pid(), atom()) :: boolean()
-  defp other_pool_alive?(tenant, db_user, excluding_pid, reason) do
+  # The exception is a node-down purge: syn calls back for each pid of the down node
+  # *before* deleting any of them, so all of that node's members count as gone.
+  @spec last_pool_left?(String.t(), String.t(), pid(), term()) :: boolean()
+  defp last_pool_left?(tenant, db_user, leaving_pid, reason) do
     tenant
     |> Supavisor.tenant_pools(db_user)
-    |> Enum.reject(&(&1 == excluding_pid))
-    |> Enum.any?(&pool_alive?(&1, reason))
+    |> Enum.reject(&(&1 == leaving_pid or on_down_node?(&1, reason)))
+    |> Enum.empty?()
   end
 
-  @spec pool_alive?(pid(), atom()) :: boolean()
-  defp pool_alive?(pid, reason) do
-    node = (reason == :test_rpc_failure && :nonexistent) || node(pid)
+  defp on_down_node?(member, {:syn_remote_scope_node_down, _scope, down_node}),
+    do: node(member) == down_node
 
-    :erpc.call(
-      node,
-      Process,
-      :alive?,
-      [pid],
-      5_000
-    )
-  catch
-    kind, reason ->
-      Logger.warning(
-        "SynHandler: Couldn't check liveness of #{inspect(pid)} on #{node(pid)}, assuming alive: #{inspect({kind, reason})}"
-      )
-
-      true
-  end
+  defp on_down_node?(_member, _reason), do: false
 
   defp logger_metadata(Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db)),
     do: Logger.metadata(type: type, project: tenant, user: user, mode: mode, db_name: db)
