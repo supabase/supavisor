@@ -588,23 +588,34 @@ defmodule Supavisor do
   end
 
   @doc """
-  Join a `pool_pid` to the `:tenants` process groups under the `{tenant, db_user}` key
+  Join a `pool_pid` to the `:tenant_pools` process group under the `{tenant, db_user}` key.
+
+  `:tenant_pools` is deliberately a separate `:syn` scope from `:tenants` (used for
+  routing via `get_global_sup/1`). `Supavisor.Terminator` de-registers a pool from
+  `:tenants` early, before it finishes draining, so that new clients don't get
+  routed to a shutting-down pool. That early de-registration must not affect
+  `:tenant_pools` membership, since that's what cache invalidation relies on to
+  tell whether a tenant+user is genuinely unserved - membership here should only
+  ever change because a pool actually joined or died.
   """
-  @spec join_tenant_pool(String.t(), String.t(), pid()) ::
+  @spec join_tenant_pool(id(), pid()) ::
           :ok | {:error, reason :: term()}
-  def join_tenant_pool(tenant, db_user, pool_pid) do
-    with {:error, reason} = err <- :syn.join(:tenants, {tenant, db_user}, pool_pid) do
-      Logger.error("Failed to register pool #{inspect(pool_pid)} in :tenants: #{inspect(reason)}")
+  def join_tenant_pool(id(tenant: tenant, user: db_user) = id, pool_pid) do
+    with {:error, reason} = err <- :syn.join(:tenant_pools, {tenant, db_user}, pool_pid, id) do
+      Logger.error(
+        "Failed to register pool #{inspect(pool_pid)} in :tenant_pools: #{inspect(reason)}"
+      )
+
       err
     end
   end
 
   @doc """
-  Return pids of the pools joined to the `tenants` process group under the `{tenant, db_user}` key
+  Return pids of the pools joined to the `:tenant_pools` process group under the `{tenant, db_user}` key
   """
   @spec tenant_pools(String.t(), String.t()) :: [pid()]
   def tenant_pools(tenant, db_user) do
-    :tenants
+    :tenant_pools
     |> :syn.members({tenant, db_user})
     |> Enum.map(fn {pid, _meta} -> pid end)
   end

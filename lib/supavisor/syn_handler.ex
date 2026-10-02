@@ -9,68 +9,40 @@ defmodule Supavisor.SynHandler do
   require Supavisor
 
   @impl true
-  def on_process_registered(
-        :tenants,
-        Supavisor.id(
-          type: type,
-          tenant: tenant,
-          user: user,
-          mode: mode,
-          db: db
-        ),
-        pid,
-        _,
-        _
-      ) do
-    Logger.metadata(
-      project: tenant,
-      user: user,
-      type: type,
-      mode: mode,
-      db_name: db
-    )
-
-    Supavisor.join_tenant_pool(tenant, user, pid)
+  def on_process_registered(:tenants, id, pid, _, _) do
+    logger_metadata(id)
+    Supavisor.join_tenant_pool(id, pid)
   end
 
   @impl true
-  def on_process_unregistered(
-        :tenants,
-        Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db, search_path: _) =
-          id,
-        pid,
-        _meta,
-        reason
-      ) do
-    Logger.metadata(
-      project: tenant,
-      user: user,
-      type: type,
-      mode: mode,
-      db_name: db
-    )
+  def on_process_unregistered(:tenants, id, _pid, _meta, reason) do
+    logger_metadata(id)
+    Logger.debug("Process unregistered: #{Supavisor.inspect_id(id)} #{inspect(reason)}")
+  end
 
-    if not other_pool_alive?(tenant, user, pid, reason) do
-      Supavisor.ClientAuthentication.invalidate_local(tenant, user)
+  @impl true
+  def on_process_left(:tenant_pools, {tenant, db_user} = group_name, pid, id, reason) do
+    logger_metadata(id)
+
+    if not other_pool_alive?(tenant, db_user, pid, reason) do
+      Supavisor.ClientAuthentication.invalidate_local(tenant, db_user)
       Logger.info("SynHandler: invalidated client authentication cache")
     end
 
-    Logger.debug("Process unregistered: #{Supavisor.inspect_id(id)} #{inspect(reason)}")
+    Logger.debug("SynHandler: pool left #{inspect(group_name)}: #{inspect(reason)}")
   end
 
   @impl true
   def resolve_registry_conflict(
         :tenants,
-        Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db) =
-          id,
+        id,
         {pid1, _, time1} = remote,
         {pid2, _, time2} = local
       ) do
-    meta = %{project: tenant, user: user, mode: mode, db_name: db, type: type}
+    logger_metadata(id)
 
     Logger.info(
-      "SynHandler: resolving #{Supavisor.inspect_id(id)} conflict: #{inspect(local)} vs #{inspect(remote)}",
-      meta
+      "SynHandler: resolving #{Supavisor.inspect_id(id)} conflict: #{inspect(local)} vs #{inspect(remote)}"
     )
 
     {keep, stop} =
@@ -103,32 +75,30 @@ defmodule Supavisor.SynHandler do
           end
 
         Logger.warning(
-          "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}",
-          meta
+          "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
         )
       end)
     else
       Logger.warning(
-        "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, remote pid: #{inspect(stop)}",
-        meta
+        "SynHandler: Resolving #{Supavisor.inspect_id(id)} conflict, remote pid: #{inspect(stop)}"
       )
     end
 
     keep
   end
 
-  # `excluding_pid` (the pid this unregister callback fires for) is monitored
-  # independently by :syn's registry (for its own `id`) and by its pg group (for
-  # `{tenant, db_user}`), so the group can still list `excluding_pid` itself as a
-  # member for a short while after it dies - the group's own monitor hasn't
-  # processed the death yet. On a multi-node cluster, membership updates for pools
-  # on other nodes also propagate asynchronously, so a sibling that died moments
-  # ago elsewhere can still show up as a member until its removal is received.
+  # `excluding_pid` (the pid this `on_process_left` callback fires for) can still show
+  # up in `Supavisor.tenant_pools/2` at this point: when a whole node goes down, :syn
+  # purges every pid that was on it by calling this callback for each of them *before*
+  # removing any of them from the group table - so while handling one, its doomed
+  # siblings (including itself, on a prior/later iteration) can still be listed.
   #
-  # Excluding `excluding_pid` and checking the liveness of whatever remains rules
-  # out both races, instead of trusting group membership alone.
+  # Whatever remains after that still isn't necessarily alive: on a multi-node cluster,
+  # membership updates propagate asynchronously, so a sibling that died moments ago on
+  # another node can still show up as a member here until its removal is received. We
+  # check liveness of the remainder rather than trusting group membership alone.
   #
-  # we pass the reason only for testing purposes
+  # We pass the reason only for testing purposes.
   @spec other_pool_alive?(String.t(), String.t(), pid(), atom()) :: boolean()
   defp other_pool_alive?(tenant, db_user, excluding_pid, reason) do
     tenant
@@ -156,4 +126,7 @@ defmodule Supavisor.SynHandler do
 
       true
   end
+
+  defp logger_metadata(Supavisor.id(type: type, tenant: tenant, user: user, mode: mode, db: db)),
+    do: Logger.metadata(type: type, project: tenant, user: user, mode: mode, db_name: db)
 end

@@ -16,6 +16,17 @@ defmodule SupavisorTest do
     spawn_link(fn -> Process.sleep(:infinity) end)
   end
 
+  defp build_id(tenant, user) do
+    Supavisor.id(
+      type: :single,
+      tenant: tenant,
+      user: user,
+      mode: :transaction,
+      db: "postgres",
+      search_path: nil
+    )
+  end
+
   @fake_id Supavisor.id(
              type: :single,
              tenant: "nonexistent_tenant",
@@ -135,7 +146,7 @@ defmodule SupavisorTest do
     end
   end
 
-  describe "join_tenant_pool/3" do
+  describe "join_tenant_pool/2" do
     test "no pools joined before anything joins" do
       tenant = "syn_pg_test_#{System.unique_integer([:positive])}"
       user = "user1"
@@ -148,7 +159,7 @@ defmodule SupavisorTest do
       user = "user1"
       pid = fake_pool_pid()
 
-      :ok = Supavisor.join_tenant_pool(tenant, user, pid)
+      :ok = Supavisor.join_tenant_pool(build_id(tenant, user), pid)
 
       assert [pid] == Supavisor.tenant_pools(tenant, user)
     end
@@ -158,7 +169,7 @@ defmodule SupavisorTest do
       user = "user1"
       pid = fake_pool_pid()
 
-      :ok = Supavisor.join_tenant_pool(tenant, user, pid)
+      :ok = Supavisor.join_tenant_pool(build_id(tenant, user), pid)
       assert [pid] == Supavisor.tenant_pools(tenant, user)
 
       Process.unlink(pid)
@@ -172,9 +183,10 @@ defmodule SupavisorTest do
       user = "user1"
       pid1 = fake_pool_pid()
       pid2 = fake_pool_pid()
+      id = build_id(tenant, user)
 
-      :ok = Supavisor.join_tenant_pool(tenant, user, pid1)
-      :ok = Supavisor.join_tenant_pool(tenant, user, pid2)
+      :ok = Supavisor.join_tenant_pool(id, pid1)
+      :ok = Supavisor.join_tenant_pool(id, pid2)
 
       Process.unlink(pid1)
       Process.exit(pid1, :kill)
@@ -189,7 +201,7 @@ defmodule SupavisorTest do
       assert_eventually(fn -> not Process.alive?(pid) end)
 
       {:error, :not_alive} =
-        Supavisor.join_tenant_pool(tenant, user, pid)
+        Supavisor.join_tenant_pool(build_id(tenant, user), pid)
 
       assert [] == Supavisor.tenant_pools(tenant, user)
     end
@@ -208,9 +220,10 @@ defmodule SupavisorTest do
       user = "user1"
       pid1 = fake_pool_pid()
       pid2 = fake_pool_pid()
+      id = build_id(tenant, user)
 
-      :ok = Supavisor.join_tenant_pool(tenant, user, pid1)
-      :ok = Supavisor.join_tenant_pool(tenant, user, pid2)
+      :ok = Supavisor.join_tenant_pool(id, pid1)
+      :ok = Supavisor.join_tenant_pool(id, pid2)
 
       assert Enum.sort([pid1, pid2]) ==
                Enum.sort(Supavisor.tenant_pools(tenant, user))
