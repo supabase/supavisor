@@ -11,7 +11,7 @@ defmodule Supavisor.SynHandler do
   @impl true
   def on_process_registered(:tenants, id, pid, _, _) do
     logger_metadata(id)
-    Supavisor.join_tenant_pool(id, pid)
+    if node(pid) == node(), do: Supavisor.join_tenant_pool(id, pid)
   end
 
   @impl true

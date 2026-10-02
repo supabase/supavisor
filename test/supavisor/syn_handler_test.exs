@@ -132,6 +132,21 @@ defmodule Supavisor.SynHandlerTest do
 
       assert [pid] == Supavisor.tenant_pools(tenant, user)
     end
+
+    @tag cluster: true
+    test "does not join a pool registered on another node" do
+      {:ok, peer, node2} = Cluster.start_node()
+      true = Node.connect(node2)
+
+      tenant = "syn_handler_unit_test_#{System.unique_integer([:positive])}"
+      user = "user1"
+      id = build_id(tenant, user)
+      remote_pid = :peer.call(peer, Kernel, :spawn, [:timer, :sleep, [:infinity]])
+
+      SynHandler.on_process_registered(:tenants, id, remote_pid, nil, nil)
+
+      assert [] == Supavisor.tenant_pools(tenant, user)
+    end
   end
 
   describe "on_process_unregistered/5" do
