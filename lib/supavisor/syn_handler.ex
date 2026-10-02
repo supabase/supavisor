@@ -32,6 +32,8 @@ defmodule Supavisor.SynHandler do
     Logger.debug("SynHandler: pool left #{inspect(group_name)}: #{inspect(reason)}")
   end
 
+  def on_process_left(_scope, _group_name, _pid, _id, _reason), do: :ok
+
   @impl true
   def resolve_registry_conflict(
         :tenants,
