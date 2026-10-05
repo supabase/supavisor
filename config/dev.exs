@@ -76,7 +76,9 @@ config :logger, :console,
     :peer_ip,
     :local,
     :proxy,
-    :db_host
+    :db_host,
+    :tls,
+    :proxy
   ]
 
 # Set a higher stacktrace during development. Avoid configuring such
