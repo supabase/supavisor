@@ -207,6 +207,29 @@ defmodule Supavisor.DbHandlerTest do
       assert data.server_proof == nil
     end
 
+    test "sets db_host logger metadata", %{id: id} do
+      conn_params = connection_params(%{host: ~c"db.example.com"})
+
+      table = :ets.new(:tenant_cache, [:set, :public])
+      Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
+
+      manager_config = %{
+        id: id,
+        connection_params: conn_params,
+        tenant: {:single, "test_tenant"},
+        user: "user",
+        mode: :transaction,
+        replica_type: :single,
+        log_level: nil,
+        tenant_feature_flags: %{}
+      }
+
+      {:ok, _manager} = start_supervised({FakeManager, manager_config})
+
+      assert {:ok, :waiting_for_secrets, _data, []} = Db.init(%{id: id})
+      assert Logger.metadata()[:db_host] == "db.example.com"
+    end
+
     test "enters waiting_for_secrets state when upstream secrets are missing", %{id: id} do
       conn_params = connection_params()
       tenant = "test_tenant"
