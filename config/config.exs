@@ -41,6 +41,7 @@ metadata = [
   :app_name,
   :peer_ip,
   :local,
+  :tls,
   :proxy
 ]
 

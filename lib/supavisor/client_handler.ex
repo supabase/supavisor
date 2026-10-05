@@ -100,7 +100,7 @@ defmodule Supavisor.ClientHandler do
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
 
-    Logger.metadata(peer_ip: peer_ip, local: local, state: :init)
+    Logger.metadata(peer_ip: peer_ip, local: local, tls: false, state: :init)
     :ok = trans.setopts(sock, active: @switch_active_count)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
@@ -177,6 +177,7 @@ defmodule Supavisor.ClientHandler do
            {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
         socket = {:ssl, ssl_sock}
         :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
+        Logger.metadata(tls: true)
         {:keep_state, %{data | sock: socket, ssl: true}}
       else
         {:error, %ClientSocketClosedError{} = exception} ->
@@ -255,7 +256,8 @@ defmodule Supavisor.ClientHandler do
       type: type,
       app_name: data.app_name,
       db_name: db_name,
-      peer_ip: peer_ip
+      peer_ip: peer_ip,
+      tls: effective_ssl
     )
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
