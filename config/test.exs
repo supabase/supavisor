@@ -32,6 +32,8 @@ config :supavisor,
     System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107") |> parse_integer_list.(),
   max_pools: 10,
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer(),
+  admission_retries: System.get_env("ADMISSION_RETRIES", "3") |> String.to_integer(),
+  admission_backoff: System.get_env("ADMISSION_BACKOFF", "100") |> String.to_integer(),
   metrics_pusher_req_options: [
     plug: {Req.Test, Supavisor.MetricsPusher.Global}
   ],

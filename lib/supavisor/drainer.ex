@@ -51,7 +51,8 @@ defmodule Supavisor.Drainer do
   defp stop(pid) do
     Supervisor.stop(pid, :shutdown, @stop_timeout)
   catch
-    :exit, :noproc -> :ok
+    :exit, {:noproc, _} -> :ok
+    :exit, {{:normal, _}, _} -> :ok
     :exit, reason -> Logger.error("Failed to drain pool #{inspect(pid)}: #{inspect(reason)}")
   end
 

@@ -9,7 +9,11 @@ defmodule Supavisor.TenantSupervisor do
   alias Supavisor.Terminator
 
   def start_link(args) do
-    meta = Supavisor.get_local_server(args.id)
+    meta =
+      args.id
+      |> Supavisor.get_local_server()
+      |> Map.put(:availability_zone, args.availability_zone)
+
     name = {:via, :syn, {:tenants, args.id, meta}}
     Supervisor.start_link(__MODULE__, args, name: name)
   end
