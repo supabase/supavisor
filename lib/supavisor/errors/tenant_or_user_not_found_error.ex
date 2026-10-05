@@ -17,5 +17,5 @@ defmodule Supavisor.Errors.TenantOrUserNotFoundError do
     do: "tenant/user #{user}.#{tenant_or_alias} not found"
 
   @impl Supavisor.Error
-  def response_delay(_), do: 2_500
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
 end

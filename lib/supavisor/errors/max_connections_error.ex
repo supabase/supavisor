@@ -51,5 +51,5 @@ defmodule Supavisor.Errors.MaxConnectionsError do
   def log_message(error), do: message(error)
 
   @impl Supavisor.Error
-  def response_delay(_), do: 1_000
+  def response_delay(_), do: Supavisor.Error.short_response_delay()
 end

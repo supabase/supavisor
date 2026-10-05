@@ -17,5 +17,5 @@ defmodule Supavisor.Errors.TenantBannedError do
   def log_level(_), do: :warning
 
   @impl Supavisor.Error
-  def response_delay(_), do: 2_500
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
 end

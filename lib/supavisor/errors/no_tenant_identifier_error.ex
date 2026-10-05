@@ -14,5 +14,5 @@ defmodule Supavisor.Errors.NoTenantIdentifierError do
   end
 
   @impl Supavisor.Error
-  def response_delay(_), do: 2_500
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
 end

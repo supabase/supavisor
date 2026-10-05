@@ -16,5 +16,5 @@ defmodule Supavisor.Errors.SslRequiredError do
   end
 
   @impl Supavisor.Error
-  def response_delay(_), do: 1_000
+  def response_delay(_), do: Supavisor.Error.short_response_delay()
 end

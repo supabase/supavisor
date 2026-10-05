@@ -32,5 +32,5 @@ defmodule Supavisor.Errors.JitUnauthorizedError do
   end
 
   @impl Supavisor.Error
-  def response_delay(_), do: 500
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
 end

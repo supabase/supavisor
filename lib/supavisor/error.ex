@@ -64,6 +64,19 @@ defmodule Supavisor.Error do
   """
   @callback response_delay(error :: t()) :: non_neg_integer()
 
+  @long_response_delay Application.compile_env!(:supavisor, [:response_delays, :long])
+  @short_response_delay Application.compile_env!(:supavisor, [:response_delays, :short])
+
+  @doc """
+  Response delay for errors that retrying won't fix
+  """
+  def long_response_delay, do: @long_response_delay
+
+  @doc """
+  Response delay for overload errors
+  """
+  def short_response_delay, do: @short_response_delay
+
   defmacro __using__(opts) do
     quote generated: true do
       if is_nil(unquote(opts)[:code]) do
