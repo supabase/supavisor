@@ -35,7 +35,7 @@ defmodule Supavisor.ClientHandlerTest do
            [session_id_tracker: :some_pid]
          }, [:some_pid]}
 
-      data = %{sock: {:ssl, sock}}
+      data = %{sock: {:ssl, sock}, mode: :transaction}
       {:ok, sock: sock, data: data}
     end
 
@@ -48,7 +48,7 @@ defmodule Supavisor.ClientHandlerTest do
             ~c"TLS server: In state connection received CLIENT ALERT: Fatal - User Canceled\n"}
          }}
 
-      assert {:stop, :normal} == @subject.handle_event(:info, error, nil, data)
+      assert {:stop, :normal} == @subject.handle_event(:info, error, :busy, data)
     end
 
     test "handles warning TLS alert by keeping connection alive", %{sock: sock, data: data} do
