@@ -103,7 +103,13 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "sends the original error to the client once the budget is exhausted", ctx do
       {client, server} = sockpair()
-      data = %{admission_retries: ctx.budget, id: nil, sock: {:gen_tcp, server}}
+
+      data = %{
+        admission_retries: ctx.budget,
+        id: nil,
+        sock: {:gen_tcp, server},
+        mode: :transaction
+      }
 
       assert {:stop, :normal} =
                @subject.wait_for_slot_or_terminate(data, ctx.retry_event, ctx.exception)

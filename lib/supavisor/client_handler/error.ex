@@ -4,6 +4,7 @@ defmodule Supavisor.ClientHandler.Error do
   """
 
   alias Supavisor.{HandlerHelpers, Monitoring.Telem, Protocol.Server}
+  alias Supavisor.Errors.ClientSocketClosedError
 
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
   require Logger
@@ -34,6 +35,8 @@ defmodule Supavisor.ClientHandler.Error do
     log_level = Map.get(error_actions, :log_level, :error)
     send_ready_for_query = Map.get(error_actions, :send_ready_for_query, false)
 
+    record_error(exception, data.mode)
+
     if log_message do
       Logger.log(log_level, "ClientHandler: #{log_message}")
     end
@@ -60,6 +63,11 @@ defmodule Supavisor.ClientHandler.Error do
 
     {:stop, :normal}
   end
+
+  # A client closing the socket while idle is a normal disconnect, not an error
+  defp record_error(%ClientSocketClosedError{client_state: :idle}, _mode), do: :ok
+  defp record_error(e, mode) when is_exception(e), do: Telem.client_error(e.code, mode)
+  defp record_error(_, mode), do: Telem.client_error("internal", mode)
 
   @spec process(term(), term()) :: map()
   defp process(e, stage) when is_exception(e) do

@@ -183,6 +183,12 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           tags: [:mode]
         ),
         counter(
+          [:supavisor, :client, :errors],
+          event_name: [:supavisor, :client, :error],
+          description: "The total number of errors that terminated a client connection.",
+          tags: [:code, :mode]
+        ),
+        counter(
           [:supavisor, :client_handler, :started, :count],
           event_name: [:supavisor, :client_handler, :started, :all],
           description: "The total number of created client_handler.",
