@@ -27,6 +27,8 @@ defmodule Supavisor.MessageQueueWatchdog do
     :syn_pg_tenants,
     :syn_registry_availability_zone,
     :syn_pg_availability_zone,
+    :syn_registry_accepting_pools,
+    :syn_pg_accepting_pools,
     Supavisor.ErlSysMon,
     Supavisor.PoolTerminator,
     :"Elixir.Supavisor.Cache_courier"
