@@ -21,6 +21,9 @@ defmodule Supavisor.Errors.WrongPasswordError do
   end
 
   @impl Supavisor.Error
+  def response_delay(_), do: 500
+
+  @impl Supavisor.Error
   # Use the plain message without the error code prefix to match
   # the standard PostgreSQL authentication error format on the wire.
   def postgres_error(%{user: user}) do
