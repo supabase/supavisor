@@ -44,7 +44,7 @@ metadata = [
   :proxy,
   :db_host,
   :tls
-  ]
+]
 
 # Configures Elixir's Logger
 config :logger, :default_formatter,
