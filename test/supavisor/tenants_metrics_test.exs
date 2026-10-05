@@ -7,7 +7,7 @@ defmodule Supavisor.TenantsMetricsTest do
   alias Supavisor.PromEx.Plugins.Tenant
 
   describe "handle_info(:check_metrics, state)" do
-    test "one pool disappearing wipes the cached metrics of every other still-active pool for the same tenant" do
+    test "one pool disappearing does not wipe the cached metrics of other still-active pools for the same tenant" do
       tenant = "tenants_metrics_bug_#{System.unique_integer([:positive])}"
 
       transaction_id =
@@ -57,10 +57,20 @@ defmodule Supavisor.TenantsMetricsTest do
       metrics_after_repopulation = PromEx.get_tenant_metrics(tenant) |> IO.iodata_to_binary()
       assert metrics_after_repopulation =~ ~s(mode="transaction")
 
-      # Second check cycle, second half: handle_info then deletes the cache
-      # entry for every pool that dropped out - keyed only on `tenant`, not on
-      # the full pool identity - which wipes the transaction pool's data it
-      # had just written above.
+      # Second check cycle, second half: handle_info only deletes the cache
+      # entry for a tenant once none of its pools are active anymore. The
+      # transaction pool is still live, so its freshly-cached data survives.
+      {:noreply, state} = Supavisor.TenantsMetrics.handle_info(:check_metrics, state)
+
+      metrics_after_session_drop = PromEx.get_tenant_metrics(tenant) |> IO.iodata_to_binary()
+      assert metrics_after_session_drop =~ ~s(mode="transaction")
+      assert {:ok, metrics} = Cachex.get(Supavisor.Cache, {:metrics, tenant})
+      assert is_map(metrics)
+
+      # Now the last remaining pool for the tenant also disappears: this time
+      # the cache entry should actually be cleared.
+      Registry.unregister(Supavisor.Registry.TenantClients, transaction_id)
+
       {:noreply, _state} = Supavisor.TenantsMetrics.handle_info(:check_metrics, state)
 
       assert PromEx.get_tenant_metrics(tenant) |> IO.iodata_to_binary() == ""
