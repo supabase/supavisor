@@ -41,8 +41,9 @@ metadata = [
   :app_name,
   :peer_ip,
   :local,
-  :tls,
-  :proxy
+  :proxy,
+  :db_host,
+  :tls
 ]
 
 # Configures Elixir's Logger

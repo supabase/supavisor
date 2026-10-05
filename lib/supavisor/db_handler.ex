@@ -204,7 +204,13 @@ defmodule Supavisor.DbHandler do
 
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
-    Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
+
+    Logger.metadata(
+      project: config.tenant,
+      user: config.user,
+      mode: config.mode,
+      db_host: to_string(config.connection_params.host)
+    )
 
     conn_params =
       if proxy do
