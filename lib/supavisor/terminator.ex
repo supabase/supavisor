@@ -37,6 +37,7 @@ defmodule Supavisor.Terminator do
         :exit, _ -> :ok
       end
     end
+
     :ok = Manager.graceful_shutdown(state.id, @drain_timeout, @call_timeout)
   end
 
