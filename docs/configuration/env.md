@@ -41,6 +41,7 @@ This document provides a categorized list of all environment variables used in S
 | ----------------------------------- | ------------------------------------------------------------ | ------------- | -------- |
 | `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `false`       | No       |
 | `APP_NAME_METRIC_ENABLED`           | Add client `app_name` label to connection metrics (true, false, 1, 0) | `false` | No       |
+| `CLEARTEXT_AUTH_OVER_TLS_ENABLED`   | Use cleartext password authentication instead of SCRAM for TLS clients (true, false, 1, 0) | `true` | No       |
 
 ---
 
