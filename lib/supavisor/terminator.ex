@@ -30,7 +30,13 @@ defmodule Supavisor.Terminator do
   def terminate(_reason, state) do
     unregister(state.id, state.sup)
     # Reduce the idle timeout while draining.
-    for pool <- state.pools, do: :poolboy.set_idle_timeout(pool, @idle_timeout)
+    for pool <- state.pools do
+      try do
+        :poolboy.set_idle_timeout(pool, @idle_timeout)
+      catch
+        :exit, _ -> :ok
+      end
+    end
     :ok = Manager.graceful_shutdown(state.id, @drain_timeout, @call_timeout)
   end
 
