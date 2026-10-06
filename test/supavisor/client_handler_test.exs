@@ -35,7 +35,7 @@ defmodule Supavisor.ClientHandlerTest do
            [session_id_tracker: :some_pid]
          }, [:some_pid]}
 
-      data = %{sock: {:ssl, sock}, mode: :transaction}
+      data = %{sock: {:ssl, sock}, mode: :transaction, local: false}
       {:ok, sock: sock, data: data}
     end
 
@@ -108,7 +108,8 @@ defmodule Supavisor.ClientHandlerTest do
         admission_retries: ctx.budget,
         id: nil,
         sock: {:gen_tcp, server},
-        mode: :transaction
+        mode: :transaction,
+        local: false
       }
 
       assert {:stop, :normal} =
@@ -135,7 +136,7 @@ defmodule Supavisor.ClientHandlerTest do
   describe "socket DOWN handler" do
     test "handles DOWN message for matching ref" do
       ref = make_ref()
-      data = %{sock_ref: ref, mode: :transaction}
+      data = %{sock_ref: ref, mode: :transaction, local: false}
 
       assert {:stop, :normal} =
                @subject.handle_event(:info, {:DOWN, ref, :port, self(), :normal}, :idle, data)
