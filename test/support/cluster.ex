@@ -9,14 +9,12 @@ defmodule Supavisor.Support.Cluster do
     """
     defstruct proxy_port_transaction: 7655,
               proxy_port_session: 7656,
-              proxy_port: 7657,
               session_proxy_ports: [13_100, 13_101, 13_102, 13_103],
               transaction_proxy_ports: [13_104, 13_105, 13_106, 13_107]
 
     @type t :: %__MODULE__{
             proxy_port_transaction: pos_integer(),
             proxy_port_session: pos_integer(),
-            proxy_port: pos_integer(),
             session_proxy_ports: [pos_integer()],
             transaction_proxy_ports: [pos_integer()]
           }
@@ -106,15 +104,6 @@ defmodule Supavisor.Support.Cluster do
          _val,
          _clustered,
          %PortConfig{proxy_port_session: port}
-       ) do
-    port
-  end
-
-  defp transform_config_value(
-         {:supavisor, :proxy_port},
-         _val,
-         _clustered,
-         %PortConfig{proxy_port: port}
        ) do
     port
   end
