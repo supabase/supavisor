@@ -9,12 +9,6 @@ defmodule Supavisor.ClientHandler.Error do
   require Supavisor.Protocol.PreparedStatements, as: PreparedStatements
   require Logger
 
-  # TODO: make response delay configurable per error via the Supavisor.Error behaviour
-  @delayed_response_errors %{
-    Supavisor.Errors.TenantOrUserNotFoundError => 2_500,
-    Supavisor.Errors.WrongPasswordError => 500
-  }
-
   @type context :: :handshake | :authenticated
 
   @doc """
@@ -34,6 +28,7 @@ defmodule Supavisor.ClientHandler.Error do
     log_message = Map.get(error_actions, :log_message)
     log_level = Map.get(error_actions, :log_level, :error)
     send_ready_for_query = Map.get(error_actions, :send_ready_for_query, false)
+    response_delay = Map.get(error_actions, :response_delay, 0)
 
     record_error(exception, data.mode, data.local)
 
@@ -41,10 +36,8 @@ defmodule Supavisor.ClientHandler.Error do
       Logger.log(log_level, "ClientHandler: #{log_message}")
     end
 
-    if is_struct(exception) do
-      if delay = @delayed_response_errors[exception.__struct__] do
-        Process.sleep(delay)
-      end
+    if response_delay > 0 do
+      Process.sleep(response_delay)
     end
 
     # Only send message if one exists (some errors like socket closed can't send)
@@ -86,6 +79,7 @@ defmodule Supavisor.ClientHandler.Error do
       error: error,
       log_message: e.__struct__.log_message(e),
       log_level: e.__struct__.log_level(e),
+      response_delay: e.__struct__.response_delay(e),
       # It's very important for the protocol implementation that we send ReadyForQuery after
       # non-fatal errors in authenticated connections. In non authneticated connections, we should
       # close without sending ReadyForQuery

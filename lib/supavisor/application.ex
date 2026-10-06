@@ -104,6 +104,7 @@ defmodule Supavisor.Application do
         {Cachex, name: Supavisor.Cache},
         Supavisor.ErlSysMon,
         Supavisor.Logger.LinesCounter,
+        Supavisor.MessageQueueWatchdog,
         Supavisor.Health,
         Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,

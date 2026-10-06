@@ -49,4 +49,7 @@ defmodule Supavisor.Errors.MaxConnectionsError do
   end
 
   def log_message(error), do: message(error)
+
+  @impl Supavisor.Error
+  def response_delay(_), do: Supavisor.Error.short_response_delay()
 end
