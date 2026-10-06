@@ -34,6 +34,7 @@ config :supavisor,
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer(),
   admission_retries: System.get_env("ADMISSION_RETRIES", "3") |> String.to_integer(),
   admission_backoff: System.get_env("ADMISSION_BACKOFF", "100") |> String.to_integer(),
+  response_delays: [long: 0, short: 0],
   metrics_pusher_req_options: [
     plug: {Req.Test, Supavisor.MetricsPusher.Global}
   ],
