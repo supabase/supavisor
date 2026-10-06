@@ -217,12 +217,8 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, %StartupParams{} = params} ->
-        if params.log_level, do: Logger.put_process_level(self(), params.log_level)
-
-        {:keep_state,
-         %{data | app_name: params.app_name, invalid_options: params.invalid_options},
-         {:next_event, :internal, {:hello, params}}}
+      {:ok, %StartupParams{} = startup_params} ->
+        {:keep_state_and_data, {:next_event, :internal, {:hello, startup_params}}}
 
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -231,7 +227,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello, %StartupParams{} = params},
+        {:hello, %StartupParams{} = startup_params},
         :handshake,
         %{sock: sock} = data
       ) do
@@ -241,10 +237,13 @@ defmodule Supavisor.ClientHandler do
       tenant_or_alias: tenant_or_alias,
       db_name: db_name,
       search_path: search_path,
-      jit: jit,
+      jit: client_jit,
       client_tls: client_tls,
-      client_ip: client_ip
-    } = params
+      client_ip: client_ip,
+      app_name: app_name,
+      log_level: log_level,
+      invalid_options: invalid_options
+    } = startup_params
 
     sni_hostname = HandlerHelpers.try_get_sni(sock)
 
@@ -253,14 +252,16 @@ defmodule Supavisor.ClientHandler do
     # peer is the forwarding node). Otherwise, use what we observed on the socket.
     effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
     peer_ip = ProtocolHelpers.effective_peer_ip(data.local, client_ip, data.peer_ip)
-    data = %{data | peer_ip: peer_ip}
+    data = %{data | peer_ip: peer_ip, app_name: app_name, invalid_options: invalid_options}
+
+    if log_level, do: Logger.put_process_level(self(), log_level)
 
     Logger.metadata(
       project: tenant_or_alias,
       user: user,
       mode: data.mode,
       type: type,
-      app_name: data.app_name,
+      app_name: app_name,
       db_name: db_name,
       peer_ip: peer_ip,
       tls: effective_ssl
@@ -290,18 +291,18 @@ defmodule Supavisor.ClientHandler do
              {:ok, auth_method} <-
                AuthMethods.fetch_authentication_method(
                  info.tenant,
-                 jit,
+                 client_jit,
                  effective_ssl,
                  user
                ) do
           Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
-          new_data = set_tenant_info(data, info, user, id, db_name, jit)
+          new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
 
           {:keep_state, new_data,
            {:next_event, :internal, {:start_authentication, auth_method, info}}}
         else
           {:error, %MaxConnectionsError{} = exception} ->
-            wait_for_slot_or_terminate(%{data | id: id}, {:hello, params}, exception)
+            wait_for_slot_or_terminate(%{data | id: id}, {:hello, startup_params}, exception)
 
           {:error, exception} when is_exception(exception) ->
             Error.terminate_with_error(%{data | id: id}, exception, :handshake)

@@ -222,19 +222,32 @@ defmodule Supavisor.ClientHandlerTest do
 
   describe "startup packet log_level option" do
     test "sets process log level from options" do
-      bin =
-        <<79::32,
-          "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00">>
+      # No tenant in the user name, so the hello handler fails before any DB lookup.
+      payload =
+        "\x00\x03\x00\x00user\x00log_level_user\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00"
 
-      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil, invalid_options: []}
+      bin = <<byte_size(payload) + 4::32, payload::binary>>
 
-      assert {:keep_state, %{app_name: ""},
+      {sock, _recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, sock},
+        id: nil,
+        local: false,
+        ssl: false,
+        peer_ip: "127.0.0.1",
+        mode: :transaction,
+        app_name: nil,
+        invalid_options: []
+      }
+
+      assert {:keep_state_and_data,
               {:next_event, :internal,
                {:hello,
                 %StartupParams{
                   type: :single,
-                  user: "postgres",
-                  tenant_or_alias: "dev_tenant",
+                  user: "log_level_user",
+                  tenant_or_alias: nil,
                   db_name: "postgres",
                   search_path: nil,
                   jit: false,
@@ -243,9 +256,10 @@ defmodule Supavisor.ClientHandlerTest do
                   app_name: "",
                   log_level: :debug,
                   invalid_options: []
-                }}}} =
-               @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
+                }} = hello}} =
+               @subject.handle_event(:info, {:tcp, sock, bin}, :handshake, data)
 
+      assert {:stop, :normal} = @subject.handle_event(:internal, hello, :handshake, data)
       assert Logger.get_process_level(self()) == :debug
     end
   end
