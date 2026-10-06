@@ -3,6 +3,7 @@ defmodule Supavisor.ClientHandlerTest do
 
   alias Supavisor.Protocol.FrontendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
+  alias Supavisor.ClientHandler.StartupParams
 
   @subject Supavisor.ClientHandler
 
@@ -76,7 +77,15 @@ defmodule Supavisor.ClientHandlerTest do
     setup do
       %{
         exception: MaxConnectionsError.new(:transaction, 2),
-        retry_event: {:hello, {:single, {"user", "tenant", "postgres", nil, false, false, nil}}},
+        retry_event:
+          {:hello,
+           %StartupParams{
+             type: :single,
+             user: "user",
+             tenant_or_alias: "tenant",
+             db_name: "postgres",
+             client_tls: false
+           }},
         budget: Application.get_env(:supavisor, :admission_retries)
       }
     end
@@ -221,7 +230,20 @@ defmodule Supavisor.ClientHandlerTest do
 
       assert {:keep_state, %{app_name: ""},
               {:next_event, :internal,
-               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil, false, nil, nil}}}}} =
+               {:hello,
+                %StartupParams{
+                  type: :single,
+                  user: "postgres",
+                  tenant_or_alias: "dev_tenant",
+                  db_name: "postgres",
+                  search_path: nil,
+                  jit: false,
+                  client_tls: nil,
+                  client_ip: nil,
+                  app_name: "",
+                  log_level: :debug,
+                  invalid_options: []
+                }}}} =
                @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
 
       assert Logger.get_process_level(self()) == :debug

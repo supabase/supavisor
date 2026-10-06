@@ -45,7 +45,8 @@ defmodule Supavisor.ClientHandler do
     Data,
     Error,
     ProtocolHelpers,
-    Proxy
+    Proxy,
+    StartupParams
   }
 
   alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer, StartupOptions}
@@ -216,16 +217,12 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:info, {_, _, bin}, :handshake, data) do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
-       app_name, log_level, invalid} ->
-        event =
-          {:hello,
-           {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
+      {:ok, %StartupParams{} = params} ->
+        if params.log_level, do: Logger.put_process_level(self(), params.log_level)
 
-        if log_level, do: Logger.put_process_level(self(), log_level)
-
-        {:keep_state, %{data | app_name: app_name, invalid_options: invalid},
-         {:next_event, :internal, event}}
+        {:keep_state,
+         %{data | app_name: params.app_name, invalid_options: params.invalid_options},
+         {:next_event, :internal, {:hello, params}}}
 
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -234,9 +231,7 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello,
-         {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls, client_ip}} =
-           hello_args},
+        {:hello, %StartupParams{} = params},
         :handshake,
         %{sock: sock} = data
       ) do
@@ -245,57 +240,59 @@ defmodule Supavisor.ClientHandler do
     # When receiving a proxied connection on a local listener, client_tls and
     # client_ip carry the original client's TLS status and IP address (the socket
     # peer is the forwarding node). Otherwise, use what we observed on the socket.
-    effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
-    peer_ip = ProtocolHelpers.effective_peer_ip(data.local, client_ip, data.peer_ip)
+    effective_ssl =
+      if(data.local && params.client_tls, do: params.client_tls, else: data.ssl)
+
+    peer_ip = ProtocolHelpers.effective_peer_ip(data.local, params.client_ip, data.peer_ip)
     data = %{data | peer_ip: peer_ip}
 
     Logger.metadata(
-      project: tenant_or_alias,
-      user: user,
+      project: params.tenant_or_alias,
+      user: params.user,
       mode: data.mode,
-      type: type,
+      type: params.type,
       app_name: data.app_name,
-      db_name: db_name,
+      db_name: params.db_name,
       peer_ip: peer_ip,
       tls: effective_ssl
     )
 
-    case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
+    case Tenants.get_user_cache(params.type, params.user, params.tenant_or_alias, sni_hostname) do
       {:ok, info} ->
         upstream_tls = upstream_tls(info.tenant, effective_ssl)
 
-        resolved_tenant = tenant_or_alias || info.tenant.external_id
+        resolved_tenant = params.tenant_or_alias || info.tenant.external_id
 
         id =
           Supavisor.id(
-            type: type,
+            type: params.type,
             tenant: resolved_tenant,
-            user: user,
+            user: params.user,
             mode: data.mode,
-            db: db_name,
-            search_path: search_path,
+            db: params.db_name,
+            search_path: params.search_path,
             upstream_tls: upstream_tls
           )
 
         with :ok <- Checks.check_tenant_not_banned(info),
-             :ok <- Checks.check_ssl_enforcement(data, info, user),
+             :ok <- Checks.check_ssl_enforcement(data, info, params.user),
              :ok <- Checks.check_address_allowed(sock, info),
              :ok <- Manager.check_client_limit(id, info, data.mode),
              {:ok, auth_method} <-
                AuthMethods.fetch_authentication_method(
                  info.tenant,
-                 client_jit,
+                 params.jit,
                  effective_ssl,
-                 user
+                 params.user
                ) do
           Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
-          new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
+          new_data = set_tenant_info(data, info, params.user, id, params.db_name, params.jit)
 
           {:keep_state, new_data,
            {:next_event, :internal, {:start_authentication, auth_method, info}}}
         else
           {:error, %MaxConnectionsError{} = exception} ->
-            wait_for_slot_or_terminate(%{data | id: id}, {:hello, hello_args}, exception)
+            wait_for_slot_or_terminate(%{data | id: id}, {:hello, params}, exception)
 
           {:error, exception} when is_exception(exception) ->
             Error.terminate_with_error(%{data | id: id}, exception, :handshake)
