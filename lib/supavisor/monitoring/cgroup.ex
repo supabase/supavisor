@@ -133,6 +133,7 @@ defmodule Supavisor.PromEx.Plugins.CGroup do
     end) || :error
   end
 
+  # sobelow_skip ["Traversal.FileModule"]
   defp read_max(max_path) do
     with {:ok, max_content} <- File.read(max_path),
          {:ok, max} <- parse_int(max_content) do

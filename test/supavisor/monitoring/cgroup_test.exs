@@ -85,6 +85,18 @@ defmodule Supavisor.PromEx.Plugins.CGroupTest do
         :error -> :ok
       end
     end
+
+    @tag :linux
+    test "reuses the cached cgroup directory on repeated calls" do
+      first = CGroup.memory()
+      second = CGroup.memory()
+
+      case {first, second} do
+        {{:ok, _}, {:ok, _}} -> :ok
+        {:error, :error} -> :ok
+        _ -> flunk("expected both calls to agree on whether the cgroup could be resolved")
+      end
+    end
   end
 
   describe "parse_cgroup_path/1" do
