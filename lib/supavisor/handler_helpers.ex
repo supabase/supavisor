@@ -91,23 +91,17 @@ defmodule Supavisor.HandlerHelpers do
     []
   end
 
-  @spec addr_from_sock(Supavisor.sock()) :: {:ok, :inet.ip_address()} | :error
+  @spec addr_from_sock(Supavisor.sock()) :: {:ok, :inet.ip_address()} | {:error, term()}
   def addr_from_sock({:gen_tcp, port}) do
     case :inet.peername(port) do
-      {:ok, {:local, _}} ->
-        :error
-
-      {:ok, {:undefined, _}} ->
-        :error
-
-      {:ok, {:unspec, _}} ->
-        :error
+      {:ok, {family, _}} when family in [:local, :undefined, :unspec] ->
+        {:error, {:unsupported_address_family, family}}
 
       {:ok, {addr, _port}} ->
         {:ok, addr}
 
-      {:error, _} ->
-        :error
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -116,8 +110,8 @@ defmodule Supavisor.HandlerHelpers do
       {:ok, {addr, _port}} ->
         {:ok, addr}
 
-      {:error, _} ->
-        :error
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 end
