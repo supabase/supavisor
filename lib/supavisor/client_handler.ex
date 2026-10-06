@@ -1021,7 +1021,7 @@ defmodule Supavisor.ClientHandler do
     # A write with prepared statement packets goes whole through the DbHandler, so it
     # reaches the backend in order.
     if is_list(bin_or_pkts) and Enum.any?(bin_or_pkts, &is_tuple/1),
-      do: DbHandler.handle_prepared_statement_pkts(db_handler, bin_or_pkts),
+      do: DbHandler.send_prepared_write(db_handler, bin_or_pkts),
       else: HandlerHelpers.sock_send(db_sock, bin_or_pkts)
   end
 

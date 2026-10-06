@@ -12,14 +12,15 @@ defmodule Supavisor.Protocol.BackendConnection do
     actually sent for each prepared statement packet depends on the statements the backend
     has.
   - `query/2`: a query Supavisor runs for itself. None of its responses reach the client.
-  - `recv/2`: bytes from the backend. Returns what to forward to the client, and whether the
-    backend became idle with every request answered.
+  - `recv/2`: bytes from the backend. Returns what to forward to the client, and whether a
+    ReadyForQuery in them left the backend synced.
 
   ## States
 
   - `:idle`: every request answered, outside a transaction.
   - `:in_transaction`: every request answered, inside a transaction block.
-  - `:busy`: waiting for responses.
+  - `:busy`: waiting for responses, or for the Sync, Query or FunctionCall that ends an
+    extended query batch whose messages were all answered.
   - `:ignore_till_sync`: an extended query message failed, so the backend ignores every
     message until the next Sync.
   - `{:copy_in, :simple | :extended}`: a COPY FROM STDIN, during which the backend ignores
@@ -232,8 +233,8 @@ defmodule Supavisor.Protocol.BackendConnection do
   @doc """
   Follows the backend through its messages.
 
-  Returns what to forward to the client, and whether the backend became idle, outside a
-  transaction, with every request answered and no write parked.
+  Returns what to forward to the client, and whether a ReadyForQuery in `data` left the
+  backend synced, as `synced?/1` defines it.
   """
   @spec recv(t(), binary()) :: {t(), iodata(), boolean()}
   def recv(backend(buffer: <<>>) = backend, data) do
@@ -246,8 +247,8 @@ defmodule Supavisor.Protocol.BackendConnection do
     do: recv(backend(backend, buffer: <<>>), buffer <> data)
 
   @doc """
-  Returns whether the backend is idle, outside a transaction, with every request answered and
-  no write parked.
+  Returns whether the backend is idle, outside a transaction, with every request answered, no
+  write parked and no client COPY left unfinished.
   """
   @spec synced?(t()) :: boolean()
   def synced?(backend(state: state, parked_write: parked_write, client_in_copy: client_in_copy)),

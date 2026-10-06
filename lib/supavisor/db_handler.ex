@@ -163,16 +163,16 @@ defmodule Supavisor.DbHandler do
   end
 
   @doc """
-  Sends prepared statement packets to a DbHandler
+  Sends a write through a DbHandler.
 
   Different from most packets, prepared statements packets involve state at the DbHandler,
   and hence can't be sent directly to the database socket. A write containing any of them
   is sent whole through this function instead, so it reaches the backend in order.
   """
-  @spec handle_prepared_statement_pkts(pid, [PreparedStatements.handled_pkt()]) ::
+  @spec send_prepared_write(pid, [PreparedStatements.handled_pkt()]) ::
           :ok | {:error, ClientSocketClosedError.t()}
-  def handle_prepared_statement_pkts(pid, pkts) do
-    :gen_statem.call(pid, {:handle_ps_pkts, pkts}, 15_000)
+  def send_prepared_write(pid, pkts) do
+    :gen_statem.call(pid, {:send_prepared_write, pkts}, 15_000)
   end
 
   @doc """
@@ -485,15 +485,13 @@ defmodule Supavisor.DbHandler do
       when is_pid(caller) and proto in @proto do
     Logger.debug("DbHandler: Got messages: #{Debug.packet_to_string(bin, :backend)}")
 
-    # A batch is done when the backend has processed every message forwarded to it
-    # and is idle, not mid-transaction.
-    {backend, to_send, batch_done?} = BackendConnection.recv(data.backend, bin)
+    {backend, to_send, synced?} = BackendConnection.recv(data.backend, bin)
     data = %{data | backend: backend}
 
     # db_status is enqueued in the ClientHandler's mailbox before the final
     # ReadyForQuery reaches the client socket, so the ClientHandler usually releases
     # us before the client's next query arrives and that query takes a fresh checkout.
-    if batch_done?, do: ClientHandler.db_status(data.caller, :ready_for_query, data.write_seq)
+    if synced?, do: ClientHandler.db_status(data.caller, :ready_for_query, data.write_seq)
 
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
 
@@ -506,7 +504,7 @@ defmodule Supavisor.DbHandler do
 
       # In transaction mode, checked in once the ClientHandler releases us.
       :ok ->
-        if batch_done? and data.mode == :session do
+        if synced? and data.mode == :session do
           {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
           {:keep_state, %{data | stats: stats}}
         else
@@ -580,7 +578,7 @@ defmodule Supavisor.DbHandler do
     {:stop, :normal}
   end
 
-  def handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data) do
+  def handle_event({:call, from}, {:send_prepared_write, pkts}, :busy, data) do
     {backend, to_backend, due, evicted} = BackendConnection.send_parked_write(data.backend, pkts)
     if evicted > 0, do: Telem.prepared_statements_evicted(evicted, data.id)
 

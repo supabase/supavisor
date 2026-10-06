@@ -1165,7 +1165,8 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, new_data, {:reply, ^from, :ok}} =
                Db.handle_event(
                  {:call, from},
-                 {:handle_ps_pkts, [{:describe_pkt, @statement_name, describe_pkt, @parse_pkt}]},
+                 {:send_prepared_write,
+                  [{:describe_pkt, @statement_name, describe_pkt, @parse_pkt}]},
                  :busy,
                  data
                )
@@ -1193,7 +1194,8 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, new_data, {:reply, ^from, :ok}} =
                Db.handle_event(
                  {:call, from},
-                 {:handle_ps_pkts, [{:describe_pkt, @statement_name, describe_pkt, @parse_pkt}]},
+                 {:send_prepared_write,
+                  [{:describe_pkt, @statement_name, describe_pkt, @parse_pkt}]},
                  :busy,
                  data
                )
@@ -1218,7 +1220,7 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, new_data, {:reply, ^from, :ok}} =
                Db.handle_event(
                  {:call, from},
-                 {:handle_ps_pkts, [{:parse_pkt, @statement_name, @parse_pkt}]},
+                 {:send_prepared_write, [{:parse_pkt, @statement_name, @parse_pkt}]},
                  :busy,
                  data
                )
@@ -1247,7 +1249,7 @@ defmodule Supavisor.DbHandlerTest do
                {:error, %ClientSocketClosedError{client_state: :busy, reason: :closed}}}} =
                Db.handle_event(
                  {:call, from},
-                 {:handle_ps_pkts, [{:parse_pkt, @statement_name, @parse_pkt}, @sync_pkt]},
+                 {:send_prepared_write, [{:parse_pkt, @statement_name, @parse_pkt}, @sync_pkt]},
                  :busy,
                  data
                )
@@ -1361,7 +1363,7 @@ defmodule Supavisor.DbHandlerTest do
       pkts = [bind, execute_pkt, bind, execute_pkt, @sync_pkt]
 
       assert {:keep_state, _data, {:reply, ^from, :ok}} =
-               Db.handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data)
+               Db.handle_event({:call, from}, {:send_prepared_write, pkts}, :busy, data)
 
       expected = @parse_pkt <> @bind_pkt <> execute_pkt <> @bind_pkt <> execute_pkt <> @sync_pkt
       assert {:ok, ^expected} = :gen_tcp.recv(backend_recv, byte_size(expected), 1000)
@@ -1384,7 +1386,7 @@ defmodule Supavisor.DbHandlerTest do
       pkts = [{:bind_pkt, @statement_name, @bind_pkt, @parse_pkt}, @sync_pkt]
 
       assert {:keep_state, _data, {:reply, ^from, :ok}} =
-               Db.handle_event({:call, from}, {:handle_ps_pkts, pkts}, :busy, data)
+               Db.handle_event({:call, from}, {:send_prepared_write, pkts}, :busy, data)
 
       assert_received {^event, ^ref, %{count: ^evicted_count}, %{tenant: ^tenant}}
     end

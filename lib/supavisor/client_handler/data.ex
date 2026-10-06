@@ -43,7 +43,9 @@ defmodule Supavisor.ClientHandler.Data do
     :max_clients,
     :pool_ranch,
     :use_jit_flow,
+    # Latest write announced to the DbHandler, with or without tracked messages.
     write_seq: 0,
+    # Latest write with tracked messages.
     tracked_seq: 0,
     invalid_options: []
   ]
