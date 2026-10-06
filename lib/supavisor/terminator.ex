@@ -2,8 +2,9 @@ defmodule Supavisor.Terminator do
   @moduledoc """
   Handles graceful shutdown signaling for tenant pools.
 
-  Signals the pool manager to stop accepting new connections, and to
-  stop current client connections gracefully.
+  De-registers the tenant supervisor from `:syn`, so that new clients start a
+  new pool, then signals the pool manager to stop accepting new connections,
+  and to stop current client connections gracefully.
   """
   use GenServer, shutdown: :timer.seconds(5)
 
@@ -18,14 +19,32 @@ defmodule Supavisor.Terminator do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    {:ok, %{id: args.id}}
+    {:ok, %{id: args.id, sup: args.sup, pools: args.pools}}
   end
 
   @drain_timeout 2_500
   @call_timeout 4_000
+  @idle_timeout 100
 
   @impl true
   def terminate(_reason, state) do
+    unregister(state.id, state.sup)
+    # Reduce the idle timeout while draining.
+    for pool <- state.pools do
+      try do
+        :poolboy.set_idle_timeout(pool, @idle_timeout)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
     :ok = Manager.graceful_shutdown(state.id, @drain_timeout, @call_timeout)
+  end
+
+  defp unregister(id, sup) do
+    case :syn.lookup(:tenants, id) do
+      {^sup, _meta} -> :syn.unregister(:tenants, id)
+      _ -> :ok
+    end
   end
 end

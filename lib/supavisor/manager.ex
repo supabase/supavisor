@@ -105,6 +105,17 @@ defmodule Supavisor.Manager do
   end
 
   @doc """
+  Stops the pool's tenant supervisor asynchronously.
+
+  Its `Supavisor.Terminator` drains the clients gracefully.
+  """
+  @spec stop_pool(pid | Supavisor.id()) :: :ok
+  def stop_pool(manager_or_id) do
+    manager = resolve_manager(manager_or_id)
+    GenServer.cast(manager, :stop_pool)
+  end
+
+  @doc """
   Initiates graceful shutdown of the pool.
 
   Sends admin shutdown message to all clients and stops accepting new connections.
@@ -222,6 +233,7 @@ defmodule Supavisor.Manager do
 
     state = %{
       id: args.id,
+      sup: args.sup,
       check_ref: check_subscribers(),
       tid: tid,
       pid_to_ref: pid_to_ref,
@@ -347,14 +359,14 @@ defmodule Supavisor.Manager do
     end)
 
     if :ets.info(state.tid, :size) == 0 do
-      {:reply, :ok, %{state | terminating_error: Server.admin_shutdown()}}
+      {:reply, :ok, %{state | terminating_error: Server.cannot_connect_now()}}
     else
       drain_timer = Process.send_after(self(), :drain_timeout, timeout)
 
       {:noreply,
        %{
          state
-         | terminating_error: Server.admin_shutdown(),
+         | terminating_error: Server.cannot_connect_now(),
            drain_caller: from,
            drain_timer: drain_timer
        }}
@@ -376,6 +388,11 @@ defmodule Supavisor.Manager do
     async_stop_sup(state)
 
     {:noreply, %{state | terminating_error: error}}
+  end
+
+  def handle_cast(:stop_pool, state) do
+    async_stop_sup(state)
+    {:noreply, state}
   end
 
   def handle_cast({:register_waiting_for_secrets, db_handler_pid}, state) do
@@ -510,7 +527,7 @@ defmodule Supavisor.Manager do
   end
 
   defp async_stop_sup(state) do
-    Supavisor.async_stop(state.id)
+    Supavisor.async_stop(state.sup)
   end
 
   defp maybe_complete_drain(%{drain_caller: nil} = state), do: state

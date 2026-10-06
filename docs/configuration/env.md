@@ -26,6 +26,8 @@ This document provides a categorized list of all environment variables used in S
 | `PROXY_PORT_SESSION`          | Session pool port                                          | `5432`                    | No       |
 | `PROXY_PORT`                  | Internal proxy port                                        | `5412`                    | No       |
 | `SUBSCRIBE_RETRIES`           | Number of subscription retries                             | `20`                      | No       |
+| `ADMISSION_RETRIES`           | Retries waiting for a free client slot before EMAXCONN     | `5`                       | No       |
+| `ADMISSION_BACKOFF`           | Backoff between admission retries (ms)                     | `300`                     | No       |
 | `SWITCH_ACTIVE_COUNT`         | Switch active connection count                             | `100`                     | No       |
 | `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                               | -                         | No       |
 | `GLOBAL_DOWNSTREAM_CERT_PATH` | Downstream certificate path                                | -                         | No       |
@@ -80,6 +82,9 @@ This document provides a categorized list of all environment variables used in S
 | -------------------------------- | ----------------------- | ------------- | ----------------------- |
 | `SUPAVISOR_LOG_FILE_PATH`        | Path to log file        | -             | No                      |
 | `SUPAVISOR_LOG_FORMAT`           | Log format (json/text)  | `text`        | No                      |
+| `SUPAVISOR_LOG_BURST_LIMIT_ENABLE` | Enable burst-limit overload protection on the `:default` logger handler | `true` | No |
+| `SUPAVISOR_LOG_BURST_LIMIT_MAX_COUNT` | Max log events the `:default` logger handler writes per burst-limit window | `500` | No |
+| `SUPAVISOR_LOG_BURST_LIMIT_WINDOW_TIME` | Burst-limit window size for the `:default` logger handler, in milliseconds | `1000` | No |
 | `LOGS_ENGINE`                    | Logging engine to use   | -             | No                      |
 | `LOGFLARE_API_KEY`               | Logflare API key        | -             | Yes (if using Logflare) |
 | `LOGFLARE_SOURCE_ID`             | Logflare source ID      | -             | Yes (if using Logflare) |

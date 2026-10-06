@@ -90,6 +90,19 @@ defmodule Supavisor.Monitoring.Telem do
     Logger.debug("client_join is called with a mismatched id: #{Supavisor.inspect_id(id)}")
   end
 
+  @spec client_admission(:admitted | :rejected, Supavisor.id() | any()) :: :ok | nil
+  def client_admission(status, Supavisor.id() = id) do
+    telemetry_execute(
+      [:supavisor, :client, :admission, status],
+      %{},
+      id_to_tags(id)
+    )
+  end
+
+  def client_admission(_status, id) do
+    Logger.debug("client_admission is called with a mismatched id: #{Supavisor.inspect_id(id)}")
+  end
+
   @spec handler_action(
           :client_handler | :db_handler,
           :started | :stopped | :db_connection,

@@ -17,6 +17,8 @@ defmodule Supavisor.ClientHandler do
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
+  @admission_retries Application.compile_env(:supavisor, :admission_retries)
+  @admission_backoff Application.compile_env(:supavisor, :admission_backoff)
   @max_checkout_retries 2
   @timeout_subscribe 500
   @ssl_handshake_timeout 2_500
@@ -54,6 +56,7 @@ defmodule Supavisor.ClientHandler do
     ClientSocketClosedError,
     DbHandlerExitedError,
     HandshakeTimeoutError,
+    MaxConnectionsError,
     PoolCheckoutError,
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
@@ -101,7 +104,7 @@ defmodule Supavisor.ClientHandler do
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
 
-    Logger.metadata(peer_ip: peer_ip, local: local, state: :init)
+    Logger.metadata(peer_ip: peer_ip, local: local, tls: false, state: :init)
     :ok = trans.setopts(sock, active: @switch_active_count)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
@@ -122,7 +125,8 @@ defmodule Supavisor.ClientHandler do
       heartbeat_interval: 0,
       connection_start: now,
       state_entered_at: now,
-      subscribe_retries: 0
+      subscribe_retries: 0,
+      admission_retries: 0
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data, [
@@ -170,14 +174,14 @@ defmodule Supavisor.ClientHandler do
       opts = [
         verify: :verify_none,
         certs_keys: certs_keys,
-        sni_fun: fn _hostname -> :undefined end,
-        receiver_spawn_opts: [min_heap_size: 2048]
+        sni_fun: fn _hostname -> :undefined end
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
            {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
         socket = {:ssl, ssl_sock}
         :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
+        Logger.metadata(tls: true)
         {:keep_state, %{data | sock: socket, ssl: true}}
       else
         {:error, %ClientSocketClosedError{} = exception} ->
@@ -235,7 +239,8 @@ defmodule Supavisor.ClientHandler do
   def handle_event(
         :internal,
         {:hello,
-         {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls, client_ip}}},
+         {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls, client_ip}} =
+           hello_args},
         :handshake,
         %{sock: sock} = data
       ) do
@@ -255,7 +260,8 @@ defmodule Supavisor.ClientHandler do
       type: type,
       app_name: data.app_name,
       db_name: db_name,
-      peer_ip: peer_ip
+      peer_ip: peer_ip,
+      tls: effective_ssl
     )
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
@@ -292,6 +298,9 @@ defmodule Supavisor.ClientHandler do
           {:keep_state, new_data,
            {:next_event, :internal, {:start_authentication, auth_method, info}}}
         else
+          {:error, %MaxConnectionsError{} = exception} ->
+            wait_for_slot_or_terminate(%{data | id: id}, {:hello, hello_args}, exception)
+
           {:error, exception} when is_exception(exception) ->
             Error.terminate_with_error(%{data | id: id}, exception, :handshake)
         end
@@ -299,6 +308,11 @@ defmodule Supavisor.ClientHandler do
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
     end
+  end
+
+  # Named timeout: a :state_timeout would cancel @handshake_timeout.
+  def handle_event({:timeout, :admission_retry}, retry_event, _state, _data) do
+    {:keep_state_and_data, {:next_event, :internal, retry_event}}
   end
 
   def handle_event(
@@ -351,11 +365,14 @@ defmodule Supavisor.ClientHandler do
          data = Map.merge(data, opts.workers),
          {:ok, db_connection} <- maybe_checkout(:on_connect, data),
          :ok <- maybe_set_application_name(data, db_connection) do
+      if data.admission_retries > 0, do: Telem.client_admission(:admitted, data.id)
+
       data = %{
         data
         | manager: manager_ref,
           db_connection: db_connection,
-          idle_timeout: opts.idle_timeout
+          idle_timeout: opts.idle_timeout,
+          admission_retries: 0
       }
 
       Registry.register(@clients_registry, data.id,
@@ -380,6 +397,10 @@ defmodule Supavisor.ClientHandler do
 
       {:error, %PoolConfigNotFoundError{}} ->
         timeout_subscribe_or_terminate(data)
+
+      # The pre-auth `check_client_limit/3` is advisory; this is the authoritative check.
+      {:error, %MaxConnectionsError{} = exception} ->
+        wait_for_slot_or_terminate(data, :subscribe, exception)
 
       {:error, exception} when is_exception(exception) ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -891,7 +912,6 @@ defmodule Supavisor.ClientHandler do
   defp forwardable_peer_ip(peer_ip), do: peer_ip
 
   defp handle_auth_failure(exception, data) do
-    AuthMethods.handle_auth_failure(data.auth_context, exception)
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
     Error.terminate_with_error(data, exception, :handshake)
   end
@@ -1037,6 +1057,28 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
+  @doc """
+  Replays `retry_event` after a backoff while the admission budget lasts, then terminates with `exception`.
+  """
+  @spec wait_for_slot_or_terminate(map(), term(), Exception.t()) ::
+          :gen_statem.handle_event_result()
+  def wait_for_slot_or_terminate(%{admission_retries: retries} = data, retry_event, exception) do
+    if retries < @admission_retries do
+      Logger.debug("ClientHandler: Waiting for a free client slot, attempt #{retries + 1}")
+
+      {:keep_state, %{data | admission_retries: retries + 1},
+       {{:timeout, :admission_retry}, admission_backoff(), retry_event}}
+    else
+      Telem.client_admission(:rejected, data.id)
+      Error.terminate_with_error(data, exception, :handshake)
+    end
+  end
+
+  defp admission_backoff do
+    jitter = max(div(@admission_backoff, 4), 1)
+    max(@admission_backoff - jitter + :rand.uniform(2 * jitter), 0)
+  end
+
   defp pool_checkout(pool, timeout, mode) do
     {:ok, :poolboy.checkout(pool, true, timeout)}
   catch
@@ -1071,7 +1113,10 @@ defmodule Supavisor.ClientHandler do
       | id: id,
         tenant: info.tenant.external_id,
         tenant_feature_flags: info.tenant.feature_flags,
-        tenant_availability_zone: info.tenant.availability_zone,
+        # Cluster pools are placed without a zone, as their replicas may be in
+        # different ones, see `Supavisor.start_local_pool/3`
+        tenant_availability_zone:
+          if(Supavisor.id(id, :type) == :single, do: info.tenant.availability_zone),
         user: user,
         db_name: db_name,
         timeout: info.user.pool_checkout_timeout,
