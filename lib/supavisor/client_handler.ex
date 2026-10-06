@@ -235,58 +235,67 @@ defmodule Supavisor.ClientHandler do
         :handshake,
         %{sock: sock} = data
       ) do
+    %StartupParams{
+      type: type,
+      user: user,
+      tenant_or_alias: tenant_or_alias,
+      db_name: db_name,
+      search_path: search_path,
+      jit: jit,
+      client_tls: client_tls,
+      client_ip: client_ip
+    } = params
+
     sni_hostname = HandlerHelpers.try_get_sni(sock)
 
     # When receiving a proxied connection on a local listener, client_tls and
     # client_ip carry the original client's TLS status and IP address (the socket
     # peer is the forwarding node). Otherwise, use what we observed on the socket.
-    effective_ssl =
-      if(data.local && params.client_tls, do: params.client_tls, else: data.ssl)
-
-    peer_ip = ProtocolHelpers.effective_peer_ip(data.local, params.client_ip, data.peer_ip)
+    effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
+    peer_ip = ProtocolHelpers.effective_peer_ip(data.local, client_ip, data.peer_ip)
     data = %{data | peer_ip: peer_ip}
 
     Logger.metadata(
-      project: params.tenant_or_alias,
-      user: params.user,
+      project: tenant_or_alias,
+      user: user,
       mode: data.mode,
-      type: params.type,
+      type: type,
       app_name: data.app_name,
-      db_name: params.db_name,
+      db_name: db_name,
       peer_ip: peer_ip,
       tls: effective_ssl
     )
 
-    case Tenants.get_user_cache(params.type, params.user, params.tenant_or_alias, sni_hostname) do
+    case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
       {:ok, info} ->
         upstream_tls = upstream_tls(info.tenant, effective_ssl)
 
-        resolved_tenant = params.tenant_or_alias || info.tenant.external_id
+        resolved_tenant = tenant_or_alias || info.tenant.external_id
 
         id =
           Supavisor.id(
-            type: params.type,
+            type: type,
             tenant: resolved_tenant,
-            user: params.user,
+            user: user,
             mode: data.mode,
-            db: params.db_name,
-            search_path: params.search_path,
+            db: db_name,
+            search_path: search_path,
             upstream_tls: upstream_tls
           )
 
         with :ok <- Checks.check_tenant_not_banned(info),
-             :ok <- Checks.check_ssl_enforcement(data, info, params.user),
+             :ok <- Checks.check_ssl_enforcement(data, info, user),
              :ok <- Checks.check_address_allowed(sock, info),
              :ok <- Manager.check_client_limit(id, info, data.mode),
              {:ok, auth_method} <-
                AuthMethods.fetch_authentication_method(
                  info.tenant,
-                 params.jit,
+                 jit,
                  effective_ssl,
-                 params.user
+                 user
                ) do
           Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
-          new_data = set_tenant_info(data, info, params.user, id, params.db_name, params.jit)
+          new_data = set_tenant_info(data, info, user, id, db_name, jit)
 
           {:keep_state, new_data,
            {:next_event, :internal, {:start_authentication, auth_method, info}}}
