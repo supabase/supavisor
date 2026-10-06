@@ -35,7 +35,7 @@ defmodule Supavisor.ClientHandlerTest do
            [session_id_tracker: :some_pid]
          }, [:some_pid]}
 
-      data = %{sock: {:ssl, sock}}
+      data = %{sock: {:ssl, sock}, mode: :transaction, local: false}
       {:ok, sock: sock, data: data}
     end
 
@@ -48,7 +48,7 @@ defmodule Supavisor.ClientHandlerTest do
             ~c"TLS server: In state connection received CLIENT ALERT: Fatal - User Canceled\n"}
          }}
 
-      assert {:stop, :normal} == @subject.handle_event(:info, error, nil, data)
+      assert {:stop, :normal} == @subject.handle_event(:info, error, :busy, data)
     end
 
     test "handles warning TLS alert by keeping connection alive", %{sock: sock, data: data} do
@@ -103,7 +103,14 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "sends the original error to the client once the budget is exhausted", ctx do
       {client, server} = sockpair()
-      data = %{admission_retries: ctx.budget, id: nil, sock: {:gen_tcp, server}}
+
+      data = %{
+        admission_retries: ctx.budget,
+        id: nil,
+        sock: {:gen_tcp, server},
+        mode: :transaction,
+        local: false
+      }
 
       assert {:stop, :normal} =
                @subject.wait_for_slot_or_terminate(data, ctx.retry_event, ctx.exception)
@@ -129,7 +136,7 @@ defmodule Supavisor.ClientHandlerTest do
   describe "socket DOWN handler" do
     test "handles DOWN message for matching ref" do
       ref = make_ref()
-      data = %{sock_ref: ref, mode: :transaction}
+      data = %{sock_ref: ref, mode: :transaction, local: false}
 
       assert {:stop, :normal} =
                @subject.handle_event(:info, {:DOWN, ref, :port, self(), :normal}, :idle, data)
