@@ -171,6 +171,32 @@ defmodule Supavisor.PromEx.Plugins.CGroupTest do
     end
   end
 
+  describe "execute_memory_metrics/0" do
+    test "covers the production entrypoint end-to-end via a faked cached cgroup dir" do
+      dir =
+        Path.join(System.tmp_dir!(), "cgroup_fixture_dir_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "memory.current"), "104857600\n")
+      File.write!(Path.join(dir, "memory.max"), "max\n")
+
+      on_exit(fn ->
+        :persistent_term.erase({CGroup, :cgroup_dir})
+        File.rm_rf!(dir)
+      end)
+
+      :persistent_term.put({CGroup, :cgroup_dir}, {:ok, dir})
+
+      ref = attach_handler([:supavisor, :prom_ex, :osmon, :cgroup_memory])
+
+      assert :ok = CGroup.execute_memory_metrics()
+
+      assert_receive {^ref, {[:supavisor, :prom_ex, :osmon, :cgroup_memory], measurement, %{}}}
+      assert %{memory_current: 104_857_600, memory_max: memory_max} = measurement
+      assert memory_max == CGroup.unlimited_memory()
+    end
+  end
+
   describe "execute_memory_metrics/2" do
     test "emits cgroup_memory telemetry event when files exist" do
       current_path = write_fixture("104857600\n")
