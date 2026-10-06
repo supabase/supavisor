@@ -14,7 +14,6 @@ defmodule Supavisor.Integration.PromExClusterTest do
         %PortConfig{
           proxy_port_transaction: 7668,
           proxy_port_session: 7669,
-          proxy_port: 7670,
           session_proxy_ports: [15_100, 15_101, 15_102, 15_103],
           transaction_proxy_ports: [15_104, 15_105, 15_106, 15_107]
         }
@@ -27,7 +26,6 @@ defmodule Supavisor.Integration.PromExClusterTest do
         %PortConfig{
           proxy_port_transaction: 7671,
           proxy_port_session: 7672,
-          proxy_port: 7673,
           session_proxy_ports: [16_100, 16_101, 16_102, 16_103],
           transaction_proxy_ports: [16_104, 16_105, 16_106, 16_107]
         }

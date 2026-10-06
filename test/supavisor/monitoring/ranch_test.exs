@@ -72,7 +72,7 @@ defmodule Supavisor.PromEx.Plugins.RanchTest do
 
   describe "format_ref/1" do
     test "formats atom refs" do
-      assert Ranch.format_ref(:pg_proxy) == "pg_proxy"
+      assert Ranch.format_ref(:pg_proxy_transaction) == "pg_proxy_transaction"
       assert Ranch.format_ref(:pg_proxy_session) == "pg_proxy_session"
     end
 
