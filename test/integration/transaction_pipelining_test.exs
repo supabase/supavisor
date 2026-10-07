@@ -562,7 +562,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         assert_released(tenant)
       end
 
-      # race/3 queues the second write ahead of the db_status that the first
+      # race/3 queues the second write ahead of the backend_synced that the first
       # write's ReadyForQuery triggers.
       test "delivers a write queued before the previous batch completes", %{tenant: tenant} do
         sock = connect(tenant)
@@ -575,7 +575,7 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
         assert_released(tenant)
       end
 
-      # A Flush gets no reply, so nothing follows the db_status it races.
+      # A Flush gets no reply, so nothing follows the backend_synced it races.
       test "releases the backend after a write with nothing to answer races the reply", %{
         tenant: tenant
       } do

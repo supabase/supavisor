@@ -1288,7 +1288,7 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, data} =
                Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
 
-      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 1}}
+      assert_received {:"$gen_cast", {:backend_synced, 1}}
       assert data.caller
 
       assert {:next_state, :idle, data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
@@ -1331,14 +1331,14 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:keep_state, data} = Db.handle_event(:info, {:tcp, :sock, responses}, :busy, data)
 
-      refute_received {:"$gen_cast", {:db_status, _status, _write_seq}}
+      refute_received {:"$gen_cast", {:backend_synced, _write_seq}}
 
       data = expecting(data, 2, [?S])
 
       assert {:keep_state, _data} =
                Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
 
-      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 2}}
+      assert_received {:"$gen_cast", {:backend_synced, 2}}
     end
 
     test "a later chunk without a ReadyForQuery doesn't report again" do
@@ -1347,12 +1347,12 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, data} =
                Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
 
-      assert_received {:"$gen_cast", {:db_status, :ready_for_query, 0}}
+      assert_received {:"$gen_cast", {:backend_synced, 0}}
 
       notice = <<?N, 5::32, 0>>
       assert {:keep_state, _data} = Db.handle_event(:info, {:tcp, :sock, notice}, :busy, data)
 
-      refute_received {:"$gen_cast", {:db_status, _status, _write_seq}}
+      refute_received {:"$gen_cast", {:backend_synced, _write_seq}}
     end
 
     test "checkout starts the write sequence over" do
