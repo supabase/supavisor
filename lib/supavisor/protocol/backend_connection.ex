@@ -94,13 +94,15 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   @type action() :: :forward | :skip | :fake | :internal
 
+  @type write_tag() :: byte() | {:ps, byte()}
+
   @type request() :: {byte(), action(), PreparedStatements.statement_name() | nil}
 
   @type t() ::
           record(:backend,
             state: state(),
             requests: :queue.queue(request()),
-            parked_write: [byte() | {:ps, byte()}] | nil,
+            parked_write: [write_tag()] | nil,
             storage: module(),
             statements: term(),
             fatal_error: map() | nil,
@@ -164,7 +166,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   @doc """
   Records the messages of a client write, in order, before they reach the backend.
   """
-  @spec client_write(t(), [byte() | {:ps, byte()}]) :: t()
+  @spec client_write(t(), [write_tag()]) :: t()
   def client_write(backend(parked_write: nil) = backend, tags) do
     {backend, tags} = drop_copy_end(backend, tags)
 

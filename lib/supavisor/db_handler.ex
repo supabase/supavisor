@@ -119,7 +119,7 @@ defmodule Supavisor.DbHandler do
   The ClientHandler should send this *before* forwarding the messages, so it reaches the
   DbHandler before the responses do.
   """
-  @spec expect_messages(pid(), pos_integer(), [byte() | {:ps, byte()}]) :: :ok
+  @spec expect_messages(pid(), pos_integer(), [BackendConnection.write_tag()]) :: :ok
   def expect_messages(pid, write_seq, tags),
     do: :gen_statem.cast(pid, {:expect_messages, write_seq, tags})
 
