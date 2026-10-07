@@ -206,8 +206,8 @@ defmodule Supavisor.ClientHandler do
     Error.terminate_with_error(data, %HandshakeTimeoutError{}, :handshake)
   end
 
-  def handle_event(:info, {_, _, bin}, :handshake, data)
-      when byte_size(bin) > @max_startup_packet_size do
+  def handle_event(:info, {proto, _, bin}, :handshake, data)
+      when proto in @proto and byte_size(bin) > @max_startup_packet_size do
     Error.terminate_with_error(
       data,
       %StartupPacketTooLargeError{packet_size: byte_size(bin)},
@@ -215,7 +215,7 @@ defmodule Supavisor.ClientHandler do
     )
   end
 
-  def handle_event(:info, {_, _, bin}, :handshake, data) do
+  def handle_event(:info, {proto, _, bin}, :handshake, data) when proto in @proto do
     case ProtocolHelpers.parse_startup_packet(bin) do
       {:ok, %StartupParams{} = startup_params} ->
         {:keep_state_and_data, {:next_event, :internal, {:hello, startup_params}}}
@@ -286,7 +286,7 @@ defmodule Supavisor.ClientHandler do
 
         with :ok <- Checks.check_tenant_not_banned(info),
              :ok <- Checks.check_ssl_enforcement(data, info, user),
-             :ok <- Checks.check_address_allowed(sock, info),
+             :ok <- Checks.check_address_allowed(data, info),
              :ok <- Manager.check_client_limit(id, info, data.mode),
              {:ok, auth_method} <-
                AuthMethods.fetch_authentication_method(
@@ -501,15 +501,16 @@ defmodule Supavisor.ClientHandler do
   # TLS alert handling: WARNING alerts keep the connection alive, FATAL alerts terminate it.
   # For FATAL alerts, Erlang doesn't send ssl_closed, so we must terminate here.
   # The alert level is only available by parsing the message string ("Warning - " or "Fatal - ").
-  def handle_event(:info, {:ssl_error, sock, {:tls_alert, {_reason, msg}}}, _, %{sock: {_, sock}}) do
+  def handle_event(
+        :info,
+        {:ssl_error, sock, {:tls_alert, {_reason, msg}}},
+        state,
+        %{sock: {_, sock}} = data
+      ) do
     msg_string = to_string(msg)
 
     if String.contains?(msg_string, "Fatal -") do
-      Logger.warning(
-        "ClientHandler: Received fatal TLS alert: #{msg_string}, terminating connection"
-      )
-
-      {:stop, :normal}
+      handle_socket_close(state, data, msg_string)
     else
       Logger.warning(
         "ClientHandler: Received TLS warning alert: #{msg_string}, keeping connection alive"
@@ -608,11 +609,9 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  def handle_event(:info, {sock_error, _sock, msg}, state, _data)
+  def handle_event(:info, {sock_error, _sock, reason}, state, data)
       when sock_error in [:tcp_error, :ssl_error] do
-    Logger.error("ClientHandler: Socket error: #{inspect(msg)}, state was #{state}")
-
-    {:stop, :normal}
+    handle_socket_close(state, data, reason)
   end
 
   def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
@@ -1122,10 +1121,10 @@ defmodule Supavisor.ClientHandler do
   defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?
   defp upstream_tls(%{upstream_ssl: upstream_ssl}, _ssl?), do: upstream_ssl
 
-  defp handle_socket_close(state, data) do
+  defp handle_socket_close(state, data, reason \\ nil) do
     maybe_cleanup_db_handler(state, data)
 
-    error = %ClientSocketClosedError{mode: data.mode, client_state: state}
+    error = %ClientSocketClosedError{mode: data.mode, client_state: state, reason: reason}
     context = if state in [:idle, :busy], do: :authenticated, else: :handshake
     Error.terminate_with_error(data, error, context)
   end
