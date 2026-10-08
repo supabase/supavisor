@@ -19,15 +19,25 @@ defmodule Supavisor.Terminator do
   @impl true
   def init(args) do
     Process.flag(:trap_exit, true)
-    {:ok, %{id: args.id, sup: args.sup}}
+    {:ok, %{id: args.id, sup: args.sup, pools: args.pools}}
   end
 
   @drain_timeout 2_500
   @call_timeout 4_000
+  @idle_timeout 100
 
   @impl true
   def terminate(_reason, state) do
     unregister(state.id, state.sup)
+    # Reduce the idle timeout while draining.
+    for pool <- state.pools do
+      try do
+        :poolboy.set_idle_timeout(pool, @idle_timeout)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
     :ok = Manager.graceful_shutdown(state.id, @drain_timeout, @call_timeout)
   end
 

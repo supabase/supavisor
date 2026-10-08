@@ -14,4 +14,7 @@ defmodule Supavisor.Errors.AddressNotAllowedError do
   def error_message(%{address: address}) do
     "address not in tenant allow_list: #{inspect(address)}"
   end
+
+  @impl Supavisor.Error
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
 end

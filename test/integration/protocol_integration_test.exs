@@ -5,6 +5,8 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
   alias Supavisor.Support.ProtocolClient
   require Server
 
+  import ExUnit.CaptureLog
+
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
 
   describe "startup packet edge cases" do
@@ -92,6 +94,40 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert <<?R, _::binary>> = response
 
       :gen_tcp.close(sock)
+    end
+  end
+
+  describe "tls logger metadata" do
+    setup do
+      Supavisor.Support.SSLHelper.setup_downstream_certs()
+      %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
+    end
+
+    test "logs tls=false for plain connections", %{port: port} do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      log =
+        capture_log([metadata: :all], fn ->
+          :ok = :gen_tcp.send(sock, <<13::32, 3::16, 0::16, "nope", 0>>)
+          assert {:ok, <<?E, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+        end)
+
+      assert log =~ ~r/tls=false .*\[error\] ClientHandler: \(ESTARTUPMESSAGE\)/
+    end
+
+    test "logs tls=true for TLS connections", %{port: port} do
+      {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+      :ok = :gen_tcp.send(tcp, Server.ssl_request_message())
+      {:ok, "S"} = :gen_tcp.recv(tcp, 1, 5000)
+      {:ok, ssl} = :ssl.connect(tcp, [verify: :verify_none, active: false], 5000)
+
+      log =
+        capture_log([metadata: :all], fn ->
+          :ok = :ssl.send(ssl, <<13::32, 3::16, 0::16, "nope", 0>>)
+          assert {:ok, <<?E, _::binary>>} = :ssl.recv(ssl, 0, 5000)
+        end)
+
+      assert log =~ ~r/tls=true .*\[error\] ClientHandler: \(ESTARTUPMESSAGE\)/
     end
   end
 
@@ -424,6 +460,17 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       jit_handshake({:gen_tcp, sock}, ctx, "--jit=true --client_tls=true")
 
       assert_receive {:jit_request, %{"rhost" => "127.0.0.1", "role" => "postgres"}}, 5_000
+    end
+
+    test "local listener logs the forwarded TLS status", ctx do
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", ctx.local_port, [:binary, active: false])
+
+      log =
+        capture_log([metadata: :all], fn ->
+          jit_handshake({:gen_tcp, sock}, ctx, "--jit=true --client_tls=true")
+        end)
+
+      assert log =~ ~r/tls=true .*\[error\] ClientHandler: JIT unauthorized/
     end
 
     test "public listener ignores client_ip supplied by the client", ctx do

@@ -23,4 +23,7 @@ defmodule Supavisor.Errors.PoolTerminatingError do
     # Return the underlying protocol error directly since it's already formatted
     underlying_error
   end
+
+  @impl Supavisor.Error
+  def response_delay(_), do: Supavisor.Error.short_response_delay()
 end
