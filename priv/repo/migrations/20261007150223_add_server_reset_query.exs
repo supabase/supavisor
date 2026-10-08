@@ -3,7 +3,7 @@ defmodule Supavisor.Repo.Migrations.AddServerResetQuery do
 
   def change do
     alter table("tenants", prefix: "_supavisor") do
-      add(:server_reset_query, :string, default: "DISCARD ALL")
+      add(:server_reset_query, :text, default: "DISCARD ALL")
     end
   end
 end
