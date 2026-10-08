@@ -131,7 +131,7 @@ defmodule Supavisor.DbHandler do
   def release(pid, write_seq), do: :gen_statem.cast(pid, {:release, write_seq})
 
   @doc """
-  Attempts to clean up session state by sending DISCARD ALL to the database.
+  Attempts to clean up session state by sending `server_reset_query` to the database.
 
   The caller is responsible for ensuring that:
   - The DbHandler is NOT actively processing a query
@@ -232,6 +232,7 @@ defmodule Supavisor.DbHandler do
       user: config.user,
       tenant: config.tenant,
       tenant_feature_flags: config.tenant_feature_flags,
+      server_reset_query: Map.get(config, :server_reset_query),
       db_state: nil,
       parameter_status: %{},
       nonce: nil,
@@ -657,9 +658,13 @@ defmodule Supavisor.DbHandler do
         {:keep_state_and_data,
          {:reply, from, {:error, :cleanup_not_supported_in_transaction_mode}}}
 
+      state in [:idle, :busy] and is_nil(data.server_reset_query) ->
+        Logger.debug("DbHandler: server_reset_query is not set, skipping reset")
+        {:next_state, :idle, %{data | caller: nil}, {:reply, from, :ok}}
+
       state in [:idle, :busy] ->
-        Logger.debug("DbHandler: Starting cleanup, sending DISCARD ALL")
-        msg = :pgo_protocol.encode_query_message("DISCARD ALL")
+        Logger.debug("DbHandler: Starting cleanup, sending #{data.server_reset_query}")
+        msg = :pgo_protocol.encode_query_message(data.server_reset_query)
         backend = BackendConnection.query(data.backend, msg)
         :ok = HandlerHelpers.sock_send(data.sock, msg)
 

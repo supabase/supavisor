@@ -211,7 +211,8 @@ defmodule Supavisor.Manager do
       default_max_clients: default_max_clients,
       client_idle_timeout: client_idle_timeout,
       sni_hostname: sni_hostname,
-      feature_flags: feature_flags
+      feature_flags: feature_flags,
+      server_reset_query: server_reset_query
     } = tenant_record
 
     user_config = List.first(tenant_record.users)
@@ -249,6 +250,7 @@ defmodule Supavisor.Manager do
       pool_size: pool_size,
       log_level: args.log_level,
       tenant_feature_flags: feature_flags,
+      server_reset_query: server_reset_query,
       terminating_error: nil,
       drain_caller: nil,
       drain_timer: nil,
@@ -332,7 +334,8 @@ defmodule Supavisor.Manager do
       mode: state.mode,
       replica_type: state.replica_type,
       log_level: state.log_level,
-      tenant_feature_flags: state.tenant_feature_flags
+      tenant_feature_flags: state.tenant_feature_flags,
+      server_reset_query: state.server_reset_query
     }
 
     {:reply, config, state}

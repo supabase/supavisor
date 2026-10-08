@@ -1059,6 +1059,34 @@ defmodule Supavisor.Integration.ProxyTest do
     assert timeout != test_timeout
   end
 
+  test "nil server_reset_query keeps session state in session mode" do
+    connection_opts = session_tenant_with_reset_query(nil)
+    test_timeout = "12345ms"
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+
+    assert [%P.Result{rows: [[backend_pid_1]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    assert [%P.Result{}] =
+             P.SimpleConnection.call(
+               conn1,
+               {:query, "SET statement_timeout = '#{test_timeout}';"}
+             )
+
+    stop_supervised(:conn1)
+    Process.sleep(100)
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+
+    assert [%P.Result{rows: [[^backend_pid_1]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
+
+    # No reset ran, so conn2 inherits the setting conn1 left on the backend
+    assert [%P.Result{rows: [[^test_timeout]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})
+  end
+
   test "max pools reached returns proper error" do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     tenant = "max_pool_tenant"
@@ -1406,6 +1434,42 @@ defmodule Supavisor.Integration.ProxyTest do
     database = String.replace(path, "/", "")
 
     [hostname: host, port: port, database: database, password: pass, username: username]
+  end
+
+  defp session_tenant_with_reset_query(reset_query) do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+    tenant = "reset_query_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+    {:ok, _} =
+      Supavisor.Tenants.create_tenant(%{
+        db_host: db_conf[:hostname],
+        db_port: db_conf[:port],
+        db_database: db_conf[:database],
+        external_id: tenant,
+        require_user: true,
+        default_parameter_status: %{"server_version" => "15.0"},
+        server_reset_query: reset_query,
+        users: [
+          %{
+            "db_user" => db_conf[:username],
+            "db_password" => db_conf[:password],
+            "pool_size" => 1,
+            "mode_type" => "session",
+            "is_manager" => true
+          }
+        ]
+      })
+
+    on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant) end)
+
+    [
+      hostname: db_conf[:hostname],
+      port: Application.get_env(:supavisor, :proxy_port_session),
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username] <> "." <> tenant
+    ]
   end
 
   defp count_pool_workers(tenant_id) do

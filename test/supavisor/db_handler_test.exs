@@ -897,7 +897,12 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:keep_state_and_data,
               {:reply, _from, {:error, :cleanup_not_supported_in_transaction_mode}}} =
-               Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :idle, data)
+               Db.handle_event(
+                 {:call, {self(), make_ref()}},
+                 :cleanup,
+                 :idle,
+                 data
+               )
 
       :gen_tcp.close(send)
       :gen_tcp.close(recv)
@@ -913,7 +918,12 @@ defmodule Supavisor.DbHandlerTest do
       }
 
       assert {:keep_state_and_data, {:reply, _from, {:error, :cant_cleanup_now}}} =
-               Db.handle_event({:call, {self(), make_ref()}}, :cleanup, :connect, data)
+               Db.handle_event(
+                 {:call, {self(), make_ref()}},
+                 :cleanup,
+                 :connect,
+                 data
+               )
 
       :gen_tcp.close(send)
       :gen_tcp.close(recv)
@@ -926,7 +936,8 @@ defmodule Supavisor.DbHandlerTest do
         sock: {:gen_tcp, send},
         mode: :session,
         caller: self(),
-        backend: BackendConnection.new(BackendStorage.LRU)
+        backend: BackendConnection.new(BackendStorage.LRU),
+        server_reset_query: "DISCARD ALL"
       }
 
       from = {self(), make_ref()}
@@ -951,7 +962,8 @@ defmodule Supavisor.DbHandlerTest do
         sock: {:gen_tcp, send},
         mode: :session,
         caller: self(),
-        backend: BackendConnection.new(BackendStorage.LRU)
+        backend: BackendConnection.new(BackendStorage.LRU),
+        server_reset_query: "DISCARD ALL"
       }
 
       from = {self(), make_ref()}
@@ -964,6 +976,51 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
       assert message =~ "DISCARD ALL"
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "sends the configured server_reset_query" do
+      {send, recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self(),
+        backend: BackendConnection.new(BackendStorage.LRU),
+        server_reset_query: "DEALLOCATE ALL"
+      }
+
+      from = {self(), make_ref()}
+
+      assert {:next_state, :waiting_cleanup, _new_data, _timeout} =
+               Db.handle_event({:call, from}, :cleanup, :idle, data)
+
+      assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
+      assert message =~ "DEALLOCATE ALL"
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "skips the reset when server_reset_query is nil" do
+      {send, recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self(),
+        server_reset_query: nil
+      }
+
+      from = {self(), make_ref()}
+
+      assert {:next_state, :idle, new_data, {:reply, ^from, :ok}} =
+               Db.handle_event({:call, from}, :cleanup, :busy, data)
+
+      assert new_data.caller == nil
+      assert {:error, :timeout} = :gen_tcp.recv(recv, 0, 100)
 
       :gen_tcp.close(send)
       :gen_tcp.close(recv)
