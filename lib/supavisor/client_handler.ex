@@ -81,9 +81,8 @@ defmodule Supavisor.ClientHandler do
   @doc """
   Tells the ClientHandler the backend is idle after processing every write up to `write_seq`.
   """
-  @spec db_status(pid(), :ready_for_query, non_neg_integer()) :: :ok
-  def db_status(pid, status, write_seq),
-    do: :gen_statem.cast(pid, {:db_status, status, write_seq})
+  @spec backend_synced(pid(), non_neg_integer()) :: :ok
+  def backend_synced(pid, write_seq), do: :gen_statem.cast(pid, {:backend_synced, write_seq})
 
   @spec send_error_and_terminate(pid(), iodata()) :: :ok
   def send_error_and_terminate(pid, error_message),
@@ -569,8 +568,8 @@ defmodule Supavisor.ClientHandler do
 
   # emulate handle_cast
   # A write with tracked messages was forwarded after the one the backend caught up
-  # with, so the backend isn't done yet. Another db_status follows once it is.
-  def handle_event(:cast, {:db_status, :ready_for_query, write_seq}, :busy, data)
+  # with, so the backend isn't done yet. Another backend_synced follows once it is.
+  def handle_event(:cast, {:backend_synced, write_seq}, :busy, data)
       when write_seq < data.tracked_seq do
     :keep_state_and_data
   end
@@ -578,7 +577,7 @@ defmodule Supavisor.ClientHandler do
   # The rest of a partly forwarded message must reach the same backend.
   def handle_event(
         :cast,
-        {:db_status, :ready_for_query, _write_seq},
+        {:backend_synced, _write_seq},
         :busy,
         %{
           mode: :transaction,
@@ -590,7 +589,7 @@ defmodule Supavisor.ClientHandler do
 
   # Later writes without tracked messages get no reply and can't change the backend's
   # state, so the backend is done with them too.
-  def handle_event(:cast, {:db_status, :ready_for_query, _write_seq}, :busy, data) do
+  def handle_event(:cast, {:backend_synced, _write_seq}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
     # In transaction mode the DbHandler waits for us to release it, since only we
@@ -616,7 +615,7 @@ defmodule Supavisor.ClientHandler do
      handle_actions(data)}
   end
 
-  def handle_event(:cast, {:db_status, :ready_for_query, _write_seq}, :idle, _) do
+  def handle_event(:cast, {:backend_synced, _write_seq}, :idle, _) do
     :keep_state_and_data
   end
 

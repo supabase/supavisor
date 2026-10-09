@@ -13,6 +13,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
 
   @behaviour Supavisor.Protocol.MessageHandler
 
+  alias Supavisor.Protocol.BackendConnection
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.SimpleQueryHandler
 
@@ -32,6 +33,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   @doc """
   Returns the messages forwarded since the last call, in order, and clears them.
   """
+  @spec take_forwarded(map()) :: {[BackendConnection.write_tag()], map()}
   def take_forwarded(state), do: {Enum.reverse(state.forwarded), %{state | forwarded: []}}
 
   @impl true

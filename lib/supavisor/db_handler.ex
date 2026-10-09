@@ -119,7 +119,7 @@ defmodule Supavisor.DbHandler do
   The ClientHandler should send this *before* forwarding the messages, so it reaches the
   DbHandler before the responses do.
   """
-  @spec expect_messages(pid(), pos_integer(), [byte() | {:ps, byte()}]) :: :ok
+  @spec expect_messages(pid(), pos_integer(), [BackendConnection.write_tag()]) :: :ok
   def expect_messages(pid, write_seq, tags),
     do: :gen_statem.cast(pid, {:expect_messages, write_seq, tags})
 
@@ -462,7 +462,7 @@ defmodule Supavisor.DbHandler do
     # The CopyDone or CopyFail ending a failed COPY gets no response, so it's the write
     # itself that syncs the backend.
     if not BackendConnection.synced?(data.backend) and BackendConnection.synced?(backend),
-      do: ClientHandler.db_status(data.caller, :ready_for_query, write_seq)
+      do: ClientHandler.backend_synced(data.caller, write_seq)
 
     {:keep_state, %{data | backend: backend, write_seq: write_seq}}
   end
@@ -495,10 +495,10 @@ defmodule Supavisor.DbHandler do
     {backend, to_send, synced?} = BackendConnection.recv(data.backend, bin)
     data = %{data | backend: backend}
 
-    # db_status is enqueued in the ClientHandler's mailbox before the final
+    # backend_synced is enqueued in the ClientHandler's mailbox before the final
     # ReadyForQuery reaches the client socket, so the ClientHandler usually releases
     # us before the client's next query arrives and that query takes a fresh checkout.
-    if synced?, do: ClientHandler.db_status(data.caller, :ready_for_query, data.write_seq)
+    if synced?, do: ClientHandler.backend_synced(data.caller, data.write_seq)
 
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
 

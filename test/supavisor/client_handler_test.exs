@@ -294,7 +294,7 @@ defmodule Supavisor.ClientHandlerTest do
     end
   end
 
-  describe "handle_event/4 :busy db_status" do
+  describe "handle_event/4 :busy backend_synced" do
     setup do
       {db_sock, _recv} = sockpair()
 
@@ -324,7 +324,7 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "releases the DbHandler when it caught up with the latest write", %{data: data} do
       assert {:next_state, :idle, data, _actions} =
-               @subject.handle_event(:cast, {:db_status, :ready_for_query, 3}, :busy, data)
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
 
       assert data.db_connection == nil
       assert_received {:"$gen_cast", {:release, 3}}
@@ -334,7 +334,7 @@ defmodule Supavisor.ClientHandlerTest do
       data = %{data | write_seq: 5}
 
       assert {:next_state, :idle, data, _actions} =
-               @subject.handle_event(:cast, {:db_status, :ready_for_query, 3}, :busy, data)
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
 
       assert data.db_connection == nil
       assert_received {:"$gen_cast", {:release, 5}}
@@ -342,7 +342,7 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "stays busy when a later write is still in flight", %{data: data} do
       assert :keep_state_and_data =
-               @subject.handle_event(:cast, {:db_status, :ready_for_query, 2}, :busy, data)
+               @subject.handle_event(:cast, {:backend_synced, 2}, :busy, data)
 
       refute_received {:"$gen_cast", {:release, _write_seq}}
     end
@@ -352,7 +352,7 @@ defmodule Supavisor.ClientHandlerTest do
       data = %{data | stream_state: stream_state}
 
       assert :keep_state_and_data =
-               @subject.handle_event(:cast, {:db_status, :ready_for_query, 3}, :busy, data)
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
 
       refute_received {:"$gen_cast", {:release, _write_seq}}
     end
