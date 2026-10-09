@@ -946,7 +946,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event({:call, from}, :cleanup, :idle, data)
 
       assert new_data.waiting_cleanup == from
-      assert pending(new_data) == [{?Q, :internal, nil}]
+      assert pending(new_data) == [{?Q, {:internal, :server_reset_query}, nil}]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
       assert message =~ "DISCARD ALL"
@@ -972,7 +972,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event({:call, from}, :cleanup, :busy, data)
 
       assert new_data.waiting_cleanup == from
-      assert pending(new_data) == [{?Q, :internal, nil}]
+      assert pending(new_data) == [{?Q, {:internal, :server_reset_query}, nil}]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
       assert message =~ "DISCARD ALL"
@@ -1046,6 +1046,30 @@ defmodule Supavisor.DbHandlerTest do
       assert new_data.caller == nil
       assert new_data.waiting_cleanup == nil
       assert pending(new_data) == []
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "stops when the reset query fails" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        caller: self(),
+        waiting_cleanup: from,
+        backend: discarding()
+      }
+
+      error =
+        Server.encode_error_message(%{"S" => "ERROR", "C" => "42601", "M" => "syntax error"})
+
+      content = {:tcp, recv, IO.iodata_to_binary([error, Server.ready_for_query()])}
+
+      assert {:stop_and_reply, :normal, {:reply, ^from, {:error, %{"C" => "42601"}}}} =
+               Db.handle_event(:info, content, :waiting_cleanup, data)
 
       :gen_tcp.close(send)
       :gen_tcp.close(recv)
@@ -1144,10 +1168,10 @@ defmodule Supavisor.DbHandlerTest do
       assert new_data.set_app_name_from == from
 
       assert pending(new_data) == [
-               {?P, :internal, nil},
-               {?B, :internal, nil},
-               {?E, :internal, nil},
-               {?S, :internal, nil}
+               {?P, {:internal, :application_name}, nil},
+               {?B, {:internal, :application_name}, nil},
+               {?E, {:internal, :application_name}, nil},
+               {?S, {:internal, :application_name}, nil}
              ]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
@@ -1180,6 +1204,29 @@ defmodule Supavisor.DbHandlerTest do
 
       assert new_data.set_app_name_from == nil
       assert pending(new_data) == []
+
+      :gen_tcp.close(send)
+      :gen_tcp.close(recv)
+    end
+
+    test "replies with the error when set_config fails, returning to :busy" do
+      {send, recv} = sockpair()
+      from = {self(), make_ref()}
+
+      data = %{
+        sock: {:gen_tcp, send},
+        mode: :session,
+        set_app_name_from: from,
+        backend: setting_application_name()
+      }
+
+      error =
+        Server.encode_error_message(%{"S" => "ERROR", "C" => "XX000", "M" => "boom"})
+
+      content = {:tcp, recv, IO.iodata_to_binary([error, Server.ready_for_query()])}
+
+      assert {:next_state, :busy, _new_data, {:reply, ^from, {:error, %{"C" => "XX000"}}}} =
+               Db.handle_event(:info, content, :setting_application_name, data)
 
       :gen_tcp.close(send)
       :gen_tcp.close(recv)
@@ -1493,14 +1540,16 @@ defmodule Supavisor.DbHandlerTest do
   defp discarding do
     BackendConnection.query(
       BackendConnection.new(BackendStorage.LRU),
-      :pgo_protocol.encode_query_message("DISCARD ALL")
+      :pgo_protocol.encode_query_message("DISCARD ALL"),
+      :server_reset_query
     )
   end
 
   defp setting_application_name do
     BackendConnection.query(
       BackendConnection.new(BackendStorage.LRU),
-      Server.extended_query("SELECT set_config('application_name', $1, false)", ["my app"])
+      Server.extended_query("SELECT set_config('application_name', $1, false)", ["my app"]),
+      :application_name
     )
   end
 end

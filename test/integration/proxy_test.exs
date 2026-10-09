@@ -1087,6 +1087,29 @@ defmodule Supavisor.Integration.ProxyTest do
              P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})
   end
 
+  test "failed server_reset_query discards the connection instead of reusing it" do
+    connection_opts = session_tenant_with_reset_query("RESET nonexistent_setting")
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+
+    assert [%P.Result{rows: [[backend_pid_1]]}] =
+             P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    assert [%P.Result{}] =
+             P.SimpleConnection.call(conn1, {:query, "SET statement_timeout = '12345ms';"})
+
+    stop_supervised(:conn1)
+    Process.sleep(100)
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+
+    # The reset errored, so conn1's backend was closed rather than returned to the pool
+    assert [%P.Result{rows: [[backend_pid_2]]}] =
+             P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
+
+    assert backend_pid_1 != backend_pid_2
+  end
+
   test "max pools reached returns proper error" do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
     tenant = "max_pool_tenant"

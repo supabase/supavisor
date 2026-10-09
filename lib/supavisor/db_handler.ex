@@ -522,13 +522,20 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:info, {proto, _, bin}, :waiting_cleanup, %{caller: caller} = data)
       when is_pid(caller) and proto in @proto do
-    {backend, _to_send, done?} = BackendConnection.recv(data.backend, bin)
+    {backend, _to_send, _synced?} = BackendConnection.recv(data.backend, bin)
 
-    if done? do
-      new_data = %{data | backend: backend, caller: nil, waiting_cleanup: nil}
-      {:next_state, :idle, new_data, {:reply, data.waiting_cleanup, :ok}}
-    else
-      {:keep_state, %{data | backend: backend}}
+    case BackendConnection.pop_query_result(backend, :server_reset_query) do
+      {:ok, backend, :ok} ->
+        new_data = %{data | backend: backend, caller: nil, waiting_cleanup: nil}
+        {:next_state, :idle, new_data, {:reply, data.waiting_cleanup, :ok}}
+
+      # Don't return to pool if reset failed.
+      {:ok, _backend, {:error, error}} ->
+        Logger.error("DbHandler: server_reset_query failed, shutting down: #{inspect(error)}")
+        {:stop_and_reply, :normal, {:reply, data.waiting_cleanup, {:error, error}}}
+
+      {:error, :not_yet} ->
+        {:keep_state, %{data | backend: backend}}
     end
   end
 
@@ -550,7 +557,7 @@ defmodule Supavisor.DbHandler do
         query =
           Server.extended_query("SELECT set_config('application_name', $1, false)", [app_name])
 
-        backend = BackendConnection.query(data.backend, query)
+        backend = BackendConnection.query(data.backend, query, :application_name)
         :ok = HandlerHelpers.sock_send(data.sock, query)
 
         {:next_state, :setting_application_name,
@@ -565,13 +572,15 @@ defmodule Supavisor.DbHandler do
   # The query's responses never reach the client.
   def handle_event(:info, {proto, _, bin}, :setting_application_name, data)
       when proto in @proto do
-    {backend, _to_send, done?} = BackendConnection.recv(data.backend, bin)
+    {backend, _to_send, _synced?} = BackendConnection.recv(data.backend, bin)
 
-    if done? do
-      {:next_state, :busy, %{data | backend: backend, set_app_name_from: nil},
-       {:reply, data.set_app_name_from, :ok}}
-    else
-      {:keep_state, %{data | backend: backend}}
+    case BackendConnection.pop_query_result(backend, :application_name) do
+      {:ok, backend, result} ->
+        {:next_state, :busy, %{data | backend: backend, set_app_name_from: nil},
+         {:reply, data.set_app_name_from, result}}
+
+      {:error, :not_yet} ->
+        {:keep_state, %{data | backend: backend}}
     end
   end
 
@@ -665,7 +674,7 @@ defmodule Supavisor.DbHandler do
       state in [:idle, :busy] ->
         Logger.debug("DbHandler: Starting cleanup, sending #{data.server_reset_query}")
         msg = :pgo_protocol.encode_query_message(data.server_reset_query)
-        backend = BackendConnection.query(data.backend, msg)
+        backend = BackendConnection.query(data.backend, msg, :server_reset_query)
         :ok = HandlerHelpers.sock_send(data.sock, msg)
 
         {:next_state, :waiting_cleanup,
