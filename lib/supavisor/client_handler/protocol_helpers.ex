@@ -14,6 +14,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   require Logger
 
   alias Supavisor.{
+    ClientHandler.StartupParams,
     Errors.InvalidUserInfoError,
     Errors.StartupMessageError,
     Errors.MaxPreparedStatementsError,
@@ -37,11 +38,6 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
           | {:error, DuplicatePreparedStatementError.t()}
           | {:error, PreparedStatementNotFoundError.t()}
 
-  @type startup_message_data() ::
-          {atom(),
-           {String.t(), String.t(), String.t() | nil, String.t() | nil, boolean(),
-            boolean() | nil, String.t() | nil}}
-
   ## Startup Packet Processing
 
   @doc """
@@ -50,18 +46,21 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   Returns parsed user info, application name, log level, and list of invalid options.
   """
   @spec parse_startup_packet(binary()) ::
-          {:ok, startup_message_data(), String.t() | nil, Logger.level() | nil,
-           [{String.t(), String.t()}]}
+          {:ok, StartupParams.t()}
           | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
          {options, invalid} = StartupOptions.validate(hello.payload["options"] || %{}),
-         {:ok, user_info} <- extract_and_validate_user_info(hello.payload, options) do
+         {:ok, params} <- extract_and_validate_user_info(hello.payload, options) do
       Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
-      app_name = normalize_app_name(hello.payload["application_name"])
-      log_level = options["log_level"]
 
-      {:ok, user_info, app_name, log_level, invalid}
+      {:ok,
+       %{
+         params
+         | app_name: normalize_app_name(hello.payload["application_name"]),
+           log_level: options["log_level"],
+           invalid_options: invalid
+       }}
     end
   end
 
@@ -69,19 +68,25 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   Extracts and validates user information from startup payload.
   """
   @spec extract_and_validate_user_info(map(), map()) ::
-          {:ok, startup_message_data()}
+          {:ok, StartupParams.t()}
           | {:error, InvalidUserInfoError.t()}
   def extract_and_validate_user_info(payload, options) do
     {type, {user, tenant_or_alias, db_name}} = HandlerHelpers.parse_user_info(payload)
 
     if Helpers.validate_name(user) and (is_nil(db_name) or Helpers.validate_name(db_name)) do
-      search_path = payload["search_path"] || options["search_path"]
-      jit = Map.get(options, "jit", false)
-      client_tls = Map.get(options, "client_tls")
-      # Set by a peer node when it forwards a proxied connection; carries the
-      # original client's IP. Only honored on local listeners, see effective_peer_ip/3.
-      client_ip = options["client_ip"]
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
+      {:ok,
+       %StartupParams{
+         type: type,
+         user: user,
+         tenant_or_alias: tenant_or_alias,
+         db_name: db_name,
+         search_path: payload["search_path"] || options["search_path"],
+         jit: Map.get(options, "jit", false),
+         client_tls: Map.get(options, "client_tls"),
+         # Set by a peer node when it forwards a proxied connection; carries the
+         # original client's IP. Only honored on local listeners, see effective_peer_ip/3.
+         client_ip: options["client_ip"]
+       }}
     else
       {:error, %InvalidUserInfoError{user: user, db_name: db_name}}
     end

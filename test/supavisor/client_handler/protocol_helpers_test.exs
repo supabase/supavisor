@@ -1,23 +1,32 @@
 defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
   use ExUnit.Case, async: true
 
-  alias Supavisor.ClientHandler.ProtocolHelpers
+  alias Supavisor.ClientHandler.{ProtocolHelpers, StartupParams}
   alias Supavisor.Protocol.StartupOptions
 
   describe "parse_startup_packet/1" do
     test "drops an invalid option and reports it" do
       bin = startup_packet([{"user", "postgres.some_tenant"}, {"options", "-c jit=maybe"}])
 
-      assert {:ok, {_type, {"postgres", "some_tenant", _db, _sp, false, _tls, _ip}}, _app, _log,
-              [{"jit", "maybe"}]} = ProtocolHelpers.parse_startup_packet(bin)
+      assert {:ok,
+              %StartupParams{
+                user: "postgres",
+                tenant_or_alias: "some_tenant",
+                jit: false,
+                invalid_options: [{"jit", "maybe"}]
+              }} = ProtocolHelpers.parse_startup_packet(bin)
     end
 
     test "accepts and type-converts valid options" do
       bin = startup_packet([{"user", "postgres.some_tenant"}, {"options", "-c jit=1"}])
 
-      assert {:ok, {_type, {"postgres", "some_tenant", _db, _sp, true, _tls, _ip}}, _app, _log,
-              []} =
-               ProtocolHelpers.parse_startup_packet(bin)
+      assert {:ok,
+              %StartupParams{
+                user: "postgres",
+                tenant_or_alias: "some_tenant",
+                jit: true,
+                invalid_options: []
+              }} = ProtocolHelpers.parse_startup_packet(bin)
     end
   end
 
@@ -25,23 +34,47 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
     test "returns nil client_ip when the option is absent" do
       payload = %{"user" => "postgres.some_tenant"}
 
-      assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, true, nil, nil}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload, %{"jit" => true})
+      assert {:ok,
+              %StartupParams{
+                user: "postgres",
+                tenant_or_alias: "some_tenant",
+                db_name: nil,
+                search_path: nil,
+                jit: true,
+                client_tls: nil,
+                client_ip: nil
+              }} = ProtocolHelpers.extract_and_validate_user_info(payload, %{"jit" => true})
     end
 
     test "returns nil client_ip when there are no options" do
       payload = %{"user" => "postgres.some_tenant"}
 
-      assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, false, nil, nil}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload, %{})
+      assert {:ok,
+              %StartupParams{
+                user: "postgres",
+                tenant_or_alias: "some_tenant",
+                db_name: nil,
+                search_path: nil,
+                jit: false,
+                client_tls: nil,
+                client_ip: nil
+              }} = ProtocolHelpers.extract_and_validate_user_info(payload, %{})
     end
 
     test "extracts client_ip alongside jit and client_tls" do
       payload = %{"user" => "postgres.some_tenant"}
       options = %{"jit" => true, "client_tls" => true, "client_ip" => "203.0.113.9"}
 
-      assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, true, true, "203.0.113.9"}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload, options)
+      assert {:ok,
+              %StartupParams{
+                user: "postgres",
+                tenant_or_alias: "some_tenant",
+                db_name: nil,
+                search_path: nil,
+                jit: true,
+                client_tls: true,
+                client_ip: "203.0.113.9"
+              }} = ProtocolHelpers.extract_and_validate_user_info(payload, options)
     end
 
     test "round-trips client_ip through the startup options wire format" do
@@ -57,8 +90,16 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
       {options, []} = StartupOptions.validate(StartupOptions.parse(encoded))
       payload = %{"user" => "postgres.some_tenant"}
 
-      assert {:ok, {_type, {"postgres", "some_tenant", nil, nil, true, true, "2001:db8::1"}}} =
-               ProtocolHelpers.extract_and_validate_user_info(payload, options)
+      assert {:ok,
+              %StartupParams{
+                user: "postgres",
+                tenant_or_alias: "some_tenant",
+                db_name: nil,
+                search_path: nil,
+                jit: true,
+                client_tls: true,
+                client_ip: "2001:db8::1"
+              }} = ProtocolHelpers.extract_and_validate_user_info(payload, options)
     end
   end
 
