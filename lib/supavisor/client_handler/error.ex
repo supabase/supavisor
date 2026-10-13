@@ -3,6 +3,7 @@ defmodule Supavisor.ClientHandler.Error do
   Error handling and message formatting for ClientHandler.
   """
 
+  alias Supavisor.ClientHandler.ConnectionRequest
   alias Supavisor.{HandlerHelpers, Monitoring.Telem, Protocol.Server}
   alias Supavisor.Errors.ClientSocketClosedError
 
@@ -31,6 +32,9 @@ defmodule Supavisor.ClientHandler.Error do
     response_delay = Map.get(error_actions, :response_delay, 0)
 
     record_error(exception, data.mode, data.local)
+
+    # Before the response delay below, so the duration is the time to decide, not the throttle
+    ConnectionRequest.error(data, exception)
 
     if log_message do
       Logger.log(log_level, "ClientHandler: #{log_message}")

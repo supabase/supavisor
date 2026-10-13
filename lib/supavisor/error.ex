@@ -26,6 +26,7 @@ defmodule Supavisor.Error do
   * `postgres_error/1`, which by default wraps `error_message/1` in a fatal postgres
     error with code `"XX000"`.
   * `response_delay/1`, which by default returns `0`.
+  * `fault/1`, which by default returns `:supavisor`.
   """
 
   @typedoc """
@@ -63,6 +64,21 @@ defmodule Supavisor.Error do
   Throttles clients that retry in a loop on errors that retrying won't fix.
   """
   @callback response_delay(error :: t()) :: non_neg_integer()
+
+  @typedoc """
+  Who is responsible for an error:
+
+  * `:user` - an immediate rejection of a bad request (wrong password, unknown tenant, ...)
+  * `:user_timeout` - user-side, but slow by design (waiting on the client, retried limits)
+  * `:supavisor` - an unexpected failure on our side. Also the default, so unclassified errors count against us
+  * `:client_abort` - the client went away before we could finish
+  """
+  @type fault() :: :user | :user_timeout | :supavisor | :client_abort
+
+  @doc """
+  Who is responsible for this error, used to tag connection request metrics
+  """
+  @callback fault(error :: t()) :: fault()
 
   @long_response_delay Application.compile_env!(:supavisor, [:response_delays, :long])
   @short_response_delay Application.compile_env!(:supavisor, [:response_delays, :short])
@@ -111,7 +127,14 @@ defmodule Supavisor.Error do
       @impl Supavisor.Error
       def response_delay(_), do: 0
 
-      defoverridable log_level: 1, log_message: 1, postgres_error: 1, response_delay: 1
+      @impl Supavisor.Error
+      def fault(_), do: :supavisor
+
+      defoverridable log_level: 1,
+                     log_message: 1,
+                     postgres_error: 1,
+                     response_delay: 1,
+                     fault: 1
     end
   end
 

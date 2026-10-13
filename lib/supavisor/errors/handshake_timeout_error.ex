@@ -19,4 +19,7 @@ defmodule Supavisor.Errors.HandshakeTimeoutError do
 
   @impl Supavisor.Error
   def postgres_error(_error), do: nil
+
+  @impl Supavisor.Error
+  def fault(_), do: :user_timeout
 end

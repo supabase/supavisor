@@ -29,4 +29,7 @@ defmodule Supavisor.Errors.AuthTimeoutError do
   defp context_description(:auth_scram_first_wait), do: "SCRAM first"
   defp context_description(:auth_scram_final_wait), do: "SCRAM final"
   defp context_description(other), do: inspect(other)
+
+  @impl Supavisor.Error
+  def fault(_), do: :user_timeout
 end
