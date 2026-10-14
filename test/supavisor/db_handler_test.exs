@@ -96,7 +96,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: state.mode,
         replica_type: state.replica_type,
         log_level: state.log_level,
-        tenant_feature_flags: state.tenant_feature_flags
+        tenant_feature_flags: state.tenant_feature_flags,
+        log_connections: state.log_connections
       }
 
       {:reply, config, state}
@@ -189,7 +190,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        tenant_feature_flags: %{}
+        tenant_feature_flags: %{},
+        log_connections: true
       }
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
@@ -221,7 +223,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        tenant_feature_flags: %{}
+        tenant_feature_flags: %{},
+        log_connections: true
       }
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
@@ -246,7 +249,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        tenant_feature_flags: %{}
+        tenant_feature_flags: %{},
+        log_connections: true
       }
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})
@@ -276,7 +280,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :transaction,
         replica_type: :single,
         log_level: nil,
-        tenant_feature_flags: %{}
+        tenant_feature_flags: %{},
+        log_connections: true
       }
 
       {:ok, _manager} = start_supervised({FakeManager, manager_config})

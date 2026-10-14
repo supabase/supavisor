@@ -119,6 +119,7 @@ defmodule Supavisor.ClientHandler do
       stats: %{},
       idle_timeout: 0,
       heartbeat_interval: 0,
+      log_connections: true,
       connection_start: now,
       state_entered_at: now,
       subscribe_retries: 0,
@@ -431,7 +432,8 @@ defmodule Supavisor.ClientHandler do
              data.pool_ranch,
              client_ssl: data.ssl,
              client_jit: data.use_jit_flow,
-             client_ip: forwardable_peer_ip(data.peer_ip)
+             client_ip: forwardable_peer_ip(data.peer_ip),
+             log_connections: data.log_connections
            ),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
@@ -704,7 +706,7 @@ defmodule Supavisor.ClientHandler do
 
   # Terminate request
   def handle_event(_kind, {proto, _, <<?X, 4::32>>}, state, data) when proto in @proto do
-    Logger.info("ClientHandler: Terminate received from client")
+    if data.log_connections, do: Logger.info("ClientHandler: Terminate received from client")
     maybe_cleanup_db_handler(state, data)
     {:stop, :normal}
   end
@@ -828,7 +830,7 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
   defp handle_auth_success(final_secrets, data) do
-    Logger.info("ClientHandler: Connection authenticated")
+    if data.log_connections, do: Logger.info("ClientHandler: Connection authenticated")
     cache_validated_password(data, final_secrets)
 
     if data.mode != :proxy do
@@ -1105,6 +1107,7 @@ defmodule Supavisor.ClientHandler do
         ps: info.tenant.default_parameter_status,
         proxy_type: proxy_type,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
+        log_connections: info.tenant.log_connections,
         connection_params: connection_params,
         max_clients: info.user.max_clients || info.tenant.default_max_clients,
         use_jit_flow: client_jit
