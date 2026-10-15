@@ -25,6 +25,7 @@ defmodule Supavisor.Error do
   * `log_level/1`, which by default returns `:error`.
   * `postgres_error/1`, which by default wraps `error_message/1` in a fatal postgres
     error with code `"XX000"`.
+  * `response_delay/1`, which by default returns `0`.
   """
 
   @typedoc """
@@ -55,6 +56,26 @@ defmodule Supavisor.Error do
   If `nil`, no error is sent
   """
   @callback postgres_error(error :: t()) :: map() | nil
+
+  @doc """
+  Milliseconds to wait before sending the error to the client on ClientHandler
+
+  Throttles clients that retry in a loop on errors that retrying won't fix.
+  """
+  @callback response_delay(error :: t()) :: non_neg_integer()
+
+  @long_response_delay Application.compile_env!(:supavisor, [:response_delays, :long])
+  @short_response_delay Application.compile_env!(:supavisor, [:response_delays, :short])
+
+  @doc """
+  Response delay for errors that retrying won't fix
+  """
+  def long_response_delay, do: @long_response_delay
+
+  @doc """
+  Response delay for overload errors
+  """
+  def short_response_delay, do: @short_response_delay
 
   defmacro __using__(opts) do
     quote generated: true do
@@ -87,7 +108,10 @@ defmodule Supavisor.Error do
       @impl Supavisor.Error
       def log_level(_), do: :error
 
-      defoverridable log_level: 1, log_message: 1, postgres_error: 1
+      @impl Supavisor.Error
+      def response_delay(_), do: 0
+
+      defoverridable log_level: 1, log_message: 1, postgres_error: 1, response_delay: 1
     end
   end
 

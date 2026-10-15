@@ -63,10 +63,16 @@ defmodule Supavisor.Application do
         {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
          %{mode: :transaction, local: false}, Supavisor.ClientHandler},
         {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
-         %{mode: :session, local: false}, Supavisor.ClientHandler},
-        {:pg_proxy, Application.get_env(:supavisor, :proxy_port), %{mode: :proxy, local: false},
-         Supavisor.ClientHandler}
+         %{mode: :session, local: false}, Supavisor.ClientHandler}
       ] ++ session_shards ++ transaction_shards
+
+    num_acceptors = String.to_integer(System.get_env("NUM_ACCEPTORS") || "100")
+
+    max_connections =
+      case System.get_env("MAX_CONNECTIONS") do
+        nil -> :infinity
+        value -> String.to_integer(value)
+      end
 
     ranch_listeners =
       for {key, port, opts, handler} <- proxy_ports do
@@ -74,25 +80,17 @@ defmodule Supavisor.Application do
           key,
           :ranch_tcp,
           %{
-            max_connections:
-              case System.get_env("MAX_CONNECTIONS") do
-                nil -> :infinity
-                value -> String.to_integer(value)
-              end,
-            num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
-            socket_opts: [port: port, keepalive: true]
+            max_connections: max_connections,
+            num_acceptors: num_acceptors,
+            num_listen_sockets: min(System.schedulers_online(), num_acceptors),
+            socket_opts: [port: port, keepalive: true, reuseport: true]
           },
           handler,
           opts
         )
       end
 
-    :syn.set_event_handler(Supavisor.SynHandler)
-    :syn.add_node_to_scopes([:tenants, :availability_zone])
-
-    :syn.join(:availability_zone, Application.get_env(:supavisor, :availability_zone), self(),
-      node: node()
-    )
+    :syn.add_node_to_scopes([:tenants, :tenant_pools, :availability_zone, :accepting_pools])
 
     Supavisor.CircuitBreaker.init()
     Supavisor.ConnectBackoff.init()
@@ -103,11 +101,15 @@ defmodule Supavisor.Application do
       [
         {Cachex, name: Supavisor.Cache},
         Supavisor.ErlSysMon,
+        Supavisor.Logger.LinesCounter,
+        Supavisor.MessageQueueWatchdog,
         Supavisor.Health,
         Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,
         Supavisor.ConnectBackoff.Janitor,
+        Supavisor.DeadPortSweeper,
         {Task.Supervisor, name: Supavisor.PoolTerminator},
+        {Task.Supervisor, name: Supavisor.TaskSupervisor},
         {Registry, keys: :unique, name: Supavisor.Registry.Tenants},
         {Registry, keys: :unique, name: Supavisor.Registry.ManagerTables},
         {Registry, keys: :unique, name: Supavisor.Registry.PoolPids},
@@ -142,8 +144,21 @@ defmodule Supavisor.Application do
       if @metrics_disabled do
         children
       else
-        children ++ [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner]
+        children ++
+          [
+            {Supavisor.SchedulerUtilization,
+             interval: Application.fetch_env!(:supavisor, :prom_poll_rate)},
+            PromEx,
+            Supavisor.TenantsMetrics,
+            Supavisor.MetricsCleaner
+          ] ++
+          metrics_pusher_children()
       end
+
+    # These two must be last, in this order. NodeMembership is terminated
+    # first, so other nodes stop placing new pools here. The Drainer follows,
+    # draining every local pool before the client listeners are torn down.
+    children = children ++ [Supavisor.Drainer, Supavisor.NodeMembership]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -157,6 +172,25 @@ defmodule Supavisor.Application do
   def config_change(changed, _new, removed) do
     SupavisorWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  @spec metrics_pusher_children() :: [Supervisor.child_spec()]
+  def metrics_pusher_children do
+    [
+      if Application.get_env(:supavisor, :metrics_pusher_enabled) do
+        Supervisor.child_spec(
+          {Supavisor.MetricsPusher, scope: :global, name: Supavisor.MetricsPusher.Global},
+          id: Supavisor.MetricsPusher.Global
+        )
+      end,
+      if Application.get_env(:supavisor, :tenant_metrics_pusher_enabled) do
+        Supervisor.child_spec(
+          {Supavisor.MetricsPusher, scope: :tenant, name: Supavisor.MetricsPusher.Tenant},
+          id: Supavisor.MetricsPusher.Tenant
+        )
+      end
+    ]
+    |> Enum.reject(&is_nil/1)
   end
 
   @spec build_shards([pos_integer()], atom()) :: term()

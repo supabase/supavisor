@@ -3,6 +3,7 @@ main modules involved in this implementation are:
 
 - `Supavisor.Monitoring.PromEx`
 - `Supavisor.PromEx.Plugins.OsMon`
+- `Supavisor.PromEx.Plugins.NetStat`
 - `Supavisor.PromEx.Plugins.Tenant`
 - `Supavisor.Monitoring.Telem`
 
@@ -42,6 +43,9 @@ The exposed metrics include the following:
   * CPU utilization
   * RAM usage
   * Load average (LA)
+  * Disk space usage (per mountpoint)
+  * Network counters (listen drops, listen overflows, TCP aborts, SYN retransmits, active/passive opens, connection attempt failures, established resets, segment errors)
+  * TCP socket usage (in-use, orphaned, TIME_WAIT, allocated, memory pages)
 
 ## Tenant metrics
 

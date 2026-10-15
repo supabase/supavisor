@@ -63,7 +63,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
     %{id: id, db_conf: db_conf}
   end
 
-  describe "Manager.graceful_shutdown/2" do
+  describe "Manager.graceful_shutdown/3" do
     test "returns :ok  when no clients connected", %{id: id, db_conf: db_conf} do
       proxy = start_proxy(db_conf)
 
@@ -75,7 +75,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       assert :ok = wait_until(fn -> get_client_count(id) == 0 end)
 
       # Graceful shutdown should return immediately
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
     end
 
     test "waits for idle clients to disconnect", %{id: id, db_conf: db_conf} do
@@ -88,7 +88,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       ref = Process.monitor(client_pid)
 
       # Graceful shutdown blocks until client disconnects
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
 
       # Client handler should have been terminated
       assert_received {:DOWN, ^ref, :process, ^client_pid, :normal}
@@ -113,7 +113,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       # Start graceful shutdown
       shutdown_task =
         Task.async(fn ->
-          Manager.graceful_shutdown(id, 5000)
+          Manager.graceful_shutdown(id, 5000, 6000)
         end)
 
       # Query should complete (graceful shutdown waits for busy clients)
@@ -141,7 +141,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       ref = Process.monitor(client_pid)
 
       # Terminate should happen fast, regardless of ongoing query
-      assert :ok = Manager.graceful_shutdown(id, 100)
+      assert :ok = Manager.graceful_shutdown(id, 100, 1000)
       assert_receive {:DOWN, ^ref, :process, ^client_pid, _reason}, 1000
 
       assert {:error, %Postgrex.Error{postgres: %{code: :admin_shutdown}}} =
@@ -158,7 +158,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
 
       # Mock Supavisor.stop to not stop the pool, so we guarantee that the pool didn't
-      # terminate yet at the point we call Manager.graceful_shutdown/2
+      # terminate yet at the point we call Manager.graceful_shutdown/3
       :meck.new(Supavisor, [:passthrough])
 
       :meck.expect(Supavisor, :stop, fn _id ->
@@ -174,7 +174,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       assert :ok = wait_until(fn -> :sys.get_state(manager).terminating_error != nil end)
 
       # Graceful shutdown should return immediately since already terminating
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
     after
       :meck.unload(Supavisor)
     end
@@ -202,7 +202,7 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
         end
 
       # Graceful shutdown should terminate all clients
-      assert :ok = Manager.graceful_shutdown(id, 5000)
+      assert :ok = Manager.graceful_shutdown(id, 5000, 6000)
 
       # All client handlers should have been terminated
       for pid <- client_pids do
@@ -219,15 +219,15 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
       # Start graceful shutdown (won't complete until client disconnects)
       shutdown_task =
         Task.async(fn ->
-          Manager.graceful_shutdown(id, 5000)
+          Manager.graceful_shutdown(id, 5000, 6000)
         end)
 
       # Wait for manager to be terminating
       manager = Supavisor.get_local_manager(id)
       assert :ok = wait_until(fn -> :sys.get_state(manager).terminating_error != nil end)
 
-      # New connection should fail with admin_shutdown error
-      assert {:error, {%Postgrex.Error{postgres: %{code: :admin_shutdown}}, _}} =
+      # New connection should fail with cannot_connect_now error
+      assert {:error, {%Postgrex.Error{postgres: %{code: :cannot_connect_now}}, _}} =
                start_supervised(
                  SingleConnection.child_spec(
                    hostname: db_conf[:hostname],
@@ -293,6 +293,83 @@ defmodule Supavisor.Integration.GracefulShutdownTest do
 
       # Client handler should be down
       assert_receive {:DOWN, ^ref, :process, ^client_pid, _reason}, 1000
+    end
+
+    test "de-registers the pool and rejects a new one on the same node until it exits", %{
+      id: id,
+      db_conf: db_conf
+    } do
+      proxy = start_proxy(db_conf)
+      assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+
+      query_task = Task.async(fn -> P.query(proxy, "SELECT pg_sleep(1)", []) end)
+      client_pid = get_client_handler_pid(id)
+      assert :ok = wait_until(fn -> elem(:sys.get_state(client_pid), 0) == :busy end)
+
+      old_sup = Supavisor.get_global_sup(id)
+      sup_ref = Process.monitor(old_sup)
+      stop_task = Task.async(fn -> Supavisor.stop(id) end)
+
+      assert :ok = wait_until(fn -> Supavisor.get_global_sup(id) == nil end)
+      assert Process.alive?(old_sup)
+
+      conn_opts = [
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: db_conf[:username] <> "." <> @tenant,
+        sync_connect: true
+      ]
+
+      assert {:error, {%Postgrex.Error{postgres: %{code: :cannot_connect_now}}, _}} =
+               start_supervised(SingleConnection.child_spec(conn_opts))
+
+      assert {:ok, %P.Result{}} = Task.await(query_task, 2000)
+      assert :ok = Task.await(stop_task, 6000)
+      assert_receive {:DOWN, ^sup_ref, :process, ^old_sup, _reason}
+
+      new_proxy = start_proxy(db_conf)
+      assert %P.Result{rows: [[1]]} = P.query!(new_proxy, "SELECT 1", [])
+      new_sup = Supavisor.get_global_sup(id)
+      assert is_pid(new_sup)
+      refute new_sup == old_sup
+    end
+
+    test "stopping a shutting down pool doesn't stop the pool registered after it", %{
+      id: id,
+      db_conf: db_conf
+    } do
+      proxy = start_proxy(db_conf)
+      assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+
+      query_task = Task.async(fn -> P.query(proxy, "SELECT pg_sleep(1)", []) end)
+      client_pid = get_client_handler_pid(id)
+      assert :ok = wait_until(fn -> elem(:sys.get_state(client_pid), 0) == :busy end)
+
+      old_manager = Supavisor.get_local_manager(id)
+      old_sup = Supavisor.get_global_sup(id)
+      sup_ref = Process.monitor(old_sup)
+      stop_task = Task.async(fn -> Supavisor.stop(id) end)
+
+      assert :ok = wait_until(fn -> Supavisor.get_global_sup(id) == nil end)
+
+      {:ok, new_sup} = Agent.start(fn -> nil end)
+      :ok = :syn.register(:tenants, id, new_sup, %{})
+
+      on_exit(fn ->
+        :syn.unregister(:tenants, id)
+        Process.exit(new_sup, :kill)
+      end)
+
+      assert :ok = Manager.stop_pool(old_manager)
+
+      assert {:ok, %P.Result{}} = Task.await(query_task, 2000)
+      assert :ok = Task.await(stop_task, 6000)
+      assert_receive {:DOWN, ^sup_ref, :process, ^old_sup, _reason}
+
+      assert Process.alive?(new_sup)
+      assert Supavisor.get_global_sup(id) == new_sup
     end
   end
 end

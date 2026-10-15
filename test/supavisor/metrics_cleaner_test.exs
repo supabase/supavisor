@@ -23,13 +23,15 @@ defmodule Supavisor.MetricsCleanerTest do
   test "metrics for unknown tenant are removed" do
     :ok =
       Metrics.emit_telemetry_for_tenant(
-        {Supavisor.id(
-           type: :single,
-           tenant: "non-existent",
-           user: "foo",
-           mode: :transaction,
-           db: "bar"
-         ), 2137}
+        Supavisor.id(
+          type: :single,
+          tenant: "non-existent",
+          user: "foo",
+          mode: :transaction,
+          db: "bar"
+        ),
+        2137,
+        ""
       )
 
     metrics = Supavisor.Monitoring.PromEx.get_metrics()
@@ -112,13 +114,15 @@ defmodule Supavisor.MetricsCleanerTest do
 
     :ok =
       Metrics.emit_telemetry_for_tenant(
-        {Supavisor.id(
-           type: :single,
-           tenant: "orphan-tags-test",
-           user: "foo",
-           mode: :transaction,
-           db: "bar"
-         ), 42}
+        Supavisor.id(
+          type: :single,
+          tenant: "orphan-tags-test",
+          user: "foo",
+          mode: :transaction,
+          db: "bar"
+        ),
+        42,
+        ""
       )
 
     # Trigger a scrape so the cache_tid gets populated via the export path
@@ -132,7 +136,8 @@ defmodule Supavisor.MetricsCleanerTest do
       mode: :transaction,
       type: :single,
       db_name: "bar",
-      search_path: nil
+      search_path: nil,
+      app_name: ""
     }
 
     [{^tags_map, tags_id}] = :ets.lookup(tags_tid, tags_map)

@@ -63,8 +63,11 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
       {:ok, new_stream_state, result} =
         MessageStreamer.handle_packets(stream_state, original_bin)
 
-      assert MessageStreamer.stream_state(new_stream_state, :handler_state) ==
-               MessageStreamer.stream_state(stream_state, :handler_state)
+      # The action queue is untouched.
+      assert BackendMessageHandler.handler_state(
+               MessageStreamer.stream_state(new_stream_state, :handler_state),
+               :action_queue
+             ) == :queue.new()
 
       assert IO.iodata_to_binary(result) == original_bin
     end
@@ -297,6 +300,54 @@ defmodule Supavisor.Protocol.BackendMessageHandlerTest do
                MessageStreamer.stream_state(stream_state, :handler_state)
 
       assert IO.iodata_to_binary(result) == original_bin
+    end
+  end
+
+  describe "ReadyForQuery counting" do
+    test "records the count and status of a single ReadyForQuery", %{stream_state: stream_state} do
+      {:ok, new_stream_state, _result} =
+        MessageStreamer.handle_packets(stream_state, <<?Z, 5::32, ?I>>)
+
+      hs = MessageStreamer.stream_state(new_stream_state, :handler_state)
+      assert BackendMessageHandler.handler_state(hs, :rfq_count) == 1
+      assert BackendMessageHandler.handler_state(hs, :last_rfq_status) == ?I
+    end
+
+    test "counts every ReadyForQuery in a pipelined batch, keeping the last status", %{
+      stream_state: stream_state
+    } do
+      batch = <<?Z, 5::32, ?T>> <> <<?Z, 5::32, ?T>> <> <<?Z, 5::32, ?I>>
+
+      {:ok, new_stream_state, _result} = MessageStreamer.handle_packets(stream_state, batch)
+
+      hs = MessageStreamer.stream_state(new_stream_state, :handler_state)
+      assert BackendMessageHandler.handler_state(hs, :rfq_count) == 3
+      assert BackendMessageHandler.handler_state(hs, :last_rfq_status) == ?I
+    end
+
+    test "counts a ReadyForQuery only once it is fully framed across reads", %{
+      stream_state: stream_state
+    } do
+      <<first::binary-size(4), second::binary>> = <<?Z, 5::32, ?I>>
+
+      {:ok, mid_state, _result} = MessageStreamer.handle_packets(stream_state, first)
+      mid_hs = MessageStreamer.stream_state(mid_state, :handler_state)
+      assert BackendMessageHandler.handler_state(mid_hs, :rfq_count) == 0
+
+      {:ok, done_state, _result} = MessageStreamer.handle_packets(mid_state, second)
+      done_hs = MessageStreamer.stream_state(done_state, :handler_state)
+      assert BackendMessageHandler.handler_state(done_hs, :rfq_count) == 1
+      assert BackendMessageHandler.handler_state(done_hs, :last_rfq_status) == ?I
+    end
+
+    test "does not count non-ReadyForQuery messages", %{stream_state: stream_state} do
+      # ParseComplete
+      {:ok, new_stream_state, _result} =
+        MessageStreamer.handle_packets(stream_state, <<?1, 4::32>>)
+
+      hs = MessageStreamer.stream_state(new_stream_state, :handler_state)
+      assert BackendMessageHandler.handler_state(hs, :rfq_count) == 0
+      assert BackendMessageHandler.handler_state(hs, :last_rfq_status) == nil
     end
   end
 end

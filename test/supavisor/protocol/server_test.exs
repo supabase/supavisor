@@ -202,6 +202,21 @@ defmodule Supavisor.Protocol.ServerTest do
                "FATAL", 0, ?V, "FATAL", 0, 0>>
   end
 
+  test "encode_notice_message/1" do
+    message = %{
+      "S" => "NOTICE",
+      "V" => "NOTICE",
+      "C" => "22023",
+      "M" => ~s(parameter "jit" requires a Boolean value)
+    }
+
+    result = Server.encode_notice_message(message) |> IO.iodata_to_binary()
+
+    assert result ==
+             <<?N, 0, 0, 0, 70, ?C, "22023", 0, ?M, ~s(parameter "jit" requires a Boolean value),
+               0, ?S, "NOTICE", 0, ?V, "NOTICE", 0, 0>>
+  end
+
   test "scram_request/0" do
     assert Server.scram_request() ==
              <<82, 0, 0, 0, 23, 0, 0, 0, 10, 83, 67, 82, 65, 77, 45, 83, 72, 65, 45, 50, 53, 54,
@@ -214,6 +229,39 @@ defmodule Supavisor.Protocol.ServerTest do
 
   test "ready_for_query/0" do
     assert Server.ready_for_query() == <<90, 0, 0, 0, 5, 73>>
+  end
+
+  test "extended_query/2" do
+    statement = "SELECT set_config('application_name', $1, false)"
+    bin = Server.extended_query(statement, ["my app's name"])
+
+    assert bin == <<
+             # Parse: empty statement name, the query text, no parameter type oids
+             ?P,
+             56::32,
+             0,
+             statement::binary,
+             0,
+             0::16,
+             # Bind: unnamed portal + statement, no format codes, one text param, no result formats
+             ?B,
+             29::32,
+             0,
+             0,
+             0::16,
+             1::16,
+             13::32,
+             "my app's name",
+             0::16,
+             # Execute: unnamed portal, no row limit
+             ?E,
+             9::32,
+             0,
+             0::32,
+             # Sync
+             ?S,
+             4::32
+           >>
   end
 
   test "decode_pkt/1 correctly maps all message tags" do
@@ -322,12 +370,11 @@ defmodule Supavisor.Protocol.ServerTest do
     end
   end
 
-  test "decode password message payloads" do
+  test "decode_password_message/2 with SASLInitialResponse" do
     payload = <<"SCRAM-SHA-256", 0, 0, 0, 0, 1, "n,,", "p=tls-server-end-point,,m=abc,r=def">>
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: result}, ""} =
-             Server.decode_pkt(packet)
+    assert {:ok, result, ""} = Server.decode_password_message(packet, :sasl_initial_response)
 
     assert {:scram_sha_256,
             %{"p" => "tls-server-end-point", "m" => "abc", "r" => "def", "c" => "biws"}} = result
@@ -335,8 +382,7 @@ defmodule Supavisor.Protocol.ServerTest do
     payload = <<"SCRAM-SHA-256", 0, 0, 0, 0, 1, "y,,", "p=tls-server-end-point,,m=abc,r=def">>
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: result}, ""} =
-             Server.decode_pkt(packet)
+    assert {:ok, result, ""} = Server.decode_password_message(packet, :sasl_initial_response)
 
     assert {:scram_sha_256,
             %{"p" => "tls-server-end-point", "m" => "abc", "r" => "def", "c" => "eSws"}} = result
@@ -344,35 +390,54 @@ defmodule Supavisor.Protocol.ServerTest do
     payload = <<"SCRAM-SHA-256", 0, 0, 0, 0, 1, "n,,", "invalid format">>
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
-             Server.decode_pkt(packet)
+    assert {:ok, :undefined, ""} =
+             Server.decode_password_message(packet, :sasl_initial_response)
 
-    payload = "md5abcdef\0"
+    payload = "secret\0"
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: {:md5, "md5abcdef"}}, ""} =
-             Server.decode_pkt(packet)
+    assert {:ok, :undefined, ""} =
+             Server.decode_password_message(packet, :sasl_initial_response)
+  end
 
-    payload = "md5abcdef"
+  test "decode_password_message/2 with SASLResponse" do
+    payload = "p=value1,r=value2"
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
-             Server.decode_pkt(packet)
+    assert {:ok, {:first_msg_response, %{"p" => "value1", "r" => "value2"}}, ""} =
+             Server.decode_password_message(packet, :sasl_response)
 
     payload = "invalid"
     packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
-    assert {:ok, %Server.Pkt{tag: :password_message, payload: :undefined}, ""} =
-             Server.decode_pkt(packet)
+    assert {:ok, :undefined, ""} = Server.decode_password_message(packet, :sasl_response)
+  end
 
-    payload = "p=value1,r=value2"
-    packet = <<112, byte_size(payload) + 4::32, payload::binary>>
+  test "decode_password_message/2 with PasswordMessage" do
+    for password <- ["secret", "md5-prefixed-password", "p=value1,r=value2", ""] do
+      payload = password <> "\0"
+      packet = <<112, byte_size(payload) + 4::32, payload::binary>>
 
-    assert {:ok,
-            %Server.Pkt{
-              tag: :password_message,
-              payload: {:first_msg_response, %{"p" => "value1", "r" => "value2"}}
-            }, ""} = Server.decode_pkt(packet)
+      assert {:ok, {:cleartext_password, ^password}, ""} =
+               Server.decode_password_message(packet, :password)
+    end
+
+    for payload <- ["no_null_terminator", "two\0strings\0"] do
+      packet = <<112, byte_size(payload) + 4::32, payload::binary>>
+
+      assert {:ok, :undefined, ""} = Server.decode_password_message(packet, :password)
+    end
+  end
+
+  test "decode_password_message/2 with other messages" do
+    packet = <<?Z, 5::32, ?I>>
+
+    assert {:error, :unexpected_message} = Server.decode_password_message(packet, :password)
+
+    assert {:error, :incomplete} =
+             Server.decode_password_message(<<112, 10::32, "abc">>, :password)
+
+    assert {:error, :bad_packet} = Server.decode_password_message(<<>>, :password)
   end
 
   test "decode row description message" do

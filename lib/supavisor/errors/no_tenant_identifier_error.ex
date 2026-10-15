@@ -12,4 +12,7 @@ defmodule Supavisor.Errors.NoTenantIdentifierError do
   def error_message(_) do
     "no tenant identifier provided (external_id or sni_hostname required)"
   end
+
+  @impl Supavisor.Error
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
 end

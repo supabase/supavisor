@@ -31,10 +31,17 @@ defmodule Supavisor.TenantsMetrics do
 
     active_pools = PromEx.do_cache_tenants_metrics() |> MapSet.new()
 
+    active_tenants =
+      active_pools
+      |> Enum.map(fn Supavisor.id(tenant: tenant) -> tenant end)
+      |> MapSet.new()
+
     MapSet.difference(state.pools, active_pools)
     |> Enum.each(fn Supavisor.id(tenant: tenant) = pool ->
-      Logger.debug("Removing cached metrics for #{Supavisor.inspect_id(pool)}")
-      Cachex.del(Supavisor.Cache, {:metrics, tenant})
+      unless MapSet.member?(active_tenants, tenant) do
+        Logger.debug("Removing cached metrics for #{Supavisor.inspect_id(pool)}")
+        Cachex.del(Supavisor.Cache, {:metrics, tenant})
+      end
     end)
 
     {:noreply, %{state | check_ref: check_metrics(), pools: active_pools}}

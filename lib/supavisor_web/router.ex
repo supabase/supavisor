@@ -58,6 +58,7 @@ defmodule SupavisorWeb.Router do
     delete("/tenants/:external_id/network_bans", TenantController, :clear_network_bans)
 
     get("/health", TenantController, :health)
+    post("/rebalance", PoolController, :rebalance)
 
     get("/clusters/:alias", ClusterController, :show)
     put("/clusters/:alias", ClusterController, :update)

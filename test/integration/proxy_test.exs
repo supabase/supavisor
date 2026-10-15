@@ -3,6 +3,8 @@ defmodule Supavisor.Integration.ProxyTest do
 
   require Logger
   require Supavisor
+
+  alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
   alias Supavisor.Support.{Cluster, SSLHelper}
 
@@ -132,6 +134,177 @@ defmodule Supavisor.Integration.ProxyTest do
                  15_000
                )
     end
+  end
+
+  @tag cluster: true
+  test "app_name is set correctly for the proxy connection" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    username = db_conf[:username]
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "app_name_test_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            availability_zone: "ap-southeast-1c",
+            users: [
+              %{
+                "db_user" => db_conf[:username],
+                "db_password" => db_conf[:password],
+                "pool_size" => 3,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: username,
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: "#{username}.#{tenant}",
+        parameters: [application_name: "my_test_app"]
+      )
+
+    # Upstream DB connection should always identify as "Supavisor"
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(conn, "SELECT current_setting('application_name')", [])
+
+    # node2 is the pool node
+    :ok =
+      wait_until(fn ->
+        :rpc.call(node2, Registry, :lookup, [
+          Supavisor.Registry.TenantClients,
+          id
+        ]) != []
+      end)
+
+    [{_pid, proxy_meta}] =
+      :rpc.call(node2, Registry, :lookup, [
+        Supavisor.Registry.TenantClients,
+        id
+      ])
+
+    assert proxy_meta[:app_name] == "my_test_app"
+
+    # our node is the proxy node
+    :ok =
+      wait_until(fn ->
+        Registry.lookup(Supavisor.Registry.TenantProxyClients, id) != []
+      end)
+
+    [{_pid, pool_meta}] = Registry.lookup(Supavisor.Registry.TenantProxyClients, id)
+    assert pool_meta[:app_name] == "my_test_app"
+  end
+
+  @tag cluster: true
+  test "app_name defaults to empty string when not provided" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    username = db_conf[:username]
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "app_name_empty_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            availability_zone: "ap-southeast-1c",
+            users: [
+              %{
+                "db_user" => db_conf[:username],
+                "db_password" => db_conf[:password],
+                "pool_size" => 3,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    id =
+      Supavisor.id(
+        type: :single,
+        tenant: tenant,
+        user: username,
+        mode: :transaction,
+        db: db_conf[:database]
+      )
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    {:ok, conn} =
+      Postgrex.start_link(
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        password: db_conf[:password],
+        username: "#{username}.#{tenant}"
+      )
+
+    # Upstream DB connection should always identify as "Supavisor"
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(conn, "SELECT current_setting('application_name')", [])
+
+    # node2 is the pool node
+    :ok =
+      wait_until(fn ->
+        :rpc.call(node2, Registry, :lookup, [
+          Supavisor.Registry.TenantClients,
+          id
+        ]) != []
+      end)
+
+    [{_pid, proxy_meta}] =
+      :rpc.call(node2, Registry, :lookup, [
+        Supavisor.Registry.TenantClients,
+        id
+      ])
+
+    assert proxy_meta[:app_name] == ""
+
+    # our node is the proxy node
+    :ok =
+      wait_until(fn ->
+        Registry.lookup(Supavisor.Registry.TenantProxyClients, id) != []
+      end)
+
+    [{_pid, pool_meta}] = Registry.lookup(Supavisor.Registry.TenantProxyClients, id)
+    assert pool_meta[:app_name] == ""
   end
 
   for tenant <- @tenants do
@@ -266,6 +439,92 @@ defmodule Supavisor.Integration.ProxyTest do
             }} = single_connection(connection_opts)
   end
 
+  describe "waiting for a free client slot" do
+    setup do
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      connection_opts = [
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        username: db_conf[:username] <> ".admission_tenant",
+        database: db_conf[:database],
+        password: db_conf[:password]
+      ]
+
+      test_pid = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, ref}
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:supavisor, :client, :admission, :admitted],
+          [:supavisor, :client, :admission, :rejected]
+        ],
+        fn event, _measurements, _metadata, _config -> send(test_pid, {ref, event}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      %{connection_opts: connection_opts, ref: ref}
+    end
+
+    test "admits a waiting client when a slot frees up", ctx do
+      ref = ctx.ref
+
+      # admission_tenant allows 2 clients, so the pool is now full
+      assert {:ok, conn} = single_connection(ctx.connection_opts)
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+
+      test_pid = self()
+      connection_opts = ctx.connection_opts
+
+      spawn(fn ->
+        result =
+          try do
+            SingleConnection.connect(connection_opts)
+          catch
+            kind, reason -> {:error, {kind, reason}}
+          end
+
+        send(test_pid, {:waiter, result})
+      end)
+
+      # Let the third connection hit the limit and start waiting before freeing a slot.
+      Process.sleep(50)
+      GenServer.stop(conn)
+
+      assert_receive {:waiter, {:ok, _pid}}, 5_000
+      assert_receive {^ref, [:supavisor, :client, :admission, :admitted]}, 1_000
+    end
+
+    test "rejects with EMAXCONN once the wait budget is exhausted", ctx do
+      ref = ctx.ref
+
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+      assert {:ok, _conn} = single_connection(ctx.connection_opts)
+
+      {elapsed, result} = :timer.tc(fn -> single_connection(ctx.connection_opts) end)
+
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message: "(EMAXCONN) max client connections reached, limit: 2",
+                  pg_code: "XX000",
+                  severity: "FATAL"
+                }
+              }} = result
+
+      assert_receive {^ref, [:supavisor, :client, :admission, :rejected]}, 1_000
+
+      retries = Application.get_env(:supavisor, :admission_retries)
+      backoff = Application.get_env(:supavisor, :admission_backoff)
+      assert elapsed >= retries * div(backoff, 2) * 1_000
+    end
+  end
+
   test "checkout timeout in transaction mode" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
@@ -319,12 +578,14 @@ defmodule Supavisor.Integration.ProxyTest do
 
     P.query(origin, "alter user dev_postgres with password 'postgres_new';", [])
 
-    # First attempt with new password should fail (cache not updated yet)
+    # First attempt with new password fails: the SCRAM exchange used the stale salt,
+    # but the client is told that the password was changed
     assert {:error,
             %Postgrex.Error{
               postgres: %{
                 code: :invalid_password,
-                message: "password authentication failed for user \"" <> _,
+                message: "password authentication failed for user \"dev_postgres\"",
+                hint: "The password for this user was recently changed. Retry the connection.",
                 severity: "FATAL",
                 pg_code: "28P01"
               }
@@ -339,6 +600,66 @@ defmodule Supavisor.Integration.ProxyTest do
     # First connection should still be up: we don't terminate the pool anymore when the secrets change
     assert [%Postgrex.Result{rows: [["1"]]}] =
              P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    :gen_statem.stop(first_conn)
+    :gen_statem.stop(second_conn)
+  end
+
+  test "change role password with cleartext auth retries against new secrets" do
+    SSLHelper.setup_downstream_certs()
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
+
+    on_exit(fn ->
+      {:ok, origin} =
+        Postgrex.start_link(
+          hostname: db_conf[:hostname],
+          port: db_conf[:port],
+          database: db_conf[:database],
+          username: db_conf[:username],
+          password: db_conf[:password]
+        )
+
+      P.query!(origin, "alter user dev_postgres_password_test with password 'postgres';", [])
+    end)
+
+    connect = fn password ->
+      opts = [
+        hostname: db_conf[:hostname],
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        database: db_conf[:database],
+        username: "dev_postgres_password_test.is_manager",
+        password: password,
+        ssl: [verify: :verify_none]
+      ]
+
+      with {:error, {error, _}} <- start_supervised({SingleConnection, opts}) do
+        {:error, error}
+      end
+    end
+
+    assert {:ok, first_conn} = connect.(db_conf[:password])
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(first_conn, {:query, "select 1;"})
+
+    P.query!(origin, "alter user dev_postgres_password_test with password 'postgres_new';", [])
+
+    # The cleartext password is checked against the refreshed secrets, so the first
+    # attempt with the new password succeeds
+    assert {:ok, second_conn} = connect.("postgres_new")
+
+    assert [%Postgrex.Result{rows: [["1"]]}] =
+             P.SimpleConnection.call(second_conn, {:query, "select 1;"})
+
+    assert {:error,
+            %Postgrex.Error{
+              postgres: %{
+                code: :invalid_password,
+                message: "password authentication failed for user \"dev_postgres_password_test\"",
+                severity: "FATAL",
+                pg_code: "28P01"
+              }
+            }} = connect.(db_conf[:password])
 
     :gen_statem.stop(first_conn)
     :gen_statem.stop(second_conn)
@@ -626,10 +947,9 @@ defmodule Supavisor.Integration.ProxyTest do
         Process.sleep(500)
       end)
 
-    # Check that we logged the fatal TLS alert and terminated
     # The server will generate a FATAL alert in response to the corrupted data
-    assert log =~ "Received fatal TLS alert"
-    assert log =~ "terminating connection"
+    assert log =~ "(ECLIENTSOCKETCLOSED) Client socket closed while state was auth_"
+    assert log =~ "Fatal -"
   end
 
   test "no warm pool user has empty pool after disconnect in session mode" do
@@ -667,39 +987,8 @@ defmodule Supavisor.Integration.ProxyTest do
     assert count_pool_workers(tenant_id) == 0
   end
 
-  defp count_pool_workers(tenant_id) do
-    tenant_id
-    |> Supavisor.get_global_sup()
-    |> get_poolboy_workers()
-    |> length()
-  end
-
-  defp get_poolboy_workers(tenant_sup) do
-    tenant_sup
-    |> Supervisor.which_children()
-    |> Enum.filter(&match?({:pool, _}, elem(&1, 0)))
-    |> Enum.flat_map(fn {_id, pool_pid, _type, _modules} ->
-      pool_pid
-      |> Process.info()
-      |> Kernel.get_in([:links])
-      |> Enum.find(&poolboy_supervisor?/1)
-      |> case do
-        nil -> []
-        poolboy_sup -> Supervisor.which_children(poolboy_sup)
-      end
-      |> Enum.filter(&is_pid(elem(&1, 1)))
-    end)
-  end
-
-  defp poolboy_supervisor?(pid) do
-    case Process.info(pid)[:dictionary][:"$initial_call"] do
-      {:supervisor, :poolboy_sup, _} -> true
-      _ -> false
-    end
-  end
-
   test "cleanup resets session state in session mode" do
-    %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
+    %{db_conf: db_conf, origin: origin} = setup_tenant_connections(List.first(@tenants))
 
     connection_opts = [
       hostname: db_conf[:hostname],
@@ -711,10 +1000,21 @@ defmodule Supavisor.Integration.ProxyTest do
 
     test_timeout = "12345ms"
 
-    assert {:ok, conn1} = start_supervised({SingleConnection, connection_opts}, id: :conn1)
+    conn1_opts = Keyword.put(connection_opts, :parameters, application_name: "app_one")
+    conn2_opts = Keyword.put(connection_opts, :parameters, application_name: "app_two")
+
+    assert {:ok, conn1} = start_supervised({SingleConnection, conn1_opts}, id: :conn1)
 
     assert [%P.Result{rows: [[backend_pid_1]]}] =
              P.SimpleConnection.call(conn1, {:query, "SELECT pg_backend_pid();"})
+
+    # conn1's application_name reached the backend
+    assert [%P.Result{rows: [["Supavisor - app_one"]]}] =
+             P.SimpleConnection.call(
+               conn1,
+               {:query,
+                "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid();"}
+             )
 
     assert [%P.Result{}] =
              P.SimpleConnection.call(
@@ -728,12 +1028,29 @@ defmodule Supavisor.Integration.ProxyTest do
     stop_supervised(:conn1)
     Process.sleep(100)
 
-    assert {:ok, conn2} = start_supervised({SingleConnection, connection_opts}, id: :conn2)
+    # conn1 is now idle in the pool: cleanup (DISCARD ALL) reset application_name
+    # back to the default, dropping the "app_one" set during conn1's session
+    assert %P.Result{rows: [["Supavisor"]]} =
+             P.query!(
+               origin,
+               "SELECT application_name FROM pg_stat_activity WHERE pid = $1",
+               [String.to_integer(backend_pid_1)]
+             )
+
+    assert {:ok, conn2} = start_supervised({SingleConnection, conn2_opts}, id: :conn2)
 
     assert [%P.Result{rows: [[backend_pid_2]]}] =
              P.SimpleConnection.call(conn2, {:query, "SELECT pg_backend_pid();"})
 
     assert backend_pid_1 == backend_pid_2
+
+    # conn2's application_name reached the backend
+    assert [%P.Result{rows: [["Supavisor - app_two"]]}] =
+             P.SimpleConnection.call(
+               conn2,
+               {:query,
+                "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid();"}
+             )
 
     assert [%P.Result{rows: [[timeout]]}] =
              P.SimpleConnection.call(conn2, {:query, "SHOW statement_timeout;"})
@@ -1088,5 +1405,36 @@ defmodule Supavisor.Integration.ProxyTest do
     database = String.replace(path, "/", "")
 
     [hostname: host, port: port, database: database, password: pass, username: username]
+  end
+
+  defp count_pool_workers(tenant_id) do
+    tenant_id
+    |> Supavisor.get_global_sup()
+    |> get_poolboy_workers()
+    |> length()
+  end
+
+  defp get_poolboy_workers(tenant_sup) do
+    tenant_sup
+    |> Supervisor.which_children()
+    |> Enum.filter(&match?({:pool, _}, elem(&1, 0)))
+    |> Enum.flat_map(fn {_id, pool_pid, _type, _modules} ->
+      pool_pid
+      |> Process.info()
+      |> Kernel.get_in([:links])
+      |> Enum.find(&poolboy_supervisor?/1)
+      |> case do
+        nil -> []
+        poolboy_sup -> Supervisor.which_children(poolboy_sup)
+      end
+      |> Enum.filter(&is_pid(elem(&1, 1)))
+    end)
+  end
+
+  defp poolboy_supervisor?(pid) do
+    case Process.info(pid)[:dictionary][:"$initial_call"] do
+      {:supervisor, :poolboy_sup, _} -> true
+      _ -> false
+    end
   end
 end

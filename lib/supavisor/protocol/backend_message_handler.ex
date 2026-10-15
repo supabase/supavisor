@@ -9,6 +9,8 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
     actions may be inserted through `Supavisor.Protocol.MessageHandler.update_state/2`.
   - `ErrorResponse`: FATAL/PANIC errors are detected and stored in the handler state so the
     DbHandler can read the error reason before the connection closes.
+  - `ReadyForQuery`: the number seen and the last transaction status are recorded,
+    so the DbHandler can tell when every reply in a pipelined batch has been received.
   """
 
   @behaviour Supavisor.Protocol.MessageHandler
@@ -16,7 +18,12 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   require Record
   require Supavisor.Protocol.Server, as: Server
 
-  Record.defrecord(:handler_state, action_queue: :queue.new(), fatal_error: nil)
+  Record.defrecord(:handler_state,
+    action_queue: :queue.new(),
+    fatal_error: nil,
+    rfq_count: 0,
+    last_rfq_status: nil
+  )
 
   @impl true
   def handled_message_types do
@@ -38,6 +45,7 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
   end
 
   def handle_message(state, tag, len, payload) do
+    state = maybe_record_ready_for_query(state, tag, payload)
     action_queue = handler_state(state, :action_queue)
     message_type = message_type(tag)
     {injected_pkts, action_queue} = maybe_inject(action_queue)
@@ -65,6 +73,15 @@ defmodule Supavisor.Protocol.BackendMessageHandler do
         {[], action_queue}
     end
   end
+
+  defp maybe_record_ready_for_query(state, ?Z, <<status::8>>),
+    do:
+      handler_state(state,
+        rfq_count: handler_state(state, :rfq_count) + 1,
+        last_rfq_status: status
+      )
+
+  defp maybe_record_ready_for_query(state, _tag, _payload), do: state
 
   defp message_type(?1), do: :parse
   defp message_type(?3), do: :close
