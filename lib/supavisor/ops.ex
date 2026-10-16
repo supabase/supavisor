@@ -11,6 +11,7 @@ defmodule Supavisor.Ops do
   its `Supavisor.DbHandler` backends.
   """
 
+  require Logger
   require Supavisor
 
   alias Supavisor.Manager
@@ -40,12 +41,21 @@ defmodule Supavisor.Ops do
     nodes = [node() | Node.list()]
     results = :erpc.multicall(nodes, __MODULE__, :list_pools_local, [tenant], @multicall_timeout)
 
-    nodes
-    |> Enum.zip(results)
-    |> Enum.reduce(%{pools: [], errors: %{}}, fn
-      {_node, {:ok, node_pools}}, acc -> %{acc | pools: acc.pools ++ node_pools}
-      {node, error}, acc -> %{acc | errors: Map.put(acc.errors, node, error)}
-    end)
+    result =
+      nodes
+      |> Enum.zip(results)
+      |> Enum.reduce(%{pools: [], errors: %{}}, fn
+        {_node, {:ok, node_pools}}, acc -> %{acc | pools: acc.pools ++ node_pools}
+        {node, error}, acc -> %{acc | errors: Map.put(acc.errors, node, error)}
+      end)
+
+    if result.errors != %{} do
+      Logger.warning(
+        "Ops.list_pools(#{inspect(tenant)}): nodes failed to respond: #{inspect(result.errors)}"
+      )
+    end
+
+    result
   end
 
   @doc """
@@ -82,8 +92,8 @@ defmodule Supavisor.Ops do
       nil ->
         {nil, nil}
 
-      _pid ->
-        %{host: host, port: port} = Manager.get_config(id).connection_params
+      pid ->
+        %{host: host, port: port} = Manager.get_config(pid).connection_params
         {host && to_string(host), port}
     end
   catch
