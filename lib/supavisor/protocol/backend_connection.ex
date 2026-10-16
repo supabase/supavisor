@@ -58,7 +58,7 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   Undoing each ignored message on its own can leave the record wrong when a statement has
   more than one unanswered Parse or Close. The backend's next error about the statement
-  corrects it. A Parse failing with 42P05 records the statement, and a Bind or Describe
+  corrects it. A Parse failing with 42P05 (`duplicate_prepared_statement`) records the statement, and a Bind or Describe
   failing with 26000 forgets it.
   """
 
