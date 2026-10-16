@@ -16,7 +16,8 @@ config :supavisor,
   subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "20") |> String.to_integer(),
   # Worst-case wait (retries * backoff * 1.25 with jitter) must stay well below the 5s handshake timeout.
   admission_retries: System.get_env("ADMISSION_RETRIES", "5") |> String.to_integer(),
-  admission_backoff: System.get_env("ADMISSION_BACKOFF", "300") |> String.to_integer()
+  admission_backoff: System.get_env("ADMISSION_BACKOFF", "300") |> String.to_integer(),
+  response_delays: [long: 2_500, short: 1_000]
 
 config :prom_ex, storage_adapter: Supavisor.Monitoring.PromEx.Store
 

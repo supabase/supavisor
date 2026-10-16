@@ -947,10 +947,9 @@ defmodule Supavisor.Integration.ProxyTest do
         Process.sleep(500)
       end)
 
-    # Check that we logged the fatal TLS alert and terminated
     # The server will generate a FATAL alert in response to the corrupted data
-    assert log =~ "Received fatal TLS alert"
-    assert log =~ "terminating connection"
+    assert log =~ "(ECLIENTSOCKETCLOSED) Client socket closed while state was auth_"
+    assert log =~ "Fatal -"
   end
 
   test "no warm pool user has empty pool after disconnect in session mode" do

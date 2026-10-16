@@ -22,4 +22,7 @@ defmodule Supavisor.Errors.CircuitBreakerError do
 
     "circuit breaker open for operation: #{operation}, blocked until: #{blocked_until}, #{explanation}"
   end
+
+  @impl Supavisor.Error
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
 end
