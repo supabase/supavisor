@@ -11,7 +11,8 @@ defmodule Supavisor.Protocol.BackendConnection do
   - `send_parked_write/2`: the parked write, which goes through the DbHandler. What is
     actually sent for each prepared statement packet depends on the statements the backend
     has.
-  - `query/2`: a query Supavisor runs for itself. None of its responses reach the client.
+  - `query/3`: a query Supavisor runs for itself. None of its responses reach the client.
+    Once the backend has answered it, `pop_query_result/2` returns whether it succeeded.
   - `recv/2`: bytes from the backend. Returns what to forward to the client, and whether a
     ReadyForQuery in them left the backend synced.
 
@@ -47,7 +48,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   - `:fake`: a Parse not sent because the backend already has the statement, or a Close
     not sent because it doesn't. Its ParseComplete or CloseComplete is made up once every
     request before it has been answered.
-  - `:internal`: part of a `query/2`. Every response is dropped.
+  - `{:internal, query_id}`: part of a `query/3`. Every response is dropped.
 
   ## Prepared statements
 
@@ -86,13 +87,17 @@ defmodule Supavisor.Protocol.BackendConnection do
     fatal_error: nil,
     buffer: <<>>,
     streaming: nil,
-    client_in_copy: false
+    client_in_copy: false,
+    running_queries: %{},
+    query_results: %{}
   )
 
   @type state() ::
           :idle | :in_transaction | :busy | :ignore_till_sync | {:copy_in, :simple | :extended}
 
-  @type action() :: :forward | :skip | :fake | :internal
+  @type query_result() :: :ok | {:error, map()}
+
+  @type action() :: :forward | :skip | :fake | {:internal, atom()}
 
   @type write_tag() :: byte() | {:ps, byte()}
 
@@ -108,7 +113,9 @@ defmodule Supavisor.Protocol.BackendConnection do
             fatal_error: map() | nil,
             buffer: binary(),
             streaming: {bytes_left :: non_neg_integer(), forward? :: boolean()} | nil,
-            client_in_copy: boolean()
+            client_in_copy: boolean(),
+            running_queries: %{atom() => map() | nil},
+            query_results: %{atom() => query_result()}
           )
 
   @parse ?P
@@ -226,11 +233,28 @@ defmodule Supavisor.Protocol.BackendConnection do
   end
 
   @doc """
-  Records a query Supavisor is about to send for itself.
+  Records a query Supavisor is about to send for itself, under `query_id`.
   """
-  @spec query(t(), iodata()) :: t()
-  def query(backend, msgs),
-    do: add_requests(backend, internal_requests(IO.iodata_to_binary(msgs), []))
+  @spec query(t(), iodata(), atom()) :: t()
+  def query(backend(running_queries: running, query_results: results) = backend, msgs, query_id) do
+    backend
+    |> backend(
+      running_queries: Map.put(running, query_id, nil),
+      query_results: Map.delete(results, query_id)
+    )
+    |> add_requests(internal_requests(IO.iodata_to_binary(msgs), query_id, []))
+  end
+
+  @doc """
+  Takes the result of the query recorded under `query_id`.
+  """
+  @spec pop_query_result(t(), atom()) :: {:ok, t(), query_result()} | {:error, :not_yet}
+  def pop_query_result(backend(query_results: results) = backend, query_id) do
+    case Map.pop(results, query_id) do
+      {nil, _} -> {:error, :not_yet}
+      {result, results} -> {:ok, backend(backend, query_results: results), result}
+    end
+  end
 
   @doc """
   Follows the backend through its messages.
@@ -320,10 +344,10 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   defp client_request(tag), do: {tag, :forward, nil}
 
-  defp internal_requests(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, acc),
-    do: internal_requests(rest, [{tag, :internal, nil} | acc])
+  defp internal_requests(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, id, acc),
+    do: internal_requests(rest, id, [{tag, {:internal, id}, nil} | acc])
 
-  defp internal_requests(<<>>, acc), do: Enum.reverse(acc)
+  defp internal_requests(<<>>, _id, acc), do: Enum.reverse(acc)
 
   ## Backend messages
 
@@ -423,7 +447,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   # Where a message goes depends on the request it answers, the one at the head.
   defp forward?(backend(state: state) = backend, type) do
     case head_request(backend) do
-      {_, :internal, _} -> false
+      {_, {:internal, _}, _} -> false
       {@parse, :skip, _} when type == @parse_complete and is_answering(state) -> false
       {@close, :skip, _} when type == @close_complete and is_answering(state) -> false
       _ -> true
@@ -431,7 +455,10 @@ defmodule Supavisor.Protocol.BackendConnection do
   end
 
   defp handle_message(backend, type, body) do
-    backend = if type == @error_response, do: record_fatal_error(backend, body), else: backend
+    backend =
+      if type == @error_response,
+        do: backend |> record_fatal_error(body) |> record_query_error(body),
+        else: backend
 
     case backend(backend, :state) do
       state when is_answering(state) -> answering(backend, type, body)
@@ -443,6 +470,17 @@ defmodule Supavisor.Protocol.BackendConnection do
   defp record_fatal_error(backend, body) do
     error = Server.decode_error_response(body)
     if error["S"] in ["FATAL", "PANIC"], do: backend(backend, fatal_error: error), else: backend
+  end
+
+  defp record_query_error(backend(running_queries: running) = backend, body) do
+    case head_request(backend) do
+      {_, {:internal, id}, _} ->
+        running = Map.update!(running, id, &(&1 || Server.decode_error_response(body)))
+        backend(backend, running_queries: running)
+
+      _ ->
+        backend
+    end
   end
 
   # A response completes the request at the head if that's the request it answers.
@@ -551,8 +589,10 @@ defmodule Supavisor.Protocol.BackendConnection do
     end
   end
 
-  defp pop_request(backend(requests: requests) = backend),
-    do: backend(backend, requests: :queue.drop(requests))
+  defp pop_request(backend(requests: requests) = backend) do
+    {{:value, request}, requests} = :queue.out(requests)
+    finish_query(backend(backend, requests: requests), request)
+  end
 
   defp pop_request(backend, message) do
     case head_request(backend) do
@@ -616,8 +656,24 @@ defmodule Supavisor.Protocol.BackendConnection do
           statements
       end
 
-    backend(backend, requests: requests, statements: statements)
+    finish_query(backend(backend, requests: requests, statements: statements), request)
   end
+
+  # A query's requests are queued together, so it's over once the next request isn't one of its.
+  defp finish_query(backend, {_, {:internal, id}, _}) do
+    case head_request(backend) do
+      {_, {:internal, ^id}, _} ->
+        backend
+
+      _ ->
+        backend(running_queries: running, query_results: results) = backend
+        {error, running} = Map.pop(running, id)
+        result = if error, do: {:error, error}, else: :ok
+        backend(backend, running_queries: running, query_results: Map.put(results, id, result))
+    end
+  end
+
+  defp finish_query(backend, _request), do: backend
 
   defp reconcile_statement(
          backend(storage: storage, statements: statements) = backend,
