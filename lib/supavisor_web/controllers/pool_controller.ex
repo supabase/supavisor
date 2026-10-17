@@ -4,7 +4,7 @@ defmodule SupavisorWeb.PoolController do
 
   require Logger
 
-  alias SupavisorWeb.OpenApiSchemas.{Rebalance, RebalanceParams, UnprocessablyEntity}
+  alias SupavisorWeb.OpenApiSchemas.{PoolList, Rebalance, RebalanceParams, UnprocessablyEntity}
 
   plug OpenApiSpex.Plug.CastAndValidate, json_render_error_v2: true, replace_params: false
   plug :put_view, SupavisorWeb.PoolJSON
@@ -17,6 +17,28 @@ defmodule SupavisorWeb.PoolController do
     example:
       "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE2ODAxNjIxNTR9.U9orU6YYqXAtpF8uAiw6MS553tm4XxRzxOhz2IwDhpY"
   ]
+
+  operation(:index,
+    summary: "List a tenant's pools across the cluster",
+    description: """
+    Lists every pool of a tenant across all cluster nodes, with each pool's id,
+    node, upstream host/port, connected client count and backend connection counts.
+
+    Each pool includes an opaque `token` that identifies it for subsequent
+    operations. Nodes that fail to respond are reported under `errors` keyed by node.
+    """,
+    parameters: [
+      external_id: [in: :path, description: "External id", type: :string],
+      authorization: @authorization
+    ],
+    responses: %{
+      200 => PoolList.response()
+    }
+  )
+
+  def index(conn, %{"external_id" => external_id}) do
+    render(conn, :index, result: Supavisor.Ops.list_pools(external_id))
+  end
 
   operation(:rebalance,
     summary: "Rebalance pools across the cluster",
