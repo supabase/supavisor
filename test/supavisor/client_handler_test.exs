@@ -3,6 +3,7 @@ defmodule Supavisor.ClientHandlerTest do
 
   alias Supavisor.Protocol.FrontendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
+  alias Supavisor.ClientHandler.StartupParams
 
   require MessageStreamer
   require Supavisor
@@ -38,7 +39,7 @@ defmodule Supavisor.ClientHandlerTest do
            [session_id_tracker: :some_pid]
          }, [:some_pid]}
 
-      data = %{sock: {:ssl, sock}}
+      data = %{sock: {:ssl, sock}, mode: :transaction, local: false}
       {:ok, sock: sock, data: data}
     end
 
@@ -51,7 +52,7 @@ defmodule Supavisor.ClientHandlerTest do
             ~c"TLS server: In state connection received CLIENT ALERT: Fatal - User Canceled\n"}
          }}
 
-      assert {:stop, :normal} == @subject.handle_event(:info, error, nil, data)
+      assert {:stop, :normal} == @subject.handle_event(:info, error, :busy, data)
     end
 
     test "handles warning TLS alert by keeping connection alive", %{sock: sock, data: data} do
@@ -79,7 +80,15 @@ defmodule Supavisor.ClientHandlerTest do
     setup do
       %{
         exception: MaxConnectionsError.new(:transaction, 2),
-        retry_event: {:hello, {:single, {"user", "tenant", "postgres", nil, false, false, nil}}},
+        retry_event:
+          {:hello,
+           %StartupParams{
+             type: :single,
+             user: "user",
+             tenant_or_alias: "tenant",
+             db_name: "postgres",
+             client_tls: false
+           }},
         budget: Application.get_env(:supavisor, :admission_retries)
       }
     end
@@ -106,7 +115,14 @@ defmodule Supavisor.ClientHandlerTest do
 
     test "sends the original error to the client once the budget is exhausted", ctx do
       {client, server} = sockpair()
-      data = %{admission_retries: ctx.budget, id: nil, sock: {:gen_tcp, server}}
+
+      data = %{
+        admission_retries: ctx.budget,
+        id: nil,
+        sock: {:gen_tcp, server},
+        mode: :transaction,
+        local: false
+      }
 
       assert {:stop, :normal} =
                @subject.wait_for_slot_or_terminate(data, ctx.retry_event, ctx.exception)
@@ -132,7 +148,7 @@ defmodule Supavisor.ClientHandlerTest do
   describe "socket DOWN handler" do
     test "handles DOWN message for matching ref" do
       ref = make_ref()
-      data = %{sock_ref: ref, mode: :transaction}
+      data = %{sock_ref: ref, mode: :transaction, local: false}
 
       assert {:stop, :normal} =
                @subject.handle_event(:info, {:DOWN, ref, :port, self(), :normal}, :idle, data)
@@ -216,17 +232,44 @@ defmodule Supavisor.ClientHandlerTest do
 
   describe "startup packet log_level option" do
     test "sets process log level from options" do
-      bin =
-        <<79::32,
-          "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00">>
+      # No tenant in the user name, so the hello handler fails before any DB lookup.
+      payload =
+        "\x00\x03\x00\x00user\x00log_level_user\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00"
 
-      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil, invalid_options: []}
+      bin = <<byte_size(payload) + 4::32, payload::binary>>
 
-      assert {:keep_state, %{app_name: ""},
+      {sock, _recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, sock},
+        id: nil,
+        local: false,
+        ssl: false,
+        peer_ip: "127.0.0.1",
+        mode: :transaction,
+        app_name: nil,
+        invalid_options: []
+      }
+
+      assert {:keep_state_and_data,
               {:next_event, :internal,
-               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil, false, nil, nil}}}}} =
-               @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
+               {:hello,
+                %StartupParams{
+                  type: :single,
+                  user: "log_level_user",
+                  tenant_or_alias: nil,
+                  db_name: "postgres",
+                  search_path: nil,
+                  jit: false,
+                  client_tls: nil,
+                  client_ip: nil,
+                  app_name: "",
+                  log_level: :debug,
+                  invalid_options: []
+                }} = hello}} =
+               @subject.handle_event(:info, {:tcp, sock, bin}, :handshake, data)
 
+      assert {:stop, :normal} = @subject.handle_event(:internal, hello, :handshake, data)
       assert Logger.get_process_level(self()) == :debug
     end
   end

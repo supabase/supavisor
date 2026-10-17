@@ -53,6 +53,9 @@ defmodule Supavisor.Errors.AuthQueryError do
   def error_message(%{reason: :timeout}),
     do: "auth_query secret check timed out"
 
+  @impl Supavisor.Error
+  def response_delay(_), do: Supavisor.Error.long_response_delay()
+
   defp humanize(%DBConnection.ConnectionError{reason: :queue_timeout}),
     do: "connection to database not available"
 

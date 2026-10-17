@@ -6,7 +6,12 @@ defmodule Supavisor.ClientHandler.Checks do
   # TODO: remove the dependency, move the functions here
   alias Supavisor.HandlerHelpers
 
-  alias Supavisor.Errors.{AddressNotAllowedError, SslRequiredError, TenantBannedError}
+  alias Supavisor.Errors.{
+    AddressNotAllowedError,
+    ClientSocketClosedError,
+    SslRequiredError,
+    TenantBannedError
+  }
 
   def check_tenant_not_banned(data, now \\ DateTime.utc_now())
 
@@ -36,10 +41,22 @@ defmodule Supavisor.ClientHandler.Checks do
     end
   end
 
-  def check_address_allowed(sock, info) do
-    {:ok, addr} = HandlerHelpers.addr_from_sock(sock)
+  def check_address_allowed(data, info) do
+    with {:ok, addr} <- HandlerHelpers.addr_from_sock(data.sock),
+         :ok <- check_cidrs(info.tenant.allow_list, addr) do
+      :ok
+    else
+      {:error, %AddressNotAllowedError{}} = error ->
+        error
 
-    if HandlerHelpers.filter_cidrs(info.tenant.allow_list, addr) == [] do
+      {:error, reason} ->
+        {:error,
+         %ClientSocketClosedError{mode: data.mode, client_state: :handshake, reason: reason}}
+    end
+  end
+
+  defp check_cidrs(allow_list, addr) do
+    if HandlerHelpers.filter_cidrs(allow_list, addr) == [] do
       {:error, %AddressNotAllowedError{address: addr}}
     else
       :ok
