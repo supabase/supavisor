@@ -52,18 +52,23 @@ defmodule Supavisor.ClientHandler do
   require MessageStreamer
 
   alias Supavisor.Errors.{
+    AuthProtocolError,
+    AuthTimeoutError,
     CheckoutTimeoutError,
     ClientSocketClosedError,
     DbHandlerExitedError,
     HandshakeTimeoutError,
+    JitUnauthorizedError,
     MaxConnectionsError,
+    PasswordChangedError,
     PoolCheckoutError,
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
     SslHandshakeError,
     StartupPacketTooLargeError,
     SubscribeRetriesExhaustedError,
-    WorkerNotFoundError
+    WorkerNotFoundError,
+    WrongPasswordError
   }
 
   require Supavisor.Protocol.Server, as: Server
@@ -674,7 +679,7 @@ defmodule Supavisor.ClientHandler do
              :auth_scram_final_wait,
              :auth_password_wait
            ] do
-    exception = %Supavisor.Errors.AuthTimeoutError{context: auth_state}
+    exception = %AuthTimeoutError{context: auth_state}
     handle_auth_failure(exception, data)
   end
 
@@ -876,8 +881,19 @@ defmodule Supavisor.ClientHandler do
   defp forwardable_peer_ip("undefined"), do: nil
   defp forwardable_peer_ip(peer_ip), do: peer_ip
 
-  defp handle_auth_failure(exception, data) do
+  defp handle_auth_failure(%error{} = exception, data)
+       when error in [
+              WrongPasswordError,
+              PasswordChangedError,
+              JitUnauthorizedError,
+              AuthProtocolError,
+              AuthTimeoutError
+            ] do
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
+    Error.terminate_with_error(data, exception, :handshake)
+  end
+
+  defp handle_auth_failure(exception, data) do
     Error.terminate_with_error(data, exception, :handshake)
   end
 
