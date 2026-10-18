@@ -251,7 +251,7 @@ defmodule Supavisor.ClientHandler.StatsTest do
       mode = unquote(mode)
       conn = setup_connection(mode, ctx)
 
-      # This test specifically validates the fix for session mode where db_status wasn't being called
+      # This test specifically validates the fix for session mode where backend_synced wasn't being called
       for _i <- 1..3 do
         assert {:ok, _} = SingleConnection.query(conn, "SELECT 1")
 
