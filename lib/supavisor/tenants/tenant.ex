@@ -30,6 +30,7 @@ defmodule Supavisor.Tenants.Tenant do
     field(:default_max_clients, :integer, default: 1000)
     field(:client_idle_timeout, :integer, default: 0)
     field(:client_heartbeat_interval, :integer, default: 60)
+    field(:server_reset_query, :string, default: "DISCARD ALL")
     field(:log_connections, :boolean, default: true)
     field(:allow_list, {:array, :string}, default: ["0.0.0.0/0", "::/0"])
     field(:availability_zone, :string)
@@ -71,6 +72,7 @@ defmodule Supavisor.Tenants.Tenant do
       :default_max_clients,
       :client_idle_timeout,
       :client_heartbeat_interval,
+      :server_reset_query,
       :log_connections,
       :allow_list,
       :availability_zone,

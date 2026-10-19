@@ -40,7 +40,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     test "forwards the same bytes however the reads are split" do
       backend =
         new()
-        |> BackendConnection.query(simple_query("DISCARD ALL"))
+        |> BackendConnection.query(simple_query("DISCARD ALL"), :reset)
         |> BackendConnection.client_write([?P, ?B, ?D, ?E, ?S])
 
       internal = command_complete("DISCARD ALL") <> z(?I)
@@ -682,7 +682,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
 
   describe "queries run by Supavisor" do
     test "none of their responses reach the client" do
-      backend = BackendConnection.query(new(), extended_query())
+      backend = BackendConnection.query(new(), extended_query(), :check)
 
       responses =
         parse_complete() <>
@@ -696,7 +696,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "a DataRow split across reads is consumed" do
-      backend = BackendConnection.query(new(), extended_query())
+      backend = BackendConnection.query(new(), extended_query(), :check)
       row = data_row(String.duplicate("x", 100))
       <<first::binary-size(40), second::binary>> = row
 
@@ -710,7 +710,7 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
 
     test "an error is consumed too" do
-      backend = BackendConnection.query(new(), simple_query("DISCARD ALL"))
+      backend = BackendConnection.query(new(), simple_query("DISCARD ALL"), :reset)
 
       assert {_backend, [], true} = BackendConnection.recv(backend, error("25001") <> z(?I))
     end
@@ -718,13 +718,85 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     test "responses after them reach the client" do
       backend =
         new()
-        |> BackendConnection.query(simple_query("DISCARD ALL"))
+        |> BackendConnection.query(simple_query("DISCARD ALL"), :reset)
         |> BackendConnection.client_write([?Q])
 
       responses = command_complete("DISCARD ALL") <> z(?I) <> data_row("x") <> z(?I)
 
       assert {_backend, out, true} = BackendConnection.recv(backend, responses)
       assert IO.iodata_to_binary(out) == data_row("x") <> z(?I)
+    end
+  end
+
+  describe "query results" do
+    test "a query succeeds once the backend answered all of it" do
+      backend = BackendConnection.query(new(), simple_query("DISCARD ALL"), :reset)
+
+      assert {:error, :not_yet} = BackendConnection.pop_query_result(backend, :reset)
+
+      {backend, [], true} =
+        BackendConnection.recv(backend, command_complete("DISCARD ALL") <> z(?I))
+
+      assert {:ok, _backend, :ok} = BackendConnection.pop_query_result(backend, :reset)
+    end
+
+    test "a query's error is its result" do
+      backend = BackendConnection.query(new(), simple_query("DISCARD ALL"), :reset)
+
+      {backend, [], true} = BackendConnection.recv(backend, error("25001") <> z(?I))
+
+      assert {:ok, _backend, {:error, %{"C" => "25001"}}} =
+               BackendConnection.pop_query_result(backend, :reset)
+    end
+
+    test "a query isn't over before its ReadyForQuery" do
+      backend = BackendConnection.query(new(), simple_query("DISCARD ALL"), :reset)
+
+      {backend, [], false} = BackendConnection.recv(backend, error("25001"))
+      assert {:error, :not_yet} = BackendConnection.pop_query_result(backend, :reset)
+
+      {backend, [], true} = BackendConnection.recv(backend, z(?I))
+      assert {:ok, _backend, {:error, _}} = BackendConnection.pop_query_result(backend, :reset)
+    end
+
+    test "an extended query is over at its Sync after a failed message" do
+      backend = BackendConnection.query(new(), extended_query(), :check)
+
+      {backend, [], true} = BackendConnection.recv(backend, error("42601") <> z(?I))
+
+      assert {:ok, _backend, {:error, %{"C" => "42601"}}} =
+               BackendConnection.pop_query_result(backend, :check)
+    end
+
+    test "a result is taken once" do
+      backend = BackendConnection.query(new(), simple_query("DISCARD ALL"), :reset)
+
+      {backend, [], true} =
+        BackendConnection.recv(backend, command_complete("DISCARD ALL") <> z(?I))
+
+      {:ok, backend, :ok} = BackendConnection.pop_query_result(backend, :reset)
+      assert {:error, :not_yet} = BackendConnection.pop_query_result(backend, :reset)
+    end
+
+    test "each query gets its own result" do
+      backend =
+        new()
+        |> BackendConnection.query(simple_query("DISCARD ALL"), :reset)
+        |> BackendConnection.query(extended_query(), :check)
+
+      responses =
+        error("25001") <>
+          z(?I) <>
+          parse_complete() <>
+          bind_complete() <>
+          row_description() <> data_row("1") <> command_complete("SELECT 1") <> z(?I)
+
+      {backend, [], true} = BackendConnection.recv(backend, responses)
+
+      assert {:ok, backend, {:error, %{"C" => "25001"}}} =
+               BackendConnection.pop_query_result(backend, :reset)
+
+      assert {:ok, _backend, :ok} = BackendConnection.pop_query_result(backend, :check)
     end
   end
 
