@@ -816,6 +816,35 @@ defmodule Supavisor.Integration.ProxyTest do
     Supavisor.CircuitBreaker.clear(tenant, :get_secrets)
   end
 
+  test "get_secrets failures don't count towards the auth_error circuit breaker" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    tenant = "circuit_breaker_secrets"
+
+    for _ <- 1..5 do
+      Supavisor.CircuitBreaker.record_failure(tenant, :get_secrets)
+    end
+
+    url =
+      "postgresql://postgres.#{tenant}:#{db_conf[:password]}@#{db_conf[:hostname]}:#{Application.get_env(:supavisor, :proxy_port_transaction)}/postgres"
+
+    for _ <- 1..11 do
+      assert {:error,
+              %Postgrex.Error{
+                postgres: %{
+                  code: :internal_error,
+                  message:
+                    "(ECIRCUITBREAKER) failed to retrieve database credentials after multiple attempts, new connections are temporarily blocked",
+                  pg_code: "XX000",
+                  severity: "FATAL"
+                }
+              }} = parse_uri(url) |> single_connection()
+    end
+
+    assert :ok = Supavisor.CircuitBreaker.check({tenant, "127.0.0.1"}, :auth_error)
+
+    Supavisor.CircuitBreaker.clear(tenant, :get_secrets)
+  end
+
   @tag :skip
   test "circuit breaker blocks db_connection after failures" do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
