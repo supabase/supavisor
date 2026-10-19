@@ -233,6 +233,7 @@ defmodule Supavisor.DbHandler do
       tenant: config.tenant,
       tenant_feature_flags: config.tenant_feature_flags,
       server_reset_query: Map.get(config, :server_reset_query),
+      log_connections: config.log_connections,
       db_state: nil,
       parameter_status: %{},
       nonce: nil,
@@ -430,9 +431,11 @@ defmodule Supavisor.DbHandler do
       {:ready_for_query, acc} ->
         ps = acc.ps
 
-        Logger.info(
-          "DbHandler: Backend authenticated, backend_pid: #{inspect(acc[:backend_key_data][:pid])}"
-        )
+        if data.log_connections do
+          Logger.info(
+            "DbHandler: Backend authenticated, backend_pid: #{inspect(acc[:backend_key_data][:pid])}"
+          )
+        end
 
         if data.mode != :proxy do
           Supavisor.set_parameter_status(data.id, ps)

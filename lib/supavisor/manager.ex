@@ -214,6 +214,7 @@ defmodule Supavisor.Manager do
       sni_hostname: sni_hostname,
       feature_flags: feature_flags,
       server_reset_query: server_reset_query
+      log_connections: log_connections
     } = tenant_record
 
     user_config = List.first(tenant_record.users)
@@ -252,6 +253,7 @@ defmodule Supavisor.Manager do
       log_level: args.log_level,
       tenant_feature_flags: feature_flags,
       server_reset_query: server_reset_query,
+      log_connections: log_connections,
       terminating_error: nil,
       drain_caller: nil,
       drain_timer: nil,
@@ -336,7 +338,8 @@ defmodule Supavisor.Manager do
       replica_type: state.replica_type,
       log_level: state.log_level,
       tenant_feature_flags: state.tenant_feature_flags,
-      server_reset_query: state.server_reset_query
+      server_reset_query: state.server_reset_query,
+      log_connections: state.log_connections
     }
 
     {:reply, config, state}

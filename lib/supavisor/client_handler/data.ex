@@ -36,6 +36,7 @@ defmodule Supavisor.ClientHandler.Data do
     :stats,
     :idle_timeout,
     :heartbeat_interval,
+    :log_connections,
     :connection_start,
     :state_entered_at,
     :subscribe_retries,
