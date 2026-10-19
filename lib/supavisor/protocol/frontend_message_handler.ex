@@ -3,38 +3,33 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   Handles PostgreSQL frontend messages.
 
   - Parse (P), Bind (B), Close (C), Describe (D): PreparedStatements
-  - Simple Query (Q), Execute (E), Sync (S), FunctionCall (F): forwarded unchanged
+  - Simple Query (Q), Execute (E), Sync (S), FunctionCall (F), CopyDone (c), CopyFail (f):
+    forwarded unchanged
 
   Parse (P) and Simple Query (Q) messages are validated before being handled,
   rejecting statements that leave session state behind and prepared statement
   commands when the tenant has those checks enabled.
 
-  It also counts the number of messages that produce a `ReadyForQuery` response from the backend.
-
-  Extended protocol messages only reach a transaction boundary once the client
-  sends a Sync, so `open_batch?` tracks whether one is still pending. The
-  backend keeps such a batch buffered and waits for the Sync, so the connection
-  must not be released while this is set, even if every response so far has
-  already arrived.
+  It also records the messages forwarded in each write, so the DbHandler can follow the
+  backend through them (see `Supavisor.Protocol.BackendConnection`). Prepared statement
+  packets are recorded as `{:ps, tag}`, since the DbHandler decides what is sent for them.
   """
 
   @behaviour Supavisor.Protocol.MessageHandler
 
+  alias Supavisor.Protocol.BackendConnection
   alias Supavisor.Protocol.ParseMessageHandler
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.SimpleQueryHandler
 
-  @rfq_producers [?Q, ?S, ?F]
-
   @impl true
-  def handled_message_types, do: [?P, ?B, ?C, ?D, ?E, ?Q, ?S, ?F]
+  def handled_message_types, do: [?P, ?B, ?C, ?D, ?E, ?Q, ?S, ?F, ?c, ?f]
 
   @impl true
   def init_state do
     %{
       prepared_statements: PreparedStatements.init_storage(),
-      rfq_producers: 0,
-      open_batch?: false,
+      forwarded: [],
       # Prepared statements feature flag:
       translate?: true,
       # Tenant's txn_mode_leak_action field:
@@ -45,6 +40,12 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       check_simple_query_prepare?: false
     }
   end
+
+  @doc """
+  Returns the messages forwarded since the last call, in order, and clears them.
+  """
+  @spec take_forwarded(map()) :: {[BackendConnection.write_tag()], map()}
+  def take_forwarded(state), do: {Enum.reverse(state.forwarded), %{state | forwarded: []}}
 
   @impl true
   def handle_message(state, tag, len, payload) do
@@ -68,27 +69,16 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
         {:ok, state.prepared_statements, <<tag, len::32, payload::binary>>}
     end
     |> case do
-      {:ok, new_ps_state, result} ->
-        new_state = %{state | prepared_statements: new_ps_state}
-        {:ok, new_state |> count_rfq_producer(tag) |> track_open_batch(tag), result}
+      {:ok, new_ps_state, pkt} when is_tuple(pkt) ->
+        {:ok, record(%{state | prepared_statements: new_ps_state}, {:ps, tag}), pkt}
+
+      {:ok, new_ps_state, pkt} ->
+        {:ok, record(%{state | prepared_statements: new_ps_state}, tag), pkt}
 
       error ->
         error
     end
   end
 
-  defp count_rfq_producer(state, tag) when tag in @rfq_producers,
-    do: %{state | rfq_producers: state.rfq_producers + 1}
-
-  defp count_rfq_producer(state, _tag), do: state
-
-  # Extended protocol messages leave the backend holding a batch until a Sync
-  # reaches it. Simple Query and FunctionCall produce a ReadyForQuery of their
-  # own and are unrelated to the extended protocol, so they leave this untouched.
-  defp track_open_batch(state, tag) when tag in [?P, ?B, ?E, ?D, ?C],
-    do: %{state | open_batch?: true}
-
-  defp track_open_batch(state, ?S), do: %{state | open_batch?: false}
-
-  defp track_open_batch(state, _tag), do: state
+  defp record(state, tag), do: %{state | forwarded: [tag | state.forwarded]}
 end

@@ -73,7 +73,7 @@ defmodule Supavisor.MixProject do
 
       # pooller
       # {:poolboy, "~> 1.5.2"},
-      {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.3"},
+      {:poolboy, git: "https://github.com/supabase/poolboy", tag: "v0.0.4"},
       {:syn, "~> 3.3"},
       {:pgo, "~> 0.13"},
       {:pg_saslprep,
@@ -95,7 +95,8 @@ defmodule Supavisor.MixProject do
       {:excoveralls, ">= 0.0.0", only: [:dev, :test]},
       {:stream_data, "~> 1.0", only: [:dev, :test]},
       # Override needed due to eflambe
-      {:meck, "~> 1.0", only: [:dev, :test], override: true}
+      {:meck, "~> 1.0", only: [:dev, :test], override: true},
+      {:tidewave, "~> 0.9.1", only: [:dev]}
     ]
   end
 

@@ -58,6 +58,31 @@ defmodule Supavisor.AuthQueryTest do
       assert_valid_error(result)
     end
 
+    test "accepts SCRAM secrets at the iteration limit" do
+      secret =
+        "SCRAM-SHA-256$32768:#{Base.encode64("salt")}$#{Base.encode64("storedKey")}:#{Base.encode64("serverKey")}"
+
+      assert {:ok, %Supavisor.Secrets.SASLSecrets{iterations: 32_768}} =
+               AuthQuery.parse_secret(secret, "user")
+    end
+
+    test "rejects SCRAM secrets above the iteration limit" do
+      secret =
+        "SCRAM-SHA-256$32769:#{Base.encode64("salt")}$#{Base.encode64("storedKey")}:#{Base.encode64("serverKey")}"
+
+      assert {:error,
+              %AuthQueryError{
+                reason: :too_many_iterations,
+                details: "32769 exceeds the maximum of 32768"
+              }} =
+               result = AuthQuery.parse_secret(secret, "user")
+
+      assert Exception.message(elem(result, 1)) =~
+               "SCRAM secret iteration count 32769 exceeds the maximum of 32768"
+
+      assert_valid_error(result)
+    end
+
     test "returns error for malformed SCRAM secret" do
       assert {:error, %AuthQueryError{reason: :parse_error}} =
                result = AuthQuery.parse_secret("SCRAM-SHA-256$malformed", "user")

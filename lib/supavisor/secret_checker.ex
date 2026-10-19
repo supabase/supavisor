@@ -18,7 +18,7 @@ defmodule Supavisor.SecretChecker do
   end
 
   @spec get_secrets(Supavisor.id()) ::
-          {:ok, ValidationSecrets.t()}
+          {:ok, ValidationSecrets.t(), :changed | :noop}
           | {:error, :not_started}
           | {:error, :no_auth_config}
           | {:error, Supavisor.Errors.AuthQueryError.t()}
@@ -99,7 +99,10 @@ defmodule Supavisor.SecretChecker do
   end
 
   def handle_info(:check, state) do
-    check_secrets(state.user, state)
+    with {:ok, _secrets, :changed} <- check_secrets(state.user, state) do
+      Logger.info("Secrets changed or not present, updating cache")
+    end
+
     {:noreply, %{state | check_ref: check()}}
   end
 
@@ -120,12 +123,10 @@ defmodule Supavisor.SecretChecker do
       {:ok, sasl_secrets} ->
         validation_secrets = ValidationSecrets.from_sasl_secrets(sasl_secrets)
 
-        case ClientAuthentication.refresh_if_changed(state.tenant, state.user, validation_secrets) do
-          :changed -> Logger.info("Secrets changed or not present, updating cache")
-          :noop -> :ok
-        end
+        cache =
+          ClientAuthentication.refresh_if_changed(state.tenant, state.user, validation_secrets)
 
-        {:ok, validation_secrets}
+        {:ok, validation_secrets, cache}
 
       other ->
         Logger.error("Failed to get secret: #{inspect(other)}")

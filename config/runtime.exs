@@ -245,7 +245,6 @@ if config_env() != :test do
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
-    proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
@@ -313,6 +312,30 @@ if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
          context: []
        }}
 end
+
+burst_limit_enable =
+  case System.get_env("SUPAVISOR_LOG_BURST_LIMIT_ENABLE") do
+    nil -> true
+    v -> v in ~w(true 1)
+  end
+
+burst_limit_max_count =
+  System.get_env("SUPAVISOR_LOG_BURST_LIMIT_MAX_COUNT", "500") |> String.to_integer()
+
+burst_limit_window_time =
+  System.get_env("SUPAVISOR_LOG_BURST_LIMIT_WINDOW_TIME", "1000") |> String.to_integer()
+
+config :logger, :default_handler,
+  config: [
+    burst_limit_enable: burst_limit_enable,
+    burst_limit_max_count: burst_limit_max_count,
+    burst_limit_window_time: burst_limit_window_time
+  ]
+
+config :supavisor,
+  logger_burst_limit_enable: burst_limit_enable,
+  logger_burst_limit_max_count: burst_limit_max_count,
+  logger_burst_limit_window_time: burst_limit_window_time
 
 config :logger,
   backends: [:console]

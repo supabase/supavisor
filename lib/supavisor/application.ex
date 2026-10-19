@@ -63,9 +63,7 @@ defmodule Supavisor.Application do
         {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
          %{mode: :transaction, local: false}, Supavisor.ClientHandler},
         {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
-         %{mode: :session, local: false}, Supavisor.ClientHandler},
-        {:pg_proxy, Application.get_env(:supavisor, :proxy_port), %{mode: :proxy, local: false},
-         Supavisor.ClientHandler}
+         %{mode: :session, local: false}, Supavisor.ClientHandler}
       ] ++ session_shards ++ transaction_shards
 
     num_acceptors = String.to_integer(System.get_env("NUM_ACCEPTORS") || "100")
@@ -92,7 +90,7 @@ defmodule Supavisor.Application do
         )
       end
 
-    :syn.add_node_to_scopes([:tenants, :availability_zone, :accepting_pools])
+    :syn.add_node_to_scopes([:tenants, :tenant_pools, :availability_zone, :accepting_pools])
 
     Supavisor.CircuitBreaker.init()
     Supavisor.ConnectBackoff.init()
@@ -103,6 +101,8 @@ defmodule Supavisor.Application do
       [
         {Cachex, name: Supavisor.Cache},
         Supavisor.ErlSysMon,
+        Supavisor.Logger.LinesCounter,
+        Supavisor.MessageQueueWatchdog,
         Supavisor.Health,
         Supavisor.ClientAuthentication.RefreshLimiter,
         Supavisor.CircuitBreaker.Janitor,
@@ -145,7 +145,13 @@ defmodule Supavisor.Application do
         children
       else
         children ++
-          [PromEx, Supavisor.TenantsMetrics, Supavisor.MetricsCleaner] ++
+          [
+            {Supavisor.SchedulerUtilization,
+             interval: Application.fetch_env!(:supavisor, :prom_poll_rate)},
+            PromEx,
+            Supavisor.TenantsMetrics,
+            Supavisor.MetricsCleaner
+          ] ++
           metrics_pusher_children()
       end
 

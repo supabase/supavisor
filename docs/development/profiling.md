@@ -2,7 +2,7 @@ Profiling of the Supabase can be done using [eFlambé][eflambe] project.
 
 Example profiling session looks like:
 
-- Start application within IEx session (for example by using `make dev`)
+- Start application within IEx session (for example by using `mise run dev`)
 - Within given session you can specify which function you want to trace, by
   calling `:eflambe.capture({mod, func, arity}, no_of_captures)`, however it is
   useful to have some separate directory to store all traces, for that one can use

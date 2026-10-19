@@ -17,6 +17,8 @@ defmodule Supavisor.ClientHandler do
   @proto [:tcp, :ssl]
   @switch_active_count Application.compile_env(:supavisor, :switch_active_count)
   @subscribe_retries Application.compile_env(:supavisor, :subscribe_retries)
+  @admission_retries Application.compile_env(:supavisor, :admission_retries)
+  @admission_backoff Application.compile_env(:supavisor, :admission_backoff)
   @max_checkout_retries 2
   @timeout_subscribe 500
   @ssl_handshake_timeout 2_500
@@ -43,24 +45,31 @@ defmodule Supavisor.ClientHandler do
     Data,
     Error,
     ProtocolHelpers,
-    Proxy
+    Proxy,
+    StartupParams
   }
 
   alias Supavisor.Protocol.{FrontendMessageHandler, MessageStreamer, StartupOptions}
   require MessageStreamer
 
   alias Supavisor.Errors.{
+    AuthProtocolError,
+    AuthTimeoutError,
     CheckoutTimeoutError,
     ClientSocketClosedError,
     DbHandlerExitedError,
     HandshakeTimeoutError,
+    JitUnauthorizedError,
+    MaxConnectionsError,
+    PasswordChangedError,
     PoolCheckoutError,
     PoolConfigNotFoundError,
     PoolRanchNotFoundError,
     SslHandshakeError,
     StartupPacketTooLargeError,
     SubscribeRetriesExhaustedError,
-    WorkerNotFoundError
+    WorkerNotFoundError,
+    WrongPasswordError
   }
 
   require Supavisor.Protocol.Server, as: Server
@@ -75,8 +84,11 @@ defmodule Supavisor.ClientHandler do
   @impl true
   def callback_mode, do: [:handle_event_function, :state_enter]
 
-  @spec db_status(pid(), :ready_for_query) :: :ok
-  def db_status(pid, status), do: :gen_statem.cast(pid, {:db_status, status})
+  @doc """
+  Tells the ClientHandler the backend is idle after processing every write up to `write_seq`.
+  """
+  @spec backend_synced(pid(), non_neg_integer()) :: :ok
+  def backend_synced(pid, write_seq), do: :gen_statem.cast(pid, {:backend_synced, write_seq})
 
   @spec send_error_and_terminate(pid(), iodata()) :: :ok
   def send_error_and_terminate(pid, error_message),
@@ -97,7 +109,7 @@ defmodule Supavisor.ClientHandler do
     peer_ip = Helpers.peer_ip(sock)
     local = opts[:local] || false
 
-    Logger.metadata(peer_ip: peer_ip, local: local, state: :init)
+    Logger.metadata(peer_ip: peer_ip, local: local, tls: false, state: :init)
     :ok = trans.setopts(sock, active: @switch_active_count)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
@@ -116,9 +128,11 @@ defmodule Supavisor.ClientHandler do
       stats: %{},
       idle_timeout: 0,
       heartbeat_interval: 0,
+      log_connections: true,
       connection_start: now,
       state_entered_at: now,
-      subscribe_retries: 0
+      subscribe_retries: 0,
+      admission_retries: 0
     }
 
     :gen_statem.enter_loop(__MODULE__, [hibernate_after: 5_000], :handshake, data, [
@@ -166,14 +180,14 @@ defmodule Supavisor.ClientHandler do
       opts = [
         verify: :verify_none,
         certs_keys: certs_keys,
-        sni_fun: fn _hostname -> :undefined end,
-        receiver_spawn_opts: [min_heap_size: 2048]
+        sni_fun: fn _hostname -> :undefined end
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
            {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
         socket = {:ssl, ssl_sock}
         :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
+        Logger.metadata(tls: true)
         {:keep_state, %{data | sock: socket, ssl: true}}
       else
         {:error, %ClientSocketClosedError{} = exception} ->
@@ -201,8 +215,8 @@ defmodule Supavisor.ClientHandler do
     Error.terminate_with_error(data, %HandshakeTimeoutError{}, :handshake)
   end
 
-  def handle_event(:info, {_, _, bin}, :handshake, data)
-      when byte_size(bin) > @max_startup_packet_size do
+  def handle_event(:info, {proto, _, bin}, :handshake, data)
+      when proto in @proto and byte_size(bin) > @max_startup_packet_size do
     Error.terminate_with_error(
       data,
       %StartupPacketTooLargeError{packet_size: byte_size(bin)},
@@ -210,18 +224,10 @@ defmodule Supavisor.ClientHandler do
     )
   end
 
-  def handle_event(:info, {_, _, bin}, :handshake, data) do
+  def handle_event(:info, {proto, _, bin}, :handshake, data) when proto in @proto do
     case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}},
-       app_name, log_level, invalid} ->
-        event =
-          {:hello,
-           {type, {user, tenant_or_alias, db_name, search_path, jit, client_tls, client_ip}}}
-
-        if log_level, do: Logger.put_process_level(self(), log_level)
-
-        {:keep_state, %{data | app_name: app_name, invalid_options: invalid},
-         {:next_event, :internal, event}}
+      {:ok, %StartupParams{} = startup_params} ->
+        {:keep_state_and_data, {:next_event, :internal, {:hello, startup_params}}}
 
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -230,11 +236,24 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(
         :internal,
-        {:hello,
-         {type, {user, tenant_or_alias, db_name, search_path, client_jit, client_tls, client_ip}}},
+        {:hello, %StartupParams{} = startup_params},
         :handshake,
         %{sock: sock} = data
       ) do
+    %StartupParams{
+      type: type,
+      user: user,
+      tenant_or_alias: tenant_or_alias,
+      db_name: db_name,
+      search_path: search_path,
+      jit: client_jit,
+      client_tls: client_tls,
+      client_ip: client_ip,
+      app_name: app_name,
+      log_level: log_level,
+      invalid_options: invalid_options
+    } = startup_params
+
     sni_hostname = HandlerHelpers.try_get_sni(sock)
 
     # When receiving a proxied connection on a local listener, client_tls and
@@ -242,16 +261,19 @@ defmodule Supavisor.ClientHandler do
     # peer is the forwarding node). Otherwise, use what we observed on the socket.
     effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
     peer_ip = ProtocolHelpers.effective_peer_ip(data.local, client_ip, data.peer_ip)
-    data = %{data | peer_ip: peer_ip}
+    data = %{data | peer_ip: peer_ip, app_name: app_name, invalid_options: invalid_options}
+
+    if log_level, do: Logger.put_process_level(self(), log_level)
 
     Logger.metadata(
       project: tenant_or_alias,
       user: user,
       mode: data.mode,
       type: type,
-      app_name: data.app_name,
+      app_name: app_name,
       db_name: db_name,
-      peer_ip: peer_ip
+      peer_ip: peer_ip,
+      tls: effective_ssl
     )
 
     case Tenants.get_user_cache(type, user, tenant_or_alias, sni_hostname) do
@@ -273,7 +295,7 @@ defmodule Supavisor.ClientHandler do
 
         with :ok <- Checks.check_tenant_not_banned(info),
              :ok <- Checks.check_ssl_enforcement(data, info, user),
-             :ok <- Checks.check_address_allowed(sock, info),
+             :ok <- Checks.check_address_allowed(data, info),
              :ok <- Manager.check_client_limit(id, info, data.mode),
              {:ok, auth_method} <-
                AuthMethods.fetch_authentication_method(
@@ -288,6 +310,9 @@ defmodule Supavisor.ClientHandler do
           {:keep_state, new_data,
            {:next_event, :internal, {:start_authentication, auth_method, info}}}
         else
+          {:error, %MaxConnectionsError{} = exception} ->
+            wait_for_slot_or_terminate(%{data | id: id}, {:hello, startup_params}, exception)
+
           {:error, exception} when is_exception(exception) ->
             Error.terminate_with_error(%{data | id: id}, exception, :handshake)
         end
@@ -295,6 +320,11 @@ defmodule Supavisor.ClientHandler do
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
     end
+  end
+
+  # Named timeout: a :state_timeout would cancel @handshake_timeout.
+  def handle_event({:timeout, :admission_retry}, retry_event, _state, _data) do
+    {:keep_state_and_data, {:next_event, :internal, retry_event}}
   end
 
   def handle_event(
@@ -347,11 +377,14 @@ defmodule Supavisor.ClientHandler do
          data = Map.merge(data, opts.workers),
          {:ok, db_connection} <- maybe_checkout(:on_connect, data),
          :ok <- maybe_set_application_name(data, db_connection) do
+      if data.admission_retries > 0, do: Telem.client_admission(:admitted, data.id)
+
       data = %{
         data
         | manager: manager_ref,
           db_connection: db_connection,
-          idle_timeout: opts.idle_timeout
+          idle_timeout: opts.idle_timeout,
+          admission_retries: 0
       }
 
       Registry.register(@clients_registry, data.id,
@@ -376,6 +409,10 @@ defmodule Supavisor.ClientHandler do
 
       {:error, %PoolConfigNotFoundError{}} ->
         timeout_subscribe_or_terminate(data)
+
+      # The pre-auth `check_client_limit/3` is advisory; this is the authoritative check.
+      {:error, %MaxConnectionsError{} = exception} ->
+        wait_for_slot_or_terminate(data, :subscribe, exception)
 
       {:error, exception} when is_exception(exception) ->
         Error.terminate_with_error(data, exception, :handshake)
@@ -410,7 +447,8 @@ defmodule Supavisor.ClientHandler do
              data.pool_ranch,
              client_ssl: data.ssl,
              client_jit: data.use_jit_flow,
-             client_ip: forwardable_peer_ip(data.peer_ip)
+             client_ip: forwardable_peer_ip(data.peer_ip),
+             log_connections: data.log_connections
            ),
          {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
       {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
@@ -473,15 +511,16 @@ defmodule Supavisor.ClientHandler do
   # TLS alert handling: WARNING alerts keep the connection alive, FATAL alerts terminate it.
   # For FATAL alerts, Erlang doesn't send ssl_closed, so we must terminate here.
   # The alert level is only available by parsing the message string ("Warning - " or "Fatal - ").
-  def handle_event(:info, {:ssl_error, sock, {:tls_alert, {_reason, msg}}}, _, %{sock: {_, sock}}) do
+  def handle_event(
+        :info,
+        {:ssl_error, sock, {:tls_alert, {_reason, msg}}},
+        state,
+        %{sock: {_, sock}} = data
+      ) do
     msg_string = to_string(msg)
 
     if String.contains?(msg_string, "Fatal -") do
-      Logger.warning(
-        "ClientHandler: Received fatal TLS alert: #{msg_string}, terminating connection"
-      )
-
-      {:stop, :normal}
+      handle_socket_close(state, data, msg_string)
     else
       Logger.warning(
         "ClientHandler: Received TLS warning alert: #{msg_string}, keeping connection alive"
@@ -543,12 +582,42 @@ defmodule Supavisor.ClientHandler do
   end
 
   # emulate handle_cast
-  def handle_event(:cast, {:db_status, :ready_for_query}, :busy, data) do
+  # A write with tracked messages was forwarded after the one the backend caught up
+  # with, so the backend isn't done yet. Another backend_synced follows once it is.
+  def handle_event(:cast, {:backend_synced, write_seq}, :busy, data)
+      when write_seq < data.tracked_seq do
+    :keep_state_and_data
+  end
+
+  # The rest of a partly forwarded message must reach the same backend.
+  def handle_event(
+        :cast,
+        {:backend_synced, _write_seq},
+        :busy,
+        %{
+          mode: :transaction,
+          stream_state: MessageStreamer.stream_state(in_flight_pkt: {_tag, _remaining_len})
+        }
+      ) do
+    :keep_state_and_data
+  end
+
+  # Later writes without tracked messages get no reply and can't change the backend's
+  # state, so the backend is done with them too.
+  def handle_event(:cast, {:backend_synced, _write_seq}, :busy, data) do
     Logger.debug("ClientHandler: Client is ready")
 
-    # In transaction mode the DbHandler checks itself back into the pool once
-    # it finishes forwarding the response; we only drop our reference to it.
-    db_connection = if data.mode == :transaction, do: nil, else: data.db_connection
+    # In transaction mode the DbHandler waits for us to release it, since only we
+    # know nothing else was forwarded to it.
+    db_connection =
+      case data do
+        %{mode: :transaction, db_connection: {_pool, db_pid, _sock}} ->
+          DbHandler.release(db_pid, data.write_seq)
+          nil
+
+        _ ->
+          data.db_connection
+      end
 
     {_, stats} =
       if data.local,
@@ -561,7 +630,7 @@ defmodule Supavisor.ClientHandler do
      handle_actions(data)}
   end
 
-  def handle_event(:cast, {:db_status, :ready_for_query}, :idle, _) do
+  def handle_event(:cast, {:backend_synced, _write_seq}, :idle, _) do
     :keep_state_and_data
   end
 
@@ -580,11 +649,9 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
-  def handle_event(:info, {sock_error, _sock, msg}, state, _data)
+  def handle_event(:info, {sock_error, _sock, reason}, state, data)
       when sock_error in [:tcp_error, :ssl_error] do
-    Logger.error("ClientHandler: Socket error: #{inspect(msg)}, state was #{state}")
-
-    {:stop, :normal}
+    handle_socket_close(state, data, reason)
   end
 
   def handle_event(:info, {event, _socket}, _, data) when event in [:tcp_passive, :ssl_passive] do
@@ -654,7 +721,7 @@ defmodule Supavisor.ClientHandler do
              :auth_scram_final_wait,
              :auth_password_wait
            ] do
-    exception = %Supavisor.Errors.AuthTimeoutError{context: auth_state}
+    exception = %AuthTimeoutError{context: auth_state}
     handle_auth_failure(exception, data)
   end
 
@@ -684,15 +751,15 @@ defmodule Supavisor.ClientHandler do
 
   # Terminate request
   def handle_event(_kind, {proto, _, <<?X, 4::32>>}, state, data) when proto in @proto do
-    Logger.info("ClientHandler: Terminate received from client")
+    if data.log_connections, do: Logger.info("ClientHandler: Terminate received from client")
     maybe_cleanup_db_handler(state, data)
     {:stop, :normal}
   end
 
-  # Sync when idle and no db_connection - return sync directly
+  # Lone sync when idle and no db_connection - return sync directly
   def handle_event(
         _kind,
-        {proto, _, <<?S, 4::32, _::binary>>},
+        {proto, _, <<?S, 4::32>>},
         :idle,
         %{db_connection: nil} = data
       )
@@ -808,7 +875,7 @@ defmodule Supavisor.ClientHandler do
 
   ## Internal functions
   defp handle_auth_success(final_secrets, data) do
-    Logger.info("ClientHandler: Connection authenticated")
+    if data.log_connections, do: Logger.info("ClientHandler: Connection authenticated")
     cache_validated_password(data, final_secrets)
 
     if data.mode != :proxy do
@@ -856,9 +923,19 @@ defmodule Supavisor.ClientHandler do
   defp forwardable_peer_ip("undefined"), do: nil
   defp forwardable_peer_ip(peer_ip), do: peer_ip
 
-  defp handle_auth_failure(exception, data) do
-    AuthMethods.handle_auth_failure(data.auth_context, exception)
+  defp handle_auth_failure(%error{} = exception, data)
+       when error in [
+              WrongPasswordError,
+              PasswordChangedError,
+              JitUnauthorizedError,
+              AuthProtocolError,
+              AuthTimeoutError
+            ] do
     Supavisor.CircuitBreaker.record_failure({data.tenant, data.peer_ip}, :auth_error)
+    Error.terminate_with_error(data, exception, :handshake)
+  end
+
+  defp handle_auth_failure(exception, data) do
     Error.terminate_with_error(data, exception, :handshake)
   end
 
@@ -907,34 +984,34 @@ defmodule Supavisor.ClientHandler do
 
     with {:ok, new_stream_state, pkts} <-
            ProtocolHelpers.process_client_packets(data_to_send, data.mode, data),
-         {:ok, new_stream_state} <- maybe_expect_ready_for_query(data, new_stream_state),
+         data = maybe_expect_messages(%{data | stream_state: new_stream_state}),
          :ok <- sock_send(pkts, data) do
-      {:ok, %{data | stream_state: new_stream_state}}
+      {:ok, data}
     else
       {:error, exception} ->
         {:error, exception}
     end
   end
 
-  defp maybe_expect_ready_for_query(
-         %{mode: :transaction, db_connection: {_pool, db_pid, _sock}},
-         stream_state
-       ) do
-    {count, open_batch?, stream_state} = handle_rfq_producers(stream_state)
-    DbHandler.expect_ready_for_query(db_pid, count, open_batch?)
-    {:ok, stream_state}
+  # Every write is announced, even one without tracked messages, so the DbHandler
+  # can't be released while any of it is in flight.
+  defp maybe_expect_messages(%{mode: :transaction, db_connection: {_pool, db_pid, _sock}} = data) do
+    handler_state = MessageStreamer.stream_state(data.stream_state, :handler_state)
+    {forwarded, handler_state} = FrontendMessageHandler.take_forwarded(handler_state)
+    write_seq = data.write_seq + 1
+    tracked_seq = if forwarded == [], do: data.tracked_seq, else: write_seq
+    DbHandler.expect_messages(db_pid, write_seq, forwarded)
+
+    %{
+      data
+      | write_seq: write_seq,
+        tracked_seq: tracked_seq,
+        stream_state:
+          MessageStreamer.stream_state(data.stream_state, handler_state: handler_state)
+    }
   end
 
-  defp maybe_expect_ready_for_query(_data, stream_state), do: {:ok, stream_state}
-
-  defp handle_rfq_producers(stream_state) do
-    handler_state = MessageStreamer.stream_state(stream_state, :handler_state)
-
-    # The count is per write, so it is reset on read. `open_batch?` outlives the
-    # write that opened the batch and is only cleared by the client's Sync.
-    {handler_state.rfq_producers, handler_state.open_batch?,
-     MessageStreamer.update_state(stream_state, fn s -> %{s | rfq_producers: 0} end)}
-  end
+  defp maybe_expect_messages(data), do: data
 
   @spec handle_actions(map) :: [{:timeout, non_neg_integer, atom}]
   defp handle_actions(%{} = data) do
@@ -984,28 +1061,11 @@ defmodule Supavisor.ClientHandler do
   defp sock_send(bin_or_pkts, data) do
     {_pool, db_handler, db_sock} = data.db_connection
 
-    case bin_or_pkts do
-      pkts when is_list(pkts) ->
-        # Chunking to ensure we send bigger packets
-        pkts
-        |> Enum.chunk_by(&is_tuple/1)
-        |> Enum.reduce_while(:ok, fn chunk, _acc ->
-          case chunk do
-            [t | _] = prepared_pkts when is_tuple(t) ->
-              Supavisor.DbHandler.handle_prepared_statement_pkts(db_handler, prepared_pkts)
-
-            bins ->
-              HandlerHelpers.sock_send(db_sock, bins)
-          end
-          |> case do
-            :ok -> {:cont, :ok}
-            error -> {:halt, error}
-          end
-        end)
-
-      bin ->
-        HandlerHelpers.sock_send(elem(data.db_connection, 2), bin)
-    end
+    # A write with prepared statement packets goes whole through the DbHandler, so it
+    # reaches the backend in order.
+    if is_list(bin_or_pkts) and Enum.any?(bin_or_pkts, &is_tuple/1),
+      do: DbHandler.send_prepared_write(db_handler, bin_or_pkts),
+      else: HandlerHelpers.sock_send(db_sock, bin_or_pkts)
   end
 
   @spec timeout_subscribe_or_terminate(map()) :: :gen_statem.handle_event_result()
@@ -1018,6 +1078,28 @@ defmodule Supavisor.ClientHandler do
     else
       Error.terminate_with_error(data, %SubscribeRetriesExhaustedError{}, :handshake)
     end
+  end
+
+  @doc """
+  Replays `retry_event` after a backoff while the admission budget lasts, then terminates with `exception`.
+  """
+  @spec wait_for_slot_or_terminate(map(), term(), Exception.t()) ::
+          :gen_statem.handle_event_result()
+  def wait_for_slot_or_terminate(%{admission_retries: retries} = data, retry_event, exception) do
+    if retries < @admission_retries do
+      Logger.debug("ClientHandler: Waiting for a free client slot, attempt #{retries + 1}")
+
+      {:keep_state, %{data | admission_retries: retries + 1},
+       {{:timeout, :admission_retry}, admission_backoff(), retry_event}}
+    else
+      Telem.client_admission(:rejected, data.id)
+      Error.terminate_with_error(data, exception, :handshake)
+    end
+  end
+
+  defp admission_backoff do
+    jitter = max(div(@admission_backoff, 4), 1)
+    max(@admission_backoff - jitter + :rand.uniform(2 * jitter), 0)
   end
 
   defp pool_checkout(pool, timeout, mode) do
@@ -1054,7 +1136,10 @@ defmodule Supavisor.ClientHandler do
       | id: id,
         tenant: info.tenant.external_id,
         tenant_feature_flags: info.tenant.feature_flags,
-        tenant_availability_zone: info.tenant.availability_zone,
+        # Cluster pools are placed without a zone, as their replicas may be in
+        # different ones, see `Supavisor.start_local_pool/3`
+        tenant_availability_zone:
+          if(Supavisor.id(id, :type) == :single, do: info.tenant.availability_zone),
         txn_mode_leak_action: info.tenant.txn_mode_leak_action,
         user: user,
         db_name: db_name,
@@ -1062,6 +1147,7 @@ defmodule Supavisor.ClientHandler do
         ps: info.tenant.default_parameter_status,
         proxy_type: proxy_type,
         heartbeat_interval: info.tenant.client_heartbeat_interval * 1000,
+        log_connections: info.tenant.log_connections,
         connection_params: connection_params,
         max_clients: info.user.max_clients || info.tenant.default_max_clients,
         use_jit_flow: client_jit
@@ -1071,10 +1157,10 @@ defmodule Supavisor.ClientHandler do
   defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?
   defp upstream_tls(%{upstream_ssl: upstream_ssl}, _ssl?), do: upstream_ssl
 
-  defp handle_socket_close(state, data) do
+  defp handle_socket_close(state, data, reason \\ nil) do
     maybe_cleanup_db_handler(state, data)
 
-    error = %ClientSocketClosedError{mode: data.mode, client_state: state}
+    error = %ClientSocketClosedError{mode: data.mode, client_state: state, reason: reason}
     context = if state in [:idle, :busy], do: :authenticated, else: :handshake
     Error.terminate_with_error(data, error, context)
   end

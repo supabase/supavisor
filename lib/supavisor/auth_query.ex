@@ -9,6 +9,8 @@ defmodule Supavisor.AuthQuery do
   alias Supavisor.Secrets.{ManagerSecrets, SASLSecrets}
   alias Supavisor.Tenants.Tenant
 
+  @max_scram_iterations 32_768
+
   @doc """
   Starts and links a Postgrex connection configured for auth-query use.
   """
@@ -126,6 +128,7 @@ defmodule Supavisor.AuthQuery do
     # <digest>$<iteration>:<salt>$<stored_key>:<server_key>
     with [_, digest, iterations, salt, stored_key, server_key] <-
            Regex.run(~r/^(.+)\$(\d+):(.+)\$(.+):(.+)$/, secret),
+         {:ok, iterations} <- validate_iterations(String.to_integer(iterations)),
          {:ok, decoded_stored_key} <- Base.decode64(stored_key),
          {:ok, decoded_server_key} <- Base.decode64(server_key),
          {:ok, decoded_salt} <- Base.decode64(salt) do
@@ -133,12 +136,13 @@ defmodule Supavisor.AuthQuery do
        %SASLSecrets{
          user: user,
          digest: digest,
-         iterations: String.to_integer(iterations),
+         iterations: iterations,
          salt: decoded_salt,
          stored_key: decoded_stored_key,
          server_key: decoded_server_key
        }}
     else
+      {:error, %AuthQueryError{}} = error -> error
       _ -> {:error, %AuthQueryError{reason: :parse_error}}
     end
   end
@@ -152,6 +156,16 @@ defmodule Supavisor.AuthQuery do
   end
 
   ## Private
+
+  defp validate_iterations(iterations) when iterations > @max_scram_iterations do
+    {:error,
+     %AuthQueryError{
+       reason: :too_many_iterations,
+       details: "#{iterations} exceeds the maximum of #{@max_scram_iterations}"
+     }}
+  end
+
+  defp validate_iterations(iterations), do: {:ok, iterations}
 
   defp build_ssl_options(%Tenant{upstream_ssl: true, upstream_verify: :peer} = tenant) do
     sni = tenant.sni_hostname || tenant.db_host

@@ -44,6 +44,9 @@ connection
 
 `client_idle_timeout` - the maximum duration of an idle client connection
 
+`log_connections` - log client and server (pool) connections and client
+disconnections (default `true`)
+
 `allow_list` - a list of CIDR ranges which are allowed to connect
 
 `txn_mode_leak_action` - what to do when a client sends a statement that leaves
