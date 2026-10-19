@@ -111,7 +111,19 @@ defmodule Supavisor.DbHandlerTest do
       {:reply, state.connection_params, state}
     end
 
+    def handle_call({:set_parameter_status, _ps}, _from, state) do
+      {:reply, :ok, state}
+    end
+
     def handle_cast({:shutdown_with_error, _error}, state) do
+      {:noreply, state}
+    end
+
+    def handle_cast(:notify_secrets_available, state) do
+      {:noreply, state}
+    end
+
+    def handle_cast({:register_waiting_for_secrets, _pid}, state) do
       {:noreply, state}
     end
   end
@@ -299,6 +311,149 @@ defmodule Supavisor.DbHandlerTest do
 
       assert updated_data.connection_params.secrets == secrets
       assert updated_data.manager_ref == nil
+    end
+  end
+
+  describe "connect lease" do
+    setup %{id: id} do
+      table = :ets.new(:tenant_cache, [:set, :public])
+      Registry.register(Supavisor.Registry.Tenants, {:cache, id}, table)
+
+      manager_config = %{
+        id: id,
+        connection_params: connection_params(),
+        tenant: {:single, "test_tenant"},
+        user: "user",
+        mode: :transaction,
+        replica_type: :single,
+        log_level: nil,
+        tenant_feature_flags: %{"connect_gate" => true},
+        log_connections: true
+      }
+
+      {:ok, manager} = start_supervised({FakeManager, manager_config})
+      gate = start_supervised!({Supavisor.ConnectGate, %{id: id}})
+      {:ok, gate: gate, manager: manager}
+    end
+
+    test "connects without a lease when the feature flag is disabled", %{
+      id: id,
+      manager: manager
+    } do
+      secrets = %PasswordSecrets{user: "user", password: "pass"}
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, secrets)
+
+      {:ok, {_gate, holder_ref}} = Supavisor.ConnectGate.acquire(id)
+      assert_receive {:connect_lease, ^holder_ref}
+
+      :sys.replace_state(manager, &%{&1 | tenant_feature_flags: %{"connect_gate" => false}})
+
+      assert {:ok, :connect, data, {:next_event, :internal, :connect}} = Db.init(%{id: id})
+      assert data.connect_lease == nil
+      assert data.connection_params.secrets == secrets
+    end
+
+    test "connects once the lease is granted", %{id: id, gate: gate} do
+      secrets = %PasswordSecrets{user: "user", password: "pass"}
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(id, secrets)
+
+      assert {:ok, :waiting_for_connect_lease, data, []} = Db.init(%{id: id})
+      assert {^gate, ref} = data.connect_lease
+      assert_receive {:connect_lease, ^ref} = msg
+
+      assert {:next_state, :connect, data, {:next_event, :internal, :connect}} =
+               Db.handle_event(:info, msg, :waiting_for_connect_lease, data)
+
+      assert data.connection_params.secrets == secrets
+      assert {^gate, ^ref} = data.connect_lease
+    end
+
+    test "releases the lease when secrets are missing once granted", %{id: id} do
+      assert {:ok, :waiting_for_connect_lease, data, []} = Db.init(%{id: id})
+      {_gate, ref} = data.connect_lease
+      assert_receive {:connect_lease, ^ref} = msg
+
+      {:ok, {_gate, next_ref}} = Supavisor.ConnectGate.acquire(id)
+      refute_receive {:connect_lease, ^next_ref}, 100
+
+      assert {:next_state, :waiting_for_secrets, data, []} =
+               Db.handle_event(:info, msg, :waiting_for_connect_lease, data)
+
+      assert data.connect_lease == nil
+      assert data.manager_ref != nil
+      assert_receive {:connect_lease, ^next_ref}
+    end
+
+    test "releases the lease and cools down when a connect failed meanwhile", %{id: id} do
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(
+        id,
+        %PasswordSecrets{user: "user", password: "pass"}
+      )
+
+      assert {:ok, :waiting_for_connect_lease, data, []} = Db.init(%{id: id})
+      {_gate, ref} = data.connect_lease
+      assert_receive {:connect_lease, ^ref} = msg
+
+      {:ok, {_gate, next_ref}} = Supavisor.ConnectGate.acquire(id)
+      Supavisor.ConnectBackoff.record_failure(id, System.monotonic_time(:millisecond))
+
+      assert {:next_state, :connect_cooldown, data, {:state_timeout, cooldown, :connect}} =
+               Db.handle_event(:info, msg, :waiting_for_connect_lease, data)
+
+      assert cooldown > 0 and cooldown <= 2_500
+      assert data.connect_lease == nil
+      assert_receive {:connect_lease, ^next_ref}
+    end
+
+    test "releases the lease once authenticated", %{id: id} do
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(
+        id,
+        %PasswordSecrets{user: "user", password: "pass"}
+      )
+
+      assert {:ok, :waiting_for_connect_lease, data, []} = Db.init(%{id: id})
+      {_gate, ref} = data.connect_lease
+      assert_receive {:connect_lease, ^ref}
+
+      {:ok, {_gate, next_ref}} = Supavisor.ConnectGate.acquire(id)
+
+      bin =
+        IO.iodata_to_binary([
+          Server.encode_parameter_status(%{"server_version" => "17.0"}),
+          Server.ready_for_query()
+        ])
+
+      assert {:next_state, :idle, data} =
+               Db.handle_event(
+                 :info,
+                 {:tcp, :sock, bin},
+                 :authentication,
+                 data
+               )
+
+      assert data.connect_lease == nil
+      assert_receive {:connect_lease, ^next_ref}
+    end
+
+    test "connects without a lease when the gate goes down while waiting", %{id: id} do
+      Supavisor.UpstreamAuthentication.put_upstream_auth_secrets(
+        id,
+        %PasswordSecrets{user: "user", password: "pass"}
+      )
+
+      {:ok, {_gate, holder_ref}} = Supavisor.ConnectGate.acquire(id)
+      assert_receive {:connect_lease, ^holder_ref}
+
+      assert {:ok, :waiting_for_connect_lease, data, []} = Db.init(%{id: id})
+      {_gate, ref} = data.connect_lease
+
+      stop_supervised!(Supavisor.ConnectGate)
+      assert_receive {:DOWN, ^ref, :process, _, _} = msg
+
+      assert {:next_state, :connect, data, {:next_event, :internal, :connect}} =
+               Db.handle_event(:info, msg, :waiting_for_connect_lease, data)
+
+      assert data.connect_lease == nil
     end
   end
 
@@ -637,7 +792,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :session,
         user: "some user",
         client_sock: nil,
-        terminating_error: nil
+        terminating_error: nil,
+        connect_lease: nil
       }
 
       # Step 1: Receive error from DB, should prepare to terminate
@@ -681,7 +837,8 @@ defmodule Supavisor.DbHandlerTest do
         mode: :session,
         user: "some user",
         client_sock: {:gen_tcp, send},
-        terminating_error: nil
+        terminating_error: nil,
+        connect_lease: nil
       }
 
       # Step 1: Receive error from DB, should prepare to terminate

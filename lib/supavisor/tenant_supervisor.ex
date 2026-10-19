@@ -4,6 +4,7 @@ defmodule Supavisor.TenantSupervisor do
 
   require Logger
   require Supavisor
+  alias Supavisor.ConnectGate
   alias Supavisor.Manager
   alias Supavisor.SecretChecker
   alias Supavisor.Terminator
@@ -45,6 +46,7 @@ defmodule Supavisor.TenantSupervisor do
 
     manager_args = %{id: args.id, sup: self(), log_level: args.log_level}
     secret_checker_args = %{id: args.id}
+    connect_gate_args = %{id: args.id}
     cache_args = %{id: args.id, upstream_auth_secrets: args.secrets}
     terminator_args = %{id: args.id, sup: self(), pools: pool_names}
 
@@ -52,7 +54,8 @@ defmodule Supavisor.TenantSupervisor do
       [
         {Supavisor.TenantCache, cache_args},
         {Manager, manager_args},
-        {SecretChecker, secret_checker_args}
+        {SecretChecker, secret_checker_args},
+        {ConnectGate, connect_gate_args}
         | pools
       ] ++ [{Terminator, terminator_args}]
 

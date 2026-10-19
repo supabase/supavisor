@@ -12,10 +12,12 @@ defmodule Supavisor.DbHandler do
 
   ### Pool mode (transaction/session)
 
-  Started via `start_link/1` by poolboy with a Manager config. Fetches auth
-  secrets (or enters `:waiting_for_secrets` if unavailable), then connects to
-  the database immediately. Workers are long-lived and shared across clients
-  via checkout/checkin.
+  Started via `start_link/1` by poolboy with a Manager config. With the
+  `"connect_gate"` feature flag, waits for a `Supavisor.ConnectGate` lease, so
+  only one DbHandler of the tenant tree connects and authenticates at a time.
+  Then fetches auth secrets (or enters `:waiting_for_secrets` if unavailable)
+  and connects to the database. Workers are long-lived and shared across
+  clients via checkout/checkin.
 
   ### Proxy mode
 
@@ -30,11 +32,13 @@ defmodule Supavisor.DbHandler do
   require Supavisor
   require Supavisor.Protocol.Server, as: Server
 
+  alias Supavisor.ConnectGate
   alias Supavisor.ConnectionParameters
   alias Supavisor.Errors.CheckoutError
   alias Supavisor.Errors.CheckoutTimeoutError
   alias Supavisor.Errors.ClientSocketClosedError
   alias Supavisor.Errors.DbHandlerExitedError
+  alias Supavisor.FeatureFlag
   alias Supavisor.Secrets.PasswordSecrets
   alias Supavisor.Protocol.{PreparedStatements, StartupOptions}
   alias Supavisor.Protocol.PreparedStatements.BackendStorage
@@ -57,6 +61,7 @@ defmodule Supavisor.DbHandler do
           | :busy
           | :terminating_with_error
           | :waiting_for_secrets
+          | :waiting_for_connect_lease
           | :setting_application_name
 
   @sock_closed [:tcp_closed, :ssl_closed]
@@ -251,6 +256,7 @@ defmodule Supavisor.DbHandler do
       pool: pool,
       terminating_error: nil,
       manager_ref: nil,
+      connect_lease: nil,
       derived_secrets: nil
     }
 
@@ -264,7 +270,7 @@ defmodule Supavisor.DbHandler do
     if cooldown > 0 do
       {:ok, :connect_cooldown, data, {:state_timeout, cooldown, :connect}}
     else
-      {initial_state, data, actions} = resolve_secrets(data)
+      {initial_state, data, actions} = request_connect(data)
       {:ok, initial_state, data, actions}
     end
   end
@@ -274,7 +280,44 @@ defmodule Supavisor.DbHandler do
 
   @impl true
   def handle_event(:state_timeout, :connect, :connect_cooldown, data) do
-    {next_state, data, actions} = resolve_secrets(data)
+    {next_state, data, actions} = request_connect(data)
+    {:next_state, next_state, data, actions}
+  end
+
+  def handle_event(
+        :info,
+        {:connect_lease, ref},
+        :waiting_for_connect_lease,
+        %{connect_lease: {_gate, ref}} = data
+      ) do
+    cooldown = connect_cooldown_remaining(data.id)
+
+    if cooldown > 0 do
+      {:next_state, :connect_cooldown, release_connect_lease(data),
+       {:state_timeout, cooldown, :connect}}
+    else
+      case resolve_secrets(data) do
+        {:waiting_for_secrets, data, actions} ->
+          {:next_state, :waiting_for_secrets, release_connect_lease(data), actions}
+
+        {next_state, data, actions} ->
+          {:next_state, next_state, data, actions}
+      end
+    end
+  end
+
+  # Waiting for a new gate could take long, so connect without a lease.
+  def handle_event(
+        :info,
+        {:DOWN, ref, :process, _pid, reason},
+        :waiting_for_connect_lease,
+        %{connect_lease: {_gate, ref}} = data
+      ) do
+    Logger.warning(
+      "connect gate exited while waiting for a connect lease (#{inspect(reason)}), connecting anyway"
+    )
+
+    {next_state, data, actions} = resolve_secrets(%{data | connect_lease: nil})
     {:next_state, next_state, data, actions}
   end
 
@@ -347,6 +390,7 @@ defmodule Supavisor.DbHandler do
 
   def handle_event(:internal, {:terminate_with_error, error, pool_action}, _state, data) do
     Logger.debug("DbHandler: Transitioning to terminating_with_error state")
+    data = release_connect_lease(data)
 
     case pool_action do
       :shutdown_pool when not data.proxy ->
@@ -441,6 +485,7 @@ defmodule Supavisor.DbHandler do
           cache_derived_secrets(data)
         end
 
+        data = release_connect_lease(data)
         {:next_state, :idle, Map.merge(data, %{parameter_status: ps, derived_secrets: nil})}
 
       other ->
@@ -721,16 +766,8 @@ defmodule Supavisor.DbHandler do
 
     Process.demonitor(data.manager_ref, [:flush])
 
-    case get_connection_params_with_secrets(data.connection_params, data.id) do
-      {:ok, conn_params_with_secrets} ->
-        {:next_state, :connect,
-         %{data | connection_params: conn_params_with_secrets, manager_ref: nil},
-         {:next_event, :internal, :connect}}
-
-      {:error, :no_secrets} ->
-        Logger.error("DbHandler: Still no secrets available after notification")
-        :keep_state_and_data
-    end
+    {next_state, data, actions} = request_connect(%{data | manager_ref: nil})
+    {:next_state, next_state, data, actions}
   end
 
   def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, :waiting_for_secrets, data)
@@ -1112,6 +1149,28 @@ defmodule Supavisor.DbHandler do
     do: "authentication did not complete within #{@authentication_timeout_ms}ms"
 
   defp format_reason(reason), do: inspect(reason)
+
+  # Secrets are fetched once the lease is granted, so DbHandlers that waited
+  # behind a failed authentication don't retry with invalidated secrets.
+  defp request_connect(%{proxy: true} = data), do: resolve_secrets(data)
+
+  defp request_connect(data) do
+    if FeatureFlag.enabled?(data.tenant_feature_flags, "connect_gate") do
+      case ConnectGate.acquire(data.id) do
+        {:ok, lease} -> {:waiting_for_connect_lease, %{data | connect_lease: lease}, []}
+        {:error, :not_running} -> resolve_secrets(data)
+      end
+    else
+      resolve_secrets(data)
+    end
+  end
+
+  defp release_connect_lease(%{connect_lease: nil} = data), do: data
+
+  defp release_connect_lease(data) do
+    ConnectGate.release(data.connect_lease)
+    %{data | connect_lease: nil}
+  end
 
   defp resolve_secrets(data) do
     if data.proxy do
