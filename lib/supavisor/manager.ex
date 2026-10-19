@@ -213,7 +213,7 @@ defmodule Supavisor.Manager do
       client_idle_timeout: client_idle_timeout,
       sni_hostname: sni_hostname,
       feature_flags: feature_flags,
-      server_reset_query: server_reset_query
+      server_reset_query: server_reset_query,
       log_connections: log_connections
     } = tenant_record
 
