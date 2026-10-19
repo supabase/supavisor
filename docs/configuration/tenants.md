@@ -44,7 +44,7 @@ connection
 
 `client_idle_timeout` - the maximum duration of an idle client connection
 
-`log_connections` - log client and server connections and client
+`log_connections` - log client and server (pool) connections and client
 disconnections (default `true`)
 
 `allow_list` - a list of CIDR ranges which are allowed to connect
