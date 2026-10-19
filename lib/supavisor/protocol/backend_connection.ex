@@ -48,7 +48,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   - `:fake`: a Parse not sent because the backend already has the statement, or a Close
     not sent because it doesn't. Its ParseComplete or CloseComplete is made up once every
     request before it has been answered.
-  - `{:internal, query_id}`: part of a `query/3`. Every response is dropped.
+  - `{:internal_query, query_id}`: part of a `query/3`. Every response is dropped.
 
   ## Prepared statements
 
@@ -61,6 +61,12 @@ defmodule Supavisor.Protocol.BackendConnection do
   more than one unanswered Parse or Close. The backend's next error about the statement
   corrects it. A Parse failing with 42P05 (`duplicate_prepared_statement`) records the statement, and a Bind or Describe
   failing with 26000 forgets it.
+
+  ## Queries
+
+  Each message of a Supavisor `query/3` is stored as an `{:internal_query, query_id}` request.
+  None of their responses reach the client, and rows aren't kept. Once the backend has answered/ignored
+  all of them for a `query_id`, `pop_query_result/2` returns the result as `:ok`, or `{:error, error}`.
   """
 
   require Record
@@ -97,7 +103,7 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   @type query_result() :: :ok | {:error, map()}
 
-  @type action() :: :forward | :skip | :fake | {:internal, atom()}
+  @type action() :: :forward | :skip | :fake | {:internal_query, atom()}
 
   @type write_tag() :: byte() | {:ps, byte()}
 
@@ -345,7 +351,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   defp client_request(tag), do: {tag, :forward, nil}
 
   defp internal_requests(<<tag, len::32, _::binary-size(len - 4), rest::binary>>, id, acc),
-    do: internal_requests(rest, id, [{tag, {:internal, id}, nil} | acc])
+    do: internal_requests(rest, id, [{tag, {:internal_query, id}, nil} | acc])
 
   defp internal_requests(<<>>, _id, acc), do: Enum.reverse(acc)
 
@@ -447,7 +453,7 @@ defmodule Supavisor.Protocol.BackendConnection do
   # Where a message goes depends on the request it answers, the one at the head.
   defp forward?(backend(state: state) = backend, type) do
     case head_request(backend) do
-      {_, {:internal, _}, _} -> false
+      {_, {:internal_query, _}, _} -> false
       {@parse, :skip, _} when type == @parse_complete and is_answering(state) -> false
       {@close, :skip, _} when type == @close_complete and is_answering(state) -> false
       _ -> true
@@ -474,7 +480,7 @@ defmodule Supavisor.Protocol.BackendConnection do
 
   defp record_query_error(backend(running_queries: running) = backend, body) do
     case head_request(backend) do
-      {_, {:internal, id}, _} ->
+      {_, {:internal_query, id}, _} ->
         running = Map.update!(running, id, &(&1 || Server.decode_error_response(body)))
         backend(backend, running_queries: running)
 
@@ -660,9 +666,9 @@ defmodule Supavisor.Protocol.BackendConnection do
   end
 
   # A query's requests are queued together, so it's over once the next request isn't one of its.
-  defp finish_query(backend, {_, {:internal, id}, _}) do
+  defp finish_query(backend, {_, {:internal_query, id}, _}) do
     case head_request(backend) do
-      {_, {:internal, ^id}, _} ->
+      {_, {:internal_query, ^id}, _} ->
         backend
 
       _ ->

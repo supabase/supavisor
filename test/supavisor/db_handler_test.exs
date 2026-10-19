@@ -946,7 +946,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event({:call, from}, :cleanup, :idle, data)
 
       assert new_data.waiting_cleanup == from
-      assert pending(new_data) == [{?Q, {:internal, :server_reset_query}, nil}]
+      assert pending(new_data) == [{?Q, {:internal_query, :server_reset_query}, nil}]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
       assert message =~ "DISCARD ALL"
@@ -972,7 +972,7 @@ defmodule Supavisor.DbHandlerTest do
                Db.handle_event({:call, from}, :cleanup, :busy, data)
 
       assert new_data.waiting_cleanup == from
-      assert pending(new_data) == [{?Q, {:internal, :server_reset_query}, nil}]
+      assert pending(new_data) == [{?Q, {:internal_query, :server_reset_query}, nil}]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
       assert message =~ "DISCARD ALL"
@@ -1168,10 +1168,10 @@ defmodule Supavisor.DbHandlerTest do
       assert new_data.set_app_name_from == from
 
       assert pending(new_data) == [
-               {?P, {:internal, :application_name}, nil},
-               {?B, {:internal, :application_name}, nil},
-               {?E, {:internal, :application_name}, nil},
-               {?S, {:internal, :application_name}, nil}
+               {?P, {:internal_query, :application_name}, nil},
+               {?B, {:internal_query, :application_name}, nil},
+               {?E, {:internal_query, :application_name}, nil},
+               {?S, {:internal_query, :application_name}, nil}
              ]
 
       assert {:ok, message} = :gen_tcp.recv(recv, 0, 1000)
