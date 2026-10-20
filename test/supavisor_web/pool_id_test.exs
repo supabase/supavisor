@@ -17,21 +17,18 @@ defmodule SupavisorWeb.PoolIdTest do
     )
   end
 
-  defp params(overrides) do
-    Map.merge(
-      %{
-        "type" => "single",
-        "tenant" => "t1",
-        "user" => "postgres",
-        "mode" => "transaction",
-        "database" => "postgres"
-      },
-      overrides
-    )
+  defp token(overrides) do
+    %{
+      "type" => "single",
+      "tenant" => "t1",
+      "user" => "postgres",
+      "mode" => "transaction",
+      "database" => "postgres"
+    }
+    |> Map.merge(overrides)
+    |> Jason.encode!()
+    |> Base.url_encode64(padding: false)
   end
-
-  defp errors(changeset),
-    do: Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
 
   describe "id_to_map/1" do
     test "serializes a pool id to its external map" do
@@ -74,40 +71,38 @@ defmodule SupavisorWeb.PoolIdTest do
     end
   end
 
-  describe "parse_id/1" do
-    test "builds an id from a valid map" do
-      assert {:ok, i} = PoolId.parse_id(params(%{}))
+  describe "decode_token/1 validation" do
+    test "builds an id from a valid token" do
+      assert {:ok, i} = PoolId.decode_token(token(%{}))
       assert i == id()
     end
 
     test "casts enum strings to atoms" do
-      assert {:ok, i} = PoolId.parse_id(params(%{"type" => "cluster", "mode" => "session"}))
+      assert {:ok, i} = PoolId.decode_token(token(%{"type" => "cluster", "mode" => "session"}))
       assert Supavisor.id(i, :type) == :cluster
       assert Supavisor.id(i, :mode) == :session
     end
 
     test "defaults upstream_tls to false and search_path to nil" do
-      assert {:ok, i} = PoolId.parse_id(params(%{}))
+      assert {:ok, i} = PoolId.decode_token(token(%{}))
       assert Supavisor.id(i, :upstream_tls) == false
       assert Supavisor.id(i, :search_path) == nil
     end
 
-    test "rejects an unknown enum value" do
-      assert {:error, %Ecto.Changeset{} = cs} = PoolId.parse_id(params(%{"mode" => "nope"}))
-      assert %{mode: ["is invalid"]} = errors(cs)
+    test "rejects modes a pool cannot have" do
+      for mode <- ["nope", "proxy", "native"] do
+        assert {:error, :invalid_token} = PoolId.decode_token(token(%{"mode" => mode}))
+      end
     end
 
     test "requires the mandatory fields" do
-      assert {:error, %Ecto.Changeset{} = cs} = PoolId.parse_id(%{"type" => "single"})
-      e = errors(cs)
-      assert e[:tenant] == ["can't be blank"]
-      assert e[:user] == ["can't be blank"]
-      assert e[:mode] == ["can't be blank"]
-      assert e[:database] == ["can't be blank"]
+      for field <- ["type", "tenant", "user", "mode", "database"] do
+        assert {:error, :invalid_token} = PoolId.decode_token(token(%{field => nil}))
+      end
     end
 
-    test "rejects non-map input" do
-      assert {:error, :invalid_id} = PoolId.parse_id("nope")
+    test "rejects JSON that is not an object" do
+      assert {:error, :invalid_token} = PoolId.decode_token(Base.url_encode64("[1]"))
     end
   end
 end

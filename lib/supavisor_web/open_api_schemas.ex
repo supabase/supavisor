@@ -508,7 +508,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         user: %Schema{type: :string, description: "Database user"},
         mode: %Schema{
           type: :string,
-          enum: ["transaction", "session", "native", "proxy"],
+          enum: ["transaction", "session"],
           description: "Pooling mode"
         },
         database: %Schema{type: :string, description: "Database name"},

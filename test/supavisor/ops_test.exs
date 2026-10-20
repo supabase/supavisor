@@ -64,11 +64,9 @@ defmodule Supavisor.OpsTest do
       id = start_pool!(pool_id([]))
       subscribe_clients(id, 2)
 
-      # The warm worker (min pool size 1) connects asynchronously, so wait for it.
-      assert_eventually(fn ->
-        %{pools: [pool]} = Ops.list_pools(@tenant)
-        pool.clients == 2 and pool.connections == %{idle: 1, checked_out: 0}
-      end)
+      assert %{pools: [pool]} = Ops.list_pools(@tenant)
+      assert pool.clients == 2
+      assert pool.connections == %{idle: 1, checked_out: 0}
     end
 
     test "lists every pool of the tenant" do
@@ -105,7 +103,11 @@ defmodule Supavisor.OpsTest do
       :meck.expect(Supavisor.Ops, :list_pools_local, fn _tenant -> raise "boom" end)
 
       assert %{pools: [], errors: errors} = Supavisor.Ops.list_pools(@tenant)
-      assert Map.has_key?(errors, node())
+
+      assert [{node, {:error, {:exception, %RuntimeError{message: "boom"}, _stacktrace}}}] =
+               Map.to_list(errors)
+
+      assert node == node()
     end
   end
 

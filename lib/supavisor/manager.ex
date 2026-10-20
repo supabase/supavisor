@@ -67,12 +67,7 @@ defmodule Supavisor.Manager do
     end
   end
 
-  @doc """
-  Number of clients currently subscribed to the pool.
-
-  Reads the manager's client table via the `ManagerTables` registry. Returns `nil`
-  when the pool has no registered manager table (not started yet / shutting down).
-  """
+  @doc "Number of clients subscribed to the pool, or `nil` if the pool isn't running."
   @spec client_count(Supavisor.id()) :: non_neg_integer() | nil
   def client_count(id) do
     with [{_pid, tid}] <- Registry.lookup(Supavisor.Registry.ManagerTables, id),

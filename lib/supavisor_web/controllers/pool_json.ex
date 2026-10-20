@@ -4,11 +4,8 @@ defmodule SupavisorWeb.PoolJSON do
   alias SupavisorWeb.PoolId
 
   @doc """
-  Renders a tenant's pools from `Supavisor.Ops.list_pools/1`.
-
-  Each pool carries both its readable `id` fields and an opaque `token`. Unreachable
-  nodes are reported under `errors` with a stable `"unreachable"` reason (the real
-  reason is logged server-side, not leaked to the client).
+  Renders a tenant's pools. Node errors are reported as `"unreachable"`; the actual
+  reason is only logged.
   """
   def index(%{result: %{pools: pools, errors: errors}}) do
     %{
