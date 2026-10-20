@@ -1,13 +1,21 @@
+Development tasks are defined in `mise.toml` and run with [mise](https://mise.jdx.dev).
+Install the toolchain pinned in `.tool-versions` and list the available tasks:
+
+```
+mise install
+mise tasks
+```
+
 Launch the Supavisor application:
 
 ```
-make dev
+mise run dev
 ```
 
 Start the Supavisor database to store tenant information:
 
 ```
-make db_start && make db_migrate
+mise run db:start && mise run db:migrate
 ```
 
 You need to add tenants to the database. For example, the following request will
@@ -55,8 +63,8 @@ psql postgresql://postgres.dev_tenant:postgres@localhost:6543/postgres
 > `some_username.some_tenant`. This approach enables the system to support
 > multi-tenancy on a single IP address.
 
-As a general note, if you are not using the `Makefile` you will have to set a
-`VAULT_ENC_KEY` which should be exactly 32 bytes long.
+As a general note, if you are not using the mise tasks you will have to set a
+`VAULT_ENC_KEY` which should be exactly 32 bytes long (see `.env.dev`).
 
 ## General Commands
 

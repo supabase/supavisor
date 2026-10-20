@@ -93,7 +93,7 @@ defmodule Supavisor.Integration.SecretCheckerTest do
         db: alt_db_name
       )
 
-    assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{} = secrets} =
+    assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{} = secrets, _cache} =
              Supavisor.SecretChecker.get_secrets(pool_id)
 
     assert %{user: _} = secrets.sasl_secrets

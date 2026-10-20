@@ -14,4 +14,7 @@ defmodule Supavisor.Errors.SslRequiredError do
   def error_message(%{user: user}) do
     "SSL connection is required for user: #{user}"
   end
+
+  @impl Supavisor.Error
+  def response_delay(_), do: Supavisor.Error.short_response_delay()
 end

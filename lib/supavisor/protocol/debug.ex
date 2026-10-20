@@ -21,8 +21,8 @@ defmodule Supavisor.Protocol.Debug do
   @type message_source :: :frontend | :backend
   @type packet :: binary()
   @type structured_packet ::
-          {:parse_pkt | :close_pkt | :describe_pkt, String.t(), packet()}
-          | {:bind_pkt, String.t(), packet(), packet()}
+          {:parse_pkt | :close_pkt, String.t(), packet()}
+          | {:bind_pkt | :describe_pkt, String.t(), packet(), packet()}
   @type debug_input :: packet() | structured_packet() | %{bin: packet()}
   @type format_result :: String.t()
   @type extract_result :: {String.t(), binary()} | nil
@@ -49,7 +49,7 @@ defmodule Supavisor.Protocol.Debug do
       {:close_pkt, stmt_name, _pkt} ->
         format_structured_packet(:close, stmt_name)
 
-      {:describe_pkt, stmt_name, _pkt} ->
+      {:describe_pkt, stmt_name, _pkt, _parse_pkt} ->
         format_structured_packet(:describe, stmt_name)
 
       {:parse_pkt, stmt_name, _pkt} ->

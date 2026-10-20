@@ -120,10 +120,14 @@ defmodule Supavisor.DbHandler do
 
   The ClientHandler should send this *before* forwarding the messages that produce them,
   so the count reaches the DbHandler before the responses do.
+
+  `open_batch?` reports whether the client left an extended protocol batch
+  waiting for its Sync. The connection cannot be released while that is true,
+  since the backend is still holding the batch.
   """
-  @spec expect_ready_for_query(pid(), pos_integer()) :: :ok
-  def expect_ready_for_query(pid, count),
-    do: :gen_statem.cast(pid, {:expect_ready_for_query, count})
+  @spec expect_ready_for_query(pid(), non_neg_integer(), boolean()) :: :ok
+  def expect_ready_for_query(pid, count, open_batch?),
+    do: :gen_statem.cast(pid, {:expect_ready_for_query, count, open_batch?})
 
   @doc """
   Attempts to clean up session state by sending DISCARD ALL to the database.
@@ -200,7 +204,13 @@ defmodule Supavisor.DbHandler do
 
     Helpers.set_log_level(config.log_level)
     Helpers.set_max_heap_size(90)
-    Logger.metadata(project: config.tenant, user: config.user, mode: config.mode)
+
+    Logger.metadata(
+      project: config.tenant,
+      user: config.user,
+      mode: config.mode,
+      db_host: to_string(config.connection_params.host)
+    )
 
     conn_params =
       if proxy do
@@ -230,6 +240,7 @@ defmodule Supavisor.DbHandler do
       proxy: proxy,
       client_tls: Map.get(config, :client_tls),
       client_jit: Map.get(config, :client_jit),
+      client_ip: Map.get(config, :client_ip),
       stream_state: MessageStreamer.new_stream_state(BackendMessageHandler),
       backend_message_streaming: true,
       mode: config.mode,
@@ -237,6 +248,7 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       client_sock: nil,
       expected_rfq: 0,
+      open_batch?: false,
       pool: pool,
       terminating_error: nil,
       manager_ref: nil,
@@ -282,7 +294,13 @@ defmodule Supavisor.DbHandler do
 
     connect_timeout = if data.proxy, do: 1_000, else: 5_000
 
-    case :gen_tcp.connect(conn_params.host, conn_params.port, sock_opts, connect_timeout) do
+    host =
+      case :inet.parse_address(conn_params.host) do
+        {:ok, ip} -> ip
+        {:error, _} -> conn_params.host
+      end
+
+    case :gen_tcp.connect(host, conn_params.port, sock_opts, connect_timeout) do
       {:ok, sock} ->
         # Ensure buffer >= recbuf to avoid unnecessary copying
         # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
@@ -293,12 +311,13 @@ defmodule Supavisor.DbHandler do
 
         case try_ssl_handshake({:gen_tcp, sock}, conn_params) do
           {:ok, sock} ->
-            tenant = if data.proxy, do: Supavisor.id(data.id, :tenant)
+            tenant = if data.proxy, do: proxy_tenant(data.id)
 
             options = %{
               "search_path" => Supavisor.id(data.id, :search_path),
               "client_tls" => if(data.proxy, do: to_string(data.client_tls)),
-              "jit" => if(data.proxy, do: to_string(data.client_jit))
+              "jit" => if(data.proxy, do: to_string(data.client_jit)),
+              "client_ip" => if(data.proxy, do: data.client_ip)
             }
 
             case send_startup(sock, conn_params, tenant, options) do
@@ -335,7 +354,7 @@ defmodule Supavisor.DbHandler do
         Supavisor.Manager.shutdown_with_error(data.id, error)
 
       :graceful_shutdown_pool when not data.proxy ->
-        Supavisor.async_stop(data.id)
+        Supavisor.Manager.stop_pool(data.id)
 
       _ ->
         :ok
@@ -445,8 +464,8 @@ defmodule Supavisor.DbHandler do
     :keep_state_and_data
   end
 
-  def handle_event(:cast, {:expect_ready_for_query, count}, _state, data) do
-    {:keep_state, %{data | expected_rfq: data.expected_rfq + count}}
+  def handle_event(:cast, {:expect_ready_for_query, count, open_batch?}, _state, data) do
+    {:keep_state, %{data | expected_rfq: data.expected_rfq + count, open_batch?: open_batch?}}
   end
 
   # forward the message to the client
@@ -458,9 +477,10 @@ defmodule Supavisor.DbHandler do
     {count, last_status, data} = handle_ready_for_query(data)
 
     # A batch is done when we have received the expected number of `ReadyForQuery`
-    # messages and the last status is idle and not mid-transaction.
+    # messages, the last status is idle and not mid-transaction, and the client
+    # is not holding an extended protocol batch open awaiting its Sync.
     outstanding = data.expected_rfq - count
-    batch_done? = outstanding <= 0 and last_status == ?I
+    batch_done? = outstanding <= 0 and last_status == ?I and not data.open_batch?
     data = %{data | expected_rfq: max(outstanding, 0)}
 
     # db_status must be enqueued in the ClientHandler's mailbox before the final
@@ -866,6 +886,13 @@ defmodule Supavisor.DbHandler do
     HandlerHelpers.sock_send(sock, msg)
   end
 
+  # The node of the pool parses the user name like the node of the client did
+  @spec proxy_tenant(Supavisor.id()) :: String.t()
+  defp proxy_tenant(Supavisor.id(type: :cluster, tenant: cluster_alias)),
+    do: "cluster." <> cluster_alias
+
+  defp proxy_tenant(Supavisor.id(tenant: tenant)), do: tenant
+
   @spec activate(Supavisor.sock()) :: :ok | {:error, term}
   defp activate({:gen_tcp, sock}) do
     :inet.setopts(sock, active: @switch_active_count)
@@ -1077,11 +1104,15 @@ defmodule Supavisor.DbHandler do
   defp take_chunk([], _remaining, acc), do: {:lists.reverse(acc), []}
 
   # If the prepared statement exists for us, it exists for the server, so we just send the
-  # bind to the socket. If it doesn't, we must send the parse pkt first.
+  # packet to the socket. If it doesn't, we must send the parse pkt first.
   #
-  # If we received a bind without a parse, we need to intercept the parse response, otherwise,
-  # the client will receive an unexpected message.
-  defp handle_prepared_statement_pkt({:bind_pkt, stmt_name, pkt, parse_pkt}, {iodata, data}) do
+  # If we replay a parse, we need to intercept the parse response, otherwise the client will
+  # receive an unexpected message.
+  defp handle_prepared_statement_pkt(
+         {packet_type, stmt_name, pkt, parse_pkt},
+         {iodata, data}
+       )
+       when packet_type in [:bind_pkt, :describe_pkt] do
     storage_mod = data.prepared_statements_storage
 
     if storage_mod.member?(data.prepared_statements, stmt_name) do
@@ -1122,10 +1153,6 @@ defmodule Supavisor.DbHandler do
              )
            end)
      }}
-  end
-
-  defp handle_prepared_statement_pkt({:describe_pkt, _stmt_name, pkt}, {iodata, data}) do
-    {[pkt | iodata], data}
   end
 
   # If we stop generating unique id per statement, and instead do deterministic ids,

@@ -24,7 +24,7 @@ HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
 
 if [ "$HTTP_STATUS" = "000" ] || [ -z "$HTTP_STATUS" ]; then
   echo "ERROR: Cannot reach Supavisor API at $API_URL"
-  echo "Make sure Supavisor is running: make dev"
+  echo "Make sure Supavisor is running: mise run dev"
   exit 1
 fi
 echo "✓ Supavisor API is reachable (HTTP $HTTP_STATUS)"
@@ -167,5 +167,5 @@ echo "# API error (503):"
 echo "psql \"postgresql://postgres.${TENANT_ID}:sbp_4444e3d26b63d9a3557c72a1b9902cbb84121111@localhost:6543/postgres?sslmode=verify-full&sslrootcert=${CA_CERT}\""
 echo ""
 echo "=== Cleanup ==="
-echo "To stop: make jit_dev_stop"
+echo "To stop: mise run jit:stop"
 echo "To delete tenant: curl -X DELETE '$API_URL/api/tenants/$TENANT_ID' -H 'Authorization: $JWT'"

@@ -15,7 +15,6 @@ config :supavisor,
   jwt_claim_validators: %{},
   proxy_port_session: System.get_env("PROXY_PORT_SESSION", "7653") |> String.to_integer(),
   proxy_port_transaction: System.get_env("PROXY_PORT_TRANSACTION", "7654") |> String.to_integer(),
-  proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
   secondary_proxy_port: 7655,
   secondary_http: 4003,
   prom_poll_rate: 500,
@@ -32,7 +31,16 @@ config :supavisor,
   transaction_proxy_ports:
     System.get_env("TRANSACTION_PROXY_PORTS", "12104,12105,12106,12107") |> parse_integer_list.(),
   max_pools: 10,
-  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer()
+  subscribe_retries: System.get_env("SUBSCRIBE_RETRIES", "5") |> String.to_integer(),
+  admission_retries: System.get_env("ADMISSION_RETRIES", "3") |> String.to_integer(),
+  admission_backoff: System.get_env("ADMISSION_BACKOFF", "100") |> String.to_integer(),
+  response_delays: [long: 0, short: 0],
+  metrics_pusher_req_options: [
+    plug: {Req.Test, Supavisor.MetricsPusher.Global}
+  ],
+  tenant_metrics_pusher_req_options: [
+    plug: {Req.Test, Supavisor.MetricsPusher.Tenant}
+  ]
 
 config :supavisor, Supavisor.Repo,
   username: "postgres",

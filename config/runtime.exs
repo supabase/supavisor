@@ -129,6 +129,34 @@ config :libcluster,
   debug: false,
   topologies: topologies
 
+if config_env() != :test do
+  config :supavisor,
+    metrics_pusher_enabled: Supavisor.Helpers.get_env_bool("METRICS_PUSHER_ENABLED", false),
+    metrics_pusher_url: System.get_env("METRICS_PUSHER_URL"),
+    metrics_pusher_user: System.get_env("METRICS_PUSHER_USER", "supavisor"),
+    metrics_pusher_auth: System.get_env("METRICS_PUSHER_AUTH"),
+    metrics_pusher_interval_ms:
+      System.get_env("METRICS_PUSHER_INTERVAL_MS", "30000") |> String.to_integer(),
+    metrics_pusher_timeout_ms:
+      System.get_env("METRICS_PUSHER_TIMEOUT_MS", "15000") |> String.to_integer(),
+    metrics_pusher_compress: Supavisor.Helpers.get_env_bool("METRICS_PUSHER_COMPRESS", true),
+    metrics_pusher_extra_labels:
+      Supavisor.Helpers.parse_extra_labels("METRICS_PUSHER_EXTRA_LABELS"),
+    tenant_metrics_pusher_enabled:
+      Supavisor.Helpers.get_env_bool("TENANT_METRICS_PUSHER_ENABLED", false),
+    tenant_metrics_pusher_url: System.get_env("TENANT_METRICS_PUSHER_URL"),
+    tenant_metrics_pusher_user: System.get_env("TENANT_METRICS_PUSHER_USER", "supavisor"),
+    tenant_metrics_pusher_auth: System.get_env("TENANT_METRICS_PUSHER_AUTH"),
+    tenant_metrics_pusher_interval_ms:
+      System.get_env("TENANT_METRICS_PUSHER_INTERVAL_MS", "30000") |> String.to_integer(),
+    tenant_metrics_pusher_timeout_ms:
+      System.get_env("TENANT_METRICS_PUSHER_TIMEOUT_MS", "15000") |> String.to_integer(),
+    tenant_metrics_pusher_compress:
+      Supavisor.Helpers.get_env_bool("TENANT_METRICS_PUSHER_COMPRESS", true),
+    tenant_metrics_pusher_extra_labels:
+      Supavisor.Helpers.parse_extra_labels("TENANT_METRICS_PUSHER_EXTRA_LABELS")
+end
+
 upstream_ca =
   if path = System.get_env("GLOBAL_UPSTREAM_CA_PATH") do
     File.read!(path)
@@ -246,7 +274,6 @@ if config_env() != :test do
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
-    proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
@@ -312,6 +339,30 @@ if System.get_env("SUPAVISOR_LOG_FORMAT") == "json" do
          context: []
        }}
 end
+
+burst_limit_enable =
+  case System.get_env("SUPAVISOR_LOG_BURST_LIMIT_ENABLE") do
+    nil -> true
+    v -> v in ~w(true 1)
+  end
+
+burst_limit_max_count =
+  System.get_env("SUPAVISOR_LOG_BURST_LIMIT_MAX_COUNT", "500") |> String.to_integer()
+
+burst_limit_window_time =
+  System.get_env("SUPAVISOR_LOG_BURST_LIMIT_WINDOW_TIME", "1000") |> String.to_integer()
+
+config :logger, :default_handler,
+  config: [
+    burst_limit_enable: burst_limit_enable,
+    burst_limit_max_count: burst_limit_max_count,
+    burst_limit_window_time: burst_limit_window_time
+  ]
+
+config :supavisor,
+  logger_burst_limit_enable: burst_limit_enable,
+  logger_burst_limit_max_count: burst_limit_max_count,
+  logger_burst_limit_window_time: burst_limit_window_time
 
 config :logger,
   backends: [:console]

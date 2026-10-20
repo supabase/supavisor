@@ -116,8 +116,9 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       # Should not change client_statements
       assert new_client_statements == client_statements
 
-      # Should return describe_pkt tuple with statement name
-      assert {:describe_pkt, "server_stmt", result_bin} = result
+      # Should return describe_pkt tuple with statement name and cached parse packet
+      assert {:describe_pkt, "server_stmt", result_bin, returned_parse_pkt} = result
+      assert returned_parse_pkt == parse_pkt
 
       # Verify the result binary has the correct format
       assert <<?D, _len::32, ?S, "server_stmt", 0>> = result_bin
