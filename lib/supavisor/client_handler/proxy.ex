@@ -131,7 +131,8 @@ defmodule Supavisor.ClientHandler.Proxy do
       log_level: nil,
       client_tls: Keyword.fetch!(client_opts, :client_ssl),
       client_jit: Keyword.fetch!(client_opts, :client_jit),
-      client_ip: Keyword.get(client_opts, :client_ip)
+      client_ip: Keyword.get(client_opts, :client_ip),
+      log_connections: Keyword.fetch!(client_opts, :log_connections)
     }
   end
 end
