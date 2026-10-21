@@ -20,20 +20,20 @@ defmodule Supavisor.ClientHandler.AuthMethodsTest do
                {:ok, :password}
     end
 
-    test "uses SCRAM over TLS when cleartext_auth_over_tls is disabled for the tenant" do
-      tenant = %Tenant{use_jit: false, feature_flags: %{"cleartext_auth_over_tls" => false}}
+    test "uses SCRAM over TLS when scram_auth_over_tls is enabled for the tenant" do
+      tenant = %Tenant{use_jit: false, feature_flags: %{"scram_auth_over_tls" => true}}
 
       assert AuthMethods.fetch_authentication_method(tenant, false, true, "user") ==
                {:ok, :scram_sha_256}
     end
 
-    test "uses SCRAM over TLS when cleartext_auth_over_tls is disabled globally" do
+    test "uses SCRAM over TLS when scram_auth_over_tls is enabled globally" do
       original = Application.get_env(:supavisor, Supavisor.FeatureFlag, %{})
 
       Application.put_env(
         :supavisor,
         Supavisor.FeatureFlag,
-        Map.put(original, "cleartext_auth_over_tls", false)
+        Map.put(original, "scram_auth_over_tls", true)
       )
 
       on_exit(fn -> Application.put_env(:supavisor, Supavisor.FeatureFlag, original) end)
@@ -50,19 +50,19 @@ defmodule Supavisor.ClientHandler.AuthMethodsTest do
       Application.put_env(
         :supavisor,
         Supavisor.FeatureFlag,
-        Map.put(original, "cleartext_auth_over_tls", false)
+        Map.put(original, "scram_auth_over_tls", true)
       )
 
       on_exit(fn -> Application.put_env(:supavisor, Supavisor.FeatureFlag, original) end)
 
-      tenant = %Tenant{use_jit: false, feature_flags: %{"cleartext_auth_over_tls" => true}}
+      tenant = %Tenant{use_jit: false, feature_flags: %{"scram_auth_over_tls" => false}}
 
       assert AuthMethods.fetch_authentication_method(tenant, false, true, "user") ==
                {:ok, :password}
     end
 
-    test "uses JIT over TLS regardless of cleartext_auth_over_tls" do
-      tenant = %Tenant{use_jit: true, feature_flags: %{"cleartext_auth_over_tls" => false}}
+    test "uses JIT over TLS regardless of scram_auth_over_tls" do
+      tenant = %Tenant{use_jit: true, feature_flags: %{"scram_auth_over_tls" => true}}
 
       assert AuthMethods.fetch_authentication_method(tenant, true, true, "user") ==
                {:ok, :jit}

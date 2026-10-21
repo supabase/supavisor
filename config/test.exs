@@ -67,8 +67,7 @@ config :supavisor, Supavisor.Vault,
 config :supavisor, Supavisor.FeatureFlag, %{
   "test_global_flag" => true,
   "test_disabled_flag" => false,
-  "override_test" => true,
-  "cleartext_auth_over_tls" => true
+  "override_test" => true
 }
 
 # Print only warnings and errors during test
