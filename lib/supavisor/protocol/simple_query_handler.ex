@@ -47,7 +47,7 @@ defmodule Supavisor.Protocol.SimpleQueryHandler do
          # Some clients send null terminators
          query = String.trim_trailing(payload, <<0>>),
          {:ok, parsed} <- MessageHandlerHelpers.parse_query(query),
-         :ok <- if(leak_check?, do: SessionLeaks.check(leak_action, parsed, query), else: :ok) do
+         :ok <- if(leak_check?, do: SessionLeaks.check(leak_action, parsed), else: :ok) do
       if prepare_check?, do: check_prepared_statements(parsed), else: :ok
     else
       {:error, _} = error -> error

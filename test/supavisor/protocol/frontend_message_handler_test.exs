@@ -158,8 +158,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
           assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
         end)
 
-      assert log =~
-               "received session-level SET statement in transaction mode: SET statement_timeout = '1s'"
+      assert log =~ "received session-level SET statement in transaction mode"
+      refute log =~ "statement_timeout"
     end
 
     test "log action detects SET in Parse messages", %{stream_state: stream_state} do
@@ -171,8 +171,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
           assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
         end)
 
-      assert log =~
-               "received session-level SET statement in transaction mode: SET statement_timeout = '1s'"
+      assert log =~ "received session-level SET statement in transaction mode"
+      refute log =~ "statement_timeout"
     end
 
     test "log action ignores transaction-scoped SET variants", %{stream_state: stream_state} do
@@ -485,7 +485,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
           assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
         end)
 
-      assert log =~ "DISCARD ALL"
+      assert log =~ "received DISCARD statement in transaction mode"
     end
 
     test "ignore action passes them through silently", %{stream_state: stream_state} do

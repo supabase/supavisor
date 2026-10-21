@@ -27,19 +27,21 @@ defmodule Supavisor.Protocol.SessionLeaks do
 
   @doc """
   Checks a parsed query for statements that leave session state behind,
-  applying the given action. `query` is only used for logging.
-  """
-  @spec check(action(), PgParser.parsed(), binary()) ::
-          :ok | {:error, SessionLeakError.t()}
-  def check(:ignore, _parsed, _query), do: :ok
+  applying the given action.
 
-  def check(action, parsed, query) do
+  The log message leaves out the query text, which may carry secrets passed as
+  literals, such as `set_config('app.token', '...', false)`.
+  """
+  @spec check(action(), PgParser.parsed()) :: :ok | {:error, SessionLeakError.t()}
+  def check(:ignore, _parsed), do: :ok
+
+  def check(action, parsed) do
     case {PgParser.session_leak(parsed), action} do
       {nil, _action} ->
         :ok
 
       {leak, :log} ->
-        Logger.warning("received #{describe(leak)} in transaction mode: #{query}")
+        Logger.warning("received #{describe(leak)} in transaction mode")
         :ok
 
       {leak, :error} ->

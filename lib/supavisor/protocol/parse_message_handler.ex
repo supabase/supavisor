@@ -34,7 +34,7 @@ defmodule Supavisor.Protocol.ParseMessageHandler do
     with [_name, rest] <- :binary.split(payload, <<0>>),
          [query, _] <- :binary.split(rest, <<0>>),
          {:ok, parsed} <- MessageHandlerHelpers.parse_query(query) do
-      SessionLeaks.check(set_action, parsed, query)
+      SessionLeaks.check(set_action, parsed)
     else
       _ -> :ok
     end
