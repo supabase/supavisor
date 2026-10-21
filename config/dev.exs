@@ -75,6 +75,9 @@ config :logger, :console,
     :app_name,
     :peer_ip,
     :local,
+    :proxy,
+    :db_host,
+    :tls,
     :proxy
   ]
 

@@ -24,27 +24,29 @@ defmodule Supavisor.TenantSupervisor do
 
     min_size = if Supavisor.Helpers.no_warm_pool_user?(user), do: 0, else: 1
 
-    pools =
+    {pool_names, pools} =
       replicas
       |> Enum.with_index()
       |> Enum.map(fn {e, i} ->
         id = {:pool, e.replica_type, i, args.id}
         name = {:via, Registry, {Supavisor.Registry.Tenants, id, e.replica_type}}
 
-        %{
-          id: {:pool, id},
-          start:
-            {:poolboy, :start_link,
-             [pool_spec(name, min_size, e.pool_size), %{id: args.id, pool: name}]},
-          restart: :temporary,
-          type: :supervisor
-        }
+        {name,
+         %{
+           id: {:pool, id},
+           start:
+             {:poolboy, :start_link,
+              [pool_spec(name, min_size, e.pool_size), %{id: args.id, pool: name}]},
+           restart: :temporary,
+           type: :supervisor
+         }}
       end)
+      |> Enum.unzip()
 
     manager_args = %{id: args.id, sup: self(), log_level: args.log_level}
     secret_checker_args = %{id: args.id}
     cache_args = %{id: args.id, upstream_auth_secrets: args.secrets}
-    terminator_args = %{id: args.id, sup: self()}
+    terminator_args = %{id: args.id, sup: self(), pools: pool_names}
 
     children =
       [
