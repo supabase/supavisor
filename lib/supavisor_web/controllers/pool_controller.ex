@@ -29,8 +29,8 @@ defmodule SupavisorWeb.PoolController do
     description: """
     `pid` is an opaque handle of the pool's supervisor, used to target the pool in
     other requests. A `shutting_down` pool is draining its clients; a new pool for the
-    same id may already be `active`. Nodes that fail to respond are reported under
-    `errors`.
+    same id may already be `active` on another node. Nodes that fail to respond are
+    reported under `errors`.
     """,
     parameters: [
       external_id: [in: :path, description: "External id", type: :string],

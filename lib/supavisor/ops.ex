@@ -82,7 +82,7 @@ defmodule Supavisor.Ops do
   end
 
   # A pool's Terminator unregisters it from :syn as soon as it starts shutting down,
-  # so a new pool for the same id can start while this one drains its clients.
+  # so a new pool for the same id can start on another node while this one drains.
   @spec status(Supavisor.id(), pid()) :: :active | :shutting_down
   defp status(id, sup) do
     if Supavisor.get_global_sup(id) == sup, do: :active, else: :shutting_down
