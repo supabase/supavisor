@@ -56,14 +56,14 @@ fn parse(env: Env, query: Binary) -> Result<ResourceArc<ParsedQuery>, Atom> {
 /// The length of a scheduler timeslice, which erl_nif approximates as 1 ms.
 const TIMESLICE: Duration = Duration::from_millis(1);
 
-/// Charges `elapsed` against the calling process's timeslice, in whole percent.
-/// A call shorter than 1% of the timeslice is not charged.
+/// Charges `elapsed` against the calling process's timeslice, in whole percent
+/// rounded up, so that even the shortest call is charged at least 1%.
 fn consume_timeslice(env: Env, elapsed: Duration) {
-    let percent = (elapsed.as_micros() * 100 / TIMESLICE.as_micros()).min(100) as i32;
+    let percent = (elapsed.as_nanos() * 100)
+        .div_ceil(TIMESLICE.as_nanos())
+        .clamp(1, 100) as i32;
 
-    if percent > 0 {
-        rustler::schedule::consume_timeslice(env, percent);
-    }
+    rustler::schedule::consume_timeslice(env, percent);
 }
 
 #[rustler::nif]
