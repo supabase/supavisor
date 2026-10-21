@@ -137,6 +137,10 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
     <<?P, byte_size(query) + 8::32, 0, query::binary, 0, 0::16>>
   end
 
+  defp padded_query(query, size) do
+    query <> String.duplicate("x", size - byte_size(query))
+  end
+
   describe "SET statements in transaction mode" do
     test "ignore action passes SET through silently", %{stream_state: stream_state} do
       bin = simple_query("SET statement_timeout = '1s'")
@@ -501,6 +505,39 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
 
       for bin <- [simple_query(query), parse_message(query)] do
         assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+      end
+    end
+
+    test "queries up to 4 KB are checked", %{stream_state: stream_state} do
+      stream_state = with_leak_action(stream_state, :error)
+      query = padded_query("SET statement_timeout = '1s'; --", 4096)
+
+      for bin <- [simple_query(query), parse_message(query)] do
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
+                 MessageStreamer.handle_packets(stream_state, bin)
+      end
+    end
+
+    test "queries over 4 KB are passed through unchecked, with a warning", %{
+      stream_state: stream_state
+    } do
+      stream_state =
+        stream_state
+        |> with_leak_action(:error)
+        |> with_simple_query_prepare_check()
+
+      for query <- [
+            padded_query("SET statement_timeout = '1s'; --", 4097),
+            padded_query("PREPARE p AS SELECT 1; --", 4097)
+          ],
+          bin <- [simple_query(query), parse_message(query)] do
+        log =
+          capture_log(fn ->
+            assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+          end)
+
+        assert log =~
+                 "skipped transaction mode checks for query of 4097 bytes, larger than the 4096 byte limit"
       end
     end
 

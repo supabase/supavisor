@@ -56,4 +56,5 @@ warning) or `error` (reject the statement and return an error to the client).
 This covers session-level `SET`, `set_config/3`, `DISCARD`, session-scoped
 advisory locks, `LISTEN`/`UNLISTEN`, `WITH HOLD` cursors, temp tables and
 `LOAD`. Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
-`ON COMMIT DROP`, `SET CONSTRAINTS`) are always allowed
+`ON COMMIT DROP`, `SET CONSTRAINTS`) are always allowed. Queries larger than
+4 KB are not checked; a warning is logged for each one instead.
