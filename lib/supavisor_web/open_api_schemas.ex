@@ -511,11 +511,11 @@ defmodule SupavisorWeb.OpenApiSchemas do
           enum: ["transaction", "session"],
           description: "Pooling mode"
         },
-        database: %Schema{type: :string, description: "Database name"},
+        db: %Schema{type: :string, description: "Database name"},
         search_path: %Schema{type: :string, nullable: true},
         upstream_tls: %Schema{type: :boolean}
       },
-      required: [:type, :tenant, :user, :mode, :database, :upstream_tls]
+      required: [:type, :tenant, :user, :mode, :db, :upstream_tls]
     })
   end
 
@@ -525,7 +525,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     OpenApiSpex.schema(%{
       type: :object,
-      description: "Open backend connection counts",
+      description: "Open database connection counts",
       properties: %{
         idle: %Schema{type: :integer},
         checked_out: %Schema{type: :integer}
@@ -542,14 +542,19 @@ defmodule SupavisorWeb.OpenApiSchemas do
       type: :object,
       properties: %{
         id: PoolId,
-        token: %Schema{type: :string, description: "Opaque handle for this pool"},
+        pid: %Schema{type: :string, description: "Opaque handle of the pool's supervisor"},
+        pid_label: %Schema{
+          type: :string,
+          description: "The supervisor's pid as printed on its node, for display"
+        },
+        status: %Schema{type: :string, enum: ["active", "shutting_down"]},
         node: %Schema{type: :string, description: "Node the pool runs on"},
-        host: %Schema{type: :string, nullable: true, description: "Upstream database host"},
-        port: %Schema{type: :integer, nullable: true, description: "Upstream database port"},
+        db_host: %Schema{type: :string, nullable: true, description: "Database host"},
+        db_port: %Schema{type: :integer, nullable: true, description: "Database port"},
         clients: %Schema{type: :integer, nullable: true, description: "Connected clients"},
-        connections: %Schema{allOf: [PoolConnections], nullable: true}
+        db_connections: %Schema{allOf: [PoolConnections], nullable: true}
       },
-      required: [:id, :token, :node]
+      required: [:id, :pid, :pid_label, :status, :node]
     })
   end
 
@@ -576,16 +581,18 @@ defmodule SupavisorWeb.OpenApiSchemas do
               tenant: "dev_tenant",
               user: "postgres",
               mode: "transaction",
-              database: "postgres",
+              db: "postgres",
               search_path: nil,
               upstream_tls: false
             },
-            token: "eyJ0eXBlIjoic2luZ2xlIn0",
+            pid: "g1h3EXN1cGF2aXNvckAxMC4wLjAuMQAAAyIAAAAAas-KDQ",
+            pid_label: "#PID<0.1234.0>",
+            status: "active",
             node: "supavisor@10.0.0.1",
-            host: "localhost",
-            port: 6432,
+            db_host: "localhost",
+            db_port: 6432,
             clients: 3,
-            connections: %{idle: 1, checked_out: 2}
+            db_connections: %{idle: 1, checked_out: 2}
           }
         ],
         errors: %{}

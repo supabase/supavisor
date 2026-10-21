@@ -4,7 +4,13 @@ defmodule SupavisorWeb.PoolController do
 
   require Logger
 
-  alias SupavisorWeb.OpenApiSchemas.{PoolList, Rebalance, RebalanceParams, UnprocessablyEntity}
+  alias SupavisorWeb.OpenApiSchemas.{
+    NotFound,
+    PoolList,
+    Rebalance,
+    RebalanceParams,
+    UnprocessablyEntity
+  }
 
   plug OpenApiSpex.Plug.CastAndValidate, json_render_error_v2: true, replace_params: false
   plug :put_view, SupavisorWeb.PoolJSON
@@ -21,23 +27,29 @@ defmodule SupavisorWeb.PoolController do
   operation(:index,
     summary: "List a tenant's pools across the cluster",
     description: """
-    Lists every pool of a tenant across all cluster nodes, with each pool's id,
-    node, upstream host/port, connected client count and backend connection counts.
-
-    Each pool includes an opaque `token` that identifies it for subsequent
-    operations. Nodes that fail to respond are reported under `errors` keyed by node.
+    `pid` is an opaque handle of the pool's supervisor, used to target the pool in
+    other requests. A `shutting_down` pool is draining its clients; a new pool for the
+    same id may already be `active`. Nodes that fail to respond are reported under
+    `errors`.
     """,
     parameters: [
       external_id: [in: :path, description: "External id", type: :string],
       authorization: @authorization
     ],
     responses: %{
-      200 => PoolList.response()
+      200 => PoolList.response(),
+      404 => NotFound.response()
     }
   )
 
   def index(conn, %{"external_id" => external_id}) do
-    render(conn, :index, result: Supavisor.Ops.list_pools(external_id))
+    case Supavisor.Ops.list_pools(external_id) do
+      {:ok, result} ->
+        render(conn, :index, result: result)
+
+      {:error, :tenant_not_found} ->
+        conn |> put_status(404) |> render(:error, error: "not found")
+    end
   end
 
   operation(:rebalance,

@@ -7,6 +7,7 @@ defmodule Supavisor.Ops do
   require Logger
 
   alias Supavisor.Manager
+  alias Supavisor.Tenants
 
   @multicall_timeout :timer.seconds(5)
 
@@ -14,32 +15,44 @@ defmodule Supavisor.Ops do
 
   @type pool_info :: %{
           id: Supavisor.id(),
+          pid: pid(),
+          pid_label: String.t(),
+          status: :active | :shutting_down,
           node: node(),
-          host: String.t() | nil,
-          port: non_neg_integer() | nil,
+          db_host: String.t() | nil,
+          db_port: non_neg_integer() | nil,
           clients: non_neg_integer() | nil,
-          connections: connection_counts() | nil
+          db_connections: connection_counts() | nil
         }
 
   @doc """
   Lists a tenant's pools on every node. Nodes that fail to answer are returned
   under `:errors` instead of failing the whole listing.
   """
-  @spec list_pools(String.t()) :: %{pools: [pool_info()], errors: %{node() => term()}}
+  @spec list_pools(String.t()) ::
+          {:ok, %{pools: [pool_info()], errors: %{node() => term()}}}
+          | {:error, :tenant_not_found}
   def list_pools(tenant) do
-    nodes = [node() | Node.list()]
-    results = :erpc.multicall(nodes, __MODULE__, :list_pools_local, [tenant], @multicall_timeout)
+    if Tenants.tenant_exists?(tenant) do
+      nodes = [node() | Node.list()]
 
-    nodes
-    |> Enum.zip(results)
-    |> Enum.reduce(%{pools: [], errors: %{}}, fn
-      {_node, {:ok, node_pools}}, acc ->
-        %{acc | pools: acc.pools ++ node_pools}
+      results =
+        :erpc.multicall(nodes, __MODULE__, :list_pools_local, [tenant], @multicall_timeout)
 
-      {node, error}, acc ->
-        Logger.warning("Failed to list pools of #{tenant} on #{node}: #{inspect(error)}")
-        %{acc | errors: Map.put(acc.errors, node, error)}
-    end)
+      nodes
+      |> Enum.zip(results)
+      |> Enum.reduce(%{pools: [], errors: %{}}, fn
+        {_node, {:ok, node_pools}}, acc ->
+          %{acc | pools: acc.pools ++ node_pools}
+
+        {node, error}, acc ->
+          Logger.warning("Failed to list pools of #{tenant} on #{node}: #{inspect(error)}")
+          %{acc | errors: Map.put(acc.errors, node, error)}
+      end)
+      |> then(&{:ok, &1})
+    else
+      {:error, :tenant_not_found}
+    end
   end
 
   @doc """
@@ -51,22 +64,33 @@ defmodule Supavisor.Ops do
     Supavisor.Registry.TenantSups
     |> Registry.lookup(tenant)
     |> Enum.map(fn {sup, id} ->
-      {host, port} = host_port(id)
+      {db_host, db_port} = db_host_port(id)
 
       %{
         id: id,
+        pid: sup,
+        # Built on the pool's node: how a remote pid prints depends on the node printing it.
+        pid_label: inspect(sup),
+        status: status(id, sup),
         node: node(sup),
-        host: host,
-        port: port,
+        db_host: db_host,
+        db_port: db_port,
         clients: Manager.client_count(id),
-        connections: connection_counts(id)
+        db_connections: connection_counts(id)
       }
     end)
   end
 
+  # A pool's Terminator unregisters it from :syn as soon as it starts shutting down,
+  # so a new pool for the same id can start while this one drains its clients.
+  @spec status(Supavisor.id(), pid()) :: :active | :shutting_down
+  defp status(id, sup) do
+    if Supavisor.get_global_sup(id) == sup, do: :active, else: :shutting_down
+  end
+
   # The manager can exit between the lookup and the call, e.g. while the pool stops.
-  @spec host_port(Supavisor.id()) :: {String.t() | nil, non_neg_integer() | nil}
-  defp host_port(id) do
+  @spec db_host_port(Supavisor.id()) :: {String.t() | nil, non_neg_integer() | nil}
+  defp db_host_port(id) do
     case Supavisor.get_local_manager(id) do
       nil ->
         {nil, nil}

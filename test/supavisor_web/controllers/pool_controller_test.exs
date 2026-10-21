@@ -31,16 +31,25 @@ defmodule SupavisorWeb.PoolControllerTest do
       {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
     end
 
-    test "returns an empty list for a tenant with no pools", %{conn: conn} do
-      assert %{pools: [], errors: %{}} =
+    test "returns 404 for a tenant that does not exist", %{conn: conn} do
+      assert %{"error" => "not found"} =
                conn
                |> get(~p"/api/tenants/no_such_tenant/pools")
+               |> json_response(404)
+    end
+
+    test "returns an empty list for a tenant without running pools", %{conn: conn} do
+      assert %{pools: [], errors: %{}} =
+               conn
+               |> get(~p"/api/tenants/#{@tenant}/pools")
                |> json_response(200)
                |> assert_schema("PoolList")
     end
 
-    test "lists the tenant's pools with id, token and counts", %{conn: conn} do
-      start_pool!(pool_id([]))
+    test "lists the tenant's pools with id, pid, status and counts", %{conn: conn} do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
 
       assert %{pools: [pool], errors: %{}} =
                conn
@@ -51,13 +60,15 @@ defmodule SupavisorWeb.PoolControllerTest do
       assert pool.id.tenant == @tenant
       assert pool.id.user == "postgres"
       assert pool.id.mode == "transaction"
-      assert pool.id.database == "supavisor_test"
-      assert is_binary(pool.token) and pool.token != ""
+      assert pool.id.db == "supavisor_test"
+      assert pool.pid |> Base.url_decode64!(padding: false) |> :erlang.binary_to_term() == sup
+      assert pool.pid_label == inspect(sup)
+      assert pool.status == "active"
       assert pool.node == to_string(node())
-      assert pool.host == "localhost"
-      assert pool.port == 6432
+      assert pool.db_host == "localhost"
+      assert pool.db_port == 6432
       assert is_integer(pool.clients)
-      assert %{idle: idle, checked_out: checked_out} = pool.connections
+      assert %{idle: idle, checked_out: checked_out} = pool.db_connections
       assert is_integer(idle) and is_integer(checked_out)
     end
 
