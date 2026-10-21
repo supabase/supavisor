@@ -28,8 +28,9 @@ impl Resource for ParsedQuery {}
 /// Parses a query into a tree that can be inspected by the functions below.
 ///
 /// Parsing dominates the cost of every check, so callers that run more than
-/// one check should parse once here and reuse the result.
-#[rustler::nif]
+/// one check should parse once here and reuse the result. It runs on a dirty
+/// scheduler since parse time grows with the query and is unbounded.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn parse(query: &str) -> Result<ResourceArc<ParsedQuery>, String> {
     let result = pg_query::parse(query).map_err(|_| "Error parsing query")?;
 
