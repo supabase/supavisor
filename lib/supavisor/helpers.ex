@@ -214,13 +214,35 @@ defmodule Supavisor.Helpers do
 
   @spec downstream_certs_keys() :: [map()]
   def downstream_certs_keys do
-    for {cert, key} <- [
-          {downstream_ec_cert(), downstream_ec_key()},
-          {downstream_cert(), downstream_key()}
-        ],
-        cert != nil and key != nil do
+    certs_keys([
+      {downstream_ec_cert(), downstream_ec_key()},
+      {downstream_cert(), downstream_key()}
+    ])
+  end
+
+  @spec downstream_v2_certs_keys() :: [map()]
+  def downstream_v2_certs_keys do
+    certs_keys([
+      {Application.get_env(:supavisor, :downstream_v2_ec_cert),
+       Application.get_env(:supavisor, :downstream_v2_ec_key)},
+      {Application.get_env(:supavisor, :downstream_v2_cert),
+       Application.get_env(:supavisor, :downstream_v2_key)}
+    ])
+  end
+
+  defp certs_keys(pairs) do
+    for {cert, key} <- pairs, cert != nil and key != nil do
       %{certfile: cert, keyfile: key}
     end
+  end
+
+  @spec downstream_v2_sni_hostname?(String.t()) :: boolean()
+  def downstream_v2_sni_hostname?(sni_hostname) do
+    String.downcase(sni_hostname) in Application.get_env(
+      :supavisor,
+      :downstream_v2_sni_hostnames,
+      []
+    )
   end
 
   @doc """

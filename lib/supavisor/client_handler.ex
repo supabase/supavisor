@@ -180,7 +180,7 @@ defmodule Supavisor.ClientHandler do
       opts = [
         verify: :verify_none,
         certs_keys: certs_keys,
-        sni_fun: fn _hostname -> :undefined end
+        sni_fun: &downstream_sni_options/1
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
@@ -1155,6 +1155,14 @@ defmodule Supavisor.ClientHandler do
 
   defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?
   defp upstream_tls(%{upstream_ssl: upstream_ssl}, _ssl?), do: upstream_ssl
+
+  defp downstream_sni_options(sni_hostname) do
+    certs_keys = Helpers.downstream_v2_certs_keys()
+
+    if certs_keys != [] and Helpers.downstream_v2_sni_hostname?(List.to_string(sni_hostname)),
+      do: [certs_keys: certs_keys],
+      else: :undefined
+  end
 
   defp handle_socket_close(state, data, reason \\ nil) do
     maybe_cleanup_db_handler(state, data)
