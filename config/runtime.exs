@@ -266,7 +266,8 @@ if config_env() != :test do
   config :supavisor, Supavisor.FeatureFlag, %{
     "named_prepared_statements" =>
       Supavisor.Helpers.get_env_bool("NAMED_PREPARED_STATEMENTS_ENABLED", false),
-    "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false)
+    "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false),
+    "scram_auth_over_tls" => Supavisor.Helpers.get_env_bool("SCRAM_AUTH_OVER_TLS_ENABLED", false)
   }
 
   config :supavisor, Supavisor.Repo,
