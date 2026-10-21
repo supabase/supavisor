@@ -44,8 +44,9 @@ connection
 
 `client_idle_timeout` - the maximum duration of an idle client connection
 
-`log_connections` - log client and server (pool) connections and client
-disconnections (default `true`)
+`server_reset_query` - the query run on a session mode connection before it is returned to the pool (`DISCARD ALL` by default, `null` to skip)
+
+`log_connections` - log client and server (pool) connections and client disconnections (default `true`)
 
 `allow_list` - a list of CIDR ranges which are allowed to connect
 

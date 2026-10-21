@@ -41,6 +41,7 @@ This document provides a categorized list of all environment variables used in S
 | `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `false`       | No       |
 | `APP_NAME_METRIC_ENABLED`           | Add client `app_name` label to connection metrics (true, false, 1, 0) | `false` | No       |
 | `CHECK_SIMPLE_QUERY_PREPARE_ENABLED` | Reject `PREPARE`/`EXECUTE`/`DEALLOCATE` sent over the simple query protocol in transaction mode. Parses every simple query, so it adds latency proportional to query size (true, false, 1, 0) | `false` | No       |
+| `SCRAM_AUTH_OVER_TLS_ENABLED`       | Use SCRAM instead of cleartext password authentication for TLS clients (true, false, 1, 0) | `false` | No       |
 
 ---
 

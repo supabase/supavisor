@@ -213,6 +213,7 @@ defmodule Supavisor.Manager do
       client_idle_timeout: client_idle_timeout,
       sni_hostname: sni_hostname,
       feature_flags: feature_flags,
+      server_reset_query: server_reset_query,
       log_connections: log_connections
     } = tenant_record
 
@@ -251,6 +252,7 @@ defmodule Supavisor.Manager do
       pool_size: pool_size,
       log_level: args.log_level,
       tenant_feature_flags: feature_flags,
+      server_reset_query: server_reset_query,
       log_connections: log_connections,
       terminating_error: nil,
       drain_caller: nil,
@@ -336,6 +338,7 @@ defmodule Supavisor.Manager do
       replica_type: state.replica_type,
       log_level: state.log_level,
       tenant_feature_flags: state.tenant_feature_flags,
+      server_reset_query: state.server_reset_query,
       log_connections: state.log_connections
     }
 
