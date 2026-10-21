@@ -1,4 +1,6 @@
-use rustler::{Atom, Binary, Resource, ResourceArc};
+use std::time::{Duration, Instant};
+
+use rustler::{Atom, Binary, Env, Resource, ResourceArc};
 
 mod atoms {
     rustler::atoms! {
@@ -30,18 +32,38 @@ impl Resource for ParsedQuery {}
 /// Parses a query into a tree that can be inspected by the functions below.
 ///
 /// Parsing dominates the cost of every check, so callers that run more than
-/// one check should parse once here and reuse the result. It runs on a dirty
-/// scheduler since parse time grows with the query and is unbounded.
+/// one check should parse once here and reuse the result.
+///
+/// It runs on a normal scheduler, so callers must bound the query size; parse
+/// time grows faster than it. The time spent is reported to the scheduler, so a
+/// process parsing many queries in a row is preempted like any other.
 ///
 /// The query is taken as a binary rather than a `&str`, which Rustler would
 /// reject with a `badarg` on text that is not UTF-8, as clients with another
 /// `client_encoding` send.
-#[rustler::nif(schedule = "DirtyCpu")]
-fn parse(query: Binary) -> Result<ResourceArc<ParsedQuery>, Atom> {
-    let query = std::str::from_utf8(query.as_slice()).map_err(|_| atoms::invalid_utf8())?;
-    let result = pg_query::parse(query).map_err(|_| atoms::syntax_error())?;
+#[rustler::nif]
+fn parse(env: Env, query: Binary) -> Result<ResourceArc<ParsedQuery>, Atom> {
+    let started = Instant::now();
+    let result = std::str::from_utf8(query.as_slice())
+        .map_err(|_| atoms::invalid_utf8())
+        .and_then(|query| pg_query::parse(query).map_err(|_| atoms::syntax_error()));
 
-    Ok(ResourceArc::new(ParsedQuery { result }))
+    consume_timeslice(env, started.elapsed());
+
+    Ok(ResourceArc::new(ParsedQuery { result: result? }))
+}
+
+/// The length of a scheduler timeslice, which erl_nif approximates as 1 ms.
+const TIMESLICE: Duration = Duration::from_millis(1);
+
+/// Charges `elapsed` against the calling process's timeslice, in whole percent.
+/// A call shorter than 1% of the timeslice is not charged.
+fn consume_timeslice(env: Env, elapsed: Duration) {
+    let percent = (elapsed.as_micros() * 100 / TIMESLICE.as_micros()).min(100) as i32;
+
+    if percent > 0 {
+        rustler::schedule::consume_timeslice(env, percent);
+    }
 }
 
 #[rustler::nif]
