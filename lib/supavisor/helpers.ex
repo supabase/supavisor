@@ -192,31 +192,13 @@ defmodule Supavisor.Helpers do
     Application.get_env(:supavisor, :global_upstream_ca) || default
   end
 
-  @spec downstream_cert() :: Path.t() | nil
-  def downstream_cert do
-    Application.get_env(:supavisor, :global_downstream_cert)
-  end
-
-  @spec downstream_key() :: Path.t() | nil
-  def downstream_key do
-    Application.get_env(:supavisor, :global_downstream_key)
-  end
-
-  @spec downstream_ec_cert() :: Path.t() | nil
-  def downstream_ec_cert do
-    Application.get_env(:supavisor, :global_downstream_ec_cert)
-  end
-
-  @spec downstream_ec_key() :: Path.t() | nil
-  def downstream_ec_key do
-    Application.get_env(:supavisor, :global_downstream_ec_key)
-  end
-
   @spec downstream_certs_keys() :: [map()]
   def downstream_certs_keys do
     certs_keys([
-      {downstream_ec_cert(), downstream_ec_key()},
-      {downstream_cert(), downstream_key()}
+      {Application.get_env(:supavisor, :global_downstream_ec_cert),
+       Application.get_env(:supavisor, :global_downstream_ec_key)},
+      {Application.get_env(:supavisor, :global_downstream_cert),
+       Application.get_env(:supavisor, :global_downstream_key)}
     ])
   end
 
