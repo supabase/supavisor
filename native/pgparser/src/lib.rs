@@ -1,4 +1,4 @@
-use rustler::{Atom, Resource, ResourceArc};
+use rustler::{Atom, Binary, Resource, ResourceArc};
 
 mod atoms {
     rustler::atoms! {
@@ -30,8 +30,13 @@ impl Resource for ParsedQuery {}
 /// Parsing dominates the cost of every check, so callers that run more than
 /// one check should parse once here and reuse the result. It runs on a dirty
 /// scheduler since parse time grows with the query and is unbounded.
+///
+/// The query is taken as a binary rather than a `&str`, which Rustler would
+/// reject with a `badarg` on text that is not UTF-8, as clients with another
+/// `client_encoding` send.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn parse(query: &str) -> Result<ResourceArc<ParsedQuery>, String> {
+fn parse(query: Binary) -> Result<ResourceArc<ParsedQuery>, String> {
+    let query = std::str::from_utf8(query.as_slice()).map_err(|_| "Query is not valid UTF-8")?;
     let result = pg_query::parse(query).map_err(|_| "Error parsing query")?;
 
     Ok(ResourceArc::new(ParsedQuery { result }))

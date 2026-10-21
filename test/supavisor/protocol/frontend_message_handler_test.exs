@@ -488,6 +488,22 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       assert log =~ "received DISCARD statement in transaction mode"
     end
 
+    test "non-UTF-8 query text is passed through for the backend", %{
+      stream_state: stream_state
+    } do
+      stream_state =
+        stream_state
+        |> with_leak_action(:error)
+        |> with_simple_query_prepare_check()
+
+      # 'café' in LATIN1
+      query = <<"SELECT 'caf", 0xE9, "'">>
+
+      for bin <- [simple_query(query), parse_message(query)] do
+        assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+      end
+    end
+
     test "ignore action passes them through silently", %{stream_state: stream_state} do
       for query <- [
             "SELECT set_config('statement_timeout', '0', false)",
