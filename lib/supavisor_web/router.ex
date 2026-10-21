@@ -39,6 +39,12 @@ defmodule SupavisorWeb.Router do
     get("/", SupavisorWeb.WsProxy, [])
   end
 
+  # sql over http, for neon's serverless driver
+  scope "/sql" do
+    post("/", SupavisorWeb.HttpSql, [])
+    options("/", SupavisorWeb.HttpSql, [])
+  end
+
   scope "/api", SupavisorWeb do
     pipe_through(:api)
 
