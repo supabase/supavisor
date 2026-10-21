@@ -22,12 +22,12 @@ defmodule Supavisor.PgParser do
       ["SelectStmt"]
 
       iex> Supavisor.PgParser.parse("not a valid sql")
-      {:error, "Error parsing query"}
+      {:error, :syntax_error}
 
       iex> Supavisor.PgParser.parse(<<"select 'caf", 0xE9, "'">>)
-      {:error, "Query is not valid UTF-8"}
+      {:error, :invalid_utf8}
   """
-  @spec parse(binary()) :: {:ok, parsed()} | {:error, String.t()}
+  @spec parse(binary()) :: {:ok, parsed()} | {:error, :invalid_utf8 | :syntax_error}
   def parse(_query), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc """

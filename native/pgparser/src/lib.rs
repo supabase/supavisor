@@ -3,6 +3,8 @@ use rustler::{Atom, Binary, Resource, ResourceArc};
 mod atoms {
     rustler::atoms! {
         nil,
+        invalid_utf8,
+        syntax_error,
         session_set,
         set_config,
         discard,
@@ -35,9 +37,9 @@ impl Resource for ParsedQuery {}
 /// reject with a `badarg` on text that is not UTF-8, as clients with another
 /// `client_encoding` send.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn parse(query: Binary) -> Result<ResourceArc<ParsedQuery>, String> {
-    let query = std::str::from_utf8(query.as_slice()).map_err(|_| "Query is not valid UTF-8")?;
-    let result = pg_query::parse(query).map_err(|_| "Error parsing query")?;
+fn parse(query: Binary) -> Result<ResourceArc<ParsedQuery>, Atom> {
+    let query = std::str::from_utf8(query.as_slice()).map_err(|_| atoms::invalid_utf8())?;
+    let result = pg_query::parse(query).map_err(|_| atoms::syntax_error())?;
 
     Ok(ResourceArc::new(ParsedQuery { result }))
 }
