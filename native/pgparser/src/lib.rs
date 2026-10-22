@@ -6,6 +6,7 @@ mod atoms {
     rustler::atoms! {
         nil,
         invalid_utf8,
+        too_complex,
         syntax_error,
         session_set,
         set_config,
@@ -35,7 +36,8 @@ impl Resource for ParsedQuery {}
 /// one check should parse once here and reuse the result.
 ///
 /// It runs on a normal scheduler, so callers must bound the query size; parse
-/// time grows faster than it. The time spent is reported to the scheduler, so a
+/// time grows faster than it. Runs of operator characters, which make it grow
+/// fastest, are bounded here. The time spent is reported to the scheduler, so a
 /// process parsing many queries in a row is preempted like any other.
 ///
 /// The query is taken as a binary rather than a `&str`, which Rustler would
@@ -46,11 +48,69 @@ fn parse(env: Env, query: Binary) -> Result<ResourceArc<ParsedQuery>, Atom> {
     let started = Instant::now();
     let result = std::str::from_utf8(query.as_slice())
         .map_err(|_| atoms::invalid_utf8())
+        .and_then(|query| match operator_rescan_cost(query.as_bytes()) {
+            cost if cost > MAX_OPERATOR_RESCAN_COST => Err(atoms::too_complex()),
+            _ => Ok(query),
+        })
         .and_then(|query| pg_query::parse(query).map_err(|_| atoms::syntax_error()));
 
     consume_timeslice(env, started.elapsed());
 
     Ok(ResourceArc::new(ParsedQuery { result: result? }))
+}
+
+/// The most rescanning of operator characters allowed, up to about 160 µs of
+/// scanner time. A single run of 256 characters, such as a long `/****/`
+/// banner, fits.
+const MAX_OPERATOR_RESCAN_COST: usize = 1 << 16;
+
+/// The bytes the Postgres scanner may rescan while lexing `query`.
+///
+/// The scanner matches operators and comment starts against the whole run of
+/// operator characters that follows, keeps the token, and puts the rest back
+/// with `yyless`. A run of `n` characters can thus be rescanned once per token,
+/// about `n²` bytes in total. Postgres accepts this cost (commit d4a63f82970);
+/// it is the only place where the scanner is not linear.
+///
+/// Characters inside literals and comments are counted too, so this
+/// overestimates.
+fn operator_rescan_cost(query: &[u8]) -> usize {
+    let mut cost = 0;
+    let mut run = 0;
+
+    for &byte in query {
+        if is_operator_char(byte) {
+            run += 1;
+        } else {
+            cost += run * run;
+            run = 0;
+        }
+    }
+
+    cost + run * run
+}
+
+/// `op_chars` in the Postgres scanner.
+fn is_operator_char(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'~' | b'!'
+            | b'@'
+            | b'#'
+            | b'^'
+            | b'&'
+            | b'|'
+            | b'`'
+            | b'?'
+            | b'+'
+            | b'-'
+            | b'*'
+            | b'/'
+            | b'%'
+            | b'<'
+            | b'>'
+            | b'='
+    )
 }
 
 /// The length of a scheduler timeslice, which erl_nif approximates as 1 ms.

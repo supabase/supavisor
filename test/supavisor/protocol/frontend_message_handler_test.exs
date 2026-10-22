@@ -541,6 +541,40 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       end
     end
 
+    test "queries with long runs of operator characters are passed through unchecked, with a warning",
+         %{stream_state: stream_state} do
+      stream_state =
+        stream_state
+        |> with_leak_action(:error)
+        |> with_simple_query_prepare_check()
+
+      operators = String.duplicate("+", 300)
+
+      for query <- [
+            "SET statement_timeout = '1s'; SELECT #{operators}1",
+            "PREPARE p AS SELECT #{operators}1"
+          ],
+          bin <- [simple_query(query), parse_message(query)] do
+        log =
+          capture_log(fn ->
+            assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+          end)
+
+        assert log =~
+                 "skipped transaction mode checks for query with long runs of operator characters"
+      end
+    end
+
+    test "comment banners are still checked", %{stream_state: stream_state} do
+      stream_state = with_leak_action(stream_state, :error)
+      query = "/*" <> String.duplicate("*", 200) <> "*/ SET statement_timeout = '1s'"
+
+      for bin <- [simple_query(query), parse_message(query)] do
+        assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
+                 MessageStreamer.handle_packets(stream_state, bin)
+      end
+    end
+
     test "ignore action passes them through silently", %{stream_state: stream_state} do
       for query <- [
             "SELECT set_config('statement_timeout', '0', false)",

@@ -57,4 +57,5 @@ This covers session-level `SET`, `set_config/3`, `DISCARD`, session-scoped
 advisory locks, `LISTEN`/`UNLISTEN`, `WITH HOLD` cursors, temp tables and
 `LOAD`. Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
 `ON COMMIT DROP`, `SET CONSTRAINTS`) are always allowed. Queries larger than
-4 KB are not checked; a warning is logged for each one instead.
+4 KB, or with long runs of operator characters such as `+++…`, are not
+checked; a warning is logged for each one instead.

@@ -15,6 +15,10 @@ defmodule Supavisor.PgParser do
   @doc """
   Parses a query into a tree that the functions below can inspect.
 
+  Queries with long runs of operator characters are rejected with
+  `:too_complex` before parsing. The Postgres scanner takes time quadratic in
+  the length of such a run.
+
   ## Examples
 
       iex> {:ok, parsed} = Supavisor.PgParser.parse("select 1")
@@ -26,8 +30,12 @@ defmodule Supavisor.PgParser do
 
       iex> Supavisor.PgParser.parse(<<"select 'caf", 0xE9, "'">>)
       {:error, :invalid_utf8}
+
+      iex> Supavisor.PgParser.parse("select " <> String.duplicate("+", 300) <> "1")
+      {:error, :too_complex}
   """
-  @spec parse(binary()) :: {:ok, parsed()} | {:error, :invalid_utf8 | :syntax_error}
+  @spec parse(binary()) ::
+          {:ok, parsed()} | {:error, :invalid_utf8 | :too_complex | :syntax_error}
   def parse(_query), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc """
