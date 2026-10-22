@@ -213,7 +213,10 @@ end
 downstream_v2_configured? = downstream_v2_cert != nil or downstream_v2_ec_cert != nil
 
 if downstream_v2_sni_hostnames != [] and not downstream_v2_configured? do
-  raise "$DOWNSTREAM_V2_SNI_HOSTNAMES is set but no v2 certificate is configured"
+  Logger.warning(
+    "$DOWNSTREAM_V2_SNI_HOSTNAMES is set but no v2 certificate is configured; " <>
+      "those hostnames will be served the default certificates"
+  )
 end
 
 if downstream_v2_configured? and
