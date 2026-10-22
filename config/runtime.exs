@@ -200,7 +200,7 @@ downstream_v2_ec_key = load_file_path.("DOWNSTREAM_V2_ECDSA_KEY_PATH", "downstre
 downstream_v2_sni_hostnames =
   System.get_env("DOWNSTREAM_V2_SNI_HOSTNAMES", "")
   |> String.split(",", trim: true)
-  |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+  |> Enum.map(&(&1 |> String.trim() |> String.downcase() |> String.to_charlist()))
 
 if is_nil(downstream_v2_cert) != is_nil(downstream_v2_key) do
   raise "$DOWNSTREAM_V2_CERT_PATH and $DOWNSTREAM_V2_KEY_PATH must be set together"

@@ -1159,7 +1159,7 @@ defmodule Supavisor.ClientHandler do
   defp downstream_sni_options(sni_hostname) do
     certs_keys = Helpers.downstream_v2_certs_keys()
 
-    if certs_keys != [] and Helpers.downstream_v2_sni_hostname?(List.to_string(sni_hostname)),
+    if certs_keys != [] and Helpers.downstream_v2_sni_hostname?(sni_hostname),
       do: [certs_keys: certs_keys],
       else: :undefined
   end

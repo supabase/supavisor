@@ -100,7 +100,7 @@ defmodule Supavisor.Support.SSLHelper do
       {:downstream_v2_key, Path.join(certs_dir, "server_v2_rsa.key")},
       {:downstream_v2_ec_cert, Path.join(certs_dir, "server_v2_ecdsa.crt")},
       {:downstream_v2_ec_key, Path.join(certs_dir, "server_v2_ecdsa.key")},
-      {:downstream_v2_sni_hostnames, sni_hostnames}
+      {:downstream_v2_sni_hostnames, Enum.map(sni_hostnames, &String.to_charlist/1)}
     ])
   end
 

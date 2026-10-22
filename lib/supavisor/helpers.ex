@@ -218,9 +218,9 @@ defmodule Supavisor.Helpers do
     end
   end
 
-  @spec downstream_v2_sni_hostname?(String.t()) :: boolean()
+  @spec downstream_v2_sni_hostname?(charlist()) :: boolean()
   def downstream_v2_sni_hostname?(sni_hostname) do
-    String.downcase(sni_hostname) in Application.get_env(
+    :string.lowercase(sni_hostname) in Application.get_env(
       :supavisor,
       :downstream_v2_sni_hostnames,
       []
