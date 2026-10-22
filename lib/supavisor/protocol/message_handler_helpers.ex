@@ -7,9 +7,11 @@ defmodule Supavisor.Protocol.MessageHandlerHelpers do
 
   alias Supavisor.PgParser
 
-  # Parse time grows with the query's token count, up to about 1.3 ms at this
-  # size for expression-heavy queries. Leaking statements are short, so larger
-  # queries are passed through unchecked.
+  # Parse time grows with the query's token count, up to about 0.7 ms at 512
+  # bytes and 1.3 ms at 1 KB for expression-heavy queries. Larger queries are
+  # parsed on a dirty CPU scheduler. Leaking statements are short, so queries
+  # over 1 KB are passed through unchecked.
+  @max_normal_parse_size 512
   @max_parsed_query_size 1024
 
   @spec parse_query(binary()) ::
@@ -24,7 +26,7 @@ defmodule Supavisor.Protocol.MessageHandlerHelpers do
   end
 
   def parse_query(query) do
-    case PgParser.parse(query) do
+    case parse(query) do
       {:ok, _parsed} = ok ->
         ok
 
@@ -40,4 +42,9 @@ defmodule Supavisor.Protocol.MessageHandlerHelpers do
         :unparseable
     end
   end
+
+  defp parse(query) when byte_size(query) > @max_normal_parse_size,
+    do: PgParser.parse_dirty(query)
+
+  defp parse(query), do: PgParser.parse(query)
 end

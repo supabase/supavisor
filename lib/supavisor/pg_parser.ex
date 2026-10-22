@@ -39,6 +39,20 @@ defmodule Supavisor.PgParser do
   def parse(_query), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc """
+  Same as `parse/1`, on a dirty CPU scheduler, for queries too large to parse
+  on a normal one.
+
+  ## Examples
+
+      iex> {:ok, parsed} = Supavisor.PgParser.parse_dirty("select 1")
+      iex> Supavisor.PgParser.statement_types(parsed)
+      ["SelectStmt"]
+  """
+  @spec parse_dirty(binary()) ::
+          {:ok, parsed()} | {:error, :invalid_utf8 | :too_complex | :syntax_error}
+  def parse_dirty(_query), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc """
   Returns a list of all statements in a parsed query.
 
   ## Examples

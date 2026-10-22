@@ -39,24 +39,36 @@ impl Resource for ParsedQuery {}
 /// time grows faster than it. Runs of operator characters, which make it grow
 /// fastest, are bounded here. The time spent is reported to the scheduler, so a
 /// process parsing many queries in a row is preempted like any other.
-///
-/// The query is taken as a binary rather than a `&str`, which Rustler would
-/// reject with a `badarg` on text that is not UTF-8, as clients with another
-/// `client_encoding` send.
 #[rustler::nif]
 fn parse(env: Env, query: Binary) -> Result<ResourceArc<ParsedQuery>, Atom> {
     let started = Instant::now();
-    let result = std::str::from_utf8(query.as_slice())
-        .map_err(|_| atoms::invalid_utf8())
-        .and_then(|query| match operator_rescan_cost(query.as_bytes()) {
-            cost if cost > MAX_OPERATOR_RESCAN_COST => Err(atoms::too_complex()),
-            _ => Ok(query),
-        })
-        .and_then(|query| pg_query::parse(query).map_err(|_| atoms::syntax_error()));
+    let result = parse_query(query);
 
     consume_timeslice(env, started.elapsed());
 
     Ok(ResourceArc::new(ParsedQuery { result: result? }))
+}
+
+/// Same as `parse`, on a dirty CPU scheduler, for queries too large to parse
+/// on a normal one.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn parse_dirty(query: Binary) -> Result<ResourceArc<ParsedQuery>, Atom> {
+    Ok(ResourceArc::new(ParsedQuery {
+        result: parse_query(query)?,
+    }))
+}
+
+/// The query is taken as a binary rather than a `&str`, which Rustler would
+/// reject with a `badarg` on text that is not UTF-8, as clients with another
+/// `client_encoding` send.
+fn parse_query(query: Binary) -> Result<pg_query::ParseResult, Atom> {
+    let query = std::str::from_utf8(query.as_slice()).map_err(|_| atoms::invalid_utf8())?;
+
+    if operator_rescan_cost(query.as_bytes()) > MAX_OPERATOR_RESCAN_COST {
+        return Err(atoms::too_complex());
+    }
+
+    pg_query::parse(query).map_err(|_| atoms::syntax_error())
 }
 
 /// The most rescanning of operator characters allowed, up to about 160 µs of
