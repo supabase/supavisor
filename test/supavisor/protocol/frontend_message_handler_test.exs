@@ -508,9 +508,9 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       end
     end
 
-    test "queries up to 4 KB are checked", %{stream_state: stream_state} do
+    test "queries up to 1 KB are checked", %{stream_state: stream_state} do
       stream_state = with_leak_action(stream_state, :error)
-      query = padded_query("SET statement_timeout = '1s'; --", 4096)
+      query = padded_query("SET statement_timeout = '1s'; --", 1024)
 
       for bin <- [simple_query(query), parse_message(query)] do
         assert {:error, %Supavisor.Errors.SessionLeakError{leak: :session_set}} =
@@ -518,7 +518,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       end
     end
 
-    test "queries over 4 KB are passed through unchecked, with a warning", %{
+    test "queries over 1 KB are passed through unchecked, with a warning", %{
       stream_state: stream_state
     } do
       stream_state =
@@ -527,8 +527,8 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
         |> with_simple_query_prepare_check()
 
       for query <- [
-            padded_query("SET statement_timeout = '1s'; --", 4097),
-            padded_query("PREPARE p AS SELECT 1; --", 4097)
+            padded_query("SET statement_timeout = '1s'; --", 1025),
+            padded_query("PREPARE p AS SELECT 1; --", 1025)
           ],
           bin <- [simple_query(query), parse_message(query)] do
         log =
@@ -537,7 +537,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
           end)
 
         assert log =~
-                 "skipped transaction mode checks for query of 4097 bytes, larger than the 4096 byte limit"
+                 "skipped transaction mode checks for query of 1025 bytes, larger than the 1024 byte limit"
       end
     end
 

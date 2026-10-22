@@ -7,10 +7,10 @@ defmodule Supavisor.Protocol.MessageHandlerHelpers do
 
   alias Supavisor.PgParser
 
-  # Parse time grows with the query's token count, up to about 1.5 ms at this
+  # Parse time grows with the query's token count, up to about 1.3 ms at this
   # size for expression-heavy queries. Leaking statements are short, so larger
   # queries are passed through unchecked.
-  @max_parsed_query_size 4096
+  @max_parsed_query_size 1024
 
   @spec parse_query(binary()) ::
           {:ok, PgParser.parsed()} | :unparseable | :too_large | :too_complex
