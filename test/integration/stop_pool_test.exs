@@ -71,6 +71,41 @@ defmodule Supavisor.Integration.StopPoolTest do
     assert Supavisor.get_global_sup(local_id) == local_sup
   end
 
+  test "stops a pool through another node's API with the pid from the pool list", %{
+    conn: conn,
+    peer: peer
+  } do
+    local_id = pool_id("supavisor_test")
+    peer_id = pool_id("postgres")
+
+    {:ok, _} = Supavisor.start(local_id, @secret)
+    on_exit(fn -> Supavisor.stop(local_id) end)
+    {:ok, _} = :peer.call(peer, Supavisor.FixturesHelpers, :start_pool, [peer_id, @secret])
+
+    assert_eventually(fn -> is_pid(Supavisor.get_global_sup(peer_id)) end)
+    peer_sup = Supavisor.get_global_sup(peer_id)
+    local_sup = Supavisor.get_global_sup(local_id)
+    assert is_pid(local_sup)
+
+    %{"pools" => pools} = conn |> get(~p"/api/tenants/#{@tenant}/pools") |> json_response(200)
+    %{"pid" => pid} = Enum.find(pools, &(&1["node"] == to_string(node())))
+
+    # The peer's endpoint doesn't serve HTTP in tests, so dispatch the request on the peer.
+    resp =
+      :peer.call(peer, Phoenix.ConnTest, :dispatch, [
+        conn,
+        SupavisorWeb.Endpoint,
+        :delete,
+        ~p"/api/tenants/#{@tenant}/pools",
+        Jason.encode!(%{pid: pid})
+      ])
+
+    assert response(resp, 204)
+    refute Process.alive?(local_sup)
+    # The same process: the peer's pool was neither stopped nor restarted.
+    assert Supavisor.get_global_sup(peer_id) == peer_sup
+  end
+
   test "stop_pool/3 reports a pid's node as unreachable once it is gone", %{
     peer: peer,
     peer_name: peer_name
