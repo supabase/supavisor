@@ -37,6 +37,14 @@ defmodule Supavisor.Protocol.MessageHandlerHelpers do
 
         :too_complex
 
+      {:error, :invalid_utf8} ->
+        Logger.warning(
+          "skipped transaction mode checks for query that is not valid UTF-8, " <>
+            "client_encoding other than UTF8 is not supported"
+        )
+
+        :unparseable
+
       {:error, error} ->
         Logger.debug("Failed to parse query: #{inspect(error)}, query: #{inspect(query)}")
         :unparseable
