@@ -135,6 +135,7 @@ defmodule SupavisorWeb.PoolControllerTest do
       refute Process.alive?(sup)
       assert Supavisor.get_global_sup(id) == nil
       # The same process: the other pool was neither stopped nor restarted.
+      assert Process.alive?(other_sup)
       assert Supavisor.get_global_sup(other) == other_sup
     end
 
@@ -163,7 +164,7 @@ defmodule SupavisorWeb.PoolControllerTest do
 
       assert conn
              |> delete(~p"/api/tenants/#{@tenant}/pools", stop_body(sup, timeout: 100))
-             |> response(202)
+             |> response(202) == ""
 
       assert_eventually(10, 1_000, fn -> not Process.alive?(sup) end)
     end
@@ -193,6 +194,7 @@ defmodule SupavisorWeb.PoolControllerTest do
                |> delete(~p"/api/tenants/#{other_tenant}/pools", stop_body(sup))
                |> json_response(404)
 
+      assert Process.alive?(sup)
       assert Supavisor.get_global_sup(id) == sup
     end
 

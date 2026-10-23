@@ -150,6 +150,7 @@ defmodule Supavisor.OpsTest do
       refute Process.alive?(sup)
       assert Supavisor.get_global_sup(id) == nil
       # The same process: the other pool was neither stopped nor restarted.
+      assert Process.alive?(other_sup)
       assert Supavisor.get_global_sup(other) == other_sup
     end
 
@@ -174,6 +175,7 @@ defmodule Supavisor.OpsTest do
       assert is_pid(sup)
 
       assert {:error, :not_found} = Ops.stop_pool(other_tenant, sup)
+      assert Process.alive?(sup)
       assert Supavisor.get_global_sup(id) == sup
     end
 
@@ -191,9 +193,17 @@ defmodule Supavisor.OpsTest do
       spawn(fn -> Supervisor.stop(sup) end)
       assert_eventually(10, 100, fn -> Supavisor.get_global_sup(id) == nil end)
 
-      # The supervisor is busy stopping its children and never handles our stop
-      # request; it exits after ~5s, which ends our wait.
-      assert {:ok, :stopped} = Ops.stop_pool(@tenant, sup)
+      task = Task.async(fn -> Ops.stop_pool(@tenant, sup) end)
+
+      # The supervisor is busy stopping its children, so our stop request (reason
+      # :shutdown, unlike the first one's :normal) waits in its mailbox, unhandled.
+      assert_eventually(10, 100, fn ->
+        {:messages, messages} = Process.info(sup, :messages)
+        Enum.any?(messages, &match?({:system, _from, {:terminate, :shutdown}}, &1))
+      end)
+
+      # It exits after ~5s without handling it, which ends our wait.
+      assert {:ok, :stopped} = Task.await(task, 10_000)
       refute Process.alive?(sup)
     end
 
