@@ -19,6 +19,7 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
 
   setup_all do
     Supavisor.Support.SSLHelper.setup_downstream_certs()
+    Supavisor.Support.SSLHelper.setup_downstream_v2_certs(["v2.localhost"])
   end
 
   describe "TLS 1.2" do
@@ -69,6 +70,80 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
     end
   end
 
+  describe "SNI hostname" do
+    test "serves v2 certificate to a configured hostname" do
+      {:ok, ssl_socket} =
+        ssl_upgrade(verify: :verify_none, server_name_indication: ~c"v2.localhost")
+
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_v2_ecdsa.crt")}
+    end
+
+    test "matches hostnames case-insensitively" do
+      {:ok, ssl_socket} =
+        ssl_upgrade(verify: :verify_none, server_name_indication: ~c"V2.LOCALHOST")
+
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_v2_ecdsa.crt")}
+    end
+
+    test "serves v2 RSA certificate when client requests RSA-only ciphers" do
+      {:ok, ssl_socket} =
+        ssl_upgrade(
+          versions: [:"tlsv1.2"],
+          ciphers: @rsa_ciphers,
+          verify: :verify_none,
+          server_name_indication: ~c"v2.localhost"
+        )
+
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_v2_rsa.crt")}
+    end
+
+    test "v2 certificate passes v2 CA verification" do
+      {:ok, ssl_socket} =
+        ssl_upgrade(
+          verify: :verify_peer,
+          cacerts: [cert_der("ca_v2.crt")],
+          server_name_indication: ~c"v2.localhost"
+        )
+
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_v2_ecdsa.crt")}
+    end
+
+    test "serves default certificate to other hostnames" do
+      {:ok, ssl_socket} = ssl_upgrade(verify: :verify_none, server_name_indication: ~c"localhost")
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_ecdsa.crt")}
+    end
+
+    test "serves default certificate to a subdomain of a configured hostname" do
+      {:ok, ssl_socket} =
+        ssl_upgrade(verify: :verify_none, server_name_indication: ~c"tenant.v2.localhost")
+
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_ecdsa.crt")}
+    end
+
+    test "serves default certificate without SNI" do
+      {:ok, ssl_socket} = ssl_upgrade(verify: :verify_none)
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_ecdsa.crt")}
+    end
+
+    test "serves default certificate when v2 certificates are not configured" do
+      for key <- [
+            :downstream_v2_cert,
+            :downstream_v2_key,
+            :downstream_v2_ec_cert,
+            :downstream_v2_ec_key
+          ] do
+        value = Application.get_env(:supavisor, key)
+        Application.delete_env(:supavisor, key)
+        on_exit(fn -> Application.put_env(:supavisor, key, value) end)
+      end
+
+      {:ok, ssl_socket} =
+        ssl_upgrade(verify: :verify_none, server_name_indication: ~c"v2.localhost")
+
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_ecdsa.crt")}
+    end
+  end
+
   defp connect_with_ciphers(type) do
     ciphers = if type == :rsa, do: @rsa_ciphers, else: @ecdsa_ciphers
 
@@ -99,8 +174,10 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
     :ssl.connect(tcp, ssl_opts, 5_000)
   end
 
-  defp ca_der do
-    pem = File.read!(Path.join(@certs_dir, "ca.crt"))
+  defp ca_der, do: cert_der("ca.crt")
+
+  defp cert_der(file) do
+    pem = File.read!(Path.join(@certs_dir, file))
     [{:Certificate, der, :not_encrypted}] = :public_key.pem_decode(pem)
     der
   end

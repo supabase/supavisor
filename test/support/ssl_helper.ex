@@ -78,18 +78,38 @@ defmodule Supavisor.Support.SSLHelper do
   def setup_downstream_certs do
     certs_dir = Path.expand("../../priv/test/certs", __DIR__)
 
-    keys = [
-      {:global_downstream_cert, "server_rsa.crt"},
-      {:global_downstream_key, "server_rsa.key"},
-      {:global_downstream_ec_cert, "server_ecdsa.crt"},
-      {:global_downstream_ec_key, "server_ecdsa.key"}
-    ]
+    put_env_with_restore([
+      {:global_downstream_cert, Path.join(certs_dir, "server_rsa.crt")},
+      {:global_downstream_key, Path.join(certs_dir, "server_rsa.key")},
+      {:global_downstream_ec_cert, Path.join(certs_dir, "server_ecdsa.crt")},
+      {:global_downstream_ec_key, Path.join(certs_dir, "server_ecdsa.key")}
+    ])
+  end
 
+  @doc """
+  Configures the v2 downstream certs from priv/test/certs, served to the given SNI hostnames.
+  Registers an `on_exit` callback to restore the original values.
+
+  Must be called from a test `setup` or `setup_all` block.
+  """
+  def setup_downstream_v2_certs(sni_hostnames) do
+    certs_dir = Path.expand("../../priv/test/certs", __DIR__)
+
+    put_env_with_restore([
+      {:downstream_v2_cert, Path.join(certs_dir, "server_v2_rsa.crt")},
+      {:downstream_v2_key, Path.join(certs_dir, "server_v2_rsa.key")},
+      {:downstream_v2_ec_cert, Path.join(certs_dir, "server_v2_ecdsa.crt")},
+      {:downstream_v2_ec_key, Path.join(certs_dir, "server_v2_ecdsa.key")},
+      {:downstream_v2_sni_hostnames, Enum.map(sni_hostnames, &String.to_charlist/1)}
+    ])
+  end
+
+  defp put_env_with_restore(envs) do
     orig =
-      Map.new(keys, fn {key, _} -> {key, Application.get_env(:supavisor, key)} end)
+      Map.new(envs, fn {key, _} -> {key, Application.get_env(:supavisor, key)} end)
 
-    for {key, file} <- keys do
-      Application.put_env(:supavisor, key, Path.join(certs_dir, file))
+    for {key, value} <- envs do
+      Application.put_env(:supavisor, key, value)
     end
 
     ExUnit.Callbacks.on_exit(fn ->
