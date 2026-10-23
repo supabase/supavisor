@@ -5,6 +5,7 @@ defmodule Supavisor.Integration.StopPoolTest do
 
   import Supavisor.Asserts, only: [assert_eventually: 1]
 
+  alias Supavisor.Jwt.Token
   alias Supavisor.Support.Cluster
 
   @moduletag cluster: true
@@ -19,7 +20,7 @@ defmodule Supavisor.Integration.StopPoolTest do
     {:ok, peer, peer_node} = Cluster.start_node(peer_name)
     true = Node.connect(peer_node)
 
-    token = Supavisor.Jwt.Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
+    token = Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
 
     conn =
       conn

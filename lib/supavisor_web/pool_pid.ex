@@ -12,6 +12,8 @@ defmodule SupavisorWeb.PoolPid do
   Reverses `encode/1`. `:safe` rejects terms that would create atoms, e.g. a pid
   of a node this one has never seen.
   """
+  # Anything but a pid is rejected, so a decoded fun is never called.
+  # sobelow_skip ["Misc.BinToTerm"]
   @spec decode(String.t()) :: {:ok, pid()} | :error
   def decode(encoded) do
     with {:ok, binary} <- Base.url_decode64(encoded, padding: false),
