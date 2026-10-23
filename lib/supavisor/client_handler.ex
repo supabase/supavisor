@@ -1140,6 +1140,7 @@ defmodule Supavisor.ClientHandler do
         # different ones, see `Supavisor.start_local_pool/3`
         tenant_availability_zone:
           if(Supavisor.id(id, :type) == :single, do: info.tenant.availability_zone),
+        txn_mode_leak_action: info.tenant.txn_mode_leak_action,
         user: user,
         db_name: db_name,
         timeout: info.user.pool_checkout_timeout,
