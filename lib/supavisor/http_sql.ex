@@ -11,6 +11,7 @@ defmodule Supavisor.HttpSql do
   """
 
   alias Supavisor.HttpSql.Client
+  alias Supavisor.Protocol.StartupOptions
 
   @type query() :: {String.t(), [String.t() | nil]}
 
@@ -19,7 +20,7 @@ defmodule Supavisor.HttpSql do
           password: String.t(),
           database: String.t(),
           application_name: String.t() | nil,
-          options: String.t() | nil
+          options: %{String.t() => String.t()}
         }
 
   @type result() :: %{
@@ -58,13 +59,13 @@ defmodule Supavisor.HttpSql do
   @doc """
   Runs a request, returning its JSON response body.
   """
-  @spec run(String.t() | nil, map(), %{String.t() => String.t()}) ::
+  @spec run(String.t() | nil, map(), %{String.t() => String.t()}, String.t()) ::
           {:ok, map()} | {:error, {:postgres, map()} | {:bad_request, String.t()} | term()}
-  def run(conn_string, body, headers) do
+  def run(conn_string, body, headers, client_ip) do
     with {:ok, conn_info} <- parse_connection_string(conn_string),
          {:ok, request} <- parse_body(body),
          {:ok, begin} <- begin_statement(request, headers),
-         {:ok, results} <- Client.run(conn_info, queries(request, begin)) do
+         {:ok, results} <- Client.run(conn_info, client_ip, queries(request, begin)) do
       {:ok, response(request, begin, results)}
     else
       {:error, {:postgres, error}} -> {:error, {:postgres, error_json(error)}}
@@ -89,10 +90,20 @@ defmodule Supavisor.HttpSql do
          password: URI.decode(password),
          database: URI.decode(database),
          application_name: query["application_name"],
-         options: query["options"]
+         options: decode_options(query["options"])
        }}
     else
       _ -> {:error, {:bad_request, "invalid Neon-Connection-String header"}}
+    end
+  end
+
+  # Like Supavisor does: `-c name=value` arguments, or else a query string like `reference=x`.
+  defp decode_options(nil), do: %{}
+
+  defp decode_options(options) do
+    case StartupOptions.parse(options) do
+      parsed when map_size(parsed) > 0 -> parsed
+      _ -> URI.decode_query(options, %{}, :rfc3986)
     end
   end
 

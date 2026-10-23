@@ -6,22 +6,21 @@ defmodule Supavisor.HttpSql.Client do
   left open or aborted is rolled back before the connection is closed.
   """
 
-  alias Supavisor.Helpers
   alias Supavisor.HttpSql
   alias Supavisor.Protocol.Server
-  alias Supavisor.Secrets.PasswordSecrets
+  alias Supavisor.Protocol.StartupOptions
 
-  @spec run(HttpSql.conn_info(), [HttpSql.query()]) ::
+  @spec run(HttpSql.conn_info(), String.t(), [HttpSql.query()]) ::
           {:ok, [HttpSql.result()]} | {:error, {:postgres, map()} | term()}
-  def run(conn_info, queries) do
-    port = Application.fetch_env!(:supavisor, :proxy_port_transaction)
+  def run(conn_info, client_ip, queries) do
+    port = internal_port(conn_info)
 
     case :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false]) do
       {:ok, sock} ->
         conn = %{sock: sock, buffer: <<>>}
 
         try do
-          with {:ok, conn} <- startup(conn, conn_info),
+          with {:ok, conn} <- startup(conn, conn_info, client_ip),
                {:ok, conn} <- send_queries(conn, queries) do
             receive_results(conn, length(queries))
           end
@@ -35,69 +34,52 @@ defmodule Supavisor.HttpSql.Client do
     end
   end
 
+  defp internal_port(conn_info) do
+    ports = Application.fetch_env!(:supavisor, :transaction_proxy_ports)
+    shard = :erlang.phash2({conn_info.user, conn_info.database}, length(ports))
+    :ranch.get_port({:pg_proxy_internal, :transaction, shard})
+  end
+
   ## Startup
 
-  defp startup(conn, conn_info) do
+  defp startup(conn, conn_info, client_ip) do
+    # `client_tls` is set to always true to force cleartext authentication (the conn is local anyway).
+    options =
+      Map.merge(conn_info.options, %{
+        "client_ip" => client_ip,
+        "client_tls" => "true"
+      })
+
     params =
       [
         {"user", conn_info.user},
         {"database", conn_info.database},
         {"application_name", conn_info.application_name},
-        {"options", conn_info.options}
+        {"options", StartupOptions.encode(options)}
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
     with :ok <- sock_send(conn, :pgo_protocol.encode_startup_message(params)) do
-      authenticate(conn, conn_info, nil)
+      authenticate(conn, conn_info)
     end
   end
 
   # Authenticate as client.
-  defp authenticate(conn, conn_info, nonce) do
+  defp authenticate(conn, conn_info) do
     with {:ok, type, body, conn} <- recv_message(conn) do
       case {type, body} do
-        # AuthenticationSASL
-        {?R, <<10::32, _mechanisms::binary>>} ->
-          nonce = :pgo_scram.get_nonce(16)
-          client_first = :pgo_scram.get_client_first(conn_info.user, nonce)
-
-          initial_response = [
-            "SCRAM-SHA-256",
-            0,
-            <<IO.iodata_length(client_first)::32>>,
-            client_first
-          ]
-
-          with :ok <-
-                 sock_send(conn, :pgo_protocol.encode_scram_response_message(initial_response)),
-               do: authenticate(conn, conn_info, nonce)
-
-        # AuthenticationSASLContinue
-        {?R, <<11::32, server_first::binary>>} ->
-          secrets = %PasswordSecrets{user: conn_info.user, password: conn_info.password}
-          server_first = Helpers.parse_server_first(server_first, nonce)
-
-          {client_final, _server_signature, _derived_secrets} =
-            Helpers.get_client_final(secrets, server_first, nonce, conn_info.user, "biws")
-
-          with :ok <- sock_send(conn, :pgo_protocol.encode_scram_response_message(client_final)),
-               do: authenticate(conn, conn_info, nonce)
-
         # AuthenticationCleartextPassword
         {?R, <<3::32>>} ->
           with :ok <- sock_send(conn, password_message([conn_info.password, 0])),
-               do: authenticate(conn, conn_info, nonce)
+               do: authenticate(conn, conn_info)
 
-        # AuthenticationMD5Password
-        {?R, <<5::32, salt::binary-4>>} ->
-          digest = Helpers.md5([conn_info.password, conn_info.user])
+        # AuthenticationOk
+        {?R, <<0::32>>} ->
+          authenticate(conn, conn_info)
 
-          with :ok <- sock_send(conn, password_message(["md5", Helpers.md5([digest, salt]), 0])),
-               do: authenticate(conn, conn_info, nonce)
-
-        # AuthenticationOk, AuthenticationSASLFinal, ParameterStatus, BackendKeyData, notices
-        {type, _body} when type in [?R, ?S, ?K, ?N] ->
-          authenticate(conn, conn_info, nonce)
+        # ParameterStatus, BackendKeyData, notices
+        {type, _body} when type in [?S, ?K, ?N] ->
+          authenticate(conn, conn_info)
 
         {?Z, _status} ->
           {:ok, conn}

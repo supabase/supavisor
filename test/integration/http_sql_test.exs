@@ -83,6 +83,17 @@ defmodule Supavisor.Integration.HttpSqlTest do
              conn |> sql(conn_string, %{"query" => "SELECT 1"}) |> json_response(200)
   end
 
+  test "passes the client's IP to Supavisor", %{conn: conn, conn_string: conn_string} do
+    key = {@tenant, "10.0.0.1"}
+    Supavisor.CircuitBreaker.open_local(key, :auth_error, System.system_time(:second) + 60)
+    on_exit(fn -> Supavisor.CircuitBreaker.clear(key, :auth_error) end)
+
+    # Logins from that IP are blocked, so its requests are turned away.
+    conn = sql(%{conn | remote_ip: {10, 0, 0, 1}}, conn_string, %{"query" => "SELECT 1"})
+    assert %{"message" => message} = json_response(conn, 400)
+    assert message =~ "ECIRCUITBREAKER"
+  end
+
   test "rejects a wrong password", %{conn: conn, db_conf: db_conf} do
     conn_string =
       "postgresql://#{db_conf[:username]}.#{@tenant}:wrong@localhost/#{db_conf[:database]}"

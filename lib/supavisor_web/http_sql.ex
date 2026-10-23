@@ -30,10 +30,12 @@ defmodule SupavisorWeb.HttpSql do
   def call(conn, _opts) do
     conn = put_resp_header(conn, "access-control-allow-origin", "*")
     conn_string = conn |> get_req_header("neon-connection-string") |> List.first()
+    client_ip = conn.remote_ip |> :inet.ntoa() |> to_string()
 
     with :ok <- reject_jwt(conn),
          {:ok, body, conn} <- read_json_body(conn),
-         {:ok, response} <- HttpSql.run(conn_string, body, Map.new(conn.req_headers)) do
+         {:ok, response} <-
+           HttpSql.run(conn_string, body, Map.new(conn.req_headers), client_ip) do
       json(conn, 200, response)
     else
       # Returning 400 for both Postgres errors and bad requests is consistent with
