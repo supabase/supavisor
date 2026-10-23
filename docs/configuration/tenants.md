@@ -49,3 +49,13 @@ connection
 `log_connections` - log client and server (pool) connections and client disconnections (default `true`)
 
 `allow_list` - a list of CIDR ranges which are allowed to connect
+
+`txn_mode_leak_action` - what to do when a client sends a statement that leaves
+session state behind in transaction mode: `ignore` (default), `log` (log a
+warning) or `error` (reject the statement and return an error to the client).
+This covers session-level `SET`, `set_config/3`, `DISCARD`, session-scoped
+advisory locks, `LISTEN`/`UNLISTEN`, `WITH HOLD` cursors, temp tables and
+`LOAD`. Transaction-scoped counterparts (`SET LOCAL`, `SET TRANSACTION`,
+`ON COMMIT DROP`, `SET CONSTRAINTS`) are always allowed. Queries larger than
+1 KB, or with long runs of operator characters such as `+++…`, are not
+checked; a warning is logged for each one instead.
