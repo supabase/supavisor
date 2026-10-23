@@ -17,4 +17,7 @@ defmodule Supavisor.Errors.SslRequiredError do
 
   @impl Supavisor.Error
   def response_delay(_), do: Supavisor.Error.short_response_delay()
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

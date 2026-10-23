@@ -14,4 +14,7 @@ defmodule Supavisor.Errors.SimpleQueryNotSupportedError do
   def error_message(_error) do
     "transaction mode only supports prepared statements using the Extended Query Protocol"
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

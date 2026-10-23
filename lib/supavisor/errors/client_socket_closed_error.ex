@@ -40,4 +40,7 @@ defmodule Supavisor.Errors.ClientSocketClosedError do
 
   @impl Supavisor.Error
   def postgres_error(_error), do: nil
+
+  @impl Supavisor.Error
+  def fault(_), do: :client_abort
 end

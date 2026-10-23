@@ -95,6 +95,15 @@ defmodule Supavisor.Monitoring.Telem do
     telemetry_execute([:supavisor, :client, :error], %{}, %{code: code, mode: mode, local: local})
   end
 
+  @spec client_connection_request(integer(), :ok | :error, map()) :: :ok | nil
+  def client_connection_request(start, outcome, tags) do
+    telemetry_execute(
+      [:supavisor, :client, :connection_request, :stop],
+      %{duration: System.monotonic_time() - start},
+      Map.put(tags, :outcome, outcome)
+    )
+  end
+
   @spec client_admission(:admitted | :rejected, Supavisor.id() | any()) :: :ok | nil
   def client_admission(status, Supavisor.id() = id) do
     telemetry_execute(
