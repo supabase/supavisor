@@ -492,7 +492,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       assert log =~ "received DISCARD statement in transaction mode"
     end
 
-    test "non-UTF-8 query text is passed through for the backend", %{
+    test "non-UTF-8 queries are passed through unchecked, with a warning", %{
       stream_state: stream_state
     } do
       stream_state =
@@ -501,10 +501,19 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
         |> with_simple_query_prepare_check()
 
       # 'café' in LATIN1
-      query = <<"SELECT 'caf", 0xE9, "'">>
+      for query <- [
+            <<"SET application_name = 'caf", 0xE9, "'">>,
+            <<"PREPARE p AS SELECT 'caf", 0xE9, "'">>
+          ],
+          bin <- [simple_query(query), parse_message(query)] do
+        log =
+          capture_log(fn ->
+            assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+          end)
 
-      for bin <- [simple_query(query), parse_message(query)] do
-        assert {:ok, _, [^bin]} = MessageStreamer.handle_packets(stream_state, bin)
+        assert log =~
+                 "skipped transaction mode checks for query that is not valid UTF-8, " <>
+                   "client_encoding other than UTF8 is not supported"
       end
     end
 
