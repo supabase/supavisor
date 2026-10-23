@@ -619,7 +619,7 @@ defmodule Supavisor.Integration.ProxyTest do
       Supavisor.CircuitBreaker.clear({"proxy_tenant_ps_enabled", "127.0.0.1"}, :auth_error)
     end
 
-    test "exceeding the client limit is recorded once as a slow user error", ctx do
+    test "exceeding the client limit is recorded once as a user limit", ctx do
       ref = ctx.ref
 
       opts =
@@ -637,7 +637,7 @@ defmodule Supavisor.Integration.ProxyTest do
       assert_receive {^ref, _, %{outcome: :ok}}, 1_000
       assert_receive {^ref, _, %{outcome: :ok}}, 1_000
 
-      assert_receive {^ref, _, %{outcome: :error, code: "EMAXCONN", fault: :user_timeout}},
+      assert_receive {^ref, _, %{outcome: :error, code: "EMAXCONN", fault: :user_limit}},
                      1_000
 
       refute_receive {^ref, _, _}, 300

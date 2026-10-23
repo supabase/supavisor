@@ -54,5 +54,5 @@ defmodule Supavisor.Errors.MaxConnectionsError do
   def response_delay(_), do: Supavisor.Error.short_response_delay()
 
   @impl Supavisor.Error
-  def fault(_), do: :user_timeout
+  def fault(_), do: :user_limit
 end

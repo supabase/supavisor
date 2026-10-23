@@ -92,11 +92,34 @@ defmodule Supavisor.ClientHandler.ConnectionRequestTest do
       ConnectionRequest.error(data, Errors.MaxConnectionsError.new(:proxy, 10))
 
       assert_receive {^ref, _,
-                      %{outcome: :error, code: "EMAXCONN", fault: :user_timeout, mode: :proxy}}
+                      %{outcome: :error, code: "EMAXCONN", fault: :user_limit, mode: :proxy}}
     end
 
     test "the process exit after the pool node failed it adds nothing", %{ref: ref, data: data} do
       assert :ok = Supavisor.ClientHandler.terminate(:normal, :connecting, data)
+
+      refute_receive {^ref, _, _}, 50
+    end
+  end
+
+  describe "a client Terminate while connecting, before greetings" do
+    test "is not recorded as a request outcome, and the exit after it adds nothing", %{
+      ref: ref,
+      data: data
+    } do
+      data = Map.merge(data, %{log_connections: false, db_connection: nil})
+      terminate = <<?X, 4::32>>
+
+      assert {:stop, :normal} =
+               Supavisor.ClientHandler.handle_event(
+                 :info,
+                 {:tcp, nil, terminate},
+                 :connecting,
+                 data
+               )
+
+      refute ConnectionRequest.pending?()
+      Supavisor.ClientHandler.terminate(:normal, :connecting, data)
 
       refute_receive {^ref, _, _}, 50
     end

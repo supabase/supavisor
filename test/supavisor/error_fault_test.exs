@@ -26,15 +26,23 @@ defmodule Supavisor.ErrorFaultTest do
       end
     end
 
-    test "user-side errors that are slow by design are user_timeout" do
+    test "timeouts waiting on the client are user_timeout" do
       for error <- [
             %Errors.HandshakeTimeoutError{},
-            %Errors.AuthTimeoutError{context: :auth_password_wait},
-            Errors.MaxConnectionsError.new(:transaction, 10),
-            Errors.MaxConnectionsError.new(:session, 10),
-            %Errors.CheckoutTimeoutError{reason: :pool_exhausted}
+            %Errors.AuthTimeoutError{context: :auth_password_wait}
           ] do
         assert fault(error) == :user_timeout, inspect(error)
+      end
+    end
+
+    test "a tenant hitting a limit we enforce is user_limit" do
+      for error <- [
+            Errors.MaxConnectionsError.new(:transaction, 10),
+            Errors.MaxConnectionsError.new(:session, 10),
+            Errors.MaxConnectionsError.new(:proxy, 10),
+            %Errors.CheckoutTimeoutError{reason: :pool_exhausted}
+          ] do
+        assert fault(error) == :user_limit, inspect(error)
       end
     end
 
@@ -43,7 +51,7 @@ defmodule Supavisor.ErrorFaultTest do
     end
 
     test "checkout timeout depends on which wait timed out" do
-      assert fault(%Errors.CheckoutTimeoutError{reason: :pool_exhausted}) == :user_timeout
+      assert fault(%Errors.CheckoutTimeoutError{reason: :pool_exhausted}) == :user_limit
       assert fault(%Errors.CheckoutTimeoutError{reason: :unresponsive}) == :supavisor
       assert fault(%Errors.CheckoutTimeoutError{reason: nil}) == :supavisor
     end
@@ -79,7 +87,13 @@ defmodule Supavisor.ErrorFaultTest do
       assert error_modules != []
 
       for module <- error_modules do
-        assert module.fault(struct(module)) in [:user, :user_timeout, :supavisor, :client_abort],
+        assert module.fault(struct(module)) in [
+                 :user,
+                 :user_timeout,
+                 :user_limit,
+                 :supavisor,
+                 :client_abort
+               ],
                inspect(module)
       end
     end

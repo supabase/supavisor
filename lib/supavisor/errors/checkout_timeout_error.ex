@@ -25,6 +25,6 @@ defmodule Supavisor.Errors.CheckoutTimeoutError do
   end
 
   @impl Supavisor.Error
-  def fault(%{reason: :pool_exhausted}), do: :user_timeout
+  def fault(%{reason: :pool_exhausted}), do: :user_limit
   def fault(_), do: :supavisor
 end

@@ -69,11 +69,12 @@ defmodule Supavisor.Error do
   Who is responsible for an error:
 
   * `:user` - an immediate rejection of a bad request (wrong password, unknown tenant, ...)
-  * `:user_timeout` - user-side, but slow by design (waiting on the client, retried limits)
+  * `:user_timeout` - user-side, but slow by design (a timeout waiting on the client)
+  * `:user_limit` - the tenant hit a limit we enforce (client limit, pool full)
   * `:supavisor` - an unexpected failure on our side. Also the default, so unclassified errors count against us
   * `:client_abort` - the client went away before we could finish
   """
-  @type fault() :: :user | :user_timeout | :supavisor | :client_abort
+  @type fault() :: :user | :user_timeout | :user_limit | :supavisor | :client_abort
 
   @doc """
   Who is responsible for this error, used to tag connection request metrics

@@ -758,7 +758,7 @@ defmodule Supavisor.ClientHandler do
     if data.log_connections, do: Logger.info("ClientHandler: Terminate received from client")
     maybe_cleanup_db_handler(state, data)
 
-    ConnectionRequest.error(data, %ClientSocketClosedError{mode: data.mode, client_state: state})
+    ConnectionRequest.ignore()
 
     {:stop, :normal}
   end
