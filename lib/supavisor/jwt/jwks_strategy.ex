@@ -37,7 +37,7 @@ defmodule Supavisor.Jwt.JwksStrategy do
       _ ->
         # `DefaultStrategyTemplate.start_link/2` requires a truthy `jwks_url`
         # even though `should_start: false` means it's never started.
-        Keyword.merge(opts, jwks_url: "unused", should_start: false)
+        Keyword.merge(opts, jwks_url: :undefined, should_start: false)
     end
   end
 end

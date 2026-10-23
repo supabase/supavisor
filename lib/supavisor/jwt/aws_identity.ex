@@ -7,9 +7,8 @@ defmodule Supavisor.Jwt.AwsIdentity do
 
   Signature + `exp` are verified by Joken/`JokenJwks` (see `Token` below).
   `iss`/`sub`/`aud` are checked explicitly here against a caller-supplied
-  config, the same layering `Supavisor.Jwt.authorize_conn/2` already uses on
-  top of `Supavisor.Jwt.verify/2`. Nothing here is `/api`-specific — reusable
-  by other pipelines (e.g. `/metrics`) with their own config map.
+  config. Nothing here is `/api`-specific — reusable by other pipelines
+  (e.g. `/metrics`) with their own config map.
   """
 
   defmodule Token do

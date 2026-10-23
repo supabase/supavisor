@@ -584,14 +584,30 @@ defmodule SupavisorWeb.TenantControllerTest do
   end
 
   # AWS-identity JWKS auth is a second, additive path on the `:api` pipeline
-  # (see Supavisor.Jwt.AwsIdentity / check_auth/2's 3-arg clause) — the
-  # existing `conn`/`blocked_conn` fixtures above and every other describe
-  # block in this file exercise the untouched HMAC path.
   describe "AWS-identity (JWKS) auth on /api" do
     @jwks_issuer "https://issuer.example.tokens.sts.global.api.aws"
     @jwks_kid "test-kid"
     @jwks_sub "arn:aws:iam::123456789012:role/supavisor-api"
     @jwks_aud "supavisor-api"
+
+    def handle_jwt_auth_event(event, measurements, meta, {pid, ref}) do
+      send(pid, {ref, event, measurements, meta})
+    end
+
+    defp attach_jwt_auth_handler do
+      ref = make_ref()
+
+      :telemetry.attach_many(
+        {ref, :jwt_auth},
+        [[:supavisor, :jwt_auth, :ok], [:supavisor, :jwt_auth, :rejected]],
+        &__MODULE__.handle_jwt_auth_event/4,
+        {self(), ref}
+      )
+
+      on_exit(fn -> :telemetry.detach({ref, :jwt_auth}) end)
+
+      ref
+    end
 
     setup do
       jwk = JOSE.JWK.generate_key({:rsa, 2048})
@@ -704,6 +720,34 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert conn.status == 403
     end
 
+    test "an expired token is rejected and the log shows exp vs now in ISO8601", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      exp = Joken.current_time() - 60
+      expected_exp = exp |> DateTime.from_unix!() |> DateTime.to_iso8601()
+
+      log =
+        capture_log(fn ->
+          conn =
+            conn
+            |> put_req_header("authorization", "Bearer " <> jwks_token(pem, %{"exp" => exp}))
+            |> get(~p"/api/tenants/non_existing_tenant_id")
+
+          assert conn.status == 403
+        end)
+
+      assert log =~ "token_expired"
+      assert log =~ ~s(exp: "#{expected_exp}")
+      assert log =~ ~r/now: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/
+    end
+
     test "the existing HMAC token still works unchanged once api_jwks_config is set", %{
       conn: conn
     } do
@@ -715,6 +759,179 @@ defmodule SupavisorWeb.TenantControllerTest do
                conn
                |> get(~p"/api/tenants/non_existing_tenant_id")
                |> json_response(404)
+    end
+
+    test "emits jwt_auth ok with method :hmac for a valid HMAC token", %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      assert get(conn, ~p"/api/tenants/non_existing_tenant_id").status == 404
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :ok], %{count: 1},
+                      %{method: :hmac, pipeline: :api}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
+    end
+
+    test "emits jwt_auth ok with method :jwks for a valid AWS-identity token", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 404
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :ok], %{count: 1},
+                      %{method: :jwks, pipeline: :api}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
+    end
+
+    test "emits jwt_auth rejected with :unknown method when there is no authorization header",
+         %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> delete_req_header("authorization")
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{
+                        method: :unknown,
+                        pipeline: :api,
+                        reason: :invalid_authorization_header
+                      }}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "a non-Bearer authorization header is a 403, not a crash", %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Basic dXNlcjpwYXNz")
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :unknown, pipeline: :api, reason: :invalid_authorization_header}}
+    end
+
+    test "a repeated authorization header is a 403, not a crash", %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      [{"authorization", bearer}] =
+        Enum.filter(conn.req_headers, &(elem(&1, 0) == "authorization"))
+
+      conn = %{conn | req_headers: conn.req_headers ++ [{"authorization", bearer}]}
+
+      assert get(conn, ~p"/api/tenants/non_existing_tenant_id").status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :unknown, pipeline: :api, reason: :invalid_authorization_header}}
+    end
+
+    test "emits jwt_auth rejected :token_blocklisted (method :unknown) for a blocklisted token",
+         %{
+           conn: conn
+         } do
+      [blocked_token | _] = Application.fetch_env!(:supavisor, :api_blocklist)
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> blocked_token)
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :unknown, pipeline: :api, reason: :token_blocklisted}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "emits jwt_auth rejected :signature_error for an HMAC token with a wrong secret", %{
+      blocked_conn: wrong_secret_conn
+    } do
+      ref = attach_jwt_auth_handler()
+
+      assert get(wrong_secret_conn, ~p"/api/tenants/non_existing_tenant_id").status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :hmac, pipeline: :api, reason: :signature_error}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "emits jwt_auth rejected :token_expired for an expired AWS-identity token", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      ref = attach_jwt_auth_handler()
+      expired = jwks_token(pem, %{"exp" => Joken.current_time() - 60})
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> expired)
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :jwks, pipeline: :api, reason: :token_expired}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "emits jwt_auth rejected :subject_not_allowed for a subject outside the allow-list", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{
+          trusted_issuer: @jwks_issuer,
+          allowed_subs: ["arn:aws:iam::123456789012:role/someone-else"],
+          expected_aud: @jwks_aud
+        },
+        public_jwk
+      )
+
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :jwks, pipeline: :api, reason: :subject_not_allowed}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
     end
   end
 

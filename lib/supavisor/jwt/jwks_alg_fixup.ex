@@ -2,7 +2,8 @@ defmodule Supavisor.Jwt.JwksAlgFixup do
   @moduledoc """
   AWS's outbound-identity-federation JWKS omits `"alg"` on RSA keys (a valid,
   RFC 7517-*optional* field — AWS's own docs show an example JWKS response
-  with an RSA key entry that has no `"alg"`, alongside an EC key that does).
+  with an RSA key entry that has no `"alg"`, alongside an EC key that does:
+  https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_outbound_getting_started.html).
 
   `joken_jwks` requires `"alg"` on every key, or a single `explicit_alg`
   option applied to *all* keys — which doesn't work here, since AWS's
@@ -75,6 +76,5 @@ defmodule Supavisor.Jwt.JwksAlgFixup do
 
   defp infer_alg(%{"alg" => alg} = key) when is_binary(alg), do: key
   defp infer_alg(%{"kty" => "RSA"} = key), do: Map.put(key, "alg", "RS256")
-  defp infer_alg(%{"kty" => "EC", "crv" => "P-384"} = key), do: Map.put(key, "alg", "ES384")
   defp infer_alg(key), do: key
 end

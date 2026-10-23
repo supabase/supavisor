@@ -29,11 +29,6 @@ defmodule Supavisor.Jwt.AwsIdentityTest do
   setup %{public_jwk: public_jwk} do
     Application.put_env(:supavisor, :api_jwks_config, default_config())
 
-    # Raw JSON string body + a real content-type header — matching the
-    # actual wire format `Tesla.Mock` would otherwise skip past (it can hand
-    # back an already-decoded map directly, which masks bugs in how
-    # `http_middlewares` interacts with Tesla's JSON-decoding middleware;
-    # see `Supavisor.Jwt.JwksAlgFixup`'s moduledoc).
     Tesla.Mock.mock_global(fn
       %{method: :get, url: @issuer <> "/.well-known/jwks.json"} ->
         %Tesla.Env{
@@ -110,7 +105,7 @@ defmodule Supavisor.Jwt.AwsIdentityTest do
       assert {:error, _reason} = AwsIdentity.verify(token, default_config())
     end
 
-    test "a kid absent from the fetched JWKS fails closed", %{pem: pem} do
+    test "a kid absent from the fetched JWKS fails", %{pem: pem} do
       token = sign(pem, default_claims(), "not-in-jwks")
 
       assert {:error, _reason} = AwsIdentity.verify(token, default_config())
