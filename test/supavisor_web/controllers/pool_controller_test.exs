@@ -1,6 +1,111 @@
 defmodule SupavisorWeb.PoolControllerTest do
   use SupavisorWeb.ConnCase, async: false
 
+  require Supavisor
+
+  import Supavisor.TenantsFixtures
+
+  @tenant "pool_controller_tenant"
+  @secret %Supavisor.Secrets.PasswordSecrets{user: "postgres", password: "postgres"}
+
+  defp pool_id(opts) do
+    Supavisor.id(
+      type: :single,
+      tenant: @tenant,
+      user: "postgres",
+      mode: opts[:mode] || :transaction,
+      db: opts[:db] || "supavisor_test",
+      search_path: nil
+    )
+  end
+
+  defp start_pool!(id) do
+    {:ok, _pid} = Supavisor.start(id, @secret)
+    on_exit(fn -> Supavisor.stop(id) end)
+    id
+  end
+
+  describe "GET /api/tenants/:external_id/pools" do
+    setup %{conn: conn} do
+      tenant_fixture(%{external_id: @tenant})
+      {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
+    end
+
+    test "returns 404 for a tenant that does not exist", %{conn: conn} do
+      assert %{"error" => "not found"} =
+               conn
+               |> get(~p"/api/tenants/no_such_tenant/pools")
+               |> json_response(404)
+    end
+
+    test "returns an empty list for a tenant without running pools", %{conn: conn} do
+      assert %{pools: [], errors: %{}} =
+               conn
+               |> get(~p"/api/tenants/#{@tenant}/pools")
+               |> json_response(200)
+               |> assert_schema("PoolList")
+    end
+
+    test "lists the tenant's pools with id, pid, status and counts", %{conn: conn} do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+
+      assert %{pools: [pool], errors: %{}} =
+               conn
+               |> get(~p"/api/tenants/#{@tenant}/pools")
+               |> json_response(200)
+               |> assert_schema("PoolList")
+
+      assert pool.id.tenant == @tenant
+      assert pool.id.user == "postgres"
+      assert pool.id.mode == "transaction"
+      assert pool.id.db == "supavisor_test"
+      assert pool.pid |> Base.url_decode64!(padding: false) |> :erlang.binary_to_term() == sup
+      assert pool.pid_label == inspect(sup)
+      assert pool.status == "active"
+      assert pool.node == to_string(node())
+      assert pool.db_host == "localhost"
+      assert pool.db_port == 6432
+      assert is_integer(pool.clients)
+      assert %{idle: idle, checked_out: checked_out} = pool.db_connections
+      assert is_integer(idle) and is_integer(checked_out)
+    end
+
+    test "lists every pool of the tenant", %{conn: conn} do
+      start_pool!(pool_id(mode: :transaction))
+      start_pool!(pool_id(mode: :session))
+
+      assert %{pools: pools} =
+               conn
+               |> get(~p"/api/tenants/#{@tenant}/pools")
+               |> json_response(200)
+               |> assert_schema("PoolList")
+
+      assert length(pools) == 2
+    end
+
+    test "reports a node that fails to answer as unreachable", %{conn: conn} do
+      :meck.new(Supavisor.Ops, [:passthrough, :no_link])
+      on_exit(fn -> :meck.unload(Supavisor.Ops) end)
+      :meck.expect(Supavisor.Ops, :list_pools_local, fn _tenant -> raise "boom" end)
+
+      assert %{pools: [], errors: errors} =
+               conn
+               |> get(~p"/api/tenants/#{@tenant}/pools")
+               |> json_response(200)
+               |> assert_schema("PoolList")
+
+      assert errors == %{to_string(node()) => "unreachable"}
+    end
+
+    test "requires authorization" do
+      assert build_conn()
+             |> get(~p"/api/tenants/#{@tenant}/pools")
+             |> response(403)
+    end
+  end
+
   describe "POST /api/rebalance" do
     setup %{conn: conn} do
       conn =

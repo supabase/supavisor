@@ -494,4 +494,111 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     def params, do: {"ToggleTenant Ban Params", "application/json", __MODULE__}
   end
+
+  defmodule PoolId do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      description: "Identifies a single pool",
+      properties: %{
+        type: %Schema{type: :string, enum: ["single", "cluster"]},
+        tenant: %Schema{type: :string, description: "External ID"},
+        user: %Schema{type: :string, description: "Database user"},
+        mode: %Schema{
+          type: :string,
+          enum: ["transaction", "session"],
+          description: "Pooling mode"
+        },
+        db: %Schema{type: :string, description: "Database name"},
+        search_path: %Schema{type: :string, nullable: true},
+        upstream_tls: %Schema{type: :boolean}
+      },
+      required: [:type, :tenant, :user, :mode, :db, :upstream_tls]
+    })
+  end
+
+  defmodule PoolConnections do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      description: "Open database connection counts",
+      properties: %{
+        idle: %Schema{type: :integer},
+        checked_out: %Schema{type: :integer}
+      },
+      required: [:idle, :checked_out]
+    })
+  end
+
+  defmodule Pool do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        id: PoolId,
+        pid: %Schema{type: :string, description: "Opaque handle of the pool's supervisor"},
+        pid_label: %Schema{
+          type: :string,
+          description: "The supervisor's pid as printed on its node, for display"
+        },
+        status: %Schema{type: :string, enum: ["active", "shutting_down"]},
+        node: %Schema{type: :string, description: "Node the pool runs on"},
+        db_host: %Schema{type: :string, nullable: true, description: "Database host"},
+        db_port: %Schema{type: :integer, nullable: true, description: "Database port"},
+        clients: %Schema{type: :integer, nullable: true, description: "Connected clients"},
+        db_connections: %Schema{allOf: [PoolConnections], nullable: true}
+      },
+      required: [:id, :pid, :pid_label, :status, :node]
+    })
+  end
+
+  defmodule PoolList do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        pools: %Schema{type: :array, items: Pool},
+        errors: %Schema{
+          type: :object,
+          additionalProperties: %Schema{type: :string},
+          description: "Nodes that did not report, with a reason"
+        }
+      },
+      required: [:pools, :errors],
+      example: %{
+        pools: [
+          %{
+            id: %{
+              type: "single",
+              tenant: "dev_tenant",
+              user: "postgres",
+              mode: "transaction",
+              db: "postgres",
+              search_path: nil,
+              upstream_tls: false
+            },
+            pid: "g1h3EXN1cGF2aXNvckAxMC4wLjAuMQAAAyIAAAAAas-KDQ",
+            pid_label: "#PID<0.1234.0>",
+            status: "active",
+            node: "supavisor@10.0.0.1",
+            db_host: "localhost",
+            db_port: 6432,
+            clients: 3,
+            db_connections: %{idle: 1, checked_out: 2}
+          }
+        ],
+        errors: %{}
+      }
+    })
+
+    def response, do: {"Pool List", "application/json", __MODULE__}
+  end
 end
