@@ -30,6 +30,68 @@ defmodule SupavisorWeb.MetricsControllerTest do
     assert conn.status == 403
   end
 
+  def handle_jwt_auth_event(event, measurements, meta, {pid, ref}) do
+    send(pid, {ref, event, measurements, meta})
+  end
+
+  defp attach_jwt_auth_handler do
+    ref = make_ref()
+
+    :telemetry.attach_many(
+      {ref, :jwt_auth},
+      [[:supavisor, :jwt_auth, :ok], [:supavisor, :jwt_auth, :rejected]],
+      &__MODULE__.handle_jwt_auth_event/4,
+      {self(), ref}
+    )
+
+    on_exit(fn -> :telemetry.detach({ref, :jwt_auth}) end)
+
+    ref
+  end
+
+  test "emits jwt_auth ok for a valid token on the metrics pipeline", %{conn: conn} do
+    ref = attach_jwt_auth_handler()
+
+    assert conn |> auth() |> get(Routes.metrics_path(conn, :index)) |> Map.fetch!(:status) == 200
+
+    assert_receive {^ref, [:supavisor, :jwt_auth, :ok], %{count: 1},
+                    %{method: :hmac, pipeline: :metrics}}
+
+    refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
+  end
+
+  test "emits jwt_auth rejected (method :hmac, the only path here) for an invalid token", %{
+    conn: conn
+  } do
+    ref = attach_jwt_auth_handler()
+
+    assert conn
+           |> auth("invalid")
+           |> get(Routes.metrics_path(conn, :index))
+           |> Map.fetch!(:status) ==
+             403
+
+    assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                    %{method: :hmac, pipeline: :metrics, reason: :expected_claims_map}}
+
+    refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+  end
+
+  test "emits jwt_auth rejected :invalid_authorization_header without a token", %{
+    conn: conn
+  } do
+    ref = attach_jwt_auth_handler()
+
+    assert get(conn, Routes.metrics_path(conn, :index)).status == 403
+
+    assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                    %{
+                      method: :unknown,
+                      pipeline: :metrics,
+                      reason: :invalid_authorization_header
+                    }}
+  end
+
   test "exporting tenant metrics", %{conn: conn} do
     tenant_id = "proxy_tenant_ps_enabled"
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)

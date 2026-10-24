@@ -4,6 +4,12 @@ defmodule Supavisor.Jwt do
   """
   require Logger
 
+  alias Supavisor.Jwt.AwsIdentity
+
+  @hs_algorithms ["HS256", "HS384", "HS512"]
+
+  ### API
+
   defmodule Token do
     @moduledoc false
     use Joken.Config
@@ -40,36 +46,21 @@ defmodule Supavisor.Jwt do
     end
   end
 
-  @hs_algorithms ["HS256", "HS384", "HS512"]
+  @doc """
+  Strips whitespace and URI-decodes a raw bearer token
 
-  @spec authorize(String.t(), String.t()) :: {:ok, map()} | {:error, any()}
-  def authorize(token, secret) when is_binary(token) do
-    token
-    |> clean_token()
-    |> verify(secret)
-  end
-
-  defp clean_token(token) do
+   Not idempotent (`URI.decode/1` runs on every call), so callers should clean exactly once.
+  """
+  @spec clean_token(String.t()) :: String.t()
+  def clean_token(token) do
     Regex.replace(~r/\s|\n/, URI.decode(token), "")
   end
 
-  def authorize_conn(token, secret) do
-    case authorize(token, secret) do
-      {:ok, claims} ->
-        required = MapSet.new(["role", "exp"])
-        claims_keys = Map.keys(claims) |> MapSet.new()
+  @doc """
+  Verifies a JWT using the given HMAC secret.
 
-        if MapSet.subset?(required, claims_keys) do
-          {:ok, claims}
-        else
-          {:error, "Fields `role` and `exp` are required in JWT"}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
+  Returns `{:ok, claims}` if the token is valid, or `{:error, reason}` otherwise.
+  """
   @spec verify(String.t(), String.t()) :: {:ok, map()} | {:error, any()}
   def verify(token, secret) when is_binary(token) do
     with {:ok, _claims} <- check_claims_format(token),
@@ -80,6 +71,58 @@ defmodule Supavisor.Jwt do
   end
 
   def verify(_token, _secret), do: {:error, :token_not_a_string}
+
+  @doc """
+  Authorizes a token against either a shared HMAC secret or, if configured,
+  AWS-identity JWKS verification (`Supavisor.Jwt.AwsIdentity`) — dispatching
+  on the token's JWS header `alg`.
+
+  `HS256/384/512` always goes through the existing HMAC path unchanged;
+  anything else only succeeds if `jwks_config` is set, so this is a no-op
+  behavior change wherever JWKS isn't configured.
+
+  Expects an already-cleaned token (see `clean_token/1`). Both outcomes carry
+  the method that ran, `:unknown` if the token has no parsable header `alg`.
+  """
+  @spec authorize_dual(String.t(), String.t(), AwsIdentity.config() | nil) ::
+          {:ok, :hmac | :jwks, map()} | {:error, :hmac | :jwks | :unknown, any()}
+  def authorize_dual(token, hmac_secret, jwks_config) when is_binary(token) do
+    case peek_alg(token) do
+      {:ok, alg} -> dispatch_authorize(token, alg, hmac_secret, jwks_config)
+      {:error, reason} -> {:error, :unknown, reason}
+    end
+  end
+
+  def authorize_dual(_token, _hmac_secret, _jwks_config),
+    do: {:error, :unknown, :token_not_a_string}
+
+  ### HELPERS
+
+  defp dispatch_authorize(token, alg, hmac_secret, _jwks_config) when alg in @hs_algorithms do
+    case verify(token, hmac_secret) do
+      {:ok, claims} -> {:ok, :hmac, claims}
+      {:error, reason} -> {:error, :hmac, reason}
+    end
+  end
+
+  defp dispatch_authorize(token, _alg, _hmac_secret, jwks_config) when is_map(jwks_config) do
+    case AwsIdentity.verify(token, jwks_config) do
+      {:ok, claims} -> {:ok, :jwks, claims}
+      {:error, reason} -> {:error, :jwks, reason}
+    end
+  end
+
+  defp dispatch_authorize(_token, _alg, _hmac_secret, _jwks_config),
+    do: {:error, :jwks, :jwks_not_configured}
+
+  defp peek_alg(token) do
+    with {:ok, header} <- check_header_format(token) do
+      case header["alg"] do
+        alg when is_binary(alg) -> {:ok, alg}
+        _ -> {:error, :missing_alg}
+      end
+    end
+  end
 
   defp check_header_format(token) do
     case Joken.peek_header(token) do

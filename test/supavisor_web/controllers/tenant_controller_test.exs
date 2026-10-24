@@ -583,6 +583,358 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
+  # AWS-identity JWKS auth is a second, additive path on the `:api` pipeline
+  describe "AWS-identity (JWKS) auth on /api" do
+    @jwks_issuer "https://issuer.example.tokens.sts.global.api.aws"
+    @jwks_kid "test-kid"
+    @jwks_sub "arn:aws:iam::123456789012:role/supavisor-api"
+    @jwks_aud "supavisor-api"
+
+    def handle_jwt_auth_event(event, measurements, meta, {pid, ref}) do
+      send(pid, {ref, event, measurements, meta})
+    end
+
+    defp attach_jwt_auth_handler do
+      ref = make_ref()
+
+      :telemetry.attach_many(
+        {ref, :jwt_auth},
+        [[:supavisor, :jwt_auth, :ok], [:supavisor, :jwt_auth, :rejected]],
+        &__MODULE__.handle_jwt_auth_event/4,
+        {self(), ref}
+      )
+
+      on_exit(fn -> :telemetry.detach({ref, :jwt_auth}) end)
+
+      ref
+    end
+
+    setup do
+      jwk = JOSE.JWK.generate_key({:rsa, 2048})
+      {_, pem} = JOSE.JWK.to_pem(jwk)
+      {_, public_jwk} = JOSE.JWK.to_public_map(jwk)
+      # No "alg" — matches AWS's real outbound-identity-federation JWKS shape
+      # for RSA keys (see Supavisor.Jwt.JwksAlgFixup). Exercises the fixup.
+      public_jwk = Map.merge(public_jwk, %{"kid" => @jwks_kid})
+
+      %{pem: pem, public_jwk: public_jwk}
+    end
+
+    defp jwks_token(pem, overrides \\ %{}) do
+      claims =
+        Map.merge(
+          %{
+            "iss" => @jwks_issuer,
+            "sub" => @jwks_sub,
+            "aud" => @jwks_aud,
+            "exp" => Joken.current_time() + 300
+          },
+          overrides
+        )
+
+      signer = Joken.Signer.create("RS256", %{"pem" => pem}, %{"kid" => @jwks_kid})
+      Supavisor.Jwt.AwsIdentity.Token.generate_and_sign!(claims, signer)
+    end
+
+    defp put_jwks_config(config) do
+      previous = Application.get_env(:supavisor, :api_jwks_config)
+      Application.put_env(:supavisor, :api_jwks_config, config)
+      on_exit(fn -> Application.put_env(:supavisor, :api_jwks_config, previous) end)
+    end
+
+    test "is disabled by default: an AWS-identity token gets 403 with no api_jwks_config",
+         %{conn: conn, pem: pem} do
+      assert Application.get_env(:supavisor, :api_jwks_config) == nil
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+    end
+
+    # Starts the real, named `Supavisor.Jwt.JwksStrategy` (hardcoded into
+    # `AwsIdentity.Token`'s `add_hook/2` — there's no swappable fake for it,
+    # by design, see its moduledoc) against a `Tesla.Mock`-served JWKS.
+    # `api_jwks_config` must be set before starting it, since `init_opts/1`
+    # reads the trusted issuer from it to build the JWKS URL.
+    defp start_jwks_auth(config, public_jwk) do
+      put_jwks_config(config)
+
+      # Raw JSON string + real content-type header, not a pre-decoded map —
+      # see Supavisor.Jwt.JwksAlgFixup's moduledoc for why that distinction
+      # matters here.
+      Tesla.Mock.mock_global(fn
+        %{method: :get, url: @jwks_issuer <> "/.well-known/jwks.json"} ->
+          %Tesla.Env{
+            status: 200,
+            body: JSON.encode!(%{"keys" => [public_jwk]}),
+            headers: [{"content-type", "application/json"}]
+          }
+      end)
+
+      start_supervised!(
+        {Supavisor.Jwt.JwksStrategy, [first_fetch_sync: true, http_adapter: Tesla.Mock]}
+      )
+    end
+
+    test "an allow-listed subject is authorized once api_jwks_config is set", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      # 404 (reached the controller), not 403 — proves the JWKS path authorized the request.
+      assert conn.status == 404
+    end
+
+    test "a subject outside the allow-list is rejected even with api_jwks_config set", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{
+          trusted_issuer: @jwks_issuer,
+          allowed_subs: ["arn:aws:iam::123456789012:role/someone-else"],
+          expected_aud: @jwks_aud
+        },
+        public_jwk
+      )
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+    end
+
+    test "an expired token is rejected and the log shows exp vs now in ISO8601", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      exp = Joken.current_time() - 60
+      expected_exp = exp |> DateTime.from_unix!() |> DateTime.to_iso8601()
+
+      log =
+        capture_log(fn ->
+          conn =
+            conn
+            |> put_req_header("authorization", "Bearer " <> jwks_token(pem, %{"exp" => exp}))
+            |> get(~p"/api/tenants/non_existing_tenant_id")
+
+          assert conn.status == 403
+        end)
+
+      assert log =~ "token_expired"
+      assert log =~ ~s(exp: "#{expected_exp}")
+      assert log =~ ~r/now: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/
+    end
+
+    test "the existing HMAC token still works unchanged once api_jwks_config is set", %{
+      conn: conn
+    } do
+      put_jwks_config(%{trusted_issuer: @jwks_issuer, allowed_subs: [], expected_aud: nil})
+
+      # `conn` already carries the standard "dev" HMAC bearer token from the
+      # top-level setup — unaffected by api_jwks_config being set.
+      assert %{"error" => "not found"} ==
+               conn
+               |> get(~p"/api/tenants/non_existing_tenant_id")
+               |> json_response(404)
+    end
+
+    test "emits jwt_auth ok with method :hmac for a valid HMAC token", %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      assert get(conn, ~p"/api/tenants/non_existing_tenant_id").status == 404
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :ok], %{count: 1},
+                      %{method: :hmac, pipeline: :api}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
+    end
+
+    test "emits jwt_auth ok with method :jwks for a valid AWS-identity token", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 404
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :ok], %{count: 1},
+                      %{method: :jwks, pipeline: :api}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
+    end
+
+    test "emits jwt_auth rejected with :unknown method when there is no authorization header",
+         %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> delete_req_header("authorization")
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{
+                        method: :unknown,
+                        pipeline: :api,
+                        reason: :invalid_authorization_header
+                      }}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "a non-Bearer authorization header is a 403, not a crash", %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Basic dXNlcjpwYXNz")
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :unknown, pipeline: :api, reason: :invalid_authorization_header}}
+    end
+
+    test "a repeated authorization header is a 403, not a crash", %{conn: conn} do
+      ref = attach_jwt_auth_handler()
+
+      [{"authorization", bearer}] =
+        Enum.filter(conn.req_headers, &(elem(&1, 0) == "authorization"))
+
+      conn = %{conn | req_headers: conn.req_headers ++ [{"authorization", bearer}]}
+
+      assert get(conn, ~p"/api/tenants/non_existing_tenant_id").status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :unknown, pipeline: :api, reason: :invalid_authorization_header}}
+    end
+
+    test "emits jwt_auth rejected :token_blocklisted (method :unknown) for a blocklisted token",
+         %{
+           conn: conn
+         } do
+      [blocked_token | _] = Application.fetch_env!(:supavisor, :api_blocklist)
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> blocked_token)
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :unknown, pipeline: :api, reason: :token_blocklisted}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "emits jwt_auth rejected :signature_error for an HMAC token with a wrong secret", %{
+      blocked_conn: wrong_secret_conn
+    } do
+      ref = attach_jwt_auth_handler()
+
+      assert get(wrong_secret_conn, ~p"/api/tenants/non_existing_tenant_id").status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :hmac, pipeline: :api, reason: :signature_error}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "emits jwt_auth rejected :token_expired for an expired AWS-identity token", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        public_jwk
+      )
+
+      ref = attach_jwt_auth_handler()
+      expired = jwks_token(pem, %{"exp" => Joken.current_time() - 60})
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> expired)
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :jwks, pipeline: :api, reason: :token_expired}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "emits jwt_auth rejected :subject_not_allowed for a subject outside the allow-list", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{
+          trusted_issuer: @jwks_issuer,
+          allowed_subs: ["arn:aws:iam::123456789012:role/someone-else"],
+          expected_aud: @jwks_aud
+        },
+        public_jwk
+      )
+
+      ref = attach_jwt_auth_handler()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      assert conn.status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :jwks, pipeline: :api, reason: :subject_not_allowed}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+  end
+
   describe "PATCH /api/tenants/:external_id" do
     setup [:create_tenant]
 
