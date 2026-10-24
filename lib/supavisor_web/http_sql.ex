@@ -36,22 +36,25 @@ defmodule SupavisorWeb.HttpSql do
          {:ok, body, conn} <- read_json_body(conn),
          {:ok, response} <-
            HttpSql.run(conn_string, body, Map.new(conn.req_headers), client_ip) do
-      json(conn, 200, response)
+      send(conn, 200, response)
     else
       # Returning 400 for both Postgres errors and bad requests is consistent with
       # Neon's own server behavior. The driver shows the error details for 400s only.
       {:error, {:postgres, error}} ->
-        json(conn, 400, error)
+        send(conn, 400, error)
 
       {:error, {:bad_request, message}} ->
-        json(conn, 400, %{"message" => message})
+        send(conn, 400, json(message))
 
       {:error, :body_too_large} ->
-        json(conn, 413, %{"message" => "request body too large"})
+        send(conn, 413, json("request body too large"))
+
+      {:error, {:response_too_large, max}} ->
+        send(conn, 507, json("response is too large (max is #{max} bytes)"))
 
       {:error, reason} ->
         Logger.error("HttpSql: request failed: #{inspect(reason)}")
-        json(conn, 500, %{"message" => "internal error"})
+        send(conn, 500, json("internal error"))
     end
   end
 
@@ -75,9 +78,11 @@ defmodule SupavisorWeb.HttpSql do
 
   defp read_json_body(conn), do: {:ok, conn.body_params, conn}
 
-  defp json(conn, status, body) do
+  defp json(message), do: JSON.encode_to_iodata!(%{"message" => message})
+
+  defp send(conn, status, body) do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(status, JSON.encode_to_iodata!(body))
+    |> send_resp(status, body)
   end
 end

@@ -183,6 +183,22 @@ defmodule Supavisor.Integration.HttpSqlTest do
              conn |> sql(conn_string, %{"query" => query}) |> json_response(413)
   end
 
+  test "stops a response over the limit", %{conn: conn, conn_string: conn_string} do
+    Application.put_env(:supavisor, :http_sql_max_response_bytes, 1000)
+    on_exit(fn -> Application.delete_env(:supavisor, :http_sql_max_response_bytes) end)
+
+    conn = sql(conn, conn_string, %{"query" => "SELECT generate_series(1, 1000)"})
+    assert %{"message" => "response is too large (max is 1000 bytes)"} = json_response(conn, 507)
+  end
+
+  test "stops a row over the limit", %{conn: conn, conn_string: conn_string} do
+    Application.put_env(:supavisor, :http_sql_max_response_bytes, 1000)
+    on_exit(fn -> Application.delete_env(:supavisor, :http_sql_max_response_bytes) end)
+
+    conn = sql(conn, conn_string, %{"query" => "SELECT repeat('x', 10000000)"})
+    assert %{"message" => "response is too large (max is 1000 bytes)"} = json_response(conn, 507)
+  end
+
   test "answers CORS preflight requests", %{conn: conn} do
     conn = options(conn, "/sql")
 

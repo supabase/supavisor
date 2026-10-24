@@ -14,15 +14,19 @@ defmodule Supavisor.HttpSql.Client do
           {:ok, [HttpSql.result()]} | {:error, {:postgres, map()} | term()}
   def run(conn_info, client_ip, queries) do
     port = internal_port(conn_info)
+    max_bytes = Application.get_env(:supavisor, :http_sql_max_response_bytes, 10 * 1024 * 1024)
 
     case :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false]) do
       {:ok, sock} ->
-        conn = %{sock: sock, buffer: <<>>}
+        conn = %{sock: sock, buffer: <<>>, budget: max_bytes}
 
         try do
           with {:ok, conn} <- startup(conn, conn_info, client_ip),
                {:ok, conn} <- send_queries(conn, queries) do
-            receive_results(conn, length(queries))
+            case receive_results(conn, length(queries)) do
+              {:error, :response_too_large} -> {:error, {:response_too_large, max_bytes}}
+              result -> result
+            end
           end
         after
           :gen_tcp.send(sock, <<?X, 4::32>>)
@@ -133,8 +137,8 @@ defmodule Supavisor.HttpSql.Client do
         ?1 ->
           # Each query's responses start with its ParseComplete,
           # so a new one starts the next result.
-          results = if current, do: [reverse_rows(current) | results], else: results
-          current = %{fields: [], rows: [], command: nil, row_count: nil}
+          results = if current, do: [current | results], else: results
+          current = %{fields: [], rows: <<>>, command: nil, row_count: nil}
           receive_results(conn, count, results, current, error)
 
         # RowDescription
@@ -142,10 +146,25 @@ defmodule Supavisor.HttpSql.Client do
           current = %{current | fields: decode_fields(body)}
           receive_results(conn, count, results, current, error)
 
-        # DataRow
+        # DataRow. It's encoded right away and appended to the result's rows binary.
         ?D ->
-          current = %{current | rows: [decode_row(body) | current.rows]}
-          receive_results(conn, count, results, current, error)
+          row = JSON.encode!(decode_row(body))
+          budget = conn.budget - byte_size(row)
+
+          if budget < 0 do
+            {:error, :response_too_large}
+          else
+            rows =
+              if current.rows == <<>>, do: row, else: <<current.rows::binary, ?,, row::binary>>
+
+            receive_results(
+              %{conn | budget: budget},
+              count,
+              results,
+              %{current | rows: rows},
+              error
+            )
+          end
 
         # CommandComplete
         ?C ->
@@ -161,7 +180,7 @@ defmodule Supavisor.HttpSql.Client do
         # ReadyForQuery, answering the Sync
         ?Z ->
           # There's no result to finish if the first query failed to parse.
-          results = if current, do: [reverse_rows(current) | results], else: results
+          results = if current, do: [current | results], else: results
           finish_results(conn, count, results, body, error)
 
         # BindComplete, NoData, EmptyQueryResponse, PortalSuspended, notices, ParameterStatus
@@ -193,9 +212,6 @@ defmodule Supavisor.HttpSql.Client do
       if type == ?Z, do: {:ok, conn}, else: recv_until_ready(conn)
     end
   end
-
-  # Rows are collected in reverse.
-  defp reverse_rows(result), do: %{result | rows: Enum.reverse(result.rows)}
 
   defp decode_fields(<<count::16, rest::binary>>), do: decode_fields(count, rest, [])
 
@@ -253,14 +269,26 @@ defmodule Supavisor.HttpSql.Client do
     end
   end
 
+  # A message that doesn't fit is turned away from its header.
+  defp recv_message(%{buffer: <<_type, len::32, _::binary>>, budget: budget})
+       when len - 4 > budget,
+       do: {:error, :response_too_large}
+
+  # Consume one complete message.
   defp recv_message(%{buffer: <<type, len::32, rest::binary>>} = conn)
        when byte_size(rest) >= len - 4 do
     <<body::binary-size(len - 4), rest::binary>> = rest
     {:ok, type, body, %{conn | buffer: rest}}
   end
 
-  defp recv_message(conn) do
-    case :gen_tcp.recv(conn.sock, 0) do
+  # Once a message's length is known, the rest of it is read at once.
+  defp recv_message(%{buffer: <<_type, len::32, rest::binary>>} = conn),
+    do: recv_more(conn, len - 4 - byte_size(rest))
+
+  defp recv_message(conn), do: recv_more(conn, 0)
+
+  defp recv_more(conn, length) do
+    case :gen_tcp.recv(conn.sock, length) do
       # Appending to an empty buffer would still copy `data`.
       {:ok, data} when conn.buffer == <<>> -> recv_message(%{conn | buffer: data})
       {:ok, data} -> recv_message(%{conn | buffer: conn.buffer <> data})

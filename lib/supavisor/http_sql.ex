@@ -25,7 +25,8 @@ defmodule Supavisor.HttpSql do
 
   @type result() :: %{
           fields: [map()],
-          rows: [[binary() | nil]],
+          # The JSON rows, separated by commas
+          rows: binary(),
           command: String.t() | nil,
           row_count: non_neg_integer() | nil
         }
@@ -60,7 +61,7 @@ defmodule Supavisor.HttpSql do
   Runs a request, returning its JSON response body.
   """
   @spec run(String.t() | nil, map(), %{String.t() => String.t()}, String.t()) ::
-          {:ok, map()} | {:error, {:postgres, map()} | {:bad_request, String.t()} | term()}
+          {:ok, iodata()} | {:error, {:postgres, iodata()} | {:bad_request, String.t()} | term()}
   def run(conn_string, body, headers, client_ip) do
     with {:ok, conn_info} <- parse_connection_string(conn_string),
          {:ok, request} <- parse_body(body),
@@ -189,19 +190,20 @@ defmodule Supavisor.HttpSql do
   defp queries({:single, query}, nil), do: [query]
   defp queries({:batch, queries}, begin), do: [{begin, []} | queries] ++ [{"COMMIT", []}]
 
-  defp response({:single, _query}, nil, [result]), do: result_json(result)
+  defp response({:single, _query}, nil, [result]),
+    do: Jason.encode_to_iodata!(result_json(result))
 
   defp response({:batch, _queries}, _begin, results) do
     # Drops the results of BEGIN and COMMIT.
     results = results |> Enum.drop(1) |> Enum.drop(-1)
-    %{"results" => Enum.map(results, &result_json/1)}
+    Jason.encode_to_iodata!(%{"results" => Enum.map(results, &result_json/1)})
   end
 
   # Builds the JSON for a query's result.
   defp result_json(result) do
     %{
       "fields" => Enum.map(result.fields, &field_json/1),
-      "rows" => result.rows,
+      "rows" => Jason.Fragment.new(["[", result.rows, "]"]),
       "command" => result.command,
       "rowCount" => result.row_count,
       "rowAsArray" => true
@@ -222,9 +224,12 @@ defmodule Supavisor.HttpSql do
 
   # Builds the JSON for an error returned by Postgres.
   defp error_json(error) do
-    for {key, name} <- @error_fields,
-        Map.has_key?(error, key),
-        into: %{"message" => error["M"]},
-        do: {name, error[key]}
+    error =
+      for {key, name} <- @error_fields,
+          Map.has_key?(error, key),
+          into: %{"message" => error["M"]},
+          do: {name, error[key]}
+
+    JSON.encode_to_iodata!(error)
   end
 end
