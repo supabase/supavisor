@@ -131,67 +131,78 @@ defmodule Supavisor.HttpSql.Client do
     [?B, <<IO.iodata_length(body) + 4::32>>, body]
   end
 
-  defp receive_results(conn, count), do: receive_results(conn, count, [], nil, nil)
+  defp receive_results(conn, count) do
+    state = %{conn: conn, count: count, results: [], current: nil, error: nil}
+    receive_results(conn.buffer, <<>>, conn.budget, state)
+  end
 
-  defp receive_results(conn, count, results, current, error) do
-    with {:ok, type, body, conn} <- recv_message(conn) do
-      case type do
-        # ParseComplete
-        ?1 ->
-          # Each query's responses start with its ParseComplete,
-          # so a new one starts the next result.
-          results = if current, do: [current | results], else: results
-          current = %{fields: [], rows: <<>>, command: nil, row_count: nil}
-          receive_results(conn, count, results, current, error)
+  # Messages are matched straight from the buffer, and the rows and budget, which change on
+  # every DataRow, are kept out of `state`, so a DataRow doesn't build any map or tuple.
+  defp receive_results(<<_type, len::32, _::binary>>, _rows, budget, _state)
+       when len - 4 > budget,
+       do: {:error, :response_too_large}
 
-        # RowDescription
-        ?T ->
-          current = %{current | fields: decode_fields(body)}
-          receive_results(conn, count, results, current, error)
+  # DataRow, once it's all in the buffer. Its values are encoded right away into the result's
+  # rows binary, straight from the buffer.
+  defp receive_results(<<?D, len::32, count::16, rest::binary>>, rows, budget, state)
+       when byte_size(rest) >= len - 6 do
+    open = if rows == <<>>, do: "[", else: ",["
+    encode_values(rest, count, open, rows, byte_size(rows), budget, state)
+  end
 
-        # DataRow. It's encoded right away and appended to the result's rows binary.
-        ?D ->
-          row = JSON.encode!(decode_row(body))
-          budget = conn.budget - byte_size(row)
+  defp receive_results(
+         <<type, len::32, body::binary-size(len - 4), rest::binary>>,
+         rows,
+         budget,
+         state
+       ) do
+    case type do
+      # ParseComplete
+      ?1 ->
+        # Each query's responses start with its ParseComplete,
+        # so a new one starts the next result.
+        state = finish_result(state, rows)
+        current = %{fields: [], rows: <<>>, command: nil, row_count: nil}
+        receive_results(rest, <<>>, budget, %{state | current: current})
 
-          if budget < 0 do
-            {:error, :response_too_large}
-          else
-            rows =
-              if current.rows == <<>>, do: row, else: <<current.rows::binary, ?,, row::binary>>
+      # RowDescription
+      ?T ->
+        current = %{state.current | fields: decode_fields(body)}
+        receive_results(rest, rows, budget, %{state | current: current})
 
-            receive_results(
-              %{conn | budget: budget},
-              count,
-              results,
-              %{current | rows: rows},
-              error
-            )
-          end
+      # CommandComplete
+      ?C ->
+        {command, row_count} = decode_command(body)
+        current = %{state.current | command: command, row_count: row_count}
+        receive_results(rest, rows, budget, %{state | current: current})
 
-        # CommandComplete
-        ?C ->
-          {command, row_count} = decode_command(body)
-          current = %{current | command: command, row_count: row_count}
-          receive_results(conn, count, results, current, error)
+      # ErrorResponse
+      ?E ->
+        error = state.error || Server.decode_error_response(body)
+        receive_results(rest, rows, budget, %{state | error: error})
 
-        # ErrorResponse
-        ?E ->
-          error = error || Server.decode_error_response(body)
-          receive_results(conn, count, results, current, error)
+      # ReadyForQuery, answering the Sync
+      ?Z ->
+        state = finish_result(state, rows)
+        conn = %{state.conn | buffer: rest, budget: budget}
+        finish_results(conn, state.count, state.results, body, state.error)
 
-        # ReadyForQuery, answering the Sync
-        ?Z ->
-          # There's no result to finish if the first query failed to parse.
-          results = if current, do: [current | results], else: results
-          finish_results(conn, count, results, body, error)
-
-        # BindComplete, NoData, EmptyQueryResponse, PortalSuspended, notices, ParameterStatus
-        _ ->
-          receive_results(conn, count, results, current, error)
-      end
+      # BindComplete, NoData, EmptyQueryResponse, PortalSuspended, notices, ParameterStatus
+      _ ->
+        receive_results(rest, rows, budget, state)
     end
   end
+
+  defp receive_results(buffer, rows, budget, state) do
+    with {:ok, buffer} <- recv_more(state.conn.sock, buffer),
+         do: receive_results(buffer, rows, budget, state)
+  end
+
+  # There's no result to finish if the first query failed to parse.
+  defp finish_result(%{current: nil} = state, _rows), do: state
+
+  defp finish_result(state, rows),
+    do: %{state | results: [%{state.current | rows: rows} | state.results]}
 
   defp finish_results(conn, count, results, status, error) do
     # A query can leave a transaction open, and a failed batch leaves it aborted.
@@ -238,15 +249,49 @@ defmodule Supavisor.HttpSql.Client do
     decode_fields(count - 1, rest, [field | acc])
   end
 
-  defp decode_row(<<count::16, rest::binary>>), do: decode_row(count, rest, [])
+  # Appends a DataRow's `count` values to `rows` as a JSON array, starting with `open`, then
+  # goes on with the next message.
+  defp encode_values(<<rest::binary>>, 0, prefix, rows, start, budget, state) do
+    # The last value already closed the row, unless it had no columns.
+    rows = if prefix == ",", do: rows, else: <<rows::binary, prefix::binary, ?]>>
+    budget = budget - (byte_size(rows) - start)
 
-  defp decode_row(0, _rest, acc), do: Enum.reverse(acc)
+    if budget < 0,
+      do: {:error, :response_too_large},
+      else: receive_results(rest, rows, budget, state)
+  end
 
-  defp decode_row(count, <<-1::32-signed, rest::binary>>, acc),
-    do: decode_row(count - 1, rest, [nil | acc])
+  defp encode_values(<<-1::32-signed, rest::binary>>, count, prefix, rows, start, budget, state) do
+    rows = <<rows::binary, prefix::binary, "null", close(count)::binary>>
+    encode_values(rest, count - 1, ",", rows, start, budget, state)
+  end
 
-  defp decode_row(count, <<size::32, value::binary-size(size), rest::binary>>, acc),
-    do: decode_row(count - 1, rest, [value | acc])
+  defp encode_values(
+         <<size::32, value::binary-size(size), rest::binary>>,
+         count,
+         prefix,
+         rows,
+         start,
+         budget,
+         state
+       ) do
+    rows =
+      case JSON.encode_to_iodata!(value) do
+        # Nothing to escape, so the value is appended as it is.
+        [?", ^value, ?"] ->
+          <<rows::binary, prefix::binary, ?", value::binary, ?", close(count)::binary>>
+
+        escaped ->
+          <<rows::binary, prefix::binary, IO.iodata_to_binary(escaped)::binary,
+            close(count)::binary>>
+      end
+
+    encode_values(rest, count - 1, ",", rows, start, budget, state)
+  end
+
+  # The last value closes the row.
+  defp close(1), do: "]"
+  defp close(_count), do: ""
 
   # The command is the tag's first word, and the row count its last one.
   defp decode_command(body) do
@@ -284,17 +329,22 @@ defmodule Supavisor.HttpSql.Client do
     {:ok, type, body, %{conn | buffer: rest}}
   end
 
+  defp recv_message(conn) do
+    with {:ok, buffer} <- recv_more(conn.sock, conn.buffer),
+         do: recv_message(%{conn | buffer: buffer})
+  end
+
   # Once a message's length is known, the rest of it is read at once.
-  defp recv_message(%{buffer: <<_type, len::32, rest::binary>>} = conn),
-    do: recv_more(conn, len - 4 - byte_size(rest))
+  defp recv_more(sock, <<_type, len::32, rest::binary>> = buffer),
+    do: recv_more(sock, buffer, len - 4 - byte_size(rest))
 
-  defp recv_message(conn), do: recv_more(conn, 0)
+  defp recv_more(sock, buffer), do: recv_more(sock, buffer, 0)
 
-  defp recv_more(conn, length) do
-    case :gen_tcp.recv(conn.sock, length) do
+  defp recv_more(sock, buffer, length) do
+    case :gen_tcp.recv(sock, length) do
       # Appending to an empty buffer would still copy `data`.
-      {:ok, data} when conn.buffer == <<>> -> recv_message(%{conn | buffer: data})
-      {:ok, data} -> recv_message(%{conn | buffer: conn.buffer <> data})
+      {:ok, data} when buffer == <<>> -> {:ok, data}
+      {:ok, data} -> {:ok, buffer <> data}
       {:error, reason} -> {:error, {:recv, reason}}
     end
   end
