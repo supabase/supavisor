@@ -18,6 +18,9 @@ defmodule Supavisor.HttpSql.Client do
 
     case :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false]) do
       {:ok, sock} ->
+        # Ensure buffer >= recbuf, or each recv returns at most the default 1460 bytes.
+        {:ok, [{:recbuf, recbuf}]} = :inet.getopts(sock, [:recbuf])
+        :ok = :inet.setopts(sock, buffer: recbuf)
         conn = %{sock: sock, buffer: <<>>, budget: max_bytes}
 
         try do
