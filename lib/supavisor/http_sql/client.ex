@@ -10,6 +10,11 @@ defmodule Supavisor.HttpSql.Client do
   alias Supavisor.Protocol.Server
   alias Supavisor.Protocol.StartupOptions
 
+  # Rows are written to binaries of about this size. A binary built by appending is copied
+  # whole when ERTS trims its spare capacity from another scheduler, for example when it's
+  # sent to the connection process, so a single binary would briefly double the response.
+  @chunk_size 1024 * 1024
+
   @spec run(HttpSql.conn_info(), HttpSql.client(), [HttpSql.query()]) ::
           {:ok, [HttpSql.result()]} | {:error, {:postgres, map()} | term()}
   def run(conn_info, client, queries) do
@@ -132,7 +137,7 @@ defmodule Supavisor.HttpSql.Client do
   end
 
   defp receive_results(conn, count) do
-    state = %{conn: conn, count: count, results: [], current: nil, error: nil}
+    state = %{conn: conn, count: count, results: [], current: nil, chunks: [], error: nil}
     receive_results(conn.buffer, <<>>, conn.budget, state)
   end
 
@@ -143,11 +148,20 @@ defmodule Supavisor.HttpSql.Client do
        do: {:error, :response_too_large}
 
   # DataRow, once it's all in the buffer. Its values are encoded right away into the result's
-  # rows binary, straight from the buffer.
+  # rows binary, straight from the buffer. A full rows binary is put aside as a chunk.
   defp receive_results(<<?D, len::32, count::16, rest::binary>>, rows, budget, state)
        when byte_size(rest) >= len - 6 do
-    open = if rows == <<>>, do: "[", else: ",["
-    encode_values(rest, count, open, rows, byte_size(rows), budget, state)
+    cond do
+      rows == <<>> ->
+        encode_values(rest, count, "[", rows, 0, budget, state)
+
+      byte_size(rows) >= @chunk_size ->
+        state = %{state | chunks: [rows | state.chunks]}
+        encode_values(rest, count, ",[", <<>>, 0, budget, state)
+
+      true ->
+        encode_values(rest, count, ",[", rows, byte_size(rows), budget, state)
+    end
   end
 
   defp receive_results(
@@ -162,8 +176,8 @@ defmodule Supavisor.HttpSql.Client do
         # Each query's responses start with its ParseComplete,
         # so a new one starts the next result.
         state = finish_result(state, rows)
-        current = %{fields: [], rows: <<>>, command: nil, row_count: nil}
-        receive_results(rest, <<>>, budget, %{state | current: current})
+        current = %{fields: [], rows: [], command: nil, row_count: nil}
+        receive_results(rest, <<>>, budget, %{state | current: current, chunks: []})
 
       # RowDescription
       ?T ->
@@ -201,8 +215,10 @@ defmodule Supavisor.HttpSql.Client do
   # There's no result to finish if the first query failed to parse.
   defp finish_result(%{current: nil} = state, _rows), do: state
 
-  defp finish_result(state, rows),
-    do: %{state | results: [%{state.current | rows: rows} | state.results]}
+  defp finish_result(state, rows) do
+    rows = Enum.reverse(state.chunks, [rows])
+    %{state | results: [%{state.current | rows: rows} | state.results]}
+  end
 
   defp finish_results(conn, count, results, status, error) do
     # A query can leave a transaction open, and a failed batch leaves it aborted.

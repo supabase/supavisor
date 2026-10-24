@@ -176,6 +176,20 @@ defmodule Supavisor.Integration.HttpSqlTest do
     end
   end
 
+  test "returns rows over several chunks", %{conn: conn, conn_string: conn_string} do
+    body = %{
+      "queries" => [
+        %{"query" => "SELECT i, repeat('x', 1000) FROM generate_series(1, 3000) i"},
+        %{"query" => "SELECT 1"}
+      ]
+    }
+
+    rows = for i <- 1..3000, do: [to_string(i), String.duplicate("x", 1000)]
+
+    assert %{"results" => [%{"rows" => ^rows, "rowCount" => 3000}, %{"rows" => [["1"]]}]} =
+             conn |> sql(conn_string, body) |> json_response(200)
+  end
+
   test "rejects a body over 8MB", %{conn: conn, conn_string: conn_string} do
     query = "SELECT '#{String.duplicate("x", 8_000_000)}'"
 

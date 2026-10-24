@@ -28,7 +28,7 @@ defmodule Supavisor.HttpSql do
   @type result() :: %{
           fields: [map()],
           # The JSON rows, separated by commas
-          rows: binary(),
+          rows: iodata(),
           command: String.t() | nil,
           row_count: non_neg_integer() | nil
         }
