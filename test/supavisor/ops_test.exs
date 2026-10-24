@@ -4,6 +4,7 @@ defmodule Supavisor.OpsTest do
   require Supavisor
 
   import Supavisor.TenantsFixtures
+  import Supavisor.Asserts, only: [assert_eventually: 1, assert_eventually: 3]
 
   alias Supavisor.Ops
 
@@ -129,6 +130,97 @@ defmodule Supavisor.OpsTest do
                Map.to_list(errors)
 
       assert node == node()
+    end
+  end
+
+  describe "stop_pool/3" do
+    setup do
+      tenant_fixture(%{external_id: @tenant})
+      :ok
+    end
+
+    test "stops the pool and leaves the tenant's other pools running" do
+      id = start_pool!(pool_id(mode: :transaction))
+      other = start_pool!(pool_id(mode: :session))
+      sup = Supavisor.get_global_sup(id)
+      other_sup = Supavisor.get_global_sup(other)
+      assert is_pid(sup) and is_pid(other_sup)
+
+      assert {:ok, :stopped} = Ops.stop_pool(@tenant, sup)
+      refute Process.alive?(sup)
+      assert Supavisor.get_global_sup(id) == nil
+      # The same process: the other pool was neither stopped nor restarted.
+      assert Process.alive?(other_sup)
+      assert Supavisor.get_global_sup(other) == other_sup
+    end
+
+    test "returns :not_found once the pool has stopped" do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      :ok = Supervisor.stop(sup)
+
+      # The registry drops the pool shortly after it exits.
+      assert_eventually(fn -> Ops.stop_pool(@tenant, sup) == {:error, :not_found} end)
+    end
+
+    test "returns :not_found for a process that is not a pool" do
+      assert {:error, :not_found} = Ops.stop_pool(@tenant, self())
+    end
+
+    test "does not stop a pool of another tenant" do
+      other_tenant = "ops_test_other_tenant"
+      tenant_fixture(%{external_id: other_tenant})
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+
+      assert {:error, :not_found} = Ops.stop_pool(other_tenant, sup)
+      assert Process.alive?(sup)
+      assert Supavisor.get_global_sup(id) == sup
+    end
+
+    test "stops a pool that is already shutting down" do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+      # The pool's poolboy GenServer, once suspended, doesn't answer calls, so the
+      # Terminator's call to it on shutdown blocks until the supervisor kills the
+      # Terminator after its 5s shutdown timeout. That keeps the pool shutting down
+      # for ~5s.
+      :sys.suspend(Supavisor.get_local_pool(id))
+      # Someone else starts stopping the pool. The Terminator stops first and
+      # unregisters the pool from :syn, i.e. the pool is now `shutting_down`.
+      spawn(fn -> Supervisor.stop(sup) end)
+      assert_eventually(10, 100, fn -> Supavisor.get_global_sup(id) == nil end)
+
+      task = Task.async(fn -> Ops.stop_pool(@tenant, sup) end)
+
+      # The supervisor is busy stopping its children, so our stop request (reason
+      # :shutdown, unlike the first one's :normal) waits in its mailbox, unhandled.
+      assert_eventually(10, 100, fn ->
+        {:messages, messages} = Process.info(sup, :messages)
+        Enum.any?(messages, &match?({:system, _from, {:terminate, :shutdown}}, &1))
+      end)
+
+      # It exits after ~5s without handling it, which ends our wait.
+      assert {:ok, :stopped} = Task.await(task, 10_000)
+      refute Process.alive?(sup)
+    end
+
+    test "returns :stopping when the pool is still shutting down at the timeout" do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+
+      # The Terminator's call to the suspended poolboy blocks until the supervisor
+      # kills it after its 5s shutdown timeout.
+      :sys.suspend(Supavisor.get_local_pool(id))
+
+      assert {:ok, :stopping} = Ops.stop_pool(@tenant, sup, 100)
+
+      # The stop still completes in the background, and the pool is not restarted.
+      assert_eventually(10, 1_000, fn ->
+        not Process.alive?(sup) and Ops.list_pools_local(@tenant) == []
+      end)
     end
   end
 end

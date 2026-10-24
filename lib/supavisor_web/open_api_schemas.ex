@@ -601,4 +601,28 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     def response, do: {"Pool List", "application/json", __MODULE__}
   end
+
+  defmodule StopPoolParams do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        pid: %Schema{type: :string, description: "The pool's `pid` from the pool list"},
+        timeout: %Schema{
+          type: :integer,
+          minimum: 1,
+          maximum: 60_000,
+          description:
+            "Milliseconds to wait for the pool to stop; past it, it keeps stopping in the background",
+          default: 15_000
+        }
+      },
+      required: [:pid],
+      example: %{pid: "g1h3EXN1cGF2aXNvckAxMC4wLjAuMQAAAyIAAAAAas-KDQ", timeout: 15_000}
+    })
+
+    def params, do: {"Stop Pool Params", "application/json", __MODULE__, required: true}
+  end
 end
