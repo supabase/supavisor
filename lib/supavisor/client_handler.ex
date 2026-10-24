@@ -250,6 +250,7 @@ defmodule Supavisor.ClientHandler do
       db_name: db_name,
       search_path: search_path,
       jit: client_jit,
+      password_auth: password_auth,
       client_tls: client_tls,
       client_ip: client_ip,
       app_name: app_name,
@@ -296,17 +297,22 @@ defmodule Supavisor.ClientHandler do
             upstream_tls: upstream_tls
           )
 
+        auth_method =
+          if data.local and password_auth,
+            do: {:ok, :password},
+            else:
+              AuthMethods.fetch_authentication_method(
+                info.tenant,
+                client_jit,
+                effective_ssl,
+                user
+              )
+
         with :ok <- Checks.check_tenant_not_banned(info),
              :ok <- Checks.check_ssl_enforcement(data, info, user),
              :ok <- Checks.check_address_allowed(data, info),
              :ok <- Manager.check_client_limit(id, info, data.mode),
-             {:ok, auth_method} <-
-               AuthMethods.fetch_authentication_method(
-                 info.tenant,
-                 client_jit,
-                 effective_ssl,
-                 user
-               ) do
+             {:ok, auth_method} <- auth_method do
           Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
           new_data = set_tenant_info(data, info, user, id, db_name, client_jit)
 

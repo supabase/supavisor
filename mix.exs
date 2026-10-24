@@ -59,6 +59,7 @@ defmodule Supavisor.MixProject do
       {:peep, "~> 4.4.0", override: true},
       {:plug_cowboy, "~> 2.5"},
       {:joken, "~> 2.6.0"},
+      {:jason, "~> 1.4"},
       {:cloak_ecto, "~> 1.3.0"},
       {:req, "~> 0.6.1"},
       {:prom_ex, "~> 1.10"},

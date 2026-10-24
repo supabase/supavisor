@@ -24,6 +24,7 @@ This document provides a categorized list of all environment variables used in S
 | ----------------------------- | ---------------------------------------------------------- | ------------------------- | -------- |
 | `PROXY_PORT_TRANSACTION`      | Transaction pool port                                      | `6543`                    | No       |
 | `PROXY_PORT_SESSION`          | Session pool port                                          | `5432`                    | No       |
+| `HTTP_SQL_MAX_RESPONSE_BYTES` | Largest response of the `/sql` endpoint, in bytes          | `10485760`                | No       |
 | `SUBSCRIBE_RETRIES`           | Number of subscription retries                             | `20`                      | No       |
 | `ADMISSION_RETRIES`           | Retries waiting for a free client slot before EMAXCONN     | `5`                       | No       |
 | `ADMISSION_BACKOFF`           | Backoff between admission retries (ms)                     | `300`                     | No       |
