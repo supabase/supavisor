@@ -23,6 +23,8 @@ defmodule Supavisor.HttpSql do
           options: %{String.t() => String.t()}
         }
 
+  @type client() :: %{ip: String.t(), tls: boolean()}
+
   @type result() :: %{
           fields: [map()],
           # The JSON rows, separated by commas
@@ -60,13 +62,13 @@ defmodule Supavisor.HttpSql do
   @doc """
   Runs a request, returning its JSON response body.
   """
-  @spec run(String.t() | nil, map(), %{String.t() => String.t()}, String.t()) ::
+  @spec run(String.t() | nil, map(), %{String.t() => String.t()}, client()) ::
           {:ok, iodata()} | {:error, {:postgres, iodata()} | {:bad_request, String.t()} | term()}
-  def run(conn_string, body, headers, client_ip) do
+  def run(conn_string, body, headers, client) do
     with {:ok, conn_info} <- parse_connection_string(conn_string),
          {:ok, request} <- parse_body(body),
          {:ok, begin} <- begin_statement(request, headers),
-         {:ok, results} <- Client.run(conn_info, client_ip, queries(request, begin)) do
+         {:ok, results} <- Client.run(conn_info, client, queries(request, begin)) do
       {:ok, response(request, begin, results)}
     else
       {:error, {:postgres, error}} -> {:error, {:postgres, error_json(error)}}

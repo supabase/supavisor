@@ -10,6 +10,7 @@ defmodule Supavisor.ClientHandler.StartupParams do
           db_name: String.t() | nil,
           search_path: String.t() | nil,
           jit: boolean(),
+          password_auth: boolean(),
           client_tls: boolean() | nil,
           client_ip: String.t() | nil,
           app_name: String.t() | nil,
@@ -29,6 +30,7 @@ defmodule Supavisor.ClientHandler.StartupParams do
     :app_name,
     :log_level,
     jit: false,
+    password_auth: false,
     invalid_options: []
   ]
 end

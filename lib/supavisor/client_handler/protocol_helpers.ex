@@ -82,6 +82,9 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
          db_name: db_name,
          search_path: payload["search_path"] || options["search_path"],
          jit: Map.get(options, "jit", false),
+         # Set by a client that already has the password in cleartext.
+         # Only honored on local listeners.
+         password_auth: Map.get(options, "password_auth", false),
          client_tls: Map.get(options, "client_tls"),
          # Set by a peer node when it forwards a proxied connection; carries the
          # original client's IP. Only honored on local listeners, see effective_peer_ip/3.
