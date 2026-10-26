@@ -3,6 +3,10 @@ defmodule Supavisor.ClientHandlerTest do
 
   alias Supavisor.Protocol.FrontendMessageHandler
   alias Supavisor.Protocol.MessageStreamer
+  alias Supavisor.ClientHandler.StartupParams
+
+  require MessageStreamer
+  require Supavisor
 
   @subject Supavisor.ClientHandler
 
@@ -76,7 +80,15 @@ defmodule Supavisor.ClientHandlerTest do
     setup do
       %{
         exception: MaxConnectionsError.new(:transaction, 2),
-        retry_event: {:hello, {:single, {"user", "tenant", "postgres", nil, false, false, nil}}},
+        retry_event:
+          {:hello,
+           %StartupParams{
+             type: :single,
+             user: "user",
+             tenant_or_alias: "tenant",
+             db_name: "postgres",
+             client_tls: false
+           }},
         budget: Application.get_env(:supavisor, :admission_retries)
       }
     end
@@ -220,103 +232,172 @@ defmodule Supavisor.ClientHandlerTest do
 
   describe "startup packet log_level option" do
     test "sets process log level from options" do
-      bin =
-        <<79::32,
-          "\x00\x03\x00\x00user\x00postgres.dev_tenant\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00">>
+      # No tenant in the user name, so the hello handler fails before any DB lookup.
+      payload =
+        "\x00\x03\x00\x00user\x00log_level_user\x00database\x00postgres\x00options\x00-c log_level=debug\x00\x00"
 
-      data = %{sock: {:gen_tcp, :fake_port}, id: "test", app_name: nil, invalid_options: []}
+      bin = <<byte_size(payload) + 4::32, payload::binary>>
 
-      assert {:keep_state, %{app_name: ""},
+      {sock, _recv} = sockpair()
+
+      data = %{
+        sock: {:gen_tcp, sock},
+        id: nil,
+        local: false,
+        ssl: false,
+        peer_ip: "127.0.0.1",
+        mode: :transaction,
+        app_name: nil,
+        invalid_options: []
+      }
+
+      assert {:keep_state_and_data,
               {:next_event, :internal,
-               {:hello, {:single, {"postgres", "dev_tenant", "postgres", nil, false, nil, nil}}}}} =
-               @subject.handle_event(:info, {:tcp, :fake_port, bin}, :handshake, data)
+               {:hello,
+                %StartupParams{
+                  type: :single,
+                  user: "log_level_user",
+                  tenant_or_alias: nil,
+                  db_name: "postgres",
+                  search_path: nil,
+                  jit: false,
+                  client_tls: nil,
+                  client_ip: nil,
+                  app_name: "",
+                  log_level: :debug,
+                  invalid_options: []
+                }} = hello}} =
+               @subject.handle_event(:info, {:tcp, sock, bin}, :handshake, data)
 
+      assert {:stop, :normal} = @subject.handle_event(:internal, hello, :handshake, data)
       assert Logger.get_process_level(self()) == :debug
     end
   end
 
-  describe "handle_event/4 :busy ReadyForQuery expectation" do
-    test "forwards the expected ReadyForQuery count to the DbHandler in transaction mode" do
+  describe "handle_event/4 :busy message expectation" do
+    setup do
       {db_sock, _recv} = sockpair()
 
       data = %{
         mode: :transaction,
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
+        write_seq: 0,
+        tracked_seq: 0,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
       }
 
-      # Three pipelined simple queries produce three ReadyForQuery replies.
+      {:ok, data: data}
+    end
+
+    test "forwards the forwarded messages to the DbHandler in transaction mode", %{data: data} do
       batch =
         <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">> <> <<?Q, 12::32, "SELECT 3">>
 
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 3, false}}
+      assert_received {:"$gen_cast", {:expect_messages, 1, [?Q, ?Q, ?Q]}}
     end
 
-    test "reports an extended batch left open without its Sync" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
-
-      # Parse/Bind/Execute with no Sync: no ReadyForQuery is expected, but the
-      # backend is left holding the batch.
-      batch =
-        <<?P, 16::32, 0, "select 1", 0, 0, 0>> <>
-          <<?B, 12::32, 0, 0, 0, 0, 0, 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
-
-      assert {:keep_state, _data} =
-               @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
-
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 0, true}}
-    end
-
-    test "a Sync closes a previously open batch" do
-      {db_sock, _recv} = sockpair()
-
-      data = %{
-        mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
-
+    test "forwards each write's messages separately", %{data: data} do
       batch = <<?P, 16::32, 0, "select 1", 0, 0, 0>> <> <<?E, 9::32, 0, 0, 0, 0, 200>>
 
       assert {:keep_state, data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 0, true}}
+      assert_received {:"$gen_cast", {:expect_messages, 1, [?P, ?E]}}
 
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, <<?S, 4::32>>}, :busy, data)
 
-      assert_received {:"$gen_cast", {:expect_ready_for_query, 1, false}}
+      assert_received {:"$gen_cast", {:expect_messages, 2, [?S]}}
     end
 
-    test "does not send an expectation in session mode" do
-      {db_sock, _recv} = sockpair()
+    test "announces a write without tracked messages", %{data: data} do
+      data = %{data | write_seq: 4, tracked_seq: 2}
 
-      data = %{
-        mode: :session,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
-        tenant_feature_flags: %{},
-        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)
-      }
+      assert {:keep_state, data} =
+               @subject.handle_event(:info, {:tcp, :sock, <<?d, 6::32, "1\n">>}, :busy, data)
+
+      assert data.write_seq == 5
+      assert data.tracked_seq == 2
+      assert_received {:"$gen_cast", {:expect_messages, 5, []}}
+    end
+
+    test "does not send an expectation in session mode", %{data: data} do
+      data = %{data | mode: :session}
 
       batch = <<?Q, 12::32, "SELECT 1">> <> <<?Q, 12::32, "SELECT 2">>
 
       assert {:keep_state, _data} =
                @subject.handle_event(:info, {:tcp, :sock, batch}, :busy, data)
 
-      refute_received {:"$gen_cast", {:expect_ready_for_query, _count, _open_batch?}}
+      refute_received {:"$gen_cast", {:expect_messages, _write_seq, _tags}}
+    end
+  end
+
+  describe "handle_event/4 :busy backend_synced" do
+    setup do
+      {db_sock, _recv} = sockpair()
+
+      data = %{
+        mode: :transaction,
+        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
+        write_seq: 3,
+        tracked_seq: 3,
+        stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
+        local: true,
+        stats: %{},
+        query_start: System.monotonic_time(),
+        heartbeat_interval: 0,
+        idle_timeout: 0,
+        id:
+          Supavisor.id(
+            type: :single,
+            tenant: "tenant",
+            user: "user",
+            mode: :transaction,
+            db: "postgres"
+          )
+      }
+
+      {:ok, data: data}
+    end
+
+    test "releases the DbHandler when it caught up with the latest write", %{data: data} do
+      assert {:next_state, :idle, data, _actions} =
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
+
+      assert data.db_connection == nil
+      assert_received {:"$gen_cast", {:release, 3}}
+    end
+
+    test "releases the DbHandler when only untracked writes followed", %{data: data} do
+      data = %{data | write_seq: 5}
+
+      assert {:next_state, :idle, data, _actions} =
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
+
+      assert data.db_connection == nil
+      assert_received {:"$gen_cast", {:release, 5}}
+    end
+
+    test "stays busy when a later write is still in flight", %{data: data} do
+      assert :keep_state_and_data =
+               @subject.handle_event(:cast, {:backend_synced, 2}, :busy, data)
+
+      refute_received {:"$gen_cast", {:release, _write_seq}}
+    end
+
+    test "stays busy while a message is partly forwarded", %{data: data} do
+      stream_state = MessageStreamer.stream_state(data.stream_state, in_flight_pkt: {?d, 10})
+      data = %{data | stream_state: stream_state}
+
+      assert :keep_state_and_data =
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
+
+      refute_received {:"$gen_cast", {:release, _write_seq}}
     end
   end
 end

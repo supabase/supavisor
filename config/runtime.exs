@@ -174,59 +174,56 @@ upstream_ca =
     end
   end
 
-downstream_cert =
-  if path = System.get_env("GLOBAL_DOWNSTREAM_CERT_PATH") do
+load_file_path = fn env, label ->
+  if path = System.get_env(env) do
     if File.exists?(path) do
-      Logger.info("Loaded downstream cert from $GLOBAL_DOWNSTREAM_CERT_PATH, path: #{path}",
-        ansi_color: :green
-      )
-
+      Logger.info("Loaded #{label} from $#{env}, path: #{path}", ansi_color: :green)
       path
     else
-      raise "There is no such file in $GLOBAL_DOWNSTREAM_CERT_PATH"
+      raise "There is no such file in $#{env}"
     end
   end
+end
 
-downstream_key =
-  if path = System.get_env("GLOBAL_DOWNSTREAM_KEY_PATH") do
-    if File.exists?(path) do
-      Logger.info("Loaded downstream key from $GLOBAL_DOWNSTREAM_KEY_PATH, path: #{path}",
-        ansi_color: :green
-      )
+downstream_cert = load_file_path.("GLOBAL_DOWNSTREAM_CERT_PATH", "downstream cert")
+downstream_key = load_file_path.("GLOBAL_DOWNSTREAM_KEY_PATH", "downstream key")
+downstream_ec_cert = load_file_path.("DOWNSTREAM_SERVER_ECDSA_CERT", "downstream ECDSA cert")
+downstream_ec_key = load_file_path.("DOWNSTREAM_SERVER_ECDSA_KEY", "downstream ECDSA key")
+downstream_v2_cert = load_file_path.("DOWNSTREAM_V2_CERT_PATH", "downstream v2 cert")
+downstream_v2_key = load_file_path.("DOWNSTREAM_V2_KEY_PATH", "downstream v2 key")
 
-      path
-    else
-      raise "There is no such file in $GLOBAL_DOWNSTREAM_KEY_PATH"
-    end
-  end
+downstream_v2_ec_cert =
+  load_file_path.("DOWNSTREAM_V2_ECDSA_CERT_PATH", "downstream v2 ECDSA cert")
 
-downstream_ec_cert =
-  if path = System.get_env("DOWNSTREAM_SERVER_ECDSA_CERT") do
-    if File.exists?(path) do
-      Logger.info(
-        "Loaded downstream ECDSA cert from $DOWNSTREAM_SERVER_ECDSA_CERT, path: #{path}",
-        ansi_color: :green
-      )
+downstream_v2_ec_key = load_file_path.("DOWNSTREAM_V2_ECDSA_KEY_PATH", "downstream v2 ECDSA key")
 
-      path
-    else
-      raise "There is no such file in $DOWNSTREAM_SERVER_ECDSA_CERT"
-    end
-  end
+downstream_v2_sni_hostnames =
+  System.get_env("DOWNSTREAM_V2_SNI_HOSTNAMES", "")
+  |> String.split(",", trim: true)
+  |> Enum.map(&(&1 |> String.trim() |> String.downcase() |> String.to_charlist()))
 
-downstream_ec_key =
-  if path = System.get_env("DOWNSTREAM_SERVER_ECDSA_KEY") do
-    if File.exists?(path) do
-      Logger.info(
-        "Loaded downstream ECDSA key from $DOWNSTREAM_SERVER_ECDSA_KEY, path: #{path}",
-        ansi_color: :green
-      )
+if is_nil(downstream_v2_cert) != is_nil(downstream_v2_key) do
+  raise "$DOWNSTREAM_V2_CERT_PATH and $DOWNSTREAM_V2_KEY_PATH must be set together"
+end
 
-      path
-    else
-      raise "There is no such file in $DOWNSTREAM_SERVER_ECDSA_KEY"
-    end
-  end
+if is_nil(downstream_v2_ec_cert) != is_nil(downstream_v2_ec_key) do
+  raise "$DOWNSTREAM_V2_ECDSA_CERT_PATH and $DOWNSTREAM_V2_ECDSA_KEY_PATH must be set together"
+end
+
+downstream_v2_configured? = downstream_v2_cert != nil or downstream_v2_ec_cert != nil
+
+if downstream_v2_sni_hostnames != [] and not downstream_v2_configured? do
+  Logger.warning(
+    "$DOWNSTREAM_V2_SNI_HOSTNAMES is set but no v2 certificate is configured; " <>
+      "those hostnames will be served the default certificates"
+  )
+end
+
+if downstream_v2_configured? and
+     not ((downstream_cert != nil and downstream_key != nil) or
+            (downstream_ec_cert != nil and downstream_ec_key != nil)) do
+  raise "v2 certificates are configured but no default downstream certificate is configured"
+end
 
 if config_env() != :test do
   # AWS-identity (JWKS) auth for the /api pipeline, alongside API_JWT_SECRET
@@ -280,6 +277,11 @@ if config_env() != :test do
     global_downstream_key: downstream_key,
     global_downstream_ec_cert: downstream_ec_cert,
     global_downstream_ec_key: downstream_ec_key,
+    downstream_v2_cert: downstream_v2_cert,
+    downstream_v2_key: downstream_v2_key,
+    downstream_v2_ec_cert: downstream_v2_ec_cert,
+    downstream_v2_ec_key: downstream_v2_ec_key,
+    downstream_v2_sni_hostnames: downstream_v2_sni_hostnames,
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
     cache_bypass_users:
@@ -295,7 +297,8 @@ if config_env() != :test do
   config :supavisor, Supavisor.FeatureFlag, %{
     "named_prepared_statements" =>
       Supavisor.Helpers.get_env_bool("NAMED_PREPARED_STATEMENTS_ENABLED", false),
-    "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false)
+    "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false),
+    "scram_auth_over_tls" => Supavisor.Helpers.get_env_bool("SCRAM_AUTH_OVER_TLS_ENABLED", false)
   }
 
   config :supavisor, Supavisor.Repo,

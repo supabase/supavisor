@@ -36,6 +36,7 @@ defmodule Supavisor.ClientHandler.Data do
     :stats,
     :idle_timeout,
     :heartbeat_interval,
+    :log_connections,
     :connection_start,
     :state_entered_at,
     :subscribe_retries,
@@ -44,6 +45,10 @@ defmodule Supavisor.ClientHandler.Data do
     :max_clients,
     :pool_ranch,
     :use_jit_flow,
+    # Latest write announced to the DbHandler, with or without tracked messages.
+    write_seq: 0,
+    # Latest write with tracked messages.
+    tracked_seq: 0,
     invalid_options: []
   ]
 end
