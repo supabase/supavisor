@@ -3,6 +3,7 @@ defmodule Supavisor.OpsTest do
 
   require Supavisor
 
+  import ExUnit.CaptureLog
   import Supavisor.TenantsFixtures
   import Supavisor.Asserts, only: [assert_eventually: 1, assert_eventually: 3]
 
@@ -152,6 +153,27 @@ defmodule Supavisor.OpsTest do
       # The same process: the other pool was neither stopped nor restarted.
       assert Process.alive?(other_sup)
       assert Supavisor.get_global_sup(other) == other_sup
+    end
+
+    test "logs the start of the stop and its result" do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+
+      log =
+        capture_log([level: :info], fn -> assert {:ok, :stopped} = Ops.stop_pool(@tenant, sup) end)
+
+      assert log =~ "stopping, timeout"
+      assert log =~ "{:ok, :stopped}"
+    end
+
+    test "logs a warning when the pool is not found" do
+      log =
+        capture_log([level: :warning], fn ->
+          assert {:error, :not_found} = Ops.stop_pool(@tenant, self())
+        end)
+
+      assert log =~ "pool pid #PID<"
+      assert log =~ "not found"
     end
 
     test "returns :not_found once the pool has stopped" do

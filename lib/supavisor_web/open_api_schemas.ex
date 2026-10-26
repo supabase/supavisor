@@ -542,7 +542,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
       type: :object,
       properties: %{
         id: PoolId,
-        pid: %Schema{type: :string, description: "Opaque handle of the pool's supervisor"},
+        pid: %Schema{type: :string, description: "Opaque handle of the pool supervisor's pid"},
         pid_label: %Schema{
           type: :string,
           description: "The supervisor's pid as printed on its node, for display"

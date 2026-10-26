@@ -119,11 +119,13 @@ defmodule Supavisor.Ops do
   def stop_pool_local(tenant, sup, timeout) do
     case Registry.values(Supavisor.Registry.TenantSups, tenant, sup) do
       [id] ->
+        Logger.info("Stop pool #{Supavisor.inspect_id(id)}: stopping, timeout #{timeout}ms")
         result = stop_sup(sup, timeout)
-        Logger.warning("Stop pool #{Supavisor.inspect_id(id)}: #{inspect(result)}")
+        Logger.info("Stop pool #{Supavisor.inspect_id(id)}: #{inspect(result)}")
         result
 
       [] ->
+        Logger.warning("Stop pool of #{tenant}: pool pid #{inspect(sup)} not found")
         {:error, :not_found}
     end
   end

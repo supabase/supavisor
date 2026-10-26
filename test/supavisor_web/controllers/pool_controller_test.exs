@@ -198,6 +198,19 @@ defmodule SupavisorWeb.PoolControllerTest do
       assert Supavisor.get_global_sup(id) == sup
     end
 
+    test "returns 404 for a tenant that does not exist", %{conn: conn} do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+
+      assert %{"error" => "not found"} =
+               conn
+               |> delete(~p"/api/tenants/no_such_tenant/pools", stop_body(sup))
+               |> json_response(404)
+
+      assert Process.alive?(sup)
+    end
+
     test "returns 503 when the pool's node is unreachable", %{conn: conn} do
       :meck.new(Supavisor.Ops, [:passthrough, :no_link])
       on_exit(fn -> :meck.unload(Supavisor.Ops) end)

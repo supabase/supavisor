@@ -1,7 +1,9 @@
 defmodule SupavisorWeb.PoolPid do
   @moduledoc """
-  Opaque API handle of a pool supervisor's pid. It carries the pid's node and the
-  node's incarnation, so it identifies this exact supervisor anywhere in the cluster.
+  Opaque API handle of a pool supervisor's pid
+
+  An Erlang/Elixir pid carries the node and the node's incarnation, so it identifies
+  this exact supervisor anywhere in the cluster.
   """
 
   @spec encode(pid()) :: String.t()

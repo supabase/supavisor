@@ -31,7 +31,7 @@ defmodule SupavisorWeb.PoolController do
   operation(:index,
     summary: "List a tenant's pools across the cluster",
     description: """
-    `pid` is an opaque handle of the pool's supervisor, used to target the pool in
+    `pid` is an opaque handle of the pool supervisor's pid, used to target the pool in
     other requests. A `shutting_down` pool is draining its clients; a new pool for the
     same id may already be `active` on another node. Nodes that fail to respond are
     reported under `errors`.
@@ -79,7 +79,7 @@ defmodule SupavisorWeb.PoolController do
     summary: "Stop one of a tenant's pools",
     description: """
     Stops the pool identified by `pid` (from the pool list), on whichever node
-    runs it. A `pid` of a pool that no longer runs, or of another tenant's pool, is
+    it runs. A `pid` of a pool that no longer runs, or of another tenant's pool, is
     not found.
 
     The pool shuts down gracefully. The request waits up to `timeout` ms for it:
@@ -102,7 +102,7 @@ defmodule SupavisorWeb.PoolController do
 
   def stop(conn, %{"external_id" => external_id}) do
     # `timeout` is always set: CastAndValidate fills in the schema default.
-    params = conn.private.open_api_spex.body_params
+    params = OpenApiSpex.body_params(conn)
 
     with {:ok, sup} <- PoolPid.decode(params.pid),
          {:ok, result} <- Supavisor.Ops.stop_pool(external_id, sup, params.timeout) do
@@ -122,7 +122,7 @@ defmodule SupavisorWeb.PoolController do
   def rebalance(conn, _params) do
     opts =
       for {key, value} <-
-            Map.take(conn.private.open_api_spex.body_params, [:dry_run, :max_concurrency]),
+            Map.take(OpenApiSpex.body_params(conn), [:dry_run, :max_concurrency]),
           value != nil,
           do: {key, value}
 
