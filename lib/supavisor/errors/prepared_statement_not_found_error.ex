@@ -19,4 +19,7 @@ defmodule Supavisor.Errors.PreparedStatementNotFoundError do
   def postgres_error(error) do
     Supavisor.Error.protocol_error("FATAL", "26000", message(error))
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

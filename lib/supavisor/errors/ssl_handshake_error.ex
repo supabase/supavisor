@@ -19,4 +19,7 @@ defmodule Supavisor.Errors.SslHandshakeError do
   def postgres_error(error) do
     Supavisor.Error.protocol_error("FATAL", "08006", message(error))
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

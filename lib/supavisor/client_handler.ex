@@ -42,6 +42,7 @@ defmodule Supavisor.ClientHandler do
     AuthMethods,
     Cancel,
     Checks,
+    ConnectionRequest,
     Data,
     Error,
     ProtocolHelpers,
@@ -149,6 +150,7 @@ defmodule Supavisor.ClientHandler do
       "HTTP/1.1 204 OK\r\nx-app-version: #{Application.spec(:supavisor, :vsn)}\r\n\r\n"
     )
 
+    ConnectionRequest.ignore()
     {:stop, :normal}
   end
 
@@ -156,6 +158,7 @@ defmodule Supavisor.ClientHandler do
   def handle_event(:info, {_, _, Server.cancel_message(pid, key)}, _state, _) do
     Logger.debug("ClientHandler: Got cancel query for #{inspect({pid, key})}")
     :ok = Cancel.send_cancel_query(pid, key)
+    ConnectionRequest.ignore()
     {:stop, :normal}
   end
 
@@ -467,6 +470,7 @@ defmodule Supavisor.ClientHandler do
     case client_sock_send(data, msg, :handshake) do
       :ok ->
         Telem.client_connection_time(data.connection_start, data.id)
+        ConnectionRequest.ok(data)
         {:next_state, :idle, %{data | client_ready: true}, handle_actions(data)}
 
       {:error, exception} ->
@@ -753,6 +757,9 @@ defmodule Supavisor.ClientHandler do
   def handle_event(_kind, {proto, _, <<?X, 4::32>>}, state, data) when proto in @proto do
     if data.log_connections, do: Logger.info("ClientHandler: Terminate received from client")
     maybe_cleanup_db_handler(state, data)
+
+    ConnectionRequest.ignore()
+
     {:stop, :normal}
   end
 
@@ -817,8 +824,11 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
-  def terminate(reason, state, _data) do
+  def terminate(reason, state, data) do
     Logger.metadata(state: state)
+
+    # Safety net for exits that bypass Error.terminate_with_error (crashes, shutdowns)
+    ConnectionRequest.error(data, reason)
 
     level =
       case reason do
@@ -1106,7 +1116,7 @@ defmodule Supavisor.ClientHandler do
     {:ok, :poolboy.checkout(pool, true, timeout)}
   catch
     :exit, {:timeout, _} ->
-      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout, reason: :pool_exhausted}}
 
     :exit, reason ->
       {:error, %PoolCheckoutError{reason: reason}}
@@ -1140,6 +1150,7 @@ defmodule Supavisor.ClientHandler do
         # different ones, see `Supavisor.start_local_pool/3`
         tenant_availability_zone:
           if(Supavisor.id(id, :type) == :single, do: info.tenant.availability_zone),
+        txn_mode_leak_action: info.tenant.txn_mode_leak_action,
         user: user,
         db_name: db_name,
         timeout: info.user.pool_checkout_timeout,

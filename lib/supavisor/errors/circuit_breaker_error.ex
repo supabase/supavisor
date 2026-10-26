@@ -25,4 +25,9 @@ defmodule Supavisor.Errors.CircuitBreakerError do
 
   @impl Supavisor.Error
   def response_delay(_), do: Supavisor.Error.long_response_delay()
+
+  # Only the auth_error breaker is tripped by the client's own failures
+  @impl Supavisor.Error
+  def fault(%{operation: :auth_error}), do: :user
+  def fault(_), do: :supavisor
 end

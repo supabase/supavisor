@@ -18,4 +18,7 @@ defmodule Supavisor.Errors.TenantBannedError do
 
   @impl Supavisor.Error
   def response_delay(_), do: Supavisor.Error.long_response_delay()
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

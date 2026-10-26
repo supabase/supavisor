@@ -37,4 +37,7 @@ defmodule Supavisor.Errors.PasswordChangedError do
       "The password for this user was recently changed. Retry the connection."
     )
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end
