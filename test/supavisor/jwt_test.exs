@@ -221,6 +221,17 @@ defmodule Supavisor.JWTTest do
       assert_rejected(ref, :jwks, :api, :token_expired)
     end
 
+    test "a token that is not valid yet is rejected with a bounded :invalid_claim tag",
+         %{ref: ref, pem: pem} do
+      nbf = Joken.current_time() + 3_600
+      token = sign_token(pem, Map.put(default_claims(), "nbf", nbf))
+
+      assert {:error, [message: "Invalid token", claim: "nbf", claim_val: ^nbf]} =
+               JWT.authorize(conn_with(token), @opts_jwks)
+
+      assert_rejected(ref, :jwks, :api, :invalid_claim)
+    end
+
     test "alg none is never accepted", %{ref: ref} do
       token = unsigned_token(%{"alg" => "none", "typ" => "JWT", "kid" => kid()}, default_claims())
 

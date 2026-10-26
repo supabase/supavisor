@@ -6,7 +6,8 @@ defmodule Supavisor.JWT.JWKS do
   mechanism alongside the shared-secret path (`Supavisor.JWT.SharedSecret`),
   dispatched to by `Supavisor.JWT`.
 
-  Signature + `exp` are verified by Joken/`JokenJwks` (see `Token` below).
+  Signature, `exp` and `nbf` are verified by Joken/`JokenJwks` (see `Token`
+  below).
   `iss`/`sub`/`aud` are checked explicitly here against a caller-supplied
   config. Nothing here is `/api`-specific — reusable by other pipelines
   (e.g. `/metrics`) with their own config map.
@@ -18,11 +19,13 @@ defmodule Supavisor.JWT.JWKS do
 
     add_hook(JokenJwks, strategy: Supavisor.JWT.JWKS.Strategy)
 
-    # Only `exp` is enforced here — `iss`/`sub`/`aud` are checked explicitly
-    # against runtime config in `verify/2` below, since Joken's default
-    # validators only support a single, compile-time-fixed expected value.
+    # Only the time claims `exp` and `nbf` are enforced here — `iss`/`sub`/`aud`
+    # are checked explicitly against runtime config in `verify/2` below, since
+    # Joken's default validators only support a single, compile-time-fixed
+    # expected value. Joken validates the claims a token carries, so a token
+    # without `nbf` is still accepted.
     @impl true
-    def token_config, do: default_claims(skip: [:iss, :aud, :nbf, :iat, :jti])
+    def token_config, do: default_claims(skip: [:iss, :aud, :iat, :jti])
   end
 
   @type config :: %{

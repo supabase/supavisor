@@ -82,6 +82,34 @@ defmodule Supavisor.JWT.JWKSTest do
                JWKS.verify(token, default_config())
     end
 
+    test "rejects a token that is not valid yet (nbf in the future)", %{pem: pem} do
+      nbf = Joken.current_time() + 3_600
+      token = sign_token(pem, Map.put(default_claims(), "nbf", nbf))
+
+      assert {:error, [message: "Invalid token", claim: "nbf", claim_val: ^nbf]} =
+               JWKS.verify(token, default_config())
+    end
+
+    test "accepts a token whose nbf has passed", %{pem: pem} do
+      token = sign_token(pem, Map.put(default_claims(), "nbf", Joken.current_time() - 60))
+
+      assert {:ok, claims} = JWKS.verify(token, default_config())
+      assert claims["sub"] == sub()
+    end
+
+    test "accepts a token without nbf", %{pem: pem} do
+      claims = default_claims()
+      refute Map.has_key?(claims, "nbf")
+
+      assert {:ok, _claims} = JWKS.verify(sign_token(pem, claims), default_config())
+    end
+
+    test "does not enforce iat or jti", %{pem: pem} do
+      claims = Map.merge(default_claims(), %{"iat" => Joken.current_time() + 3_600, "jti" => "x"})
+
+      assert {:ok, _claims} = JWKS.verify(sign_token(pem, claims), default_config())
+    end
+
     test "a kid absent from the fetched JWKS fails closed", %{pem: pem} do
       token = sign_token(pem, default_claims(), kid: "not-in-jwks")
 
