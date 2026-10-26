@@ -726,7 +726,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
   test "change role password with cleartext auth retries against new secrets" do
     SSLHelper.setup_downstream_certs()
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager_cleartext")
 
     on_exit(fn ->
       {:ok, origin} =
@@ -746,7 +746,7 @@ defmodule Supavisor.Integration.ProxyTest do
         hostname: db_conf[:hostname],
         port: Application.get_env(:supavisor, :proxy_port_transaction),
         database: db_conf[:database],
-        username: "dev_postgres_password_test.is_manager",
+        username: "dev_postgres_password_test.is_manager_cleartext",
         password: password,
         ssl: [verify: :verify_none]
       ]

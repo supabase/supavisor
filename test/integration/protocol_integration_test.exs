@@ -234,6 +234,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     @password String.duplicate("！", 8)
     @role "fullwidth_pw_user"
     @tenant "is_manager"
+    @cleartext_tenant "is_manager_cleartext"
 
     setup do
       Supavisor.Support.SSLHelper.setup_downstream_certs()
@@ -280,7 +281,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       {:ok, "S"} = :gen_tcp.recv(tcp, 1, 5000)
       {:ok, ssl} = :ssl.connect(tcp, [verify: :verify_none, active: false], 5000)
 
-      send_startup(:ssl, ssl, ctx)
+      send_startup(:ssl, ssl, %{ctx | username: "#{@role}.#{@cleartext_tenant}"})
 
       {:ok, <<?R, _::32, 3::32>>} = :ssl.recv(ssl, 0, 5000)
 
