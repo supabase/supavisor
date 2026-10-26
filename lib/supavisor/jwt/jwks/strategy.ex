@@ -4,14 +4,6 @@ defmodule Supavisor.JWT.JWKS.Strategy do
   and caches the JWKS for the single trusted AWS STS issuer configured via
   `API_JWT_TRUSTED_ISSUER`.
 
-  Supavisor only ever needs to trust one issuer at a time: consumers are
-  expected to `sts:AssumeRole` into the `supavisor-api` IAM role (see
-  `pulumi/supavisor-iam`) before calling `GetWebIdentityToken`, so every
-  resulting token's issuer is this pooler cluster's own AWS account —
-  regardless of which account the calling service actually runs in. AWS
-  accounts are 1:1 with STS issuers, so that's a single, fixed JWKS source.
-  If that assumption ever stops holding (e.g. a consumer needs to present a
-  token from its own account directly), revisit.
 
   Always present in `Supavisor.Application`'s supervision tree. When
   `API_JWT_TRUSTED_ISSUER` isn't set, `init_opts/1`

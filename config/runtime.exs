@@ -228,12 +228,6 @@ end
 if config_env() != :test do
   # AWS-identity (JWKS) auth for the /api pipeline, alongside API_JWT_SECRET
   # — see Supavisor.JWT.JWKS. JWKS disabled if nil.
-  #
-  # Only one trusted issuer, deliberately: AWS accounts are 1:1 with STS
-  # issuers, and consumers are expected to assume the shared `supavisor-api`
-  # IAM role before calling GetWebIdentityToken, so every accepted token
-  # comes from this pooler cluster's own account regardless of caller — see
-  # Supavisor.JWT.JWKS.Strategy.
   api_jwks_config =
     case System.get_env("API_JWT_TRUSTED_ISSUER", "") |> String.trim() do
       "" ->

@@ -25,10 +25,6 @@ defmodule Supavisor.JWT.JWKS do
     def token_config, do: default_claims(skip: [:iss, :aud, :nbf, :iat, :jti])
   end
 
-  # Only one trusted issuer, deliberately — see `Supavisor.JWT.JWKS.Strategy`'s
-  # moduledoc for why (AWS account:issuer is 1:1, and consumers are expected
-  # to assume the shared `supavisor-api` role first, so every accepted token
-  # comes from this pooler cluster's own account regardless of caller).
   @type config :: %{
           trusted_issuer: String.t(),
           allowed_subs: [String.t()],
