@@ -1,7 +1,8 @@
 defmodule SupavisorWeb.MetricsControllerTest do
   use SupavisorWeb.ConnCase, async: false
-  alias Supavisor.Support.Cluster
   alias Postgrex, as: P
+  alias Supavisor.JWT.SharedSecret.Token
+  alias Supavisor.Support.Cluster
 
   @tag cluster: true
   test "exporting metrics", %{conn: conn} do
@@ -223,6 +224,6 @@ defmodule SupavisorWeb.MetricsControllerTest do
   end
 
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
-    Supavisor.JWT.SharedSecret.Token.gen!(secret)
+    Token.gen!(secret)
   end
 end

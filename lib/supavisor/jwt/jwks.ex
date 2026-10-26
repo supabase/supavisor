@@ -63,6 +63,13 @@ defmodule Supavisor.JWT.JWKS do
   end
 
   defp check_aud(_claim_aud, nil), do: {:error, :expected_aud_not_configured}
-  defp check_aud(aud, expected_aud) when aud == expected_aud, do: :ok
-  defp check_aud(_claim_aud, _expected_aud), do: {:error, :unexpected_audience}
+
+  # RFC 7519 §4.1.3: `aud` is a string or an array of strings
+  defp check_aud(claim_aud, expected_aud) do
+    if expected_aud in List.wrap(claim_aud) do
+      :ok
+    else
+      {:error, :unexpected_audience}
+    end
+  end
 end

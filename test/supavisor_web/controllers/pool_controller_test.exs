@@ -1,6 +1,8 @@
 defmodule SupavisorWeb.PoolControllerTest do
   use SupavisorWeb.ConnCase, async: false
 
+  alias Supavisor.JWT.SharedSecret.Token
+
   describe "POST /api/rebalance" do
     setup %{conn: conn} do
       conn =
@@ -35,6 +37,6 @@ defmodule SupavisorWeb.PoolControllerTest do
   end
 
   defp gen_token do
-    Supavisor.JWT.SharedSecret.Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
+    Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
   end
 end

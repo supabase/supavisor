@@ -45,6 +45,28 @@ defmodule Supavisor.JWT.JWKSTest do
       assert {:error, :unexpected_audience} = JWKS.verify(token, default_config())
     end
 
+    test "accepts an array-valued aud that contains the expected audience", %{pem: pem} do
+      token = sign_token(pem, %{default_claims() | "aud" => [aud()]})
+      assert {:ok, %{"aud" => [_]}} = JWKS.verify(token, default_config())
+
+      token = sign_token(pem, %{default_claims() | "aud" => ["someone-else", aud()]})
+      assert {:ok, _claims} = JWKS.verify(token, default_config())
+    end
+
+    test "rejects an array-valued aud without the expected audience", %{pem: pem} do
+      for bad <- [["someone-else"], ["someone-else", "another"], []] do
+        token = sign_token(pem, %{default_claims() | "aud" => bad})
+
+        assert {:error, :unexpected_audience} = JWKS.verify(token, default_config())
+      end
+    end
+
+    test "rejects an aud that is neither a string nor a list of strings", %{pem: pem} do
+      token = sign_token(pem, %{default_claims() | "aud" => %{"x" => aud()}})
+
+      assert {:error, :unexpected_audience} = JWKS.verify(token, default_config())
+    end
+
     test "rejects any token when expected_aud isn't configured", %{pem: pem} do
       token = sign_token(pem, default_claims())
       config = %{default_config() | expected_aud: nil}

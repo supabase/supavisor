@@ -5,6 +5,7 @@ defmodule SupavisorWeb.TenantControllerTest do
   import ExUnit.CaptureLog
   import Supavisor.JWKSHelper
 
+  alias Supavisor.JWT.SharedSecret.Token
   alias Supavisor.Tenants.Tenant
 
   @user_valid_attrs %{
@@ -1131,6 +1132,6 @@ defmodule SupavisorWeb.TenantControllerTest do
   end
 
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
-    Supavisor.JWT.SharedSecret.Token.gen!(secret)
+    Token.gen!(secret)
   end
 end

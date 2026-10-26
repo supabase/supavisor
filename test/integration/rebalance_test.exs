@@ -7,6 +7,7 @@ defmodule Supavisor.Integration.RebalanceTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
+  alias Supavisor.JWT.SharedSecret.Token
   alias Supavisor.Support.Cluster
   alias Supavisor.Tenants
 
@@ -259,6 +260,6 @@ defmodule Supavisor.Integration.RebalanceTest do
   end
 
   defp gen_token do
-    Supavisor.JWT.SharedSecret.Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
+    Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
   end
 end
