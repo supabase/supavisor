@@ -33,4 +33,7 @@ defmodule Supavisor.Errors.WrongPasswordError do
       "password authentication failed for user \"#{user}\""
     )
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

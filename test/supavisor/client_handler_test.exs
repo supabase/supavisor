@@ -39,7 +39,13 @@ defmodule Supavisor.ClientHandlerTest do
            [session_id_tracker: :some_pid]
          }, [:some_pid]}
 
-      data = %{sock: {:ssl, sock}, mode: :transaction, local: false}
+      data = %{
+        sock: {:ssl, sock},
+        mode: :transaction,
+        local: false,
+        connection_start: System.monotonic_time()
+      }
+
       {:ok, sock: sock, data: data}
     end
 
@@ -121,7 +127,8 @@ defmodule Supavisor.ClientHandlerTest do
         id: nil,
         sock: {:gen_tcp, server},
         mode: :transaction,
-        local: false
+        local: false,
+        connection_start: System.monotonic_time()
       }
 
       assert {:stop, :normal} =
@@ -148,7 +155,13 @@ defmodule Supavisor.ClientHandlerTest do
   describe "socket DOWN handler" do
     test "handles DOWN message for matching ref" do
       ref = make_ref()
-      data = %{sock_ref: ref, mode: :transaction, local: false}
+
+      data = %{
+        sock_ref: ref,
+        mode: :transaction,
+        local: false,
+        connection_start: System.monotonic_time()
+      }
 
       assert {:stop, :normal} =
                @subject.handle_event(:info, {:DOWN, ref, :port, self(), :normal}, :idle, data)
@@ -248,7 +261,8 @@ defmodule Supavisor.ClientHandlerTest do
         peer_ip: "127.0.0.1",
         mode: :transaction,
         app_name: nil,
-        invalid_options: []
+        invalid_options: [],
+        connection_start: System.monotonic_time()
       }
 
       assert {:keep_state_and_data,
@@ -282,6 +296,7 @@ defmodule Supavisor.ClientHandlerTest do
         mode: :transaction,
         db_connection: {:pool, self(), {:gen_tcp, db_sock}},
         tenant_feature_flags: %{},
+        txn_mode_leak_action: :ignore,
         write_seq: 0,
         tracked_seq: 0,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler)

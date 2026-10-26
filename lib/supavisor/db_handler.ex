@@ -106,7 +106,7 @@ defmodule Supavisor.DbHandler do
     :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
   catch
     :exit, {:timeout, _} ->
-      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout}}
+      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout, reason: :unresponsive}}
 
     :exit, {reason, _} ->
       {:error, %DbHandlerExitedError{pid: pid, reason: reason}}

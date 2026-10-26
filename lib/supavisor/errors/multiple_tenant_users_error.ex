@@ -16,4 +16,7 @@ defmodule Supavisor.Errors.MultipleTenantUsersError do
   @impl Supavisor.Error
   def error_message(%{user: user, tenant_or_alias: tenant_or_alias}),
     do: "multiple users matched for #{user}.#{tenant_or_alias}, check tenant configuration"
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

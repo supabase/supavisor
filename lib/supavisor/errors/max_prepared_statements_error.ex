@@ -14,4 +14,7 @@ defmodule Supavisor.Errors.MaxPreparedStatementsError do
   def error_message(%{limit: limit}) do
     "max prepared statements limit reached. Limit: #{limit} per connection"
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

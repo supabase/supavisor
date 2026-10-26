@@ -3,8 +3,12 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   Handles PostgreSQL frontend messages.
 
   - Parse (P), Bind (B), Close (C), Describe (D): PreparedStatements
-  - Simple Query (Q): SimpleQueryHandler
-  - Execute (E), Sync (S), FunctionCall (F), CopyDone (c), CopyFail (f): forwarded unchanged
+  - Simple Query (Q), Execute (E), Sync (S), FunctionCall (F), CopyDone (c), CopyFail (f):
+    forwarded unchanged
+
+  Parse (P) and Simple Query (Q) messages are validated before being handled,
+  rejecting statements that leave session state behind and prepared statement
+  commands when the tenant has those checks enabled.
 
   It also records the messages forwarded in each write, so the DbHandler can follow the
   backend through them (see `Supavisor.Protocol.BackendConnection`). Prepared statement
@@ -14,6 +18,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   @behaviour Supavisor.Protocol.MessageHandler
 
   alias Supavisor.Protocol.BackendConnection
+  alias Supavisor.Protocol.ParseMessageHandler
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.SimpleQueryHandler
 
@@ -26,7 +31,13 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
       prepared_statements: PreparedStatements.init_storage(),
       forwarded: [],
       # Prepared statements feature flag:
-      translate?: true
+      translate?: true,
+      # Tenant's txn_mode_leak_action field:
+      leak_action: :ignore,
+      # Rejection of PREPARE/EXECUTE/DEALLOCATE on the simple query protocol.
+      # Costs a full parse of every simple query, so it is opt-in via the
+      # check_simple_query_prepare feature flag.
+      check_simple_query_prepare?: false
     }
   end
 
@@ -37,28 +48,24 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   def take_forwarded(state), do: {Enum.reverse(state.forwarded), %{state | forwarded: []}}
 
   @impl true
-  def handle_message(%{translate?: false} = state, tag, len, payload) do
-    {:ok, record(state, tag), <<tag, len::32, payload::binary>>}
-  end
-
   def handle_message(state, tag, len, payload) do
-    case tag do
-      ?P ->
-        PreparedStatements.handle_parse_message(state.prepared_statements, len, payload)
+    case {tag, state.translate?} do
+      {?P, _translate?} ->
+        ParseMessageHandler.handle_message(state, len, payload)
 
-      ?B ->
+      {?Q, _translate?} ->
+        SimpleQueryHandler.handle_message(state, len, payload)
+
+      {?B, true} ->
         PreparedStatements.handle_bind_message(state.prepared_statements, len, payload)
 
-      ?C ->
+      {?C, true} ->
         PreparedStatements.handle_close_message(state.prepared_statements, len, payload)
 
-      ?D ->
+      {?D, true} ->
         PreparedStatements.handle_describe_message(state.prepared_statements, len, payload)
 
-      ?Q ->
-        SimpleQueryHandler.handle_simple_query_message(state.prepared_statements, len, payload)
-
-      tag when tag in [?E, ?S, ?F, ?c, ?f] ->
+      {_tag, _translate?} ->
         {:ok, state.prepared_statements, <<tag, len::32, payload::binary>>}
     end
     |> case do
