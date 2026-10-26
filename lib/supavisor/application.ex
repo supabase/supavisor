@@ -134,7 +134,7 @@ defmodule Supavisor.Application do
         },
         Supavisor.Vault,
         # will start only if the API_JWT_TRUSTED_ISSUER is set
-        {Supavisor.Jwt.JwksStrategy, name: Supavisor.Jwt.JwksStrategy},
+        {Supavisor.JWT.JWKS.Strategy, name: Supavisor.JWT.JWKS.Strategy},
 
         # Start the Endpoint (http/https)
         SupavisorWeb.Endpoint

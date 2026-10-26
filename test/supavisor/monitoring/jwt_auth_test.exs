@@ -1,11 +1,11 @@
-defmodule Supavisor.PromEx.Plugins.JwtAuthTest do
+defmodule Supavisor.PromEx.Plugins.JWTAuthTest do
   use ExUnit.Case, async: true
 
-  alias Supavisor.PromEx.Plugins.JwtAuth
+  alias Supavisor.PromEx.Plugins.JWTAuth
 
   describe "event_metrics/1" do
     setup do
-      [%PromEx.MetricTypes.Event{metrics: metrics}] = JwtAuth.event_metrics([])
+      [%PromEx.MetricTypes.Event{metrics: metrics}] = JWTAuth.event_metrics([])
       %{metrics: Map.new(metrics, &{&1.event_name, &1})}
     end
 

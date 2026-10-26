@@ -60,7 +60,7 @@ defmodule SupavisorWeb.MetricsControllerTest do
     refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
   end
 
-  test "emits jwt_auth rejected (method :hmac, the only path here) for an invalid token", %{
+  test "emits jwt_auth rejected (method :unknown, no parsable alg) for an invalid token", %{
     conn: conn
   } do
     ref = attach_jwt_auth_handler()
@@ -72,7 +72,7 @@ defmodule SupavisorWeb.MetricsControllerTest do
              403
 
     assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
-                    %{method: :hmac, pipeline: :metrics, reason: :expected_claims_map}}
+                    %{method: :unknown, pipeline: :metrics, reason: :expected_header_map}}
 
     refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
   end
@@ -223,6 +223,6 @@ defmodule SupavisorWeb.MetricsControllerTest do
   end
 
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
-    Supavisor.Jwt.Token.gen!(secret)
+    Supavisor.JWT.SharedSecret.Token.gen!(secret)
   end
 end

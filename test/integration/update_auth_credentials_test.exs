@@ -218,6 +218,6 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
   end
 
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :api_jwt_secret)) do
-    Supavisor.Jwt.Token.gen!(secret)
+    Supavisor.JWT.SharedSecret.Token.gen!(secret)
   end
 end

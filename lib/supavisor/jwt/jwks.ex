@@ -1,9 +1,10 @@
-defmodule Supavisor.Jwt.AwsIdentity do
+defmodule Supavisor.JWT.JWKS do
   @moduledoc """
   Verifies JWTs minted by AWS STS's `GetWebIdentityToken` (RS256/ES384,
   verifiable via the issuing AWS account's JWKS at
   `{issuer}/.well-known/jwks.json`) — an additional, equally-trusted auth
-  mechanism alongside the shared-HMAC-secret path in `Supavisor.Jwt`.
+  mechanism alongside the shared-secret path (`Supavisor.JWT.SharedSecret`),
+  dispatched to by `Supavisor.JWT`.
 
   Signature + `exp` are verified by Joken/`JokenJwks` (see `Token` below).
   `iss`/`sub`/`aud` are checked explicitly here against a caller-supplied
@@ -15,7 +16,7 @@ defmodule Supavisor.Jwt.AwsIdentity do
     @moduledoc false
     use Joken.Config
 
-    add_hook(JokenJwks, strategy: Supavisor.Jwt.JwksStrategy)
+    add_hook(JokenJwks, strategy: Supavisor.JWT.JWKS.Strategy)
 
     # Only `exp` is enforced here — `iss`/`sub`/`aud` are checked explicitly
     # against runtime config in `verify/2` below, since Joken's default
@@ -24,7 +25,7 @@ defmodule Supavisor.Jwt.AwsIdentity do
     def token_config, do: default_claims(skip: [:iss, :aud, :nbf, :iat, :jti])
   end
 
-  # Only one trusted issuer, deliberately — see `Supavisor.Jwt.JwksStrategy`'s
+  # Only one trusted issuer, deliberately — see `Supavisor.JWT.JWKS.Strategy`'s
   # moduledoc for why (AWS account:issuer is 1:1, and consumers are expected
   # to assume the shared `supavisor-api` role first, so every accepted token
   # comes from this pooler cluster's own account regardless of caller).

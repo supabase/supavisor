@@ -1,6 +1,6 @@
-defmodule Supavisor.Jwt.JwksStrategy do
+defmodule Supavisor.JWT.JWKS.Strategy do
   @moduledoc """
-  The `JokenJwks` strategy backing `Supavisor.Jwt.AwsIdentity.Token`: fetches
+  The `JokenJwks` strategy backing `Supavisor.JWT.JWKS.Token`: fetches
   and caches the JWKS for the single trusted AWS STS issuer configured via
   `API_JWT_TRUSTED_ISSUER`.
 
@@ -30,8 +30,8 @@ defmodule Supavisor.Jwt.JwksStrategy do
         Keyword.merge(opts,
           jwks_url: jwks_url,
           first_fetch_sync: true,
-          # AWS's JWKS omits `alg` on RSA keys — see JwksAlgFixup's moduledoc.
-          http_middlewares: [Supavisor.Jwt.JwksAlgFixup]
+          # AWS's JWKS omits `alg` on RSA keys — see JWKS.AlgFixup's moduledoc.
+          http_middlewares: [Supavisor.JWT.JWKS.AlgFixup]
         )
 
       _ ->

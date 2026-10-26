@@ -35,6 +35,6 @@ defmodule SupavisorWeb.PoolControllerTest do
   end
 
   defp gen_token do
-    Supavisor.Jwt.Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
+    Supavisor.JWT.SharedSecret.Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
   end
 end

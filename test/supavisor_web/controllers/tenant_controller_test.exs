@@ -3,6 +3,7 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   import Supavisor.TenantsFixtures
   import ExUnit.CaptureLog
+  import Supavisor.JWKSHelper
 
   alias Supavisor.Tenants.Tenant
 
@@ -585,11 +586,6 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   # AWS-identity JWKS auth is a second, additive path on the `:api` pipeline
   describe "AWS-identity (JWKS) auth on /api" do
-    @jwks_issuer "https://issuer.example.tokens.sts.global.api.aws"
-    @jwks_kid "test-kid"
-    @jwks_sub "arn:aws:iam::123456789012:role/supavisor-api"
-    @jwks_aud "supavisor-api"
-
     def handle_jwt_auth_event(event, measurements, meta, {pid, ref}) do
       send(pid, {ref, event, measurements, meta})
     end
@@ -610,36 +606,11 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
 
     setup do
-      jwk = JOSE.JWK.generate_key({:rsa, 2048})
-      {_, pem} = JOSE.JWK.to_pem(jwk)
-      {_, public_jwk} = JOSE.JWK.to_public_map(jwk)
-      # No "alg" — matches AWS's real outbound-identity-federation JWKS shape
-      # for RSA keys (see Supavisor.Jwt.JwksAlgFixup). Exercises the fixup.
-      public_jwk = Map.merge(public_jwk, %{"kid" => @jwks_kid})
-
-      %{pem: pem, public_jwk: public_jwk}
+      generate_rsa_keypair()
     end
 
     defp jwks_token(pem, overrides \\ %{}) do
-      claims =
-        Map.merge(
-          %{
-            "iss" => @jwks_issuer,
-            "sub" => @jwks_sub,
-            "aud" => @jwks_aud,
-            "exp" => Joken.current_time() + 300
-          },
-          overrides
-        )
-
-      signer = Joken.Signer.create("RS256", %{"pem" => pem}, %{"kid" => @jwks_kid})
-      Supavisor.Jwt.AwsIdentity.Token.generate_and_sign!(claims, signer)
-    end
-
-    defp put_jwks_config(config) do
-      previous = Application.get_env(:supavisor, :api_jwks_config)
-      Application.put_env(:supavisor, :api_jwks_config, config)
-      on_exit(fn -> Application.put_env(:supavisor, :api_jwks_config, previous) end)
+      sign_token(pem, Map.merge(default_claims(), overrides))
     end
 
     test "is disabled by default: an AWS-identity token gets 403 with no api_jwks_config",
@@ -654,38 +625,13 @@ defmodule SupavisorWeb.TenantControllerTest do
       assert conn.status == 403
     end
 
-    # Starts the real, named `Supavisor.Jwt.JwksStrategy` (hardcoded into
-    # `AwsIdentity.Token`'s `add_hook/2` — there's no swappable fake for it,
-    # by design, see its moduledoc) against a `Tesla.Mock`-served JWKS.
-    # `api_jwks_config` must be set before starting it, since `init_opts/1`
-    # reads the trusted issuer from it to build the JWKS URL.
-    defp start_jwks_auth(config, public_jwk) do
-      put_jwks_config(config)
-
-      # Raw JSON string + real content-type header, not a pre-decoded map —
-      # see Supavisor.Jwt.JwksAlgFixup's moduledoc for why that distinction
-      # matters here.
-      Tesla.Mock.mock_global(fn
-        %{method: :get, url: @jwks_issuer <> "/.well-known/jwks.json"} ->
-          %Tesla.Env{
-            status: 200,
-            body: JSON.encode!(%{"keys" => [public_jwk]}),
-            headers: [{"content-type", "application/json"}]
-          }
-      end)
-
-      start_supervised!(
-        {Supavisor.Jwt.JwksStrategy, [first_fetch_sync: true, http_adapter: Tesla.Mock]}
-      )
-    end
-
     test "an allow-listed subject is authorized once api_jwks_config is set", %{
       conn: conn,
       pem: pem,
       public_jwk: public_jwk
     } do
       start_jwks_auth(
-        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        %{trusted_issuer: issuer(), allowed_subs: [sub()], expected_aud: aud()},
         public_jwk
       )
 
@@ -705,9 +651,9 @@ defmodule SupavisorWeb.TenantControllerTest do
     } do
       start_jwks_auth(
         %{
-          trusted_issuer: @jwks_issuer,
+          trusted_issuer: issuer(),
           allowed_subs: ["arn:aws:iam::123456789012:role/someone-else"],
-          expected_aud: @jwks_aud
+          expected_aud: aud()
         },
         public_jwk
       )
@@ -726,7 +672,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       public_jwk: public_jwk
     } do
       start_jwks_auth(
-        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        %{trusted_issuer: issuer(), allowed_subs: [sub()], expected_aud: aud()},
         public_jwk
       )
 
@@ -751,7 +697,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     test "the existing HMAC token still works unchanged once api_jwks_config is set", %{
       conn: conn
     } do
-      put_jwks_config(%{trusted_issuer: @jwks_issuer, allowed_subs: [], expected_aud: nil})
+      put_jwks_config(%{trusted_issuer: issuer(), allowed_subs: [], expected_aud: nil})
 
       # `conn` already carries the standard "dev" HMAC bearer token from the
       # top-level setup — unaffected by api_jwks_config being set.
@@ -778,7 +724,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       public_jwk: public_jwk
     } do
       start_jwks_auth(
-        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        %{trusted_issuer: issuer(), allowed_subs: [sub()], expected_aud: aud()},
         public_jwk
       )
 
@@ -885,7 +831,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       public_jwk: public_jwk
     } do
       start_jwks_auth(
-        %{trusted_issuer: @jwks_issuer, allowed_subs: [@jwks_sub], expected_aud: @jwks_aud},
+        %{trusted_issuer: issuer(), allowed_subs: [sub()], expected_aud: aud()},
         public_jwk
       )
 
@@ -912,9 +858,9 @@ defmodule SupavisorWeb.TenantControllerTest do
     } do
       start_jwks_auth(
         %{
-          trusted_issuer: @jwks_issuer,
+          trusted_issuer: issuer(),
           allowed_subs: ["arn:aws:iam::123456789012:role/someone-else"],
-          expected_aud: @jwks_aud
+          expected_aud: aud()
         },
         public_jwk
       )
@@ -1185,6 +1131,6 @@ defmodule SupavisorWeb.TenantControllerTest do
   end
 
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :metrics_jwt_secret)) do
-    Supavisor.Jwt.Token.gen!(secret)
+    Supavisor.JWT.SharedSecret.Token.gen!(secret)
   end
 end

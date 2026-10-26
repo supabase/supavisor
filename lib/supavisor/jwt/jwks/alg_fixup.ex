@@ -1,4 +1,4 @@
-defmodule Supavisor.Jwt.JwksAlgFixup do
+defmodule Supavisor.JWT.JWKS.AlgFixup do
   @moduledoc """
   AWS's outbound-identity-federation JWKS omits `"alg"` on RSA keys (a valid,
   RFC 7517-*optional* field — AWS's own docs show an example JWKS response

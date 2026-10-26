@@ -1,4 +1,4 @@
-defmodule Supavisor.PromEx.Plugins.JwtAuth do
+defmodule Supavisor.PromEx.Plugins.JWTAuth do
   @moduledoc """
   PromEx plugin counting successful and rejected JWT authorizations by
   verification method (`:hmac`, `:jwks`, or `:unknown` for rejections whose
@@ -6,8 +6,8 @@ defmodule Supavisor.PromEx.Plugins.JwtAuth do
 
   This is the adoption signal for deciding when it's safe to stop accepting
   the shared HMAC secret on a pipeline that had AWS-identity JWKS auth
-  enabled — see `Supavisor.Jwt.authorize_dual/3` and
-  `SupavisorWeb.Router.check_auth/2`, which emit the telemetry events.
+  enabled. `Supavisor.JWT.authorize/2` emits the underlying
+  `[:supavisor, :jwt_auth, :ok | :rejected]` telemetry events.
   """
 
   use PromEx.Plugin
