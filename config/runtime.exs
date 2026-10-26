@@ -238,7 +238,7 @@ if config_env() != :test do
   # comes from this pooler cluster's own account regardless of caller — see
   # Supavisor.JWT.JWKS.Strategy.
   api_jwks_config =
-    case System.get_env("API_JWT_TRUSTED_ISSUER", "") do
+    case System.get_env("API_JWT_TRUSTED_ISSUER", "") |> String.trim() do
       "" ->
         nil
 
