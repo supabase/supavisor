@@ -8,6 +8,8 @@ defmodule SupavisorWeb.PoolControllerTest do
 
   alias SupavisorWeb.PoolPid
 
+  alias Supavisor.JWT.SharedSecret.Token
+
   @tenant "pool_controller_tenant"
   @secret %Supavisor.Secrets.PasswordSecrets{user: "postgres", password: "postgres"}
 
@@ -301,6 +303,6 @@ defmodule SupavisorWeb.PoolControllerTest do
   end
 
   defp gen_token do
-    Supavisor.Jwt.Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
+    Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
   end
 end
