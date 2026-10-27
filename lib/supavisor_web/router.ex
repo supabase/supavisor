@@ -69,6 +69,7 @@ defmodule SupavisorWeb.Router do
     delete("/tenants/:external_id/network_bans", TenantController, :clear_network_bans)
 
     get("/tenants/:external_id/pools", PoolController, :index)
+    delete("/tenants/:external_id/pools", PoolController, :stop)
 
     get("/health", TenantController, :health)
     post("/rebalance", PoolController, :rebalance)

@@ -10,6 +10,7 @@ defmodule Supavisor.Ops do
   alias Supavisor.Tenants
 
   @multicall_timeout :timer.seconds(5)
+  @stop_timeout :timer.seconds(15)
 
   @type connection_counts :: %{idle: non_neg_integer(), checked_out: non_neg_integer()}
 
@@ -86,6 +87,61 @@ defmodule Supavisor.Ops do
   @spec status(Supavisor.id(), pid()) :: :active | :shutting_down
   defp status(id, sup) do
     if Supavisor.get_global_sup(id) == sup, do: :active, else: :shutting_down
+  end
+
+  @doc """
+  Gracefully stops one of a tenant's pools, given its supervisor's pid. `timeout`
+  only bounds the wait: past it, `{:ok, :stopping}` is returned and the pool keeps
+  shutting down.
+  """
+  @spec stop_pool(String.t(), pid(), pos_integer()) ::
+          {:ok, :stopped | :stopping} | {:error, :not_found | :node_unreachable}
+  def stop_pool(tenant, sup, timeout \\ @stop_timeout) do
+    :erpc.call(
+      node(sup),
+      __MODULE__,
+      :stop_pool_local,
+      [tenant, sup, timeout],
+      timeout + @multicall_timeout
+    )
+  catch
+    :error, {:erpc, :noconnection} = reason ->
+      Logger.warning("Failed to stop pool of #{tenant} on #{node(sup)}: #{inspect(reason)}")
+      {:error, :node_unreachable}
+  end
+
+  @doc """
+  Stops one of a tenant's pools on this node. Only a pid registered as one of
+  `tenant`'s pools is stopped, so a stale pid can't hit another process.
+  """
+  @spec stop_pool_local(String.t(), pid(), pos_integer()) ::
+          {:ok, :stopped | :stopping} | {:error, :not_found}
+  def stop_pool_local(tenant, sup, timeout) do
+    case Registry.values(Supavisor.Registry.TenantSups, tenant, sup) do
+      [id] ->
+        Logger.info("Stop pool #{Supavisor.inspect_id(id)}: stopping, timeout #{timeout}ms")
+        result = stop_sup(sup, timeout)
+        Logger.info("Stop pool #{Supavisor.inspect_id(id)}: #{inspect(result)}")
+        result
+
+      [] ->
+        Logger.warning("Stop pool of #{tenant}: pool pid #{inspect(sup)} not found")
+        {:error, :not_found}
+    end
+  end
+
+  @spec stop_sup(pid(), timeout()) :: {:ok, :stopped | :stopping}
+  defp stop_sup(sup, timeout) do
+    :ok = Supervisor.stop(sup, :shutdown, timeout)
+    {:ok, :stopped}
+  catch
+    # Already gone, e.g. stopped concurrently.
+    :exit, {:noproc, _} -> {:ok, :stopped}
+    # It was already shutting down, so it never answered our request: the request
+    # failed with its exit reason (whatever stopped it), which only happens once it
+    # has exited.
+    :exit, {{_exit_reason, {:sys, :terminate, _}}, _} -> {:ok, :stopped}
+    :exit, {:timeout, _} -> {:ok, :stopping}
   end
 
   # The manager can exit between the lookup and the call, e.g. while the pool stops.
