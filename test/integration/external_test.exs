@@ -50,12 +50,14 @@ defmodule Supavisor.Integration.ExternalTest do
         {Plug.Cowboy, scheme: :http, plug: SupavisorWeb.Endpoint, options: [port: 0, ref: ref]}
       )
 
-      {:ok, endpoint: "http://127.0.0.1:#{:ranch.get_port(ref)}/sql"}
+      port = :ranch.get_port(ref)
+      {:ok, endpoint: "http://127.0.0.1:#{port}/sql", ws_proxy: "127.0.0.1:#{port}/v2/"}
     end
 
     @tag runtime: "node", mode: "transaction"
     test "Node", ctx do
-      assert_run(ctx, ~w[neon_http/index.js], env: [{"HTTP_SQL_ENDPOINT", ctx.endpoint}])
+      env = [{"HTTP_SQL_ENDPOINT", ctx.endpoint}, {"HTTP_SQL_WS_PROXY", ctx.ws_proxy}]
+      assert_run(ctx, ~w[neon_http/index.js], env: env)
     end
   end
 
