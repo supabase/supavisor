@@ -39,8 +39,10 @@ defmodule Supavisor.JWT.SharedSecretTest do
       for exp <- ["never", nil, true, [1]] do
         token = Token.gen!(%{"role" => "test", "exp" => exp}, @secret)
 
-        assert {:error, [message: "Invalid token", claim: "exp", claim_val: ^exp]} =
+        assert {:error, [message: "Invalid token", claim: "exp", claim_val: val]} =
                  SharedSecret.verify(token, @secret)
+
+        assert val == json_decoded(exp)
       end
     end
 
@@ -61,4 +63,8 @@ defmodule Supavisor.JWT.SharedSecretTest do
       assert {:error, :token_not_a_string} = SharedSecret.verify(123, @secret)
     end
   end
+
+  # Joken's JSON codec may decode a JSON `null` as `:null` rather than `nil`.
+  defp json_decoded(nil), do: :null
+  defp json_decoded(value), do: value
 end

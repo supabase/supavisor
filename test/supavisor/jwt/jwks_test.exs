@@ -82,8 +82,10 @@ defmodule Supavisor.JWT.JWKSTest do
       for bad <- [[aud(), 123], [aud(), nil], [123, aud()]] do
         token = sign_token(pem, %{default_claims() | "aud" => bad})
 
-        assert {:error, [message: "Invalid token", claim: "aud", claim_val: ^bad]} =
+        assert {:error, [message: "Invalid token", claim: "aud", claim_val: val]} =
                  JWKS.verify(token, default_config())
+
+        assert val == json_decoded(bad)
       end
     end
 
@@ -101,8 +103,10 @@ defmodule Supavisor.JWT.JWKSTest do
       for aud <- [aud(), [aud()], [nil]] do
         token = sign_token(pem, %{default_claims() | "aud" => aud})
 
-        assert {:error, [message: "Invalid token", claim: "aud", claim_val: ^aud]} =
+        assert {:error, [message: "Invalid token", claim: "aud", claim_val: val]} =
                  JWKS.verify(token, config)
+
+        assert val == json_decoded(aud)
       end
     end
 
@@ -188,4 +192,9 @@ defmodule Supavisor.JWT.JWKSTest do
       assert {:error, :signature_error} = JWKS.verify(token, default_config())
     end
   end
+
+  # Joken's JSON codec may decode a JSON `null` as `:null` rather than `nil`.
+  defp json_decoded(nil), do: :null
+  defp json_decoded(list) when is_list(list), do: Enum.map(list, &json_decoded/1)
+  defp json_decoded(value), do: value
 end
