@@ -8,6 +8,7 @@ defmodule Supavisor.OpsTest do
   import Supavisor.Asserts, only: [assert_eventually: 1, assert_eventually: 3]
 
   alias Supavisor.Ops
+  alias Supavisor.Support.Cluster
 
   @tenant "ops_test_tenant"
   @secret %Supavisor.Secrets.PasswordSecrets{user: "postgres", password: "postgres"}
@@ -243,6 +244,31 @@ defmodule Supavisor.OpsTest do
       assert_eventually(10, 1_000, fn ->
         not Process.alive?(sup) and Ops.list_pools_local(@tenant) == []
       end)
+    end
+  end
+
+  describe "restart_node/1" do
+    test "returns :not_found for a node that is not in the cluster" do
+      log =
+        capture_log([level: :warning], fn ->
+          assert {:error, :not_found} = Ops.restart_node("no_such_node")
+        end)
+
+      assert log =~ "Restart node no_such_node: not_found"
+    end
+
+    @tag cluster: true
+    test "returns :ambiguous when several nodes share the host" do
+      {:ok, _peer, peer_node} = Cluster.start_node()
+      true = Node.connect(peer_node)
+
+      log =
+        capture_log([level: :warning], fn ->
+          assert {:error, :ambiguous} = Ops.restart_node("127.0.0.1")
+        end)
+
+      assert log =~ "Restart node 127.0.0.1: ambiguous"
+      assert peer_node in Node.list()
     end
   end
 end
