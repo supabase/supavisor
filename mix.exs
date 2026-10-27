@@ -82,8 +82,8 @@ defmodule Supavisor.MixProject do
       # auth
       {:tesla, "~> 1.21"},
       {:mint, "~> 1.9.3"},
-      {:joken, "~> 2.6.0"},
-      {:joken_jwks, "~> 1.7"},
+      {:joken, "~> 2.7.0"},
+      {:joken_jwks, "~> 1.8"},
       {:cloak_ecto, "~> 1.3.0"},
 
       # Linting
