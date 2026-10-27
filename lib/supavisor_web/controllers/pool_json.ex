@@ -1,6 +1,57 @@
 defmodule SupavisorWeb.PoolJSON do
   require Supavisor
 
+  alias SupavisorWeb.PoolPid
+
+  @doc """
+  Renders a tenant's pools. Node errors are reported as `"unreachable"`; the actual
+  reason is only logged.
+  """
+  def index(%{result: %{pools: pools, errors: errors}}) do
+    %{
+      pools: Enum.map(pools, &pool/1),
+      errors: Map.new(errors, fn {node, _reason} -> {to_string(node), "unreachable"} end)
+    }
+  end
+
+  def error(%{error: error}), do: %{error: error}
+
+  defp pool(pool) do
+    %{
+      id: id(pool.id),
+      pid: PoolPid.encode(pool.pid),
+      pid_label: pool.pid_label,
+      status: pool.status,
+      node: to_string(pool.node),
+      db_host: pool.db_host,
+      db_port: pool.db_port,
+      clients: pool.clients,
+      db_connections: pool.db_connections
+    }
+  end
+
+  defp id(
+         Supavisor.id(
+           type: type,
+           tenant: tenant,
+           user: user,
+           mode: mode,
+           db: db,
+           search_path: search_path,
+           upstream_tls: upstream_tls
+         )
+       ) do
+    %{
+      type: type,
+      tenant: tenant,
+      user: user,
+      mode: mode,
+      db: db,
+      search_path: search_path,
+      upstream_tls: upstream_tls
+    }
+  end
+
   @doc """
   Renders the pools being moved by `Supavisor.rebalance/1`.
   """

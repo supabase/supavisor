@@ -19,4 +19,7 @@ defmodule Supavisor.Errors.DuplicatePreparedStatementError do
   def postgres_error(error) do
     Supavisor.Error.protocol_error("FATAL", "42P05", message(error))
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

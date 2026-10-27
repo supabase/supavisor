@@ -32,6 +32,11 @@ This document provides a categorized list of all environment variables used in S
 | `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                               | -                         | No       |
 | `GLOBAL_DOWNSTREAM_CERT_PATH` | Downstream certificate path                                | -                         | No       |
 | `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                                | -                         | No       |
+| `DOWNSTREAM_V2_CERT_PATH`     | Downstream v2 RSA certificate path                         | -                         | No       |
+| `DOWNSTREAM_V2_KEY_PATH`      | Downstream v2 RSA private key path                         | -                         | No       |
+| `DOWNSTREAM_V2_ECDSA_CERT_PATH` | Downstream v2 ECDSA certificate path                    | -                         | No       |
+| `DOWNSTREAM_V2_ECDSA_KEY_PATH` | Downstream v2 ECDSA private key path                     | -                         | No       |
+| `DOWNSTREAM_V2_SNI_HOSTNAMES` | Comma-separated list of SNI hostnames served the v2 certificates. Other clients, including those that send no SNI, get the default certificates. | - | No       |
 | `SESSION_PROXY_PORTS`         | Comma-separated list of ports for session proxy shards     | `12100,12101,12102,12103` | No       |
 | `TRANSACTION_PROXY_PORTS`     | Comma-separated list of ports for transaction proxy shards | `12104,12105,12106,12107` | No       |
 
@@ -41,6 +46,8 @@ This document provides a categorized list of all environment variables used in S
 | ----------------------------------- | ------------------------------------------------------------ | ------------- | -------- |
 | `NAMED_PREPARED_STATEMENTS_ENABLED` | Enable named prepared statements feature (true, false, 1, 0) | `false`       | No       |
 | `APP_NAME_METRIC_ENABLED`           | Add client `app_name` label to connection metrics (true, false, 1, 0) | `false` | No       |
+| `CHECK_SIMPLE_QUERY_PREPARE_ENABLED` | Reject `PREPARE`/`EXECUTE`/`DEALLOCATE` sent over the simple query protocol in transaction mode. Parses every simple query, so it adds latency proportional to query size (true, false, 1, 0) | `false` | No       |
+| `CLEARTEXT_AUTH_OVER_TLS_ENABLED`   | Use cleartext password instead of SCRAM authentication for TLS clients (true, false, 1, 0) | `false` | No       |
 
 ---
 

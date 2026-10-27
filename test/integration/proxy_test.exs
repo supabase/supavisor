@@ -525,6 +525,125 @@ defmodule Supavisor.Integration.ProxyTest do
     end
   end
 
+  describe "connection request metric" do
+    @request_event [:supavisor, :client, :connection_request, :stop]
+
+    setup do
+      test_pid = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, :connection_request, ref}
+      app_name = "connreq-#{System.unique_integer([:positive])}"
+
+      # The handler runs in the emitting ClientHandler, so its logger metadata tells whose
+      # request this is. Only this test's connections (unique application_name) are forwarded.
+      :telemetry.attach(
+        handler_id,
+        @request_event,
+        fn _event, measurements, metadata, _config ->
+          if Logger.metadata()[:app_name] == app_name,
+            do: send(test_pid, {ref, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      %{ref: ref, app_name: app_name, db_conf: Application.get_env(:supavisor, Supavisor.Repo)}
+    end
+
+    defp request_opts(ctx, port, tenant, password \\ nil) do
+      [
+        hostname: ctx.db_conf[:hostname],
+        port: port,
+        username: ctx.db_conf[:username] <> "." <> tenant,
+        database: ctx.db_conf[:database],
+        password: password || ctx.db_conf[:password],
+        parameters: [application_name: ctx.app_name]
+      ]
+    end
+
+    for {mode, port_key} <- [transaction: :proxy_port_transaction, session: :proxy_port_session] do
+      test "a successful #{mode} connection is recorded once, and disconnecting adds nothing",
+           ctx do
+        ref = ctx.ref
+
+        opts =
+          request_opts(
+            ctx,
+            Application.get_env(:supavisor, unquote(port_key)),
+            "proxy_tenant_ps_enabled"
+          )
+
+        assert {:ok, conn} = single_connection(opts)
+
+        assert_receive {^ref, %{duration: duration}, metadata}, 1_000
+        assert duration > 0
+
+        assert metadata == %{
+                 outcome: :ok,
+                 code: "",
+                 reason: "",
+                 fault: "",
+                 mode: unquote(mode)
+               }
+
+        GenServer.stop(conn)
+        refute_receive {^ref, _, _}, 300
+      end
+    end
+
+    test "a wrong password is recorded once as the user's fault", ctx do
+      ref = ctx.ref
+
+      opts =
+        request_opts(
+          ctx,
+          Application.get_env(:supavisor, :proxy_port_transaction),
+          "proxy_tenant_ps_enabled",
+          "definitely_wrong"
+        )
+
+      assert {:error, %Postgrex.Error{postgres: %{pg_code: "28P01"}}} = single_connection(opts)
+
+      assert_receive {^ref, _, metadata}, 1_000
+
+      assert metadata == %{
+               outcome: :error,
+               code: "EWRONGPASSWORD",
+               reason: "",
+               fault: :user,
+               mode: :transaction
+             }
+
+      refute_receive {^ref, _, _}, 300
+      Supavisor.CircuitBreaker.clear({"proxy_tenant_ps_enabled", "127.0.0.1"}, :auth_error)
+    end
+
+    test "exceeding the client limit is recorded once as a user limit", ctx do
+      ref = ctx.ref
+
+      opts =
+        request_opts(
+          ctx,
+          Application.get_env(:supavisor, :proxy_port_transaction),
+          "admission_tenant"
+        )
+
+      # admission_tenant allows 2 clients
+      assert {:ok, _} = single_connection(opts)
+      assert {:ok, _} = single_connection(opts)
+      assert {:error, %Postgrex.Error{}} = single_connection(opts)
+
+      assert_receive {^ref, _, %{outcome: :ok}}, 1_000
+      assert_receive {^ref, _, %{outcome: :ok}}, 1_000
+
+      assert_receive {^ref, _, %{outcome: :error, code: "EMAXCONN", fault: :user_limit}},
+                     1_000
+
+      refute_receive {^ref, _, _}, 300
+    end
+  end
+
   test "checkout timeout in transaction mode" do
     %{db_conf: db_conf} = setup_tenant_connections(List.first(@tenants))
 
@@ -607,7 +726,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
   test "change role password with cleartext auth retries against new secrets" do
     SSLHelper.setup_downstream_certs()
-    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager")
+    %{origin: origin, db_conf: db_conf} = setup_tenant_connections("is_manager_cleartext")
 
     on_exit(fn ->
       {:ok, origin} =
@@ -627,7 +746,7 @@ defmodule Supavisor.Integration.ProxyTest do
         hostname: db_conf[:hostname],
         port: Application.get_env(:supavisor, :proxy_port_transaction),
         database: db_conf[:database],
-        username: "dev_postgres_password_test.is_manager",
+        username: "dev_postgres_password_test.is_manager_cleartext",
         password: password,
         ssl: [verify: :verify_none]
       ]
@@ -726,6 +845,8 @@ defmodule Supavisor.Integration.ProxyTest do
       username: db_conf[:username],
       pool_size: 1
     ]
+
+    opts = opts ++ Keyword.take(db_conf, [:parameters])
 
     with {:error, {error, _}} <- start_supervised({SingleConnection, opts}) do
       {:error, error}

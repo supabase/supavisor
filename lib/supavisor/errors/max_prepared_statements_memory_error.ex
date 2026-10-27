@@ -14,4 +14,7 @@ defmodule Supavisor.Errors.MaxPreparedStatementsMemoryError do
   def error_message(%{limit_mb: limit_mb}) do
     "max prepared statements memory limit reached. Limit: #{limit_mb}MB per connection"
   end
+
+  @impl Supavisor.Error
+  def fault(_), do: :user
 end

@@ -64,6 +64,11 @@ defmodule Supavisor.Tenants do
     Tenant |> Repo.get_by(external_id: external_id) |> Repo.preload(:users)
   end
 
+  @spec tenant_exists?(String.t()) :: boolean()
+  def tenant_exists?(external_id) do
+    Tenant |> where(external_id: ^external_id) |> Repo.exists?()
+  end
+
   @spec get_cluster_by_alias(String.t()) :: Cluster.t() | nil
   def get_cluster_by_alias(alias) do
     Cluster |> Repo.get_by(alias: alias) |> Repo.preload(:cluster_tenants)

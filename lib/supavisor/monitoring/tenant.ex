@@ -41,6 +41,34 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
       buckets: [1, 5, 10, 100, 500, 1_000, 2_500, 5_000, 10_000, 15_000]
   end
 
+  defmodule ConnectionRequestBuckets do
+    @moduledoc false
+    use Peep.Buckets.Custom,
+      buckets: [
+        1,
+        2,
+        5,
+        10,
+        20,
+        25,
+        50,
+        100,
+        200,
+        250,
+        500,
+        1_000,
+        2_000,
+        2_500,
+        5_000,
+        10_000,
+        15_000,
+        20_000,
+        30_000,
+        60_000,
+        120_000
+      ]
+  end
+
   defmodule ClientConnectionLifetimeBuckets do
     @moduledoc false
 
@@ -134,6 +162,18 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
           unit: {:native, :millisecond},
           reporter_options: [
             peep_bucket_calculator: Buckets
+          ]
+        ),
+        distribution(
+          [:supavisor, :client, :connection_request, :duration],
+          event_name: [:supavisor, :client, :connection_request, :stop],
+          measurement: :duration,
+          description:
+            "Duration from the TCP connection until a client connection request succeeded or failed, tagged with the outcome and who was at fault.",
+          tags: [:outcome, :code, :reason, :fault, :mode],
+          unit: {:native, :millisecond},
+          reporter_options: [
+            peep_bucket_calculator: ConnectionRequestBuckets
           ]
         ),
         sum(
