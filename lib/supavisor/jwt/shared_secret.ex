@@ -51,9 +51,10 @@ defmodule Supavisor.JWT.SharedSecret do
   end
 
   @doc """
-  Verifies `token` against `secret`. Only the token's header is read here, to
-  build the signer from its `typ`/`alg`; the structural checks every verifier
-  needs (map header with an `alg`, map payload) are done once in `Supavisor.JWT`.
+  Verifies `token` against `secret`
+
+  The structural checks every verifier needs (map header with an `alg`, map payload)
+  are done once in `Supavisor.JWT`.
   """
   @spec verify(String.t(), String.t()) :: {:ok, map()} | {:error, any()}
   def verify(token, secret) when is_binary(token) do

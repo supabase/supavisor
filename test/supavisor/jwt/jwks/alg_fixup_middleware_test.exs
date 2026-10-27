@@ -1,7 +1,7 @@
-defmodule Supavisor.JWT.JWKS.AlgFixupTest do
+defmodule Supavisor.JWT.JWKS.AlgFixupMiddlewareTest do
   use ExUnit.Case, async: true
 
-  alias Supavisor.JWT.JWKS.AlgFixup
+  alias Supavisor.JWT.JWKS.AlgFixupMiddleware
 
   @rsa_key %{"kty" => "RSA", "use" => "sig", "kid" => "rsa-1", "n" => "bW9kdWx1cw", "e" => "AQAB"}
   @ec_key %{
@@ -14,10 +14,10 @@ defmodule Supavisor.JWT.JWKS.AlgFixupTest do
     "y" => "eQ"
   }
 
-  # `AlgFixup.call/3` runs the rest of the middleware stack with `Tesla.run/2`
+  # `AlgFixupMiddleware.call/3` runs the rest of the middleware stack with `Tesla.run/2`
   # and fixes the response body it gets back. An empty stack returns the env
   # unchanged, so seeding `body` stands in for the adapter's response.
-  defp call_with_body(body), do: AlgFixup.call(%Tesla.Env{body: body}, [], [])
+  defp call_with_body(body), do: AlgFixupMiddleware.call(%Tesla.Env{body: body}, [], [])
 
   test "adds alg to an RSA key without one, in a raw JSON body, returning a decoded map" do
     body = JSON.encode!(%{"keys" => [@rsa_key, @ec_key]})
@@ -50,6 +50,6 @@ defmodule Supavisor.JWT.JWKS.AlgFixupTest do
   test "propagates a failing request untouched" do
     next = [{:fn, fn _env -> {:error, :econnrefused} end}]
 
-    assert {:error, :econnrefused} = AlgFixup.call(%Tesla.Env{}, next, [])
+    assert {:error, :econnrefused} = AlgFixupMiddleware.call(%Tesla.Env{}, next, [])
   end
 end

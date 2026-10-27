@@ -3,7 +3,20 @@ defmodule SupavisorWeb.TenantControllerTest do
 
   import Supavisor.TenantsFixtures
   import ExUnit.CaptureLog
-  import Supavisor.JWKSHelper
+
+  import Supavisor.Support.JWKSHelper,
+    only: [
+      aud: 0,
+      default_claims: 0,
+      default_config: 0,
+      generate_rsa_keypair: 0,
+      issuer: 0,
+      sign_token: 2,
+      start_jwks_auth: 2,
+      sub: 0
+    ]
+
+  import Supavisor.Support.JWTAuthHelper, only: [attach_jwt_auth_telemetry_handler: 0]
 
   alias Supavisor.JWT.SharedSecret.Token
   alias Supavisor.Tenants.Tenant
@@ -585,27 +598,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
   end
 
-  # AWS-identity JWKS auth is a second, additive path on the `:api` pipeline
-  describe "AWS-identity (JWKS) auth on /api" do
-    def handle_jwt_auth_event(event, measurements, meta, {pid, ref}) do
-      send(pid, {ref, event, measurements, meta})
-    end
-
-    defp attach_jwt_auth_handler do
-      ref = make_ref()
-
-      :telemetry.attach_many(
-        {ref, :jwt_auth},
-        [[:supavisor, :jwt_auth, :ok], [:supavisor, :jwt_auth, :rejected]],
-        &__MODULE__.handle_jwt_auth_event/4,
-        {self(), ref}
-      )
-
-      on_exit(fn -> :telemetry.detach({ref, :jwt_auth}) end)
-
-      ref
-    end
-
+  describe "JWKS auth on /api" do
     setup do
       generate_rsa_keypair()
     end
@@ -614,7 +607,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       sign_token(pem, Map.merge(default_claims(), overrides))
     end
 
-    test "is disabled by default: an AWS-identity token gets 403 with no api_jwks_config",
+    test "is disabled by default: a JWKS token gets 403 with no api_jwks_config",
          %{conn: conn, pem: pem} do
       assert Application.get_env(:supavisor, :api_jwks_config) == nil
 
@@ -696,9 +689,10 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
 
     test "the existing HMAC token still works unchanged once api_jwks_config is set", %{
-      conn: conn
+      conn: conn,
+      public_jwk: public_jwk
     } do
-      put_jwks_config(%{trusted_issuer: issuer(), allowed_subs: [], expected_aud: nil})
+      start_jwks_auth(default_config(), public_jwk)
 
       # `conn` already carries the standard "dev" HMAC bearer token from the
       # top-level setup — unaffected by api_jwks_config being set.
@@ -709,7 +703,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
 
     test "emits jwt_auth ok with method :hmac for a valid HMAC token", %{conn: conn} do
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       assert get(conn, ~p"/api/tenants/non_existing_tenant_id").status == 404
 
@@ -719,7 +713,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
     end
 
-    test "emits jwt_auth ok with method :jwks for a valid AWS-identity token", %{
+    test "emits jwt_auth ok with method :jwks for a valid JWKS token", %{
       conn: conn,
       pem: pem,
       public_jwk: public_jwk
@@ -729,7 +723,7 @@ defmodule SupavisorWeb.TenantControllerTest do
         public_jwk
       )
 
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       conn =
         conn
@@ -746,7 +740,7 @@ defmodule SupavisorWeb.TenantControllerTest do
 
     test "emits jwt_auth rejected with :unknown method when there is no authorization header",
          %{conn: conn} do
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       conn =
         conn
@@ -766,7 +760,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
 
     test "a non-Bearer authorization header is a 403, not a crash", %{conn: conn} do
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       conn =
         conn
@@ -780,7 +774,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     end
 
     test "a repeated authorization header is a 403, not a crash", %{conn: conn} do
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       [{"authorization", bearer}] =
         Enum.filter(conn.req_headers, &(elem(&1, 0) == "authorization"))
@@ -798,7 +792,7 @@ defmodule SupavisorWeb.TenantControllerTest do
            conn: conn
          } do
       [blocked_token | _] = Application.fetch_env!(:supavisor, :api_blocklist)
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       conn =
         conn
@@ -816,7 +810,7 @@ defmodule SupavisorWeb.TenantControllerTest do
     test "emits jwt_auth rejected :signature_error for an HMAC token with a wrong secret", %{
       blocked_conn: wrong_secret_conn
     } do
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       assert get(wrong_secret_conn, ~p"/api/tenants/non_existing_tenant_id").status == 403
 
@@ -826,7 +820,7 @@ defmodule SupavisorWeb.TenantControllerTest do
       refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
     end
 
-    test "emits jwt_auth rejected :token_expired for an expired AWS-identity token", %{
+    test "emits jwt_auth rejected :token_expired for an expired JWKS token", %{
       conn: conn,
       pem: pem,
       public_jwk: public_jwk
@@ -836,7 +830,7 @@ defmodule SupavisorWeb.TenantControllerTest do
         public_jwk
       )
 
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
       expired = jwks_token(pem, %{"exp" => Joken.current_time() - 60})
 
       conn =
@@ -866,7 +860,7 @@ defmodule SupavisorWeb.TenantControllerTest do
         public_jwk
       )
 
-      ref = attach_jwt_auth_handler()
+      ref = attach_jwt_auth_telemetry_handler()
 
       conn =
         conn

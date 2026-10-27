@@ -4,7 +4,19 @@ defmodule Supavisor.JWT.JWKSTest do
   # must not run concurrently with other tests touching the same state.
   use ExUnit.Case, async: false
 
-  import Supavisor.JWKSHelper
+  import Supavisor.Support.JWKSHelper,
+    only: [
+      aud: 0,
+      default_claims: 0,
+      default_config: 0,
+      ec_kid: 0,
+      generate_ec_keypair: 0,
+      generate_rsa_keypair: 0,
+      sign_token: 2,
+      sign_token: 3,
+      start_jwks_auth: 2,
+      sub: 0
+    ]
 
   alias Supavisor.JWT.JWKS
 
@@ -29,20 +41,24 @@ defmodule Supavisor.JWT.JWKSTest do
     test "rejects an untrusted issuer", %{pem: pem} do
       token = sign_token(pem, %{default_claims() | "iss" => "https://not-trusted.example"})
 
-      assert {:error, :untrusted_issuer} = JWKS.verify(token, default_config())
+      assert {:error,
+              [message: "Invalid token", claim: "iss", claim_val: "https://not-trusted.example"]} =
+               JWKS.verify(token, default_config())
     end
 
     test "rejects a subject not in the allow-list", %{pem: pem} do
-      token =
-        sign_token(pem, %{default_claims() | "sub" => "arn:aws:iam::123456789012:role/other"})
+      other = "arn:aws:iam::123456789012:role/other"
+      token = sign_token(pem, %{default_claims() | "sub" => other})
 
-      assert {:error, :subject_not_allowed} = JWKS.verify(token, default_config())
+      assert {:error, [message: "Invalid token", claim: "sub", claim_val: ^other]} =
+               JWKS.verify(token, default_config())
     end
 
     test "rejects a mismatched audience", %{pem: pem} do
       token = sign_token(pem, %{default_claims() | "aud" => "someone-else"})
 
-      assert {:error, :unexpected_audience} = JWKS.verify(token, default_config())
+      assert {:error, [message: "Invalid token", claim: "aud", claim_val: "someone-else"]} =
+               JWKS.verify(token, default_config())
     end
 
     test "accepts an array-valued aud that contains the expected audience", %{pem: pem} do
@@ -57,21 +73,47 @@ defmodule Supavisor.JWT.JWKSTest do
       for bad <- [["someone-else"], ["someone-else", "another"], []] do
         token = sign_token(pem, %{default_claims() | "aud" => bad})
 
-        assert {:error, :unexpected_audience} = JWKS.verify(token, default_config())
+        assert {:error, [message: "Invalid token", claim: "aud", claim_val: ^bad]} =
+                 JWKS.verify(token, default_config())
       end
     end
 
     test "rejects an aud that is neither a string nor a list of strings", %{pem: pem} do
-      token = sign_token(pem, %{default_claims() | "aud" => %{"x" => aud()}})
+      bad = %{"x" => aud()}
+      token = sign_token(pem, %{default_claims() | "aud" => bad})
 
-      assert {:error, :unexpected_audience} = JWKS.verify(token, default_config())
+      assert {:error, [message: "Invalid token", claim: "aud", claim_val: ^bad]} =
+               JWKS.verify(token, default_config())
     end
 
     test "rejects any token when expected_aud isn't configured", %{pem: pem} do
-      token = sign_token(pem, default_claims())
       config = %{default_config() | expected_aud: nil}
 
-      assert {:error, :expected_aud_not_configured} = JWKS.verify(token, config)
+      for aud <- [aud(), [aud()], [nil]] do
+        token = sign_token(pem, %{default_claims() | "aud" => aud})
+
+        assert {:error, [message: "Invalid token", claim: "aud", claim_val: ^aud]} =
+                 JWKS.verify(token, config)
+      end
+    end
+
+    for claim <- ["exp", "iss", "sub", "aud"] do
+      test "rejects a token without #{claim}, which Joken alone would not validate",
+           %{pem: pem} do
+        token = sign_token(pem, Map.delete(default_claims(), unquote(claim)))
+
+        assert {:error, [message: "Invalid token", missing_claims: [unquote(claim)]]} =
+                 JWKS.verify(token, default_config())
+      end
+    end
+
+    test "rejects a non-numeric exp or nbf", %{pem: pem} do
+      for claim <- ["exp", "nbf"] do
+        token = sign_token(pem, Map.put(default_claims(), claim, "9999999999"))
+
+        assert {:error, [message: "Invalid token", claim: ^claim, claim_val: "9999999999"]} =
+                 JWKS.verify(token, default_config())
+      end
     end
 
     test "rejects an expired token", %{pem: pem} do

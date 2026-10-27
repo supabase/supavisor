@@ -132,13 +132,13 @@ defmodule Supavisor.Application do
           PartitionSupervisor,
           child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
         },
-        Supavisor.Vault,
-        # will start only if the API_JWT_TRUSTED_ISSUER is set
-        {Supavisor.JWT.JWKS.Strategy, name: Supavisor.JWT.JWKS.Strategy},
-
-        # Start the Endpoint (http/https)
-        SupavisorWeb.Endpoint
-      ] ++ ranch_listeners
+        Supavisor.Vault
+      ] ++
+        jwks_children() ++
+        [
+          # Start the Endpoint (http/https)
+          SupavisorWeb.Endpoint
+        ] ++ ranch_listeners
 
     Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
 
@@ -193,6 +193,17 @@ defmodule Supavisor.Application do
       end
     ]
     |> Enum.reject(&is_nil/1)
+  end
+
+  @spec jwks_children() :: [Supervisor.child_spec() | {module(), keyword()}]
+  defp jwks_children do
+    case Application.get_env(:supavisor, :api_jwks_config) do
+      %{trusted_issuer: issuer} ->
+        [{Supavisor.JWT.JWKS.Strategy, name: Supavisor.JWT.JWKS.Strategy, trusted_issuer: issuer}]
+
+      _ ->
+        []
+    end
   end
 
   @spec build_shards([pos_integer()], atom()) :: term()

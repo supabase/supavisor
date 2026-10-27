@@ -5,7 +5,10 @@ defmodule Supavisor.PromEx.Plugins.JWTAuthTest do
 
   describe "event_metrics/1" do
     setup do
-      [%PromEx.MetricTypes.Event{metrics: metrics}] = JWTAuth.event_metrics([])
+      metrics =
+        JWTAuth.event_metrics([])
+        |> Enum.flat_map(fn %PromEx.MetricTypes.Event{metrics: metrics} -> metrics end)
+
       %{metrics: Map.new(metrics, &{&1.event_name, &1})}
     end
 
@@ -21,6 +24,19 @@ defmodule Supavisor.PromEx.Plugins.JWTAuthTest do
       assert metric.name == [:supavisor, :jwt_auth, :rejected]
       assert metric.tags == [:method, :pipeline, :reason]
       assert metric.description
+    end
+
+    test "exports counters for the JokenJwks fetch events", %{metrics: metrics} do
+      for {event, name} <- [
+            {[:joken_jwks, :default_strategy, :signers], [:supavisor, :jwks, :fetch, :ok]},
+            {[:joken_jwks, :default_strategy, :refetch], [:supavisor, :jwks, :refetch]},
+            {[:joken_jwks, :http_fetcher, :exception], [:supavisor, :jwks, :fetch, :exception]}
+          ] do
+        assert %Telemetry.Metrics.Counter{} = metric = metrics[event]
+        assert metric.name == name
+        assert metric.tags == []
+        assert metric.description
+      end
     end
   end
 end

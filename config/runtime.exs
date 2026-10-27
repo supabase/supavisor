@@ -226,10 +226,10 @@ if downstream_v2_configured? and
 end
 
 if config_env() != :test do
-  # AWS-identity (JWKS) auth for the /api pipeline, alongside API_JWT_SECRET
-  # — see Supavisor.JWT.JWKS. JWKS disabled if nil.
   api_jwks_config =
-    case System.get_env("API_JWT_TRUSTED_ISSUER", "") |> String.trim() do
+    case System.get_env("API_JWT_TRUSTED_ISSUER", "")
+         |> String.trim()
+         |> String.trim_trailing("/") do
       "" ->
         nil
 

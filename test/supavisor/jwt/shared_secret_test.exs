@@ -15,7 +15,7 @@ defmodule Supavisor.JWT.SharedSecretTest do
     end
 
     test "accepts every HMAC algorithm it advertises" do
-      for alg <- ["HS256", "HS384", "HS512"] do
+      for alg <- SharedSecret.algorithms() do
         token = Token.gen!(%{"role" => "test"}, Joken.Signer.create(alg, @secret))
         assert {:ok, %{"role" => "test"}} = SharedSecret.verify(token, @secret)
       end

@@ -6,11 +6,8 @@ defmodule Supavisor.JWT.JWKS do
   mechanism alongside the shared-secret path (`Supavisor.JWT.SharedSecret`),
   dispatched to by `Supavisor.JWT`.
 
-  Signature, `exp` and `nbf` are verified by Joken/`JokenJwks` (see `Token`
-  below).
-  `iss`/`sub`/`aud` are checked explicitly here against a caller-supplied
-  config. Nothing here is `/api`-specific — reusable by other pipelines
-  (e.g. `/metrics`) with their own config map.
+  Joken/`JokenJwks` (see `Token` below) verifies the signature and validates
+  `exp`, `nbf` and `iss`/`sub`/`aud` against a caller-supplied config.
   """
 
   defmodule Token do
@@ -18,57 +15,33 @@ defmodule Supavisor.JWT.JWKS do
     use Joken.Config
 
     add_hook(JokenJwks, strategy: Supavisor.JWT.JWKS.Strategy)
+    add_hook(Joken.Hooks.RequiredClaims, ["exp", "iss", "sub", "aud"])
 
-    # Only the time claims `exp` and `nbf` are enforced here — `iss`/`sub`/`aud`
-    # are checked explicitly against runtime config in `verify/2` below, since
-    # Joken's default validators only support a single, compile-time-fixed
-    # expected value. Joken validates the claims a token carries, so a token
-    # without `nbf` is still accepted.
+    # The validators get the `t:Supavisor.JWT.JWKS.config/0` passed as Joken's `context`.
     @impl true
-    def token_config, do: default_claims(skip: [:iss, :aud, :iat, :jti])
+    def token_config do
+      %{}
+      |> add_claim("exp", nil, &(is_number(&1) and &1 > current_time()))
+      |> add_claim("nbf", nil, &(is_number(&1) and current_time() >= &1))
+      |> add_claim("iss", nil, fn iss, _claims, config -> iss == config.trusted_issuer end)
+      |> add_claim("sub", nil, fn sub, _claims, config -> sub in config.allowed_subs end)
+      # RFC 7519 §4.1.3: `aud` is a string or an array of strings
+      |> add_claim("aud", nil, fn aud, _claims, config ->
+        is_binary(config.expected_aud) and config.expected_aud in List.wrap(aud)
+      end)
+    end
   end
 
   @type config :: %{
           trusted_issuer: String.t(),
           allowed_subs: [String.t()],
-          expected_aud: String.t() | nil
+          expected_aud: String.t()
         }
 
-  @spec verify(String.t(), config()) :: {:ok, map()} | {:error, atom()}
-  def verify(token, %{trusted_issuer: issuer, allowed_subs: subs, expected_aud: aud})
-      when is_binary(token) do
-    with {:ok, claims} <- Token.verify_and_validate(token),
-         {:ok, claims} <- require_claim_equals(claims, "iss", issuer, :untrusted_issuer),
-         {:ok, claims} <- require_claim_in(claims, "sub", subs, :subject_not_allowed),
-         :ok <- check_aud(claims["aud"], aud) do
-      {:ok, claims}
-    end
-  end
-
-  defp require_claim_equals(claims, key, expected, error) do
-    if claims[key] == expected do
-      {:ok, claims}
-    else
-      {:error, error}
-    end
-  end
-
-  defp require_claim_in(claims, key, allowed, error) do
-    if claims[key] in allowed do
-      {:ok, claims}
-    else
-      {:error, error}
-    end
-  end
-
-  defp check_aud(_claim_aud, nil), do: {:error, :expected_aud_not_configured}
-
-  # RFC 7519 §4.1.3: `aud` is a string or an array of strings
-  defp check_aud(claim_aud, expected_aud) do
-    if expected_aud in List.wrap(claim_aud) do
-      :ok
-    else
-      {:error, :unexpected_audience}
-    end
+  # A failed claim comes back as Joken's `[message: _, claim: key, claim_val: _]`;
+  # `Supavisor.JWT` logs and tags it.
+  @spec verify(String.t(), config()) :: {:ok, map()} | {:error, term()}
+  def verify(token, %{} = config) when is_binary(token) do
+    Token.verify_and_validate(token, Token.__default_signer__(), config)
   end
 end

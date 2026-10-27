@@ -1,4 +1,4 @@
-defmodule Supavisor.JWKSHelper do
+defmodule Supavisor.Support.JWKSHelper do
   @moduledoc """
   Test helpers for the JWKS path of `Supavisor.JWT`.
 
@@ -9,7 +9,8 @@ defmodule Supavisor.JWKSHelper do
   verification only the public JWKS entry.
 
   The RSA public key has no `"alg"`, like AWS's real JWKS (see
-  `Supavisor.JWT.JWKS.AlgFixup`); the EC key carries `"alg": "ES384"`, also like AWS.
+  `Supavisor.JWT.JWKS.AlgFixupMiddleware`); the EC key carries `"alg": "ES384"`,
+  also like AWS.
 
   `start_jwks_auth/2` starts a named singleton and mutates global state
   (`:api_jwks_config`, `Tesla.Mock`), so tests using it must be `async: false`.
@@ -22,16 +23,19 @@ defmodule Supavisor.JWKSHelper do
   @kid "test-kid"
   @ec_kid "test-ec-kid"
   @issuer "https://issuer.example.tokens.sts.global.api.aws"
+  @faulty_issuer "https://faulty-issuer.example.tokens.sts.global.api.aws"
+  @raising_issuer "https://raising-issuer.example.tokens.sts.global.api.aws"
   @sub "arn:aws:iam::123456789012:role/supavisor-api"
   @aud "supavisor-api"
 
   def issuer, do: @issuer
+  def faulty_issuer, do: @faulty_issuer
+  def raising_issuer, do: @raising_issuer
   def sub, do: @sub
   def aud, do: @aud
   def kid, do: @kid
   def ec_kid, do: @ec_kid
 
-  @doc "A fresh RSA keypair: `%{pem: private_pem, public_jwk: jwk_without_alg}`."
   def generate_rsa_keypair do
     jwk = JOSE.JWK.generate_key({:rsa, 2048})
     {_, pem} = JOSE.JWK.to_pem(jwk)
@@ -40,7 +44,6 @@ defmodule Supavisor.JWKSHelper do
     %{pem: pem, public_jwk: Map.put(public_jwk, "kid", @kid)}
   end
 
-  @doc "A fresh P-384 keypair: `%{pem: private_pem, public_jwk: jwk_with_alg}`."
   def generate_ec_keypair do
     jwk = JOSE.JWK.generate_key({:ec, :secp384r1})
     {_, pem} = JOSE.JWK.to_pem(jwk)
@@ -49,8 +52,8 @@ defmodule Supavisor.JWKSHelper do
     %{pem: pem, public_jwk: Map.merge(public_jwk, %{"kid" => @ec_kid, "alg" => "ES384"})}
   end
 
-  def default_config do
-    %{trusted_issuer: @issuer, allowed_subs: [@sub], expected_aud: @aud}
+  def default_config(issuer \\ @issuer) do
+    %{trusted_issuer: issuer, allowed_subs: [@sub], expected_aud: @aud}
   end
 
   def default_claims do
@@ -63,8 +66,9 @@ defmodule Supavisor.JWKSHelper do
   end
 
   @doc """
-  Signs `claims` with `pem`. `opts`: `:alg` (default `"RS256"`), `:kid` (default
-  the RSA test kid).
+  Signs `claims` with `pem`
+
+  `opts`: `:alg` (default `"RS256"`), `:kid` (default the RSA test kid).
   """
   def sign_token(pem, claims, opts \\ []) do
     alg = Keyword.get(opts, :alg, "RS256")
@@ -74,8 +78,7 @@ defmodule Supavisor.JWKSHelper do
     JWKS.Token.generate_and_sign!(claims, signer)
   end
 
-  @doc "Sets `:api_jwks_config` for the current test, restoring the previous value on exit."
-  def put_jwks_config(config) do
+  defp put_jwks_config(config) do
     previous = Application.get_env(:supavisor, :api_jwks_config)
     Application.put_env(:supavisor, :api_jwks_config, config)
     on_exit(fn -> Application.put_env(:supavisor, :api_jwks_config, previous) end)
@@ -83,8 +86,8 @@ defmodule Supavisor.JWKSHelper do
 
   @doc """
   Serves `public_jwk` (one JWK or a list) as the issuer's JWKS, sets `config` as
-  `:api_jwks_config` and starts the real `Supavisor.JWT.JWKS.Strategy` (it reads
-  the issuer from that config). Restores the previous config on exit.
+  `:api_jwks_config` (what `Supavisor.JWT.authorize/2` reads) and starts the real
+  `Supavisor.JWT.JWKS.Strategy` with it. Restores the previous config on exit.
   """
   def start_jwks_auth(config, public_jwks) do
     put_jwks_config(config)
@@ -93,7 +96,7 @@ defmodule Supavisor.JWKSHelper do
 
     # Raw JSON string + a real content-type header, not a pre-decoded map: a mock
     # handing back a decoded map would mask bugs in how `http_middlewares` interacts
-    # with Tesla's JSON middleware (see `Supavisor.JWT.JWKS.AlgFixup`).
+    # with Tesla's JSON middleware (see `Supavisor.JWT.JWKS.AlgFixupMiddleware`).
     Tesla.Mock.mock_global(fn
       %{method: :get, url: @issuer <> "/.well-known/jwks.json"} ->
         %Tesla.Env{
@@ -101,8 +104,20 @@ defmodule Supavisor.JWKSHelper do
           body: JSON.encode!(%{"keys" => keys}),
           headers: [{"content-type", "application/json"}]
         }
+
+      %{method: :get, url: @faulty_issuer <> "/.well-known/jwks.json"} ->
+        %Tesla.Env{
+          status: 500,
+          body: "Internal Server Error",
+          headers: [{"content-type", "text/plain"}]
+        }
+
+      %{method: :get, url: @raising_issuer <> "/.well-known/jwks.json"} ->
+        raise "jwks fetch failed"
     end)
 
-    start_supervised!({JWKS.Strategy, [first_fetch_sync: true, http_adapter: Tesla.Mock]})
+    start_supervised!(
+      {JWKS.Strategy, [trusted_issuer: config.trusted_issuer, http_adapter: Tesla.Mock]}
+    )
   end
 end

@@ -5,7 +5,22 @@ defmodule Supavisor.JWTTest do
 
   import ExUnit.CaptureLog
   import Plug.Conn
-  import Supavisor.JWKSHelper
+
+  import Supavisor.Support.JWKSHelper,
+    only: [
+      default_claims: 0,
+      default_config: 0,
+      ec_kid: 0,
+      generate_ec_keypair: 0,
+      generate_rsa_keypair: 0,
+      kid: 0,
+      sign_token: 2,
+      sign_token: 3,
+      start_jwks_auth: 2,
+      sub: 0
+    ]
+
+  import Supavisor.Support.JWTAuthHelper, only: [attach_jwt_auth_telemetry_handler: 0]
 
   alias Supavisor.JWT
   alias Supavisor.JWT.SharedSecret.Token
@@ -28,11 +43,12 @@ defmodule Supavisor.JWTTest do
       Application.delete_env(:supavisor, :jwt_test_blocklist)
     end)
 
-    %{ref: attach_jwt_auth_handler()}
+    %{ref: attach_jwt_auth_telemetry_handler()}
   end
 
+  # These steps run before the token's `alg` is read, so they behave the same whichever
+  # verifier the token is dispatched to; HMAC tokens are enough, except where noted.
   describe "bearer token handling" do
-    # TODO: separte for JWKS?
     test "returns the claims of a valid token" do
       assert {:ok, %{"role" => "test"}} = JWT.authorize(conn_with(hmac_token()), @opts)
     end
@@ -55,6 +71,14 @@ defmodule Supavisor.JWTTest do
 
       assert {:error, :invalid_authorization_header} = JWT.authorize(conn, @opts)
       assert_rejected(ref, :unknown, :api, :invalid_authorization_header)
+    end
+
+    test "blocklists a JWKS-style token too, before its alg selects a verifier", %{ref: ref} do
+      token = unsigned_token(%{"alg" => "RS256", "typ" => "JWT", "kid" => kid()})
+      Application.put_env(:supavisor, :jwt_test_blocklist, [token])
+
+      assert {:error, :token_blocklisted} = JWT.authorize(conn_with(token), @opts)
+      assert_rejected(ref, :unknown, :api, :token_blocklisted)
     end
 
     test "cleans the token: percent-encoding and whitespace are stripped" do
@@ -209,7 +233,11 @@ defmodule Supavisor.JWTTest do
 
     test "JWKS verification failures are tagged :jwks", %{ref: ref, pem: pem} do
       wrong_sub = sign_token(pem, %{default_claims() | "sub" => "arn:aws:iam::1:role/other"})
-      assert {:error, :subject_not_allowed} = JWT.authorize(conn_with(wrong_sub), @opts_jwks)
+      other = "arn:aws:iam::1:role/other"
+
+      assert {:error, [message: "Invalid token", claim: "sub", claim_val: ^other]} =
+               JWT.authorize(conn_with(wrong_sub), @opts_jwks)
+
       assert_rejected(ref, :jwks, :api, :subject_not_allowed)
 
       exp = Joken.current_time() - 60
@@ -221,7 +249,42 @@ defmodule Supavisor.JWTTest do
       assert_rejected(ref, :jwks, :api, :token_expired)
     end
 
-    test "a token that is not valid yet is rejected with a bounded :invalid_claim tag",
+    test "logs the claim and the offending value of a rejected iss, sub or aud", %{pem: pem} do
+      for {claim, value, tag} <- [
+            {"iss", "https://not-trusted.example", :untrusted_issuer},
+            {"sub", "arn:aws:iam::1:role/other", :subject_not_allowed},
+            {"aud", ["someone-else"], :unexpected_audience}
+          ] do
+        token = sign_token(pem, Map.put(default_claims(), claim, value))
+
+        log =
+          capture_log(fn ->
+            assert {:error, [message: _, claim: ^claim, claim_val: ^value]} =
+                     JWT.authorize(conn_with(token), @opts_jwks)
+          end)
+
+        assert log =~ "check_auth: rejected api GET /api/tenants/x"
+        assert log =~ ~s(claim: "#{claim}")
+        assert log =~ "claim_val: #{inspect(value)}"
+        refute log =~ token, "#{tag} rejection must not log the token"
+      end
+    end
+
+    test "logs a not-yet-valid token as :token_not_yet_valid with nbf vs now in ISO8601",
+         %{pem: pem} do
+      nbf = Joken.current_time() + 3_600
+      expected_nbf = nbf |> DateTime.from_unix!() |> DateTime.to_iso8601()
+      token = sign_token(pem, Map.put(default_claims(), "nbf", nbf))
+
+      log = capture_log(fn -> JWT.authorize(conn_with(token), @opts_jwks) end)
+
+      assert log =~ "token_not_yet_valid"
+      refute log =~ "token_expired"
+      assert log =~ ~s(nbf: "#{expected_nbf}")
+      assert log =~ ~r/now: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/
+    end
+
+    test "a token that is not valid yet is rejected with a bounded :token_not_yet_valid tag",
          %{ref: ref, pem: pem} do
       nbf = Joken.current_time() + 3_600
       token = sign_token(pem, Map.put(default_claims(), "nbf", nbf))
@@ -229,7 +292,17 @@ defmodule Supavisor.JWTTest do
       assert {:error, [message: "Invalid token", claim: "nbf", claim_val: ^nbf]} =
                JWT.authorize(conn_with(token), @opts_jwks)
 
-      assert_rejected(ref, :jwks, :api, :invalid_claim)
+      assert_rejected(ref, :jwks, :api, :token_not_yet_valid)
+    end
+
+    test "a token missing a required claim is rejected with the :missing_claims tag",
+         %{ref: ref, pem: pem} do
+      token = sign_token(pem, Map.delete(default_claims(), "exp"))
+
+      assert {:error, [message: "Invalid token", missing_claims: ["exp"]]} =
+               JWT.authorize(conn_with(token), @opts_jwks)
+
+      assert_rejected(ref, :jwks, :api, :missing_claims)
     end
 
     test "alg none is never accepted", %{ref: ref} do
@@ -248,25 +321,6 @@ defmodule Supavisor.JWTTest do
       assert {:error, :signature_error} = JWT.authorize(conn_with(forged), @opts_jwks)
       assert_rejected(ref, :hmac, :api, :signature_error)
     end
-  end
-
-  def handle_jwt_auth_event(event, measurements, meta, {pid, ref}) do
-    send(pid, {ref, event, measurements, meta})
-  end
-
-  defp attach_jwt_auth_handler do
-    ref = make_ref()
-
-    :telemetry.attach_many(
-      {ref, :jwt_auth},
-      [[:supavisor, :jwt_auth, :ok], [:supavisor, :jwt_auth, :rejected]],
-      &__MODULE__.handle_jwt_auth_event/4,
-      {self(), ref}
-    )
-
-    on_exit(fn -> :telemetry.detach({ref, :jwt_auth}) end)
-
-    ref
   end
 
   defp assert_rejected(ref, method, pipeline, reason) do

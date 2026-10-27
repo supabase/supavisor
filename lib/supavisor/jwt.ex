@@ -48,7 +48,6 @@ defmodule Supavisor.JWT do
   alias Supavisor.JWT.JWKS
   alias Supavisor.JWT.SharedSecret
 
-  # JWS `alg`s verified by `SharedSecret`; any other alg goes to `JWKS`.
   @hmac_algorithms SharedSecret.algorithms()
 
   @type method :: :hmac | :jwks | :unknown
@@ -68,17 +67,15 @@ defmodule Supavisor.JWT do
   @spec authorize(Plug.Conn.t(), opts()) :: {:ok, map()} | {:error, any()}
   def authorize(conn, opts) do
     pipeline = Keyword.fetch!(opts, :pipeline)
-    secret = Application.fetch_env!(:supavisor, Keyword.fetch!(opts, :secret))
-    blocklist = Application.fetch_env!(:supavisor, Keyword.fetch!(opts, :blocklist))
-    jwks_config = opts |> Keyword.get(:jwks) |> jwks_config()
+    secret = config!(opts, :secret)
+    blocklist = config!(opts, :blocklist)
+    jwks_config = config(opts, :jwks)
 
-    # Every step fails with `{:error, method, reason}`, `method` being the
-    # verifier the token claims (`:unknown` until its `alg` has been read).
     with {:ok, token} <- check_bearer(conn),
          :ok <- check_blocklist(token, blocklist),
          {:ok, method} <- check_header(token),
          :ok <- check_payload(token, method),
-         {:ok, claims} <- verify(method, token, secret, jwks_config) do
+         {:ok, claims} <- dispatch(method, token, secret, jwks_config) do
       :telemetry.execute([:supavisor, :jwt_auth, :ok], %{count: 1}, %{
         method: method,
         pipeline: pipeline
@@ -90,8 +87,14 @@ defmodule Supavisor.JWT do
     end
   end
 
-  defp jwks_config(nil), do: nil
-  defp jwks_config(key), do: Application.get_env(:supavisor, key)
+  defp config!(opts, key), do: Application.fetch_env!(:supavisor, Keyword.fetch!(opts, key))
+
+  defp config(opts, key) do
+    case Keyword.fetch(opts, key) do
+      {:ok, env_key} -> Application.get_env(:supavisor, env_key)
+      :error -> nil
+    end
+  end
 
   # Exactly one `Bearer <token>` header, cleaned once here (the blocklist needs
   # the cleaned form). Anything else — missing, non-Bearer or repeated header —
@@ -129,20 +132,17 @@ defmodule Supavisor.JWT do
     end
   end
 
-  defp verify(:hmac, token, secret, _jwks_config),
+  defp dispatch(:hmac, token, secret, _jwks_config),
     do: tag(:hmac, SharedSecret.verify(token, secret))
 
-  defp verify(:jwks, token, _secret, jwks_config) when is_map(jwks_config),
+  defp dispatch(:jwks, token, _secret, jwks_config) when is_map(jwks_config),
     do: tag(:jwks, JWKS.verify(token, jwks_config))
 
-  defp verify(:jwks, _token, _secret, _jwks_config), do: {:error, :jwks, :jwks_not_configured}
+  defp dispatch(:jwks, _token, _secret, _jwks_config), do: {:error, :jwks, :jwks_not_configured}
 
   defp tag(_method, {:ok, claims}), do: {:ok, claims}
   defp tag(method, {:error, reason}), do: {:error, method, reason}
 
-  # Logs *why* a request was rejected (never the token/secret itself) — without
-  # this, a failed request is a black box: no way to tell "no auth header" from
-  # "blocklisted" from "untrusted issuer" from a JWKS-fetch failure.
   defp reject(conn, pipeline, method, reason) do
     Logger.warning(
       "check_auth: rejected #{pipeline} #{conn.method} #{conn.request_path}: " <>
@@ -158,17 +158,25 @@ defmodule Supavisor.JWT do
     {:error, reason}
   end
 
-  # Bounded metric tag — never raw error terms or timestamps (label cardinality).
   defp reject_reason_metric(reason) when is_atom(reason), do: reason
   defp reject_reason_metric([{:message, _}, {:claim, "exp"} | _]), do: :token_expired
+  defp reject_reason_metric([{:message, _}, {:claim, "nbf"} | _]), do: :token_not_yet_valid
+  defp reject_reason_metric([{:message, _}, {:claim, "iss"} | _]), do: :untrusted_issuer
+  defp reject_reason_metric([{:message, _}, {:claim, "sub"} | _]), do: :subject_not_allowed
+  defp reject_reason_metric([{:message, _}, {:claim, "aud"} | _]), do: :unexpected_audience
+  defp reject_reason_metric([{:message, _}, {:missing_claims, _} | _]), do: :missing_claims
   defp reject_reason_metric([{:message, _} | _]), do: :invalid_claim
   defp reject_reason_metric(_other), do: :other
 
-  # Log detail: the tag plus the ISO8601 expiry vs now.
-  defp reject_reason_log(message: _, claim: "exp", claim_val: exp) when is_integer(exp) do
-    {:token_expired,
-     exp: exp |> DateTime.from_unix!() |> DateTime.to_iso8601(),
-     now: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()}
+  @time_claims %{"exp" => :exp, "nbf" => :nbf}
+
+  defp reject_reason_log([{:message, _}, {:claim, claim}, {:claim_val, val}] = reason)
+       when is_map_key(@time_claims, claim) and is_integer(val) do
+    {reject_reason_metric(reason),
+     [
+       {Map.fetch!(@time_claims, claim), val |> DateTime.from_unix!() |> DateTime.to_iso8601()},
+       {:now, DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()}
+     ]}
   end
 
   defp reject_reason_log(reason), do: reason

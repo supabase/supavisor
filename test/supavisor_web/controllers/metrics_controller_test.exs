@@ -1,5 +1,8 @@
 defmodule SupavisorWeb.MetricsControllerTest do
   use SupavisorWeb.ConnCase, async: false
+
+  import Supavisor.Support.JWTAuthHelper, only: [attach_jwt_auth_telemetry_handler: 0]
+
   alias Postgrex, as: P
   alias Supavisor.JWT.SharedSecret.Token
   alias Supavisor.Support.Cluster
@@ -31,27 +34,8 @@ defmodule SupavisorWeb.MetricsControllerTest do
     assert conn.status == 403
   end
 
-  def handle_jwt_auth_event(event, measurements, meta, {pid, ref}) do
-    send(pid, {ref, event, measurements, meta})
-  end
-
-  defp attach_jwt_auth_handler do
-    ref = make_ref()
-
-    :telemetry.attach_many(
-      {ref, :jwt_auth},
-      [[:supavisor, :jwt_auth, :ok], [:supavisor, :jwt_auth, :rejected]],
-      &__MODULE__.handle_jwt_auth_event/4,
-      {self(), ref}
-    )
-
-    on_exit(fn -> :telemetry.detach({ref, :jwt_auth}) end)
-
-    ref
-  end
-
   test "emits jwt_auth ok for a valid token on the metrics pipeline", %{conn: conn} do
-    ref = attach_jwt_auth_handler()
+    ref = attach_jwt_auth_telemetry_handler()
 
     assert conn |> auth() |> get(Routes.metrics_path(conn, :index)) |> Map.fetch!(:status) == 200
 
@@ -64,7 +48,7 @@ defmodule SupavisorWeb.MetricsControllerTest do
   test "emits jwt_auth rejected (method :unknown, no parsable alg) for an invalid token", %{
     conn: conn
   } do
-    ref = attach_jwt_auth_handler()
+    ref = attach_jwt_auth_telemetry_handler()
 
     assert conn
            |> auth("invalid")
@@ -78,10 +62,25 @@ defmodule SupavisorWeb.MetricsControllerTest do
     refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
   end
 
+  test "emits jwt_auth rejected (method :jwks) for an asymmetric token, /metrics being HMAC-only",
+       %{conn: conn} do
+    ref = attach_jwt_auth_telemetry_handler()
+    encode = &Base.url_encode64(JSON.encode!(&1), padding: false)
+    token = "#{encode.(%{"alg" => "RS256", "typ" => "JWT"})}.#{encode.(%{})}.#{encode.("sig")}"
+
+    assert conn |> auth(token) |> get(Routes.metrics_path(conn, :index)) |> Map.fetch!(:status) ==
+             403
+
+    assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                    %{method: :jwks, pipeline: :metrics, reason: :jwks_not_configured}}
+
+    refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+  end
+
   test "emits jwt_auth rejected :invalid_authorization_header without a token", %{
     conn: conn
   } do
-    ref = attach_jwt_auth_handler()
+    ref = attach_jwt_auth_telemetry_handler()
 
     assert get(conn, Routes.metrics_path(conn, :index)).status == 403
 
