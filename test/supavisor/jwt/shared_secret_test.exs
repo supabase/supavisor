@@ -35,6 +35,15 @@ defmodule Supavisor.JWT.SharedSecretTest do
                SharedSecret.verify(token, @secret)
     end
 
+    test "rejects a non-numeric exp, which would otherwise compare greater than any time" do
+      for exp <- ["never", nil, true, [1]] do
+        token = Token.gen!(%{"role" => "test", "exp" => exp}, @secret)
+
+        assert {:error, [message: "Invalid token", claim: "exp", claim_val: ^exp]} =
+                 SharedSecret.verify(token, @secret)
+      end
+    end
+
     test "rejects a token that isn't a JWT" do
       assert {:error, :expected_header_map} = SharedSecret.verify("not-a-jwt", @secret)
     end

@@ -42,7 +42,7 @@ defmodule Supavisor.JWT.SharedSecret do
     end
 
     defp add_claim_validator(claims, "exp") do
-      add_claim(claims, "exp", nil, &(&1 > current_time()))
+      add_claim(claims, "exp", nil, &(is_number(&1) and &1 > current_time()))
     end
 
     defp add_claim_validator(claims, claim_key, expected_val) do
