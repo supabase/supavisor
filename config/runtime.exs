@@ -226,26 +226,23 @@ if downstream_v2_configured? and
 end
 
 if config_env() != :test do
+  trusted_issuer =
+    "API_JWT_TRUSTED_ISSUER" |> System.get_env("") |> String.trim() |> String.trim_trailing("/")
+
   api_jwks_config =
-    case System.get_env("API_JWT_TRUSTED_ISSUER", "")
-         |> String.trim()
-         |> String.trim_trailing("/") do
-      "" ->
-        nil
+    if trusted_issuer != "" do
+      allowed_subs = System.get_env("API_JWT_ALLOWED_SUBS", "") |> String.split(",", trim: true)
+      expected_aud = System.get_env("API_JWT_EXPECTED_AUD")
 
-      trusted_issuer ->
-        allowed_subs = System.get_env("API_JWT_ALLOWED_SUBS", "") |> String.split(",", trim: true)
-        expected_aud = System.get_env("API_JWT_EXPECTED_AUD")
+      if allowed_subs == [] or expected_aud == nil do
+        raise "API_JWT_ALLOWED_SUBS and API_JWT_EXPECTED_AUD  must be set"
+      end
 
-        if allowed_subs == [] or expected_aud == nil do
-          raise "API_JWT_ALLOWED_SUBS and API_JWT_EXPECTED_AUD  must be set"
-        end
-
-        %{
-          trusted_issuer: trusted_issuer,
-          allowed_subs: allowed_subs,
-          expected_aud: expected_aud
-        }
+      %{
+        trusted_issuer: trusted_issuer,
+        allowed_subs: allowed_subs,
+        expected_aud: expected_aud
+      }
     end
 
   config :supavisor,
