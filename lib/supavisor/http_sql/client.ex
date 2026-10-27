@@ -265,7 +265,7 @@ defmodule Supavisor.HttpSql.Client do
     decode_fields(count - 1, rest, [field | acc])
   end
 
-  # Appends a DataRow's `count` values to `rows` as a JSON array, starting with `open`, then
+  # Appends a DataRow's `count` values to `rows` as a JSON array, starting with `prefix`, then
   # goes on with the next message.
   defp encode_values(<<rest::binary>>, 0, prefix, rows, start, budget, state) do
     # The last value already closed the row, unless it had no columns.
