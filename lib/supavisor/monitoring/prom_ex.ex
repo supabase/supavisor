@@ -18,6 +18,7 @@ defmodule Supavisor.Monitoring.PromEx do
   alias Supavisor.PromEx.Plugins.{
     CGroup,
     Cluster,
+    JWTAuth,
     LoggerLines,
     MessageQueue,
     NetStat,
@@ -85,6 +86,7 @@ defmodule Supavisor.Monitoring.PromEx do
       {Cluster, poll_rate: poll_rate},
       {Scheduler, poll_rate: poll_rate},
       {MessageQueue, poll_rate: poll_rate},
+      JWTAuth,
       LoggerLines
     ]
   end

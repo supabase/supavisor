@@ -4,6 +4,11 @@ defmodule SupavisorWeb.PoolControllerTest do
   require Supavisor
 
   import Supavisor.TenantsFixtures
+  import Supavisor.Asserts, only: [assert_eventually: 3]
+
+  alias SupavisorWeb.PoolPid
+
+  alias Supavisor.JWT.SharedSecret.Token
 
   @tenant "pool_controller_tenant"
   @secret %Supavisor.Secrets.PasswordSecrets{user: "postgres", password: "postgres"}
@@ -61,7 +66,7 @@ defmodule SupavisorWeb.PoolControllerTest do
       assert pool.id.user == "postgres"
       assert pool.id.mode == "transaction"
       assert pool.id.db == "supavisor_test"
-      assert pool.pid |> Base.url_decode64!(padding: false) |> :erlang.binary_to_term() == sup
+      assert PoolPid.decode(pool.pid) == {:ok, sup}
       assert pool.pid_label == inspect(sup)
       assert pool.status == "active"
       assert pool.node == to_string(node())
@@ -106,6 +111,160 @@ defmodule SupavisorWeb.PoolControllerTest do
     end
   end
 
+  describe "DELETE /api/tenants/:external_id/pools" do
+    setup %{conn: conn} do
+      tenant_fixture(%{external_id: @tenant})
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> gen_token())
+        |> put_req_header("content-type", "application/json")
+
+      {:ok, conn: conn}
+    end
+
+    test "stops the pool the pid identifies", %{conn: conn} do
+      id = start_pool!(pool_id(mode: :transaction))
+      other = start_pool!(pool_id(mode: :session))
+      sup = Supavisor.get_global_sup(id)
+      other_sup = Supavisor.get_global_sup(other)
+      assert is_pid(sup) and is_pid(other_sup)
+
+      assert conn
+             |> delete(~p"/api/tenants/#{@tenant}/pools", stop_body(sup, timeout: 5_000))
+             |> response(204)
+
+      refute Process.alive?(sup)
+      assert Supavisor.get_global_sup(id) == nil
+      # The same process: the other pool was neither stopped nor restarted.
+      assert Process.alive?(other_sup)
+      assert Supavisor.get_global_sup(other) == other_sup
+    end
+
+    test "accepts the pid returned by the pool list", %{conn: conn} do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+
+      %{"pools" => [%{"pid" => pid}]} =
+        conn |> get(~p"/api/tenants/#{@tenant}/pools") |> json_response(200)
+
+      assert conn
+             |> delete(~p"/api/tenants/#{@tenant}/pools", Jason.encode!(%{pid: pid}))
+             |> response(204)
+
+      refute Process.alive?(sup)
+    end
+
+    test "returns 202 when the pool is still shutting down at the timeout", %{conn: conn} do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+      # The Terminator's call to the suspended poolboy blocks until the supervisor
+      # kills it after its 5s shutdown timeout.
+      :sys.suspend(Supavisor.get_local_pool(id))
+
+      assert conn
+             |> delete(~p"/api/tenants/#{@tenant}/pools", stop_body(sup, timeout: 100))
+             |> response(202) == ""
+
+      assert_eventually(10, 1_000, fn -> not Process.alive?(sup) end)
+    end
+
+    test "returns 404 for a pool that is not running", %{conn: conn} do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      :ok = Supervisor.stop(sup)
+      # The registry drops the pool shortly after it exits.
+      assert_eventually(10, 100, fn -> Supavisor.Ops.list_pools_local(@tenant) == [] end)
+
+      assert %{"error" => "not found"} =
+               conn
+               |> delete(~p"/api/tenants/#{@tenant}/pools", stop_body(sup))
+               |> json_response(404)
+    end
+
+    test "returns 404 for another tenant's pool without stopping it", %{conn: conn} do
+      other_tenant = "pool_controller_other_tenant"
+      tenant_fixture(%{external_id: other_tenant})
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+
+      assert %{"error" => "not found"} =
+               conn
+               |> delete(~p"/api/tenants/#{other_tenant}/pools", stop_body(sup))
+               |> json_response(404)
+
+      assert Process.alive?(sup)
+      assert Supavisor.get_global_sup(id) == sup
+    end
+
+    test "returns 404 for a tenant that does not exist", %{conn: conn} do
+      id = start_pool!(pool_id([]))
+      sup = Supavisor.get_global_sup(id)
+      assert is_pid(sup)
+
+      assert %{"error" => "not found"} =
+               conn
+               |> delete(~p"/api/tenants/no_such_tenant/pools", stop_body(sup))
+               |> json_response(404)
+
+      assert Process.alive?(sup)
+    end
+
+    test "returns 503 when the pool's node is unreachable", %{conn: conn} do
+      :meck.new(Supavisor.Ops, [:passthrough, :no_link])
+      on_exit(fn -> :meck.unload(Supavisor.Ops) end)
+
+      :meck.expect(Supavisor.Ops, :stop_pool, fn _tenant, _sup, _timeout ->
+        {:error, :node_unreachable}
+      end)
+
+      assert %{"error" => "node unreachable"} =
+               conn
+               |> delete(~p"/api/tenants/#{@tenant}/pools", stop_body(self()))
+               |> json_response(503)
+    end
+
+    test "returns 422 for a pid that does not decode", %{conn: conn} do
+      assert %{"error" => "invalid pid"} =
+               conn
+               |> delete(~p"/api/tenants/#{@tenant}/pools", Jason.encode!(%{pid: "garbage"}))
+               |> json_response(422)
+    end
+
+    test "returns 422 for an encoded term that is not a pid", %{conn: conn} do
+      not_a_pid = :ok |> :erlang.term_to_binary() |> Base.url_encode64(padding: false)
+
+      assert %{"error" => "invalid pid"} =
+               conn
+               |> delete(~p"/api/tenants/#{@tenant}/pools", Jason.encode!(%{pid: not_a_pid}))
+               |> json_response(422)
+    end
+
+    test "returns 422 without a pid", %{conn: conn} do
+      assert %{"errors" => [%{"source" => %{"pointer" => "/pid"}}]} =
+               conn
+               |> delete(~p"/api/tenants/#{@tenant}/pools", "{}")
+               |> json_response(422)
+    end
+
+    test "returns 422 when timeout is not positive", %{conn: conn} do
+      assert %{"errors" => [%{"source" => %{"pointer" => "/timeout"}}]} =
+               conn
+               |> delete(~p"/api/tenants/#{@tenant}/pools", stop_body(self(), timeout: 0))
+               |> json_response(422)
+    end
+
+    test "requires authorization" do
+      assert build_conn()
+             |> put_req_header("content-type", "application/json")
+             |> delete(~p"/api/tenants/#{@tenant}/pools", stop_body(self()))
+             |> response(403)
+    end
+  end
+
   describe "POST /api/rebalance" do
     setup %{conn: conn} do
       conn =
@@ -139,7 +298,11 @@ defmodule SupavisorWeb.PoolControllerTest do
     end
   end
 
+  defp stop_body(pid, params \\ []) do
+    params |> Map.new() |> Map.put(:pid, PoolPid.encode(pid)) |> Jason.encode!()
+  end
+
   defp gen_token do
-    Supavisor.Jwt.Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
+    Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
   end
 end
