@@ -172,11 +172,18 @@ defmodule Supavisor.JWT do
 
   defp reject_reason_log([{:message, _}, {:claim, claim}, {:claim_val, val}] = reason)
        when is_map_key(@time_claims, claim) and is_integer(val) do
-    {reject_reason_metric(reason),
-     [
-       {Map.fetch!(@time_claims, claim), val |> DateTime.from_unix!() |> DateTime.to_iso8601()},
-       {:now, DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()}
-     ]}
+    # A signed token can carry a timestamp outside `DateTime`'s range.
+    case DateTime.from_unix(val) do
+      {:ok, at} ->
+        {reject_reason_metric(reason),
+         [
+           {Map.fetch!(@time_claims, claim), DateTime.to_iso8601(at)},
+           {:now, DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()}
+         ]}
+
+      {:error, _} ->
+        reason
+    end
   end
 
   defp reject_reason_log(reason), do: reason

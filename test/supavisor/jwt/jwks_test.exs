@@ -78,6 +78,15 @@ defmodule Supavisor.JWT.JWKSTest do
       end
     end
 
+    test "rejects an array-valued aud with a non-string entry", %{pem: pem} do
+      for bad <- [[aud(), 123], [aud(), nil], [123, aud()]] do
+        token = sign_token(pem, %{default_claims() | "aud" => bad})
+
+        assert {:error, [message: "Invalid token", claim: "aud", claim_val: ^bad]} =
+                 JWKS.verify(token, default_config())
+      end
+    end
+
     test "rejects an aud that is neither a string nor a list of strings", %{pem: pem} do
       bad = %{"x" => aud()}
       token = sign_token(pem, %{default_claims() | "aud" => bad})

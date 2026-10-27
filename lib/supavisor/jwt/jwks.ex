@@ -27,9 +27,12 @@ defmodule Supavisor.JWT.JWKS do
       |> add_claim("sub", nil, fn sub, _claims, config -> sub in config.allowed_subs end)
       # RFC 7519 §4.1.3: `aud` is a string or an array of strings
       |> add_claim("aud", nil, fn aud, _claims, config ->
-        is_binary(config.expected_aud) and config.expected_aud in List.wrap(aud)
+        valid_aud?(aud) and is_binary(config.expected_aud) and
+          config.expected_aud in List.wrap(aud)
       end)
     end
+
+    defp valid_aud?(aud), do: is_binary(aud) or (is_list(aud) and Enum.all?(aud, &is_binary/1))
   end
 
   @type config :: %{

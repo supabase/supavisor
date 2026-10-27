@@ -141,6 +141,20 @@ defmodule Supavisor.JWTTest do
       assert log =~ ~r/now: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/
     end
 
+    test "rejects a token whose exp is outside DateTime's range without crashing", %{ref: ref} do
+      exp = -999_999_999_999
+      token = Token.gen!(%{"role" => "test", "exp" => exp}, @secret)
+
+      log =
+        capture_log(fn ->
+          assert {:error, [message: "Invalid token", claim: "exp", claim_val: ^exp]} =
+                   JWT.authorize(conn_with(token), @opts)
+        end)
+
+      assert_rejected(ref, :hmac, :api, :token_expired)
+      assert log =~ "claim_val: #{exp}"
+    end
+
     test "never logs the token" do
       token = hmac_token()
 
@@ -268,6 +282,21 @@ defmodule Supavisor.JWTTest do
         assert log =~ "claim_val: #{inspect(value)}"
         refute log =~ token, "#{tag} rejection must not log the token"
       end
+    end
+
+    test "rejects a token whose nbf is outside DateTime's range without crashing",
+         %{ref: ref, pem: pem} do
+      nbf = 999_999_999_999
+      token = sign_token(pem, Map.put(default_claims(), "nbf", nbf))
+
+      log =
+        capture_log(fn ->
+          assert {:error, [message: "Invalid token", claim: "nbf", claim_val: ^nbf]} =
+                   JWT.authorize(conn_with(token), @opts_jwks)
+        end)
+
+      assert_rejected(ref, :jwks, :api, :token_not_yet_valid)
+      assert log =~ "claim_val: #{nbf}"
     end
 
     test "logs a not-yet-valid token as :token_not_yet_valid with nbf vs now in ISO8601",
