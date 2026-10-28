@@ -15,19 +15,28 @@ defmodule Supavisor.Health do
     database_reachable: {__MODULE__, :database_reachable?, []}
   ]
 
+  @check_timeout Application.compile_env(:supavisor, :health_check_timeout, :timer.seconds(5))
+
   @task_supervisor __MODULE__.TaskSupervisor
 
   @doc """
   The main API for checking the health of a Supavisor node.
+
+  A check that doesn't finish within `timeout` ms is killed and counts as failed.
   """
-  @spec health_check(Keyword.t()) :: :ok | {:error, :failed_checks, [atom()]}
-  def health_check(checks \\ @checks) do
+  @spec health_check(Keyword.t(), timeout()) :: :ok | {:error, :failed_checks, [atom()]}
+  def health_check(checks \\ @checks, timeout \\ @check_timeout) do
     successful_checks =
       @task_supervisor
-      |> Task.Supervisor.async_stream_nolink(checks, fn {check, {m, f, a}} ->
-        result = apply(m, f, a)
-        {check, result}
-      end)
+      |> Task.Supervisor.async_stream_nolink(
+        checks,
+        fn {check, {m, f, a}} ->
+          result = apply(m, f, a)
+          {check, result}
+        end,
+        timeout: timeout,
+        on_timeout: :kill_task
+      )
       |> Enum.reduce([], fn result, acc ->
         case result do
           {:ok, {check, true}} -> [check | acc]
@@ -45,6 +54,10 @@ defmodule Supavisor.Health do
         {:error, :failed_checks, failed_checks}
     end
   end
+
+  @doc false
+  @spec check_timeout() :: pos_integer()
+  def check_timeout, do: @check_timeout
 
   @doc false
   @spec acceptable_erpc_latencies?(non_neg_integer()) :: boolean()
