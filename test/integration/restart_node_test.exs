@@ -4,7 +4,7 @@ defmodule Supavisor.Integration.RestartNodeTest do
   import ExUnit.CaptureLog
   import Supavisor.Asserts, only: [assert_eventually: 3]
 
-  alias Supavisor.Jwt.Token
+  alias Supavisor.JWT.SharedSecret.Token
   alias Supavisor.Support.Cluster
 
   @moduletag cluster: true

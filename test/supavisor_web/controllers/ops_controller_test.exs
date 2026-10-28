@@ -1,7 +1,7 @@
 defmodule SupavisorWeb.OpsControllerTest do
   use SupavisorWeb.ConnCase, async: false
 
-  alias Supavisor.Jwt.Token
+  alias Supavisor.JWT.SharedSecret.Token
 
   describe "GET /api/nodes" do
     setup %{conn: conn} do
