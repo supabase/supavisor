@@ -43,8 +43,13 @@ defmodule Supavisor.Integration.RestartNodeTest do
     # A task that ignores the shutdown signal keeps the application from stopping.
     stuck_task =
       defmodule StuckTask do
-        def run do
+        def run(test_pid) do
           Process.flag(:trap_exit, true)
+
+          receive do
+            {:EXIT, _from, :shutdown} -> send(test_pid, :shutdown_ignored)
+          end
+
           Process.sleep(:infinity)
         end
       end
@@ -56,11 +61,14 @@ defmodule Supavisor.Integration.RestartNodeTest do
         Supavisor.TaskSupervisor,
         StuckTask,
         :run,
-        [],
+        [self()],
         [shutdown: :infinity]
       ])
 
     :ok = :peer.call(peer, Supavisor.Ops, :restart_node_local, [[delay: 100, watchdog: 1_000]])
+
+    # The graceful stop has started and the task ignores it, so only the watchdog can end the node.
+    assert_receive :shutdown_ignored, 2_000
 
     assert_eventually(10, 1_000, fn -> peer_node not in Node.list() end)
   end
