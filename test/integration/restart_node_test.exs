@@ -37,20 +37,25 @@ defmodule Supavisor.Integration.RestartNodeTest do
     peer: peer,
     peer_node: peer_node
   } do
-    # A task that ignores the shutdown signal keeps the application from stopping. It is
-    # started from source because the peer can't load a fun defined in this test.
-    stuck_task = """
-    Task.Supervisor.start_child(
-      Supavisor.TaskSupervisor,
-      fn ->
-        Process.flag(:trap_exit, true)
-        Process.sleep(:infinity)
-      end,
-      shutdown: :infinity
-    )
-    """
+    # A task that ignores the shutdown signal keeps the application from stopping.
+    stuck_task =
+      defmodule StuckTask do
+        def run do
+          Process.flag(:trap_exit, true)
+          Process.sleep(:infinity)
+        end
+      end
 
-    {{:ok, _task}, _binding} = :peer.call(peer, Code, :eval_string, [stuck_task])
+    :ok = Cluster.load_module(peer, stuck_task)
+
+    {:ok, _task} =
+      :peer.call(peer, Task.Supervisor, :start_child, [
+        Supavisor.TaskSupervisor,
+        StuckTask,
+        :run,
+        [],
+        [shutdown: :infinity]
+      ])
 
     :ok = :peer.call(peer, Supavisor.Ops, :restart_node_local, [[delay: 100, watchdog: 1_000]])
 
