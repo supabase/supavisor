@@ -203,7 +203,7 @@ defmodule Supavisor.Ops do
   @spec resolve_node(String.t()) :: {:ok, node()} | {:error, :not_found | :ambiguous}
   defp resolve_node(target) do
     [node() | Node.list()]
-    |> Enum.filter(&(Atom.to_string(&1) == target or node_host(&1) == target))
+    |> Enum.filter(&(to_string(&1) == target or node_host(&1) == target))
     |> case do
       [node] -> {:ok, node}
       [] -> {:error, :not_found}
@@ -213,7 +213,7 @@ defmodule Supavisor.Ops do
 
   @spec node_host(node()) :: String.t()
   defp node_host(node) do
-    node |> Atom.to_string() |> String.split("@") |> List.last()
+    node |> to_string() |> String.split("@") |> List.last()
   end
 
   @doc """
