@@ -21,14 +21,14 @@ defmodule Supavisor.Integration.ListPoolsTest do
     %{peer: peer, peer_node: peer_node}
   end
 
-  defp pool_id(db) do
+  defp pool_id(db, search_path \\ nil) do
     Supavisor.id(
       type: :single,
       tenant: @tenant,
       user: "postgres",
       mode: :transaction,
       db: db,
-      search_path: nil
+      search_path: search_path
     )
   end
 
@@ -37,9 +37,24 @@ defmodule Supavisor.Integration.ListPoolsTest do
     pools
   end
 
+  # `assert_eventually/1` only says "Expected function to return truthy value", so
+  # show what was actually listed.
+  defp assert_pools_eventually(function) do
+    assert_eventually(function)
+  rescue
+    e in ExUnit.AssertionError ->
+      reraise %{e | message: e.message <> "\nlist_pools: " <> inspect(Ops.list_pools(@tenant))},
+              __STACKTRACE__
+  end
+
   # Starts a distinct pool on this node and on the peer.
   defp start_pool_on_both(peer) do
-    local_id = pool_id("supavisor_test")
+    local_id =
+      pool_id(
+        "supavisor_test",
+        "list_pools_#{Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)}"
+      )
+
     peer_id = pool_id("postgres")
 
     {:ok, _} = Supavisor.start(local_id, @secret)
@@ -52,7 +67,7 @@ defmodule Supavisor.Integration.ListPoolsTest do
   test "list_pools/1 aggregates pools from every node", %{peer: peer, peer_node: peer_node} do
     {local_id, peer_id} = start_pool_on_both(peer)
 
-    assert_eventually(fn ->
+    assert_pools_eventually(fn ->
       {:ok, %{pools: pools, errors: errors}} = Ops.list_pools(@tenant)
 
       errors == %{} and
@@ -80,7 +95,7 @@ defmodule Supavisor.Integration.ListPoolsTest do
     {local_id, peer_id} = start_pool_on_both(peer)
 
     # Wait until the peer pool is visible cluster-wide, so we know it started.
-    assert_eventually(fn -> Enum.any?(pools(), &(&1.id == peer_id)) end)
+    assert_pools_eventually(fn -> Enum.any?(pools(), &(&1.id == peer_id)) end)
 
     assert [local] = Ops.list_pools_local(@tenant)
     assert local.id == local_id
@@ -96,9 +111,14 @@ defmodule Supavisor.Integration.ListPoolsTest do
     # Pool is owned by the peer; the client enters through this node's proxy and
     # is proxied to the peer, where it must be counted.
     id = pool_id(db_conf[:database])
-    {:ok, _} = :peer.call(peer, Supavisor.FixturesHelpers, :start_pool, [id, @secret])
+    {:ok, peer_sup} = :peer.call(peer, Supavisor.FixturesHelpers, :start_pool, [id, @secret])
 
-    assert_eventually(fn -> Enum.any?(pools(), &(&1.id == id and &1.node == peer_node)) end)
+    # `Supavisor.start/2` returns the pool already registered for the id, if any.
+    assert node(peer_sup) == peer_node
+
+    assert_pools_eventually(fn ->
+      Enum.any?(pools(), &(&1.id == id and &1.node == peer_node))
+    end)
 
     {:ok, client} =
       Postgrex.start_link(
@@ -111,12 +131,16 @@ defmodule Supavisor.Integration.ListPoolsTest do
 
     assert %Postgrex.Result{rows: [[1]]} = Postgrex.query!(client, "SELECT 1", [])
 
-    assert_eventually(fn -> match?(%{clients: 1}, Enum.find(pools(), &(&1.id == id))) end)
+    assert_pools_eventually(fn ->
+      match?(%{clients: 1}, Enum.find(pools(), &(&1.id == id)))
+    end)
 
     # A direct (owner-side) subscriber on the peer adds to the same count.
     local_sub = :peer.call(peer, :erlang, :spawn, [:timer, :sleep, [:infinity]])
     {:ok, _} = :peer.call(peer, Supavisor, :subscribe, [id, local_sub])
 
-    assert_eventually(fn -> match?(%{clients: 2}, Enum.find(pools(), &(&1.id == id))) end)
+    assert_pools_eventually(fn ->
+      match?(%{clients: 2}, Enum.find(pools(), &(&1.id == id)))
+    end)
   end
 end
