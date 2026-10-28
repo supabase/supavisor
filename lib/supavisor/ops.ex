@@ -224,9 +224,9 @@ defmodule Supavisor.Ops do
   Options:
 
     * `:delay` - ms before the stop starts, so the reply to the request that triggered
-      the restart goes out first. Defaults to 1s.
+      the restart goes out first.
     * `:watchdog` - ms after the stop starts before the VM is halted, if the stop has not
-      finished by then. Defaults to 60s, past the graceful stop of the slowest pool, so it
+      finished by then. It should be past the graceful stop of the slowest pool, so it
       never cuts one short.
   """
   @spec restart_node_local(keyword()) :: :ok
@@ -234,7 +234,7 @@ defmodule Supavisor.Ops do
     delay = Keyword.get(opts, :delay, @restart_delay)
     watchdog = Keyword.get(opts, :watchdog, @restart_watchdog)
 
-    Logger.warning("Restart node #{node()}: exiting in #{delay}ms")
+    Logger.info("Restart node #{node()}: exiting in #{delay}ms")
 
     # Timers, not processes of ours: they live under the kernel, so the backstop for a
     # graceful stop that hangs outlasts the shutdown of our supervision tree.

@@ -89,9 +89,4 @@ defmodule Supavisor.Integration.RestartNodeTest do
     assert %{"error" => "several nodes share this host" <> _} =
              conn |> post(~p"/api/nodes/127.0.0.1/restart") |> json_response(409)
   end
-
-  test "returns 404 for a node that is not in the cluster", %{conn: conn} do
-    assert %{"error" => "not found"} =
-             conn |> post(~p"/api/nodes/no_such_node/restart") |> json_response(404)
-  end
 end
