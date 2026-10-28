@@ -146,7 +146,7 @@ defmodule Supavisor.JWT do
   defp reject(conn, pipeline, method, reason) do
     Logger.warning(
       "check_auth: rejected #{pipeline} #{conn.method} #{conn.request_path}: " <>
-        inspect(reject_reason_log(reason))
+        inspect(reject_reason_log(reason)) <> " (#{method})"
     )
 
     :telemetry.execute([:supavisor, :jwt_auth, :rejected], %{count: 1}, %{
