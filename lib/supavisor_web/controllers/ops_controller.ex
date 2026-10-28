@@ -2,7 +2,7 @@ defmodule SupavisorWeb.OpsController do
   use SupavisorWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
-  alias SupavisorWeb.OpenApiSchemas.{Empty, NotFound}
+  alias SupavisorWeb.OpenApiSchemas.{Empty, NodeList, NotFound}
 
   plug OpenApiSpex.Plug.CastAndValidate, json_render_error_v2: true, replace_params: false
   plug :put_view, SupavisorWeb.OpsJSON
@@ -15,6 +15,20 @@ defmodule SupavisorWeb.OpsController do
     example:
       "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE2ODAxNjIxNTR9.U9orU6YYqXAtpF8uAiw6MS553tm4XxRzxOhz2IwDhpY"
   ]
+
+  operation(:index,
+    summary: "List the nodes of the cluster",
+    description: """
+    Lists the nodes connected to the node that receives the request, with their health.
+    Nodes that fail to respond are reported under `errors`.
+    """,
+    parameters: [authorization: @authorization],
+    responses: %{200 => NodeList.response()}
+  )
+
+  def index(conn, _params) do
+    render(conn, :index, result: Supavisor.Ops.list_nodes())
+  end
 
   operation(:restart_node,
     summary: "Restart a node of the cluster",

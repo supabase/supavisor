@@ -72,6 +72,7 @@ defmodule SupavisorWeb.Router do
     delete("/tenants/:external_id/pools", PoolController, :stop)
 
     get("/health", TenantController, :health)
+    get("/nodes", OpsController, :index)
     post("/nodes/:nodehost/restart", OpsController, :restart_node)
     post("/rebalance", PoolController, :rebalance)
 
