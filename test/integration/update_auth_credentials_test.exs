@@ -5,6 +5,7 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
   require Supavisor
 
   alias Postgrex, as: P
+  alias Supavisor.JWT.SharedSecret.Token
 
   setup do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
@@ -218,6 +219,6 @@ defmodule Supavisor.Integration.UpdateAuthCredentialsTest do
   end
 
   defp gen_token(secret \\ Application.fetch_env!(:supavisor, :api_jwt_secret)) do
-    Supavisor.Jwt.Token.gen!(secret)
+    Token.gen!(secret)
   end
 end

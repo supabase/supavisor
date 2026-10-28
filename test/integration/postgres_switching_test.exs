@@ -1,7 +1,7 @@
 defmodule Supavisor.Integration.PostgresSwitchingTest do
   use SupavisorWeb.ConnCase, async: false
 
-  alias Supavisor.Jwt.Token
+  alias Supavisor.JWT.SharedSecret.Token
 
   @moduletag integration_docker: true
 

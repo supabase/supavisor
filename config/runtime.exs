@@ -226,6 +226,25 @@ if downstream_v2_configured? and
 end
 
 if config_env() != :test do
+  trusted_issuer =
+    "API_JWT_TRUSTED_ISSUER" |> System.get_env("") |> String.trim() |> String.trim_trailing("/")
+
+  api_jwks_config =
+    if trusted_issuer != "" do
+      allowed_subs = System.get_env("API_JWT_ALLOWED_SUBS", "") |> String.split(",", trim: true)
+      expected_aud = System.get_env("API_JWT_EXPECTED_AUD")
+
+      if allowed_subs == [] or expected_aud == nil do
+        raise "API_JWT_ALLOWED_SUBS and API_JWT_EXPECTED_AUD  must be set"
+      end
+
+      %{
+        trusted_issuer: trusted_issuer,
+        allowed_subs: allowed_subs,
+        expected_aud: expected_aud
+      }
+    end
+
   config :supavisor,
     session_proxy_ports:
       System.get_env("SESSION_PROXY_PORTS", "12100,12101,12102,12103")
@@ -238,6 +257,7 @@ if config_env() != :test do
     fly_alloc_id: System.get_env("FLY_ALLOC_ID"),
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> JSON.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
+    api_jwks_config: api_jwks_config,
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
@@ -271,7 +291,8 @@ if config_env() != :test do
     "app_name_metric" => Supavisor.Helpers.get_env_bool("APP_NAME_METRIC_ENABLED", false),
     "check_simple_query_prepare" =>
       Supavisor.Helpers.get_env_bool("CHECK_SIMPLE_QUERY_PREPARE_ENABLED", false),
-    "scram_auth_over_tls" => Supavisor.Helpers.get_env_bool("SCRAM_AUTH_OVER_TLS_ENABLED", false)
+    "cleartext_auth_over_tls" =>
+      Supavisor.Helpers.get_env_bool("CLEARTEXT_AUTH_OVER_TLS_ENABLED", false)
   }
 
   config :supavisor, Supavisor.Repo,
