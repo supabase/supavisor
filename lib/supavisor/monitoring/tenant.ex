@@ -63,6 +63,7 @@ defmodule Supavisor.PromEx.Plugins.Tenant do
         600,
         750,
         1_000,
+        1_250,
         1_500,
         2_000,
         2_500,
