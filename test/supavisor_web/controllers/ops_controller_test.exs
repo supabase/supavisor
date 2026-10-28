@@ -3,6 +3,69 @@ defmodule SupavisorWeb.OpsControllerTest do
 
   alias Supavisor.Jwt.Token
 
+  describe "GET /api/nodes" do
+    setup %{conn: conn} do
+      {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
+    end
+
+    test "lists this node with its uptime, version and health", %{conn: conn} do
+      name = to_string(node())
+
+      assert %{nodes: [info], errors: errors} =
+               conn |> get(~p"/api/nodes") |> json_response(200) |> assert_schema("NodeList")
+
+      assert errors == %{}
+
+      assert %{node: ^name, host: host, uptime_ms: uptime_ms, version: version} = info
+      assert [_name, ^host] = String.split(name, "@")
+      assert is_integer(uptime_ms)
+      assert version == to_string(Application.spec(:supavisor, :vsn))
+      assert info.health == %{status: "healthy", failed_checks: []}
+    end
+
+    test "renders failed checks and unreachable nodes", %{conn: conn} do
+      info = %{
+        node: :"supavisor@10.0.0.1",
+        host: "10.0.0.1",
+        uptime_ms: 1_000,
+        version: "1.0.0",
+        health: {:error, :failed_checks, [:database_reachable]}
+      }
+
+      stub_ops(:list_nodes, fn ->
+        %{nodes: [info], errors: %{"supavisor@10.0.0.2": :timeout}}
+      end)
+
+      body = conn |> get(~p"/api/nodes") |> json_response(200)
+      assert_schema(body, "NodeList")
+
+      assert body == %{
+               "nodes" => [
+                 %{
+                   "node" => "supavisor@10.0.0.1",
+                   "host" => "10.0.0.1",
+                   "uptime_ms" => 1_000,
+                   "version" => "1.0.0",
+                   "health" => %{
+                     "status" => "unhealthy",
+                     "failed_checks" => ["database_reachable"]
+                   }
+                 }
+               ],
+               "errors" => %{"supavisor@10.0.0.2" => "unreachable"}
+             }
+    end
+
+    test "requires authorization" do
+      assert build_conn() |> get(~p"/api/nodes") |> response(403)
+    end
+
+    test "is documented in the OpenAPI spec", %{conn: conn} do
+      spec = conn |> get(~p"/api/openapi") |> json_response(200)
+      assert %{"responses" => %{"200" => _}} = spec["paths"]["/api/nodes"]["get"]
+    end
+  end
+
   describe "POST /api/nodes/:nodehost/restart" do
     setup %{conn: conn} do
       {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
@@ -62,9 +125,13 @@ defmodule SupavisorWeb.OpsControllerTest do
   end
 
   defp stub_restart_node(result) do
+    stub_ops(:restart_node, fn _target -> result end)
+  end
+
+  defp stub_ops(function, fun) do
     :meck.new(Supavisor.Ops, [:passthrough, :no_link])
     on_exit(fn -> :meck.unload(Supavisor.Ops) end)
-    :meck.expect(Supavisor.Ops, :restart_node, fn _target -> result end)
+    :meck.expect(Supavisor.Ops, function, fun)
   end
 
   defp gen_token do

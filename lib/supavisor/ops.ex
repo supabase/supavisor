@@ -28,6 +28,14 @@ defmodule Supavisor.Ops do
           db_connections: connection_counts() | nil
         }
 
+  @type node_info :: %{
+          node: node(),
+          host: String.t(),
+          uptime_ms: non_neg_integer(),
+          version: String.t(),
+          health: :ok | {:error, :failed_checks, [atom()]}
+        }
+
   @doc """
   Lists a tenant's pools on every node. Nodes that fail to answer are returned
   under `:errors` instead of failing the whole listing.
@@ -130,6 +138,46 @@ defmodule Supavisor.Ops do
         Logger.warning("Stop pool of #{tenant}: pool pid #{inspect(sup)} not found")
         {:error, :not_found}
     end
+  end
+
+  @doc """
+  Lists the nodes connected to this one, itself included. Nodes that fail to answer
+  are returned under `:errors` instead of failing the whole listing.
+  """
+  @spec list_nodes() :: %{nodes: [node_info()], errors: %{node() => term()}}
+  def list_nodes do
+    nodes = [node() | Node.list()]
+    # Room for the health checks to time out first, so a hung check is reported by the node.
+    timeout = Supavisor.Health.check_timeout() + @multicall_timeout
+    results = :erpc.multicall(nodes, __MODULE__, :node_info_local, [], timeout)
+
+    nodes
+    |> Enum.zip(results)
+    |> Enum.reduce(%{nodes: [], errors: %{}}, fn
+      {_node, {:ok, info}}, acc ->
+        %{acc | nodes: [info | acc.nodes]}
+
+      {node, error}, acc ->
+        Logger.warning("Failed to get info of node #{node}: #{inspect(error)}")
+        %{acc | errors: Map.put(acc.errors, node, error)}
+    end)
+    |> Map.update!(:nodes, &Enum.sort_by(&1, fn info -> info.node end))
+  end
+
+  @doc """
+  Describes this node.
+  """
+  @spec node_info_local() :: node_info()
+  def node_info_local do
+    uptime = System.monotonic_time() - :erlang.system_info(:start_time)
+
+    %{
+      node: node(),
+      host: node_host(node()),
+      uptime_ms: System.convert_time_unit(uptime, :native, :millisecond),
+      version: to_string(Application.spec(:supavisor, :vsn)),
+      health: Supavisor.Health.health_check()
+    }
   end
 
   @doc """

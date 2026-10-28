@@ -625,4 +625,63 @@ defmodule SupavisorWeb.OpenApiSchemas do
 
     def params, do: {"Stop Pool Params", "application/json", __MODULE__, required: true}
   end
+
+  defmodule ClusterNode do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        node: %Schema{type: :string, description: "Full node name"},
+        host: %Schema{type: :string, description: "Host part of the node name"},
+        uptime_ms: %Schema{
+          type: :integer,
+          description: "Milliseconds since the node started"
+        },
+        version: %Schema{type: :string, description: "Application version"},
+        health: %Schema{
+          type: :object,
+          properties: %{
+            status: %Schema{type: :string, enum: ["healthy", "unhealthy"]},
+            failed_checks: %Schema{type: :array, items: %Schema{type: :string}}
+          },
+          required: [:status, :failed_checks]
+        }
+      },
+      required: [:node, :host, :uptime_ms, :version, :health]
+    })
+  end
+
+  defmodule NodeList do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        nodes: %Schema{type: :array, items: ClusterNode},
+        errors: %Schema{
+          type: :object,
+          additionalProperties: %Schema{type: :string},
+          description: "Nodes that did not report, with a reason"
+        }
+      },
+      required: [:nodes, :errors],
+      example: %{
+        nodes: [
+          %{
+            node: "supavisor@10.0.0.1",
+            host: "10.0.0.1",
+            uptime_ms: 86_400_000,
+            version: "2.11.0",
+            health: %{status: "healthy", failed_checks: []}
+          }
+        ],
+        errors: %{}
+      }
+    })
+
+    def response, do: {"Node List", "application/json", __MODULE__}
+  end
 end

@@ -31,6 +31,9 @@ defmodule Supavisor.Integration.RestartNodeTest do
     assert peer_node in Node.list()
 
     assert_eventually(15, 1_000, fn -> peer_node not in Node.list() end)
+
+    assert %{"nodes" => [%{"node" => name}]} = conn |> get(~p"/api/nodes") |> json_response(200)
+    assert name == to_string(node())
   end
 
   test "halts a node whose graceful stop hangs, once the watchdog fires", %{
