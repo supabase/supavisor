@@ -265,7 +265,14 @@ defmodule Supavisor.ClientHandler do
     # peer is the forwarding node). Otherwise, use what we observed on the socket.
     effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
     peer_ip = ProtocolHelpers.effective_peer_ip(data.local, client_ip, data.peer_ip)
-    data = %{data | peer_ip: peer_ip, app_name: app_name, invalid_options: invalid_options}
+
+    data = %{
+      data
+      | peer_ip: peer_ip,
+        ssl: effective_ssl,
+        app_name: app_name,
+        invalid_options: invalid_options
+    }
 
     if log_level, do: Logger.put_process_level(self(), log_level)
 
