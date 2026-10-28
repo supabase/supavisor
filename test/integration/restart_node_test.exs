@@ -1,6 +1,7 @@
 defmodule Supavisor.Integration.RestartNodeTest do
   use SupavisorWeb.ConnCase, async: false
 
+  import ExUnit.CaptureLog
   import Supavisor.Asserts, only: [assert_eventually: 3]
 
   alias Supavisor.Jwt.Token
@@ -54,6 +55,18 @@ defmodule Supavisor.Integration.RestartNodeTest do
     :ok = :peer.call(peer, Supavisor.Ops, :restart_node_local, [[delay: 100, watchdog: 1_000]])
 
     assert_eventually(10, 1_000, fn -> peer_node not in Node.list() end)
+  end
+
+  test "restart_node/1 returns :ambiguous when several nodes share the host", %{
+    peer_node: peer_node
+  } do
+    log =
+      capture_log([level: :warning], fn ->
+        assert {:error, :ambiguous} = Supavisor.Ops.restart_node("127.0.0.1")
+      end)
+
+    assert log =~ "Restart node 127.0.0.1: ambiguous"
+    assert peer_node in Node.list()
   end
 
   test "returns 409 when several nodes share the host", %{conn: conn} do

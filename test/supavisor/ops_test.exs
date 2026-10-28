@@ -8,7 +8,6 @@ defmodule Supavisor.OpsTest do
   import Supavisor.Asserts, only: [assert_eventually: 1, assert_eventually: 3]
 
   alias Supavisor.Ops
-  alias Supavisor.Support.Cluster
 
   @tenant "ops_test_tenant"
   @secret %Supavisor.Secrets.PasswordSecrets{user: "postgres", password: "postgres"}
@@ -255,20 +254,6 @@ defmodule Supavisor.OpsTest do
         end)
 
       assert log =~ "Restart node no_such_node: not_found"
-    end
-
-    @tag cluster: true
-    test "returns :ambiguous when several nodes share the host" do
-      {:ok, _peer, peer_node} = Cluster.start_node()
-      true = Node.connect(peer_node)
-
-      log =
-        capture_log([level: :warning], fn ->
-          assert {:error, :ambiguous} = Ops.restart_node("127.0.0.1")
-        end)
-
-      assert log =~ "Restart node 127.0.0.1: ambiguous"
-      assert peer_node in Node.list()
     end
   end
 end
