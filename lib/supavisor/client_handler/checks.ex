@@ -34,7 +34,7 @@ defmodule Supavisor.ClientHandler.Checks do
   end
 
   def check_ssl_enforcement(data, info, user) do
-    if !data.local and info.tenant.enforce_ssl and !data.ssl do
+    if info.tenant.enforce_ssl and !data.ssl do
       {:error, %SslRequiredError{user: user}}
     else
       :ok

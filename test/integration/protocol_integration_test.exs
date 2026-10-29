@@ -203,6 +203,27 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert auth_type == 10
     end
 
+    test "password_auth is only honored on local listeners" do
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+      [local_port | _] = Application.get_env(:supavisor, :transaction_proxy_ports)
+      public_port = Application.get_env(:supavisor, :proxy_port_transaction)
+
+      # 3 = AuthenticationCleartextPassword, 10 = AuthenticationSASL
+      for {port, auth_type} <- [{local_port, 3}, {public_port, 10}] do
+        {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+        startup =
+          :pgo_protocol.encode_startup_message([
+            {"user", "#{db_conf[:username]}.#{List.first(@tenants)}"},
+            {"database", to_string(db_conf[:database])},
+            {"options", "--password_auth=true"}
+          ])
+
+        :ok = :gen_tcp.send(sock, startup)
+        assert {:ok, <<?R, _::32, ^auth_type::32, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+      end
+    end
+
     # Temporarily reverted: password-auth-over-TLS optimization for non-JIT
     # tenants was disabled, so these expectations no longer hold.
     # test "proxied connection requests cleartext password with client_tls option" do

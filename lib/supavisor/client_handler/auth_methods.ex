@@ -15,15 +15,20 @@ defmodule Supavisor.ClientHandler.AuthMethods do
 
   Over TLS, SCRAM is used unless the `cleartext_auth_over_tls` feature flag
   is enabled, in which case cleartext password authentication is used.
+
+  When `force_password?` is true, cleartext password authentication is used.
   """
   @spec fetch_authentication_method(
           Supavisor.Tenants.Tenant.t(),
           client_jit :: boolean(),
           ssl? :: boolean(),
+          force_password? :: boolean(),
           String.t()
         ) ::
           {:ok, :jit | :password | :scram_sha_256} | {:error, SslRequiredError.t()}
-  def fetch_authentication_method(tenant, client_jit, ssl?, user) do
+  def fetch_authentication_method(_tenant, _client_jit, _ssl?, true, _user), do: {:ok, :password}
+
+  def fetch_authentication_method(tenant, client_jit, ssl?, false, user) do
     case {tenant.use_jit, client_jit, ssl?} do
       {_, false, false} -> {:ok, :scram_sha_256}
       {_, false, true} -> {:ok, tls_authentication_method(tenant)}

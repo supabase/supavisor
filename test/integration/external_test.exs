@@ -39,6 +39,28 @@ defmodule Supavisor.Integration.ExternalTest do
     end
   end
 
+  describe "neondatabase/serverless.js over HTTP" do
+    @describetag library: "serverless.js http", suite: "js"
+
+    setup do
+      # The endpoint doesn't listen in tests.
+      ref = :http_sql_external_test
+
+      start_supervised!(
+        {Plug.Cowboy, scheme: :http, plug: SupavisorWeb.Endpoint, options: [port: 0, ref: ref]}
+      )
+
+      port = :ranch.get_port(ref)
+      {:ok, endpoint: "http://127.0.0.1:#{port}/sql", ws_proxy: "127.0.0.1:#{port}/v2/"}
+    end
+
+    @tag runtime: "node", mode: "transaction"
+    test "Node", ctx do
+      env = [{"HTTP_SQL_ENDPOINT", ctx.endpoint}, {"HTTP_SQL_WS_PROXY", ctx.ws_proxy}]
+      assert_run(ctx, ~w[neon_http/index.js], env: env)
+    end
+  end
+
   describe "Postgres.js" do
     @describetag library: "postgres.js", suite: "js"
 
