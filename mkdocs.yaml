@@ -12,8 +12,6 @@ nav:
       - Installation: "development/installation.md"
       - Setup: "development/setup.md"
       - Docs: "development/docs.md"
-  - Deployment:
-      - Deploy with Fly.io: "deployment/fly.md"
   - Connecting:
       - Overview: "connecting/overview.md"
       - Authentication: "connecting/authentication.md"
