@@ -24,6 +24,16 @@ defmodule Supavisor.Support.Cluster do
     start_peer_node(name, clustered: true, port_config: port_config)
   end
 
+  @doc """
+  Loads a module defined in a test file onto a peer, which can't find it on disk. Takes the
+  value of its `defmodule`, which also works inside a test.
+  """
+  @spec load_module(pid(), {:module, module(), binary(), term()}) :: :ok
+  def load_module(peer, {:module, module, binary, _result}) do
+    {:module, ^module} = :peer.call(peer, :code, :load_binary, [module, ~c"nofile", binary])
+    :ok
+  end
+
   def start_node_unclustered(name \\ :peer.random_name(), port_config \\ %PortConfig{}) do
     start_peer_node(name, clustered: false, port_config: port_config)
   end

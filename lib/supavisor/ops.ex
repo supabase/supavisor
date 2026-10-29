@@ -11,6 +11,8 @@ defmodule Supavisor.Ops do
 
   @multicall_timeout :timer.seconds(5)
   @stop_timeout :timer.seconds(15)
+  @restart_delay :timer.seconds(1)
+  @restart_watchdog :timer.seconds(60)
 
   @type connection_counts :: %{idle: non_neg_integer(), checked_out: non_neg_integer()}
 
@@ -24,6 +26,14 @@ defmodule Supavisor.Ops do
           db_port: non_neg_integer() | nil,
           clients: non_neg_integer() | nil,
           db_connections: connection_counts() | nil
+        }
+
+  @type node_info :: %{
+          node: node(),
+          host: String.t(),
+          uptime_ms: non_neg_integer(),
+          version: String.t(),
+          health: :ok | {:error, :failed_checks, [atom()]}
         }
 
   @doc """
@@ -128,6 +138,112 @@ defmodule Supavisor.Ops do
         Logger.warning("Stop pool of #{tenant}: pool pid #{inspect(sup)} not found")
         {:error, :not_found}
     end
+  end
+
+  @doc """
+  Lists the nodes connected to this one, itself included. Nodes that fail to answer
+  are returned under `:errors` instead of failing the whole listing.
+  """
+  @spec list_nodes() :: %{nodes: [node_info()], errors: %{node() => term()}}
+  def list_nodes do
+    nodes = [node() | Node.list()]
+    # Room for the health checks to time out first, so a hung check is reported by the node.
+    timeout = Supavisor.Health.check_timeout() + @multicall_timeout
+    results = :erpc.multicall(nodes, __MODULE__, :node_info_local, [], timeout)
+
+    nodes
+    |> Enum.zip(results)
+    |> Enum.reduce(%{nodes: [], errors: %{}}, fn
+      {_node, {:ok, info}}, acc ->
+        %{acc | nodes: [info | acc.nodes]}
+
+      {node, error}, acc ->
+        Logger.warning("Failed to get info of node #{node}: #{inspect(error)}")
+        %{acc | errors: Map.put(acc.errors, node, error)}
+    end)
+    |> Map.update!(:nodes, &Enum.sort_by(&1, fn info -> info.node end))
+  end
+
+  @doc """
+  Describes this node.
+  """
+  @spec node_info_local() :: node_info()
+  def node_info_local do
+    uptime = System.monotonic_time() - :erlang.system_info(:start_time)
+
+    %{
+      node: node(),
+      host: node_host(node()),
+      uptime_ms: System.convert_time_unit(uptime, :native, :millisecond),
+      version: to_string(Application.spec(:supavisor, :vsn)),
+      health: Supavisor.Health.health_check()
+    }
+  end
+
+  @doc """
+  Restarts a node of the cluster, given its `nodehost` or its full node name.
+  The node is only asked to restart: it exits shortly after this returns.
+  """
+  @spec restart_node(String.t()) :: :ok | {:error, :not_found | :ambiguous | :node_unreachable}
+  def restart_node(target) do
+    case resolve_node(target) do
+      {:ok, node} ->
+        :erpc.call(node, __MODULE__, :restart_node_local, [], @multicall_timeout)
+
+      {:error, reason} = error ->
+        Logger.warning("Restart node #{target}: #{reason}")
+        error
+    end
+  catch
+    :error, {:erpc, :noconnection} = reason ->
+      Logger.warning("Failed to restart node #{target}: #{inspect(reason)}")
+      {:error, :node_unreachable}
+  end
+
+  @spec resolve_node(String.t()) :: {:ok, node()} | {:error, :not_found | :ambiguous}
+  defp resolve_node(target) do
+    [node() | Node.list()]
+    |> Enum.filter(&(to_string(&1) == target or node_host(&1) == target))
+    |> case do
+      [node] -> {:ok, node}
+      [] -> {:error, :not_found}
+      [_ | _] -> {:error, :ambiguous}
+    end
+  end
+
+  @spec node_host(node()) :: String.t()
+  defp node_host(node) do
+    node |> to_string() |> String.split("@") |> List.last()
+  end
+
+  @doc """
+  Restarts this node by exiting the VM shortly after returning, so the caller gets its
+  reply first. Whatever supervises the process, e.g. systemd with `Restart=always`, is
+  expected to start it again.
+
+  Options:
+
+    * `:delay` - ms before the stop starts, so the reply to the request that triggered
+      the restart goes out first.
+    * `:watchdog` - ms after the stop starts before the VM is halted, if the stop has not
+      finished by then. It should be past the graceful stop of the slowest pool, so it
+      never cuts one short.
+  """
+  @spec restart_node_local(keyword()) :: :ok
+  def restart_node_local(opts \\ []) do
+    delay = Keyword.get(opts, :delay, @restart_delay)
+    watchdog = Keyword.get(opts, :watchdog, @restart_watchdog)
+
+    Logger.info("Restart node #{node()}: exiting in #{delay}ms")
+
+    # Timers, not processes of ours: they live under the kernel, so the backstop for a
+    # graceful stop that hangs outlasts the shutdown of our supervision tree.
+    # `System.stop/1` returns right away. Its status is non-zero, so the supervisor sees
+    # a failed exit rather than a clean stop.
+    :timer.apply_after(delay, System, :stop, [1])
+    :timer.apply_after(delay + watchdog, System, :halt, [1])
+
+    :ok
   end
 
   @spec stop_sup(pid(), timeout()) :: {:ok, :stopped | :stopping}
