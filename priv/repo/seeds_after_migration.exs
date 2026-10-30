@@ -10,29 +10,36 @@ if Tenants.get_tenant_by_external_id(tenant_name) do
   Tenants.delete_tenant_by_external_id(tenant_name)
 end
 
-if !Tenants.get_tenant_by_external_id("is_manager") do
-  {:ok, _} =
-    %{
-      db_host: db_conf[:hostname],
-      db_port: db_conf[:port],
-      db_database: db_conf[:database],
-      default_parameter_status: %{},
-      external_id: "is_manager",
-      require_user: false,
-      auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
-      users: [
-        %{
-          "db_user" => db_conf[:username],
-          "db_password" => db_conf[:password],
-          "pool_size" => 2,
-          "mode_type" => "transaction",
-          "is_manager" => true,
-          "pool_checkout_timeout" => 1000
-        }
-      ]
-    }
-    |> Tenants.create_tenant()
-end
+[
+  {"is_manager", %{}},
+  {"is_manager_cleartext", %{"cleartext_auth_over_tls" => true}}
+]
+|> Enum.each(fn {tenant, feature_flags} ->
+  if !Tenants.get_tenant_by_external_id(tenant) do
+    {:ok, _} =
+      %{
+        db_host: db_conf[:hostname],
+        db_port: db_conf[:port],
+        db_database: db_conf[:database],
+        default_parameter_status: %{},
+        external_id: tenant,
+        require_user: false,
+        auth_query: "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
+        feature_flags: feature_flags,
+        users: [
+          %{
+            "db_user" => db_conf[:username],
+            "db_password" => db_conf[:password],
+            "pool_size" => 2,
+            "mode_type" => "transaction",
+            "is_manager" => true,
+            "pool_checkout_timeout" => 1000
+          }
+        ]
+      }
+      |> Tenants.create_tenant()
+  end
+end)
 
 [
   "proxy_tenant1",
