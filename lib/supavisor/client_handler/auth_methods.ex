@@ -13,8 +13,8 @@ defmodule Supavisor.ClientHandler.AuthMethods do
   When `client_jit` is true (client passed `--jit=true` in options) and the tenant
   has `use_jit` enabled, returns `:jit` to route to the dedicated JIT auth module.
 
-  Over TLS, cleartext password authentication is used unless the
-  `scram_auth_over_tls` feature flag is enabled, in which case SCRAM is used.
+  Over TLS, SCRAM is used unless the `cleartext_auth_over_tls` feature flag
+  is enabled, in which case cleartext password authentication is used.
   """
   @spec fetch_authentication_method(
           Supavisor.Tenants.Tenant.t(),
@@ -33,8 +33,8 @@ defmodule Supavisor.ClientHandler.AuthMethods do
   end
 
   defp tls_authentication_method(tenant) do
-    if FeatureFlag.enabled?(tenant, "scram_auth_over_tls"),
-      do: :scram_sha_256,
-      else: :password
+    if FeatureFlag.enabled?(tenant, "cleartext_auth_over_tls"),
+      do: :password,
+      else: :scram_sha_256
   end
 end
