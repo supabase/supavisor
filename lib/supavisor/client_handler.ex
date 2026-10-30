@@ -375,36 +375,23 @@ defmodule Supavisor.ClientHandler do
            ),
          :not_proxy <-
            if(node(sup) != node() and data.mode != :proxy, do: :proxy, else: :not_proxy),
-         {:ok, opts} <- Supavisor.subscribe(data.id),
-         manager_ref = Process.monitor(opts.workers.manager),
-         data = Map.merge(data, opts.workers),
-         {:ok, db_connection} <- maybe_checkout(:on_connect, data),
-         :ok <- maybe_set_application_name(data, db_connection) do
-      if data.admission_retries > 0, do: Telem.client_admission(:admitted, data.id)
-
+         {:ok, opts} <- Supavisor.subscribe(data.id) do
       data = %{
-        data
-        | manager: manager_ref,
-          db_connection: db_connection,
-          idle_timeout: opts.idle_timeout,
-          admission_retries: 0
+        Map.merge(data, opts.workers)
+        | manager: Process.monitor(opts.workers.manager),
+          idle_timeout: opts.idle_timeout
       }
 
-      Registry.register(@clients_registry, data.id,
-        started_at: System.monotonic_time(),
-        app_name: data.app_name,
-        include_app_name: include_app_name?(data)
-      )
-
       cond do
-        data.client_ready ->
-          {:next_state, :idle, data, handle_actions(data)}
+        data.checkout != nil ->
+          {:keep_state, data}
 
-        opts.ps == [] ->
-          {:keep_state, data, {:timeout, 1_000, :wait_ps}}
+        data.mode != :transaction and data.db_connection == nil ->
+          {:keep_state, start_checkout(data, 0, opts.ps),
+           {:state_timeout, data.timeout, :checkout_timeout}}
 
         true ->
-          {:keep_state, data, {:next_event, :internal, {:greetings, opts.ps}}}
+          subscribed(data, opts.ps)
       end
     else
       {:error, %WorkerNotFoundError{}} ->
@@ -552,12 +539,10 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:info, {:EXIT, db_pid, reason}, state, data) do
-    context = if state in [:idle, :busy], do: :authenticated, else: :handshake
-
     Error.terminate_with_error(
       data,
       %DbHandlerExitedError{pid: db_pid, reason: reason},
-      context
+      context(state)
     )
   end
 
@@ -571,6 +556,7 @@ defmodule Supavisor.ClientHandler do
       {_, :shutdown} -> {:stop, {:shutdown, :manager_shutdown}}
       {:idle, _} -> {:next_state, :connecting, data, {:next_event, :internal, :subscribe}}
       {:connecting, _} -> {:keep_state_and_data, {:next_event, :internal, :subscribe}}
+      {:waiting_pool, _} -> {:keep_state_and_data, :postpone}
       {:busy, _} -> {:keep_state_and_data, :postpone}
     end
   end
@@ -741,6 +727,12 @@ defmodule Supavisor.ClientHandler do
       {:idle, :busy} ->
         {:next_state, new_state, data}
 
+      {:idle, :waiting_pool} ->
+        {:next_state, new_state, data}
+
+      {:waiting_pool, :busy} ->
+        {:next_state, new_state, data}
+
       {:busy, :idle} ->
         {:next_state, new_state, data, idle_timeout_action(data)}
 
@@ -782,17 +774,17 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  # Any message when idle - checkout and send to db
-  def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
-    case maybe_checkout(:on_query, data) do
-      {:ok, db_connection} ->
-        {:next_state, :busy,
-         %{data | db_connection: db_connection, query_start: System.monotonic_time()},
-         [{:next_event, :internal, {proto, socket, msg}}]}
+  # Waits for the worker without blocking, so socket closes and shutdowns are still handled.
+  def handle_event(_kind, {proto, _, _}, :idle, %{db_connection: nil} = data)
+      when proto in @proto do
+    {:next_state, :waiting_pool, start_checkout(data, 0, nil),
+     [:postpone, {:state_timeout, data.timeout, :checkout_timeout}]}
+  end
 
-      {:error, exception} ->
-        Error.terminate_with_error(data, exception, :authenticated)
-    end
+  # Any message when idle - send to db
+  def handle_event(_kind, {proto, socket, msg}, :idle, data) when proto in @proto do
+    {:next_state, :busy, %{data | query_start: System.monotonic_time()},
+     [{:next_event, :internal, {proto, socket, msg}}]}
   end
 
   # Any message when busy: send to db
@@ -806,8 +798,71 @@ defmodule Supavisor.ClientHandler do
     end
   end
 
-  # Any message when connecting - postpone
-  def handle_event(_kind, {proto, _socket, _msg}, :connecting, _data) when proto in @proto do
+  def handle_event(
+        :info,
+        {:poolboy_checkout, ref, db_pid},
+        state,
+        %{checkout: {ref, start, attempt, ps}} = data
+      ) do
+    Process.demonitor(ref, [:flush])
+
+    case DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
+      {:ok, db_sock} ->
+        same_box = if node(db_pid) == node(), do: :local, else: :remote
+        Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
+        data = %{data | db_connection: {data.pool, db_pid, db_sock}, checkout: nil}
+
+        case state do
+          :waiting_pool -> {:next_state, :busy, %{data | query_start: System.monotonic_time()}}
+          :connecting -> subscribed(data, ps)
+        end
+
+      {:error, %DbHandlerExitedError{}} when attempt < @max_checkout_retries ->
+        Logger.warning(
+          "ClientHandler: DbHandler exited during checkout, retrying (attempt #{attempt + 1})"
+        )
+
+        {:keep_state, start_checkout(data, attempt + 1, ps)}
+
+      {:error, %DbHandlerExitedError{}} ->
+        Error.terminate_with_error(
+          data,
+          %Supavisor.Errors.CheckoutRetriesExhaustedError{},
+          context(state)
+        )
+
+      {:error, exception} ->
+        Error.terminate_with_error(data, exception, context(state))
+    end
+  end
+
+  def handle_event(
+        :info,
+        {:poolboy_checkout_down, ref, :process, _, reason},
+        state,
+        %{checkout: {ref, _, _, _}} = data
+      ) do
+    Error.terminate_with_error(data, %PoolCheckoutError{reason: reason}, context(state))
+  end
+
+  def handle_event(:state_timeout, :checkout_timeout, state, %{checkout: {_, _, _, _}} = data) do
+    exception = %CheckoutTimeoutError{
+      mode: data.mode,
+      timeout_ms: data.timeout,
+      reason: :pool_exhausted
+    }
+
+    Error.terminate_with_error(data, exception, context(state))
+  end
+
+  # A session checkout can finish while :connecting still waits for parameter status.
+  def handle_event(:state_timeout, :checkout_timeout, :connecting, _data) do
+    :keep_state_and_data
+  end
+
+  # Any message when connecting or waiting for a pool worker - postpone
+  def handle_event(_kind, {proto, _socket, _msg}, state, _data)
+      when proto in @proto and state in [:connecting, :waiting_pool] do
     {:keep_state_and_data, :postpone}
   end
 
@@ -949,40 +1004,26 @@ defmodule Supavisor.ClientHandler do
     Error.terminate_with_error(data, exception, :handshake)
   end
 
-  @spec maybe_checkout(:on_connect | :on_query, map, non_neg_integer()) ::
-          {:ok, Data.db_connection()} | {:ok, nil} | {:error, Exception.t()}
-  defp maybe_checkout(event, data, attempt \\ 0)
+  defp subscribed(data, ps) do
+    :ok = maybe_set_application_name(data, data.db_connection)
+    if data.admission_retries > 0, do: Telem.client_admission(:admitted, data.id)
+    data = %{data | admission_retries: 0}
 
-  defp maybe_checkout(_, %{mode: mode, db_connection: {pool, db_pid, db_sock}}, _)
-       when is_pid(db_pid) and mode in [:session, :proxy] do
-    {:ok, {pool, db_pid, db_sock}}
-  end
+    Registry.register(@clients_registry, data.id,
+      started_at: System.monotonic_time(),
+      app_name: data.app_name,
+      include_app_name: include_app_name?(data)
+    )
 
-  defp maybe_checkout(:on_connect, %{mode: :transaction}, _), do: {:ok, nil}
+    cond do
+      data.client_ready ->
+        {:next_state, :idle, data, handle_actions(data)}
 
-  defp maybe_checkout(event, data, attempt) do
-    timeout = data.timeout |> div(attempt + 1)
-    start = System.monotonic_time(:microsecond)
+      ps == [] ->
+        {:keep_state, data, {:timeout, 1_000, :wait_ps}}
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, timeout, data.mode),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
-      same_box = if node(db_pid) == node(), do: :local, else: :remote
-      Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
-      {:ok, {data.pool, db_pid, db_sock}}
-    else
-      {:error, %Supavisor.Errors.DbHandlerExitedError{}} ->
-        if attempt < @max_checkout_retries do
-          Logger.warning(
-            "ClientHandler: DbHandler exited during checkout, retrying (attempt #{attempt + 1})"
-          )
-
-          maybe_checkout(event, data, attempt + 1)
-        else
-          {:error, %Supavisor.Errors.CheckoutRetriesExhaustedError{}}
-        end
-
-      other ->
-        other
+      true ->
+        {:keep_state, data, {:next_event, :internal, {:greetings, ps}}}
     end
   end
 
@@ -1112,14 +1153,9 @@ defmodule Supavisor.ClientHandler do
     max(@admission_backoff - jitter + :rand.uniform(2 * jitter), 0)
   end
 
-  defp pool_checkout(pool, timeout, mode) do
-    {:ok, :poolboy.checkout(pool, true, timeout)}
-  catch
-    :exit, {:timeout, _} ->
-      {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout, reason: :pool_exhausted}}
-
-    :exit, reason ->
-      {:error, %PoolCheckoutError{reason: reason}}
+  defp start_checkout(data, attempt, ps) do
+    ref = :poolboy.checkout_async(data.pool)
+    %{data | checkout: {ref, System.monotonic_time(:microsecond), attempt, ps}}
   end
 
   defp set_tenant_info(data, info, user, id, db_name, client_jit) do
@@ -1180,7 +1216,9 @@ defmodule Supavisor.ClientHandler do
     maybe_cleanup_db_handler(state, data)
 
     error = %ClientSocketClosedError{mode: data.mode, client_state: state, reason: reason}
-    context = if state in [:idle, :busy], do: :authenticated, else: :handshake
-    Error.terminate_with_error(data, error, context)
+    Error.terminate_with_error(data, error, context(state))
   end
+
+  defp context(state) when state in [:idle, :waiting_pool, :busy], do: :authenticated
+  defp context(_state), do: :handshake
 end

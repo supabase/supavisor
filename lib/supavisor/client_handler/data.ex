@@ -42,6 +42,8 @@ defmodule Supavisor.ClientHandler.Data do
     :state_entered_at,
     :subscribe_retries,
     :admission_retries,
+    # {ref, start, attempt, ps} of the pending async pool checkout.
+    :checkout,
     :client_ready,
     :max_clients,
     :pool_ranch,

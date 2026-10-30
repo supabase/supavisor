@@ -36,7 +36,8 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
           %{
             "db_user" => db_conf[:username],
             "db_password" => db_conf[:password],
-            "pool_size" => 9,
+            "pool_size" => Map.get(ctx, :pool_size, 9),
+            "pool_checkout_timeout" => Map.get(ctx, :pool_checkout_timeout, 60_000),
             "max_clients" => 100,
             "mode_type" => "transaction"
           }
@@ -44,9 +45,11 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
       })
 
     on_exit(fn ->
-      Supavisor.stop(
-        Supavisor.id(type: :single, tenant: tenant, user: db_conf[:username], mode: :transaction)
-      )
+      for mode <- [:transaction, :session] do
+        Supavisor.stop(
+          Supavisor.id(type: :single, tenant: tenant, user: db_conf[:username], mode: mode)
+        )
+      end
     end)
 
     {:ok, tenant: tenant}
@@ -868,9 +871,86 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
-  defp connect(tenant) do
+  describe "waiting for a backend" do
+    @describetag pool_size: 1
+
+    test "a queued client exits when its socket closes", %{tenant: tenant} do
+      holders = hold_all_backends(tenant)
+      sock = connect(tenant)
+      client = client_handler(tenant, sock)
+      ref = Process.monitor(client)
+
+      :ok = :gen_tcp.send(sock, query("SELECT 1"))
+      assert_eventually(30, 100, fn -> match?({:waiting_pool, _}, :sys.get_state(client)) end)
+
+      :ok = :gen_tcp.close(sock)
+      assert_receive {:DOWN, ^ref, _, _, _}, 1000
+
+      for holder <- holders do
+        :ok = :gen_tcp.send(holder, query("COMMIT"))
+        assert statuses(recv_rfqs(holder, 1)) == [?I]
+      end
+
+      assert_released(tenant)
+    end
+
+    @tag pool_checkout_timeout: 300
+    test "a queued client times out", %{tenant: tenant} do
+      _holders = hold_all_backends(tenant)
+      sock = connect(tenant)
+
+      :ok = :gen_tcp.send(sock, query("SELECT 1"))
+
+      pkts = recv_until(sock, &(error_codes(&1) != []))
+      assert Enum.any?(pkts, &(&1 =~ "ECHECKOUTTIMEOUT"))
+    end
+
+    @tag pool_size: 2
+    test "a client queued to connect in session mode exits when its socket closes", %{
+      tenant: tenant
+    } do
+      _first = connect(tenant, :session)
+      fill_pool(pool(tenant))
+      checked_out = checked_out(tenant)
+      owner = spawn(fn -> connect(tenant, :session) end)
+
+      assert_eventually(30, 100, fn -> queued_session_client(tenant) != nil end)
+      ref = Process.monitor(queued_session_client(tenant))
+
+      Process.exit(owner, :kill)
+      assert_receive {:DOWN, ^ref, _, _, _}, 1000
+
+      assert_eventually(30, 100, fn -> checked_out(tenant) == checked_out end)
+    end
+  end
+
+  defp hold_all_backends(tenant, holders \\ []) do
+    if holders != [] and elem(:poolboy.status(pool(tenant)), 0) == :full do
+      holders
+    else
+      sock = connect(tenant)
+      :ok = :gen_tcp.send(sock, query("BEGIN"))
+      assert statuses(recv_rfqs(sock, 1)) == [?T]
+      hold_all_backends(tenant, [sock | holders])
+    end
+  end
+
+  defp fill_pool(pool) do
+    if :poolboy.checkout(pool, false) != :full, do: fill_pool(pool)
+  end
+
+  defp queued_session_client(tenant) do
+    {id, _pool} = pool_entry(tenant)
+    manager = Supavisor.get_local_manager(id)
+
+    Enum.find_value(:ets.tab2list(:sys.get_state(manager).tid), fn {_, pid, _} ->
+      match?({:connecting, %{checkout: {_, _, _, _}}}, :sys.get_state(pid)) && pid
+    end)
+  end
+
+  defp connect(tenant, mode \\ :transaction) do
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
-    port = Application.get_env(:supavisor, :proxy_port_transaction)
+    port = Application.get_env(:supavisor, :"proxy_port_#{mode}")
 
     {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
     ProtocolClient.authenticate(sock, "#{db_conf[:username]}.#{tenant}", db_conf[:password])
