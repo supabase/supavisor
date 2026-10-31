@@ -379,8 +379,7 @@ defmodule Supavisor.Tenants do
     |> Repo.delete_all()
     |> case do
       {num, _} when num > 0 ->
-        cleanup_result = Supavisor.del_all_cache_dist(id)
-        Logger.info("Delete cache dist on delete #{id}: #{inspect(cleanup_result)}")
+        Supavisor.del_all_cache_dist(id)
         true
 
       _ ->
@@ -393,17 +392,14 @@ defmodule Supavisor.Tenants do
       {:ok, %Tenant{external_id: external_id}} ->
         operation = Keyword.get(opts, :operation, "operation")
 
-        cleanup_result = Supavisor.del_all_cache_dist(external_id)
-
-        Logger.info(
-          "Delete cache dist on #{operation} #{external_id}: #{inspect(cleanup_result)}"
-        )
+        Supavisor.del_all_cache_dist(external_id)
 
         if opts[:terminate_pools] do
           terminate_result = Supavisor.terminate_global(external_id, opts[:terminate_error])
 
           Logger.warning(
-            "Terminate pools on #{operation} #{external_id}: #{inspect(terminate_result)}"
+            "Terminate pools on #{operation} #{external_id}: #{inspect(terminate_result)}",
+            project: external_id
           )
         end
 
@@ -533,8 +529,7 @@ defmodule Supavisor.Tenants do
             )
 
             # Clear cache after SecretCheckers are updated to avoid race condition
-            cleanup_result = Supavisor.del_all_cache_dist(tenant.external_id)
-            Logger.info("Delete cache dist #{tenant.external_id}: #{inspect(cleanup_result)}")
+            Supavisor.del_all_cache_dist(tenant.external_id)
 
             :ok
 
