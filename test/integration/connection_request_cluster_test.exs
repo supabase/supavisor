@@ -35,6 +35,8 @@ defmodule Supavisor.Integration.ConnectionRequestClusterTest do
 
     nodes = [node(), node1, node2]
 
+    assert :ok = wait_until(fn -> peers_clustered?([node1, node2]) end, 5_000)
+
     ports = [
       Application.get_env(:supavisor, :proxy_port_transaction),
       :peer.call(peer1, Application, :get_env, [:supavisor, :proxy_port_transaction]),
@@ -42,6 +44,15 @@ defmodule Supavisor.Integration.ConnectionRequestClusterTest do
     ]
 
     {nodes, ports}
+  end
+
+  # A peer that doesn't know the other one yet places every pool on itself, and the resulting :syn
+  # conflict stops one of the pools and its clients. This node joined :accepting_pools before it was
+  # named, so :syn doesn't sync its membership and peers never list it there.
+  defp peers_clustered?(peers) do
+    Enum.all?(peers, fn peer ->
+      Enum.sort(:erpc.call(peer, Supavisor, :accepting_nodes, [])) == Enum.sort(peers)
+    end)
   end
 
   # Forwards connection request events for this test's tenants from every node. Telemetry handlers run
