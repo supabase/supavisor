@@ -415,4 +415,62 @@ defmodule Supavisor.ClientHandlerTest do
       refute_received {:"$gen_cast", {:release, _write_seq}}
     end
   end
+
+  describe "handle_event/4 exit of a DbHandler" do
+    setup do
+      {client_sock, _recv} = sockpair()
+      {db_sock, _db_recv} = sockpair()
+      db_pid = spawn(fn -> :ok end)
+
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: "tenant",
+          user: "user",
+          mode: :transaction,
+          db: "postgres"
+        )
+
+      data = %{
+        id: id,
+        mode: :transaction,
+        local: false,
+        connection_start: System.monotonic_time(),
+        sock: {:gen_tcp, client_sock},
+        db_connection: {:pool, db_pid, {:gen_tcp, db_sock}}
+      }
+
+      {:ok, data: data, db_pid: db_pid}
+    end
+
+    # The backend closing right after answering, with the query done and the worker released.
+    test "ignores an abnormal exit of a released worker", %{data: data, db_pid: db_pid} do
+      exit_msg = {:EXIT, db_pid, {:shutdown, :db_termination}}
+      released = %{data | db_connection: nil}
+
+      assert :keep_state_and_data = @subject.handle_event(:info, exit_msg, :idle, released)
+    end
+
+    test "ignores an abnormal exit of an earlier worker while on another", %{data: data} do
+      earlier = spawn(fn -> :ok end)
+      exit_msg = {:EXIT, earlier, {:shutdown, :db_termination}}
+
+      assert :keep_state_and_data = @subject.handle_event(:info, exit_msg, :busy, data)
+    end
+
+    # A worker that failed to write to the client or forwarded a FATAL stops :normal, relying
+    # on the link. It may have been released by then, and the client must still go down.
+    test "stops on a normal exit of a released worker", %{data: data, db_pid: db_pid} do
+      released = %{data | db_connection: nil}
+
+      assert {:stop, :normal} =
+               @subject.handle_event(:info, {:EXIT, db_pid, :normal}, :idle, released)
+    end
+
+    test "doesn't ignore an abnormal exit of the current worker", %{data: data, db_pid: db_pid} do
+      exit_msg = {:EXIT, db_pid, {:shutdown, :db_termination}}
+
+      refute @subject.handle_event(:info, exit_msg, :busy, data) == :keep_state_and_data
+    end
+  end
 end

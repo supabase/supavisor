@@ -551,6 +551,15 @@ defmodule Supavisor.ClientHandler do
     {:stop, :normal}
   end
 
+  # A DbHandler we released, typically on the backend closing right after answering. The
+  # query is done, so the client goes on. A :normal exit, above, still ends it: that's the
+  # DbHandler failing to write to the client, or forwarding a FATAL, before the release.
+  def handle_event(:info, {:EXIT, pid, _reason}, state, %{db_connection: db_connection})
+      when is_pid(pid) and state in [:idle, :busy] and
+             (db_connection == nil or elem(db_connection, 1) != pid) do
+    :keep_state_and_data
+  end
+
   def handle_event(:info, {:EXIT, db_pid, reason}, state, data) do
     context = if state in [:idle, :busy], do: :authenticated, else: :handshake
 
