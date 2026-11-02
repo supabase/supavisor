@@ -64,20 +64,20 @@ defmodule Supavisor.Integration.DoubleCheckoutTest do
     pool = pool(tenant)
     assert_eventually(30, 100, fn -> checked_out(pool) == 0 end)
 
-    {stand_in, worker} = checkout(pool)
-    client_a = checkout_db_handler(worker)
+    {stand_in, worker, checkout_ref} = checkout(pool)
+    client_a = checkout_db_handler(worker, checkout_ref)
 
     Process.exit(stand_in, :kill)
     assert_eventually(30, 100, fn -> checked_out(pool) == 0 end)
 
-    assert {_client_b, ^worker} = checkout(pool)
+    assert {_client_b, ^worker, _} = checkout(pool)
 
     send(client_a, :release)
     assert_receive :released, 1_000
     assert_eventually(30, 100, fn -> elem(:sys.get_state(worker), 0) == :idle end)
     _ = :poolboy.status(pool)
 
-    {_client_c, other_worker} = checkout(pool)
+    {_client_c, other_worker, _} = checkout(pool)
 
     assert other_worker != worker, "worker was checked out to two clients at once"
   end
@@ -164,22 +164,24 @@ defmodule Supavisor.Integration.DoubleCheckoutTest do
 
     pid =
       spawn(fn ->
-        send(test, {:checked_out, self(), :poolboy.checkout(pool, true, 5_000)})
+        send(test, {:checked_out, self(), :poolboy.checkout_ref(pool, true, 5_000)})
         Process.sleep(:infinity)
       end)
 
     on_exit(fn -> Process.exit(pid, :kill) end)
-    assert_receive {:checked_out, ^pid, worker}, 6_000
-    {pid, worker}
+    assert_receive {:checked_out, ^pid, {worker, checkout_ref}}, 6_000
+    {pid, worker, checkout_ref}
   end
 
   # A client the DbHandler is checked out to, releasing it when told to.
-  defp checkout_db_handler(worker) do
+  defp checkout_db_handler(worker, checkout_ref) do
     test = self()
 
     pid =
       spawn(fn ->
-        {:ok, _db_sock} = DbHandler.checkout(worker, {:gen_tcp, nil}, self(), :transaction)
+        {:ok, _db_sock} =
+          DbHandler.checkout(worker, {:gen_tcp, nil}, self(), checkout_ref, :transaction)
+
         send(test, :db_checked_out)
 
         receive do

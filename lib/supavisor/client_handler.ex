@@ -453,7 +453,7 @@ defmodule Supavisor.ClientHandler do
              client_ip: forwardable_peer_ip(data.peer_ip),
              log_connections: data.log_connections
            ),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
+         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), nil, data.mode) do
       {:keep_state, %{data | db_connection: {nil, db_pid, db_sock}, mode: :proxy}}
     else
       {:error, exception} ->
@@ -984,8 +984,9 @@ defmodule Supavisor.ClientHandler do
     timeout = data.timeout |> div(attempt + 1)
     start = System.monotonic_time(:microsecond)
 
-    with {:ok, db_pid} <- pool_checkout(data.pool, timeout, data.mode),
-         {:ok, db_sock} <- DbHandler.checkout(db_pid, data.sock, self(), data.mode) do
+    with {:ok, {db_pid, checkout_ref}} <- pool_checkout(data.pool, timeout, data.mode),
+         {:ok, db_sock} <-
+           DbHandler.checkout(db_pid, data.sock, self(), checkout_ref, data.mode) do
       same_box = if node(db_pid) == node(), do: :local, else: :remote
       Telem.pool_checkout_time(System.monotonic_time(:microsecond) - start, data.id, same_box)
       {:ok, {data.pool, db_pid, db_sock}}
@@ -1133,7 +1134,7 @@ defmodule Supavisor.ClientHandler do
   end
 
   defp pool_checkout(pool, timeout, mode) do
-    {:ok, :poolboy.checkout(pool, true, timeout)}
+    {:ok, :poolboy.checkout_ref(pool, true, timeout)}
   catch
     :exit, {:timeout, _} ->
       {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout, reason: :pool_exhausted}}

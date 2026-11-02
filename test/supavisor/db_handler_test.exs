@@ -47,7 +47,7 @@ defmodule Supavisor.DbHandlerTest do
       {:ok, %{behavior: behavior, sock: {:fake_db_sock, self()}}}
     end
 
-    def handle_call({:checkout, _sock, _caller}, _from, %{behavior: behavior} = state) do
+    def handle_call({:checkout, _sock, _caller, _ref}, _from, %{behavior: behavior} = state) do
       case behavior do
         :normal ->
           {:reply, {:ok, state.sock}, state}
@@ -159,6 +159,7 @@ defmodule Supavisor.DbHandlerTest do
 
     base = %{
       caller: self(),
+      checkout_ref: make_ref(),
       pool: self(),
       mode: :transaction,
       sock: {:gen_tcp, backend_sock},
@@ -463,7 +464,7 @@ defmodule Supavisor.DbHandlerTest do
                {:error, %Supavisor.Errors.CheckoutError{postgres_error: ^expected_postgres_error}}}} =
                Db.handle_event(
                  {:call, from},
-                 {:checkout, nil, self()},
+                 {:checkout, nil, self(), make_ref()},
                  :waiting_for_secrets,
                  data
                )
@@ -829,7 +830,7 @@ defmodule Supavisor.DbHandlerTest do
       caller = self()
 
       assert {:ok, {:fake_db_sock, ^mock_pid}} =
-               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+               Db.checkout(mock_pid, dummy_sock, caller, make_ref(), :transaction, 1000)
     end
 
     test "handles process crash during checkout" do
@@ -838,7 +839,7 @@ defmodule Supavisor.DbHandlerTest do
       caller = self()
 
       assert {:error, %DbHandlerExitedError{pid: ^mock_pid}} =
-               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+               result = Db.checkout(mock_pid, dummy_sock, caller, make_ref(), :transaction, 1000)
 
       assert_valid_error(result)
     end
@@ -849,7 +850,7 @@ defmodule Supavisor.DbHandlerTest do
       caller = self()
 
       assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: :normal}} =
-               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+               result = Db.checkout(mock_pid, dummy_sock, caller, make_ref(), :transaction, 1000)
 
       assert_valid_error(result)
     end
@@ -860,7 +861,7 @@ defmodule Supavisor.DbHandlerTest do
       caller = self()
 
       assert {:error, %DbHandlerExitedError{pid: ^mock_pid, reason: {:shutdown, :db_termination}}} =
-               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+               result = Db.checkout(mock_pid, dummy_sock, caller, make_ref(), :transaction, 1000)
 
       {:error, error} = assert_valid_error(result)
       assert Exception.message(error) =~ "connection to database closed"
@@ -872,7 +873,7 @@ defmodule Supavisor.DbHandlerTest do
       caller = self()
 
       assert {:error, %CheckoutTimeoutError{timeout_ms: 100, mode: :transaction}} =
-               result = Db.checkout(mock_pid, dummy_sock, caller, :transaction, 100)
+               result = Db.checkout(mock_pid, dummy_sock, caller, make_ref(), :transaction, 100)
 
       assert_valid_error(result)
     end
@@ -884,7 +885,7 @@ defmodule Supavisor.DbHandlerTest do
 
       assert {:error, %CheckoutError{pid: _, postgres_error: %{"S" => "FATAL"}}} =
                result =
-               Db.checkout(mock_pid, dummy_sock, caller, :transaction, 1000)
+               Db.checkout(mock_pid, dummy_sock, caller, make_ref(), :transaction, 1000)
 
       assert_valid_error(result)
     end
@@ -1413,14 +1414,16 @@ defmodule Supavisor.DbHandlerTest do
       refute caller in links
     end
 
-    test "checks in naming the ClientHandler it was released by" do
+    test "checks in by the reference of the checkout it was released from" do
       caller = spawn_link(fn -> Process.sleep(:infinity) end)
-      data = busy_data(%{caller: caller}) |> expecting(1, [?Q])
+      checkout_ref = make_ref()
+      data = busy_data(%{caller: caller, checkout_ref: checkout_ref}) |> expecting(1, [?Q])
       worker = self()
 
-      assert {:next_state, :idle, _data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      assert {:next_state, :idle, data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
 
-      assert_received {:"$gen_cast", {:checkin, ^worker, ^caller}}
+      assert_received {:"$gen_cast", {:checkin, ^worker, ^checkout_ref}}
+      assert data.checkout_ref == nil
       {:links, links} = Process.info(self(), :links)
       refute caller in links
     end
@@ -1464,7 +1467,7 @@ defmodule Supavisor.DbHandlerTest do
       from = {self(), make_ref()}
 
       assert {:keep_state_and_data, :postpone} =
-               Db.handle_event({:call, from}, {:checkout, :sock, self()}, :busy, data)
+               Db.handle_event({:call, from}, {:checkout, :sock, self(), make_ref()}, :busy, data)
     end
 
     test "expect_messages cast queues the messages in order and keeps the latest write" do
@@ -1518,7 +1521,7 @@ defmodule Supavisor.DbHandlerTest do
       assert {:next_state, :busy, data, {:reply, ^from, {:ok, _sock}}} =
                Db.handle_event(
                  {:call, from},
-                 {:checkout, {:gen_tcp, client_sock}, self()},
+                 {:checkout, {:gen_tcp, client_sock}, self(), make_ref()},
                  :idle,
                  data
                )

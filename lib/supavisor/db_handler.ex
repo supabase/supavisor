@@ -97,13 +97,13 @@ defmodule Supavisor.DbHandler do
 
   Returns the server socket, which the client may write messages directly to.
   """
-  @spec checkout(pid(), Supavisor.sock(), pid(), Supavisor.mode(), timeout()) ::
+  @spec checkout(pid(), Supavisor.sock(), pid(), reference() | nil, Supavisor.mode(), timeout()) ::
           {:ok, Supavisor.sock()}
           | {:error, DbHandlerExitedError.t()}
           | {:error, CheckoutError.t()}
           | {:error, CheckoutTimeoutError.t()}
-  def checkout(pid, sock, caller, mode, timeout \\ 15_000) do
-    :gen_statem.call(pid, {:checkout, sock, caller}, timeout)
+  def checkout(pid, sock, caller, checkout_ref, mode, timeout \\ 15_000) do
+    :gen_statem.call(pid, {:checkout, sock, caller, checkout_ref}, timeout)
   catch
     :exit, {:timeout, _} ->
       {:error, %CheckoutTimeoutError{mode: mode, timeout_ms: timeout, reason: :unresponsive}}
@@ -247,6 +247,7 @@ defmodule Supavisor.DbHandler do
       mode: config.mode,
       replica_type: config.replica_type,
       caller: nil,
+      checkout_ref: nil,
       client_sock: nil,
       write_seq: 0,
       pool: pool,
@@ -476,7 +477,7 @@ defmodule Supavisor.DbHandler do
     {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
     checkin(data)
 
-    {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+    {:next_state, :idle, %{data | stats: stats, caller: nil, checkout_ref: nil, client_sock: nil}}
   end
 
   # The ClientHandler already let go of us, so ignoring this would keep us checked out for
@@ -622,13 +623,18 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  def handle_event({:call, from}, {:checkout, _sock, _caller}, :terminating_with_error, data) do
+  def handle_event(
+        {:call, from},
+        {:checkout, _sock, _caller, _ref},
+        :terminating_with_error,
+        data
+      ) do
     Logger.debug("DbHandler: checkout call during terminating_with_error, replying with error")
     error = %Supavisor.Errors.CheckoutError{pid: self(), postgres_error: data.terminating_error}
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
-  def handle_event({:call, from}, {:checkout, _sock, _caller}, :waiting_for_secrets, _data) do
+  def handle_event({:call, from}, {:checkout, _sock, _caller, _ref}, :waiting_for_secrets, _data) do
     Logger.debug("DbHandler: checkout call during waiting_for_secrets, replying with error")
 
     postgres_error = %{
@@ -642,7 +648,7 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
-  def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
+  def handle_event({:call, from}, {:checkout, sock, caller, checkout_ref}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
     # poolboy can hand us out while busy, on seeing our caller's DOWN before we see its EXIT.
@@ -656,8 +662,8 @@ defmodule Supavisor.DbHandler do
         send(caller, {:parameter_status, bin_ps})
       end
 
-      {:next_state, :busy, %{data | client_sock: sock, caller: caller, write_seq: 0},
-       {:reply, from, {:ok, data.sock}}}
+      data = %{data | client_sock: sock, caller: caller, checkout_ref: checkout_ref, write_seq: 0}
+      {:next_state, :busy, data, {:reply, from, {:ok, data.sock}}}
     else
       {:keep_state_and_data, :postpone}
     end
@@ -1062,13 +1068,13 @@ defmodule Supavisor.DbHandler do
 
   # Returning to the pool only after the response is fully forwarded keeps
   # workers flushing to slow clients out of circulation. If the caller died
-  # before this checkin reaches poolboy, poolboy's monitor already reclaimed the
-  # worker and may have handed it to another client. The checkin names the
-  # caller, so poolboy ignores it then.
+  # before this reaches poolboy, poolboy's monitor already reclaimed the worker
+  # and may have handed it to another client. Checking in under the checkout's
+  # reference, poolboy ignores it then.
   @spec checkin(map()) :: :ok
-  defp checkin(%{caller: caller, pool: pool}) do
+  defp checkin(%{caller: caller, pool: pool, checkout_ref: checkout_ref}) do
     Process.unlink(caller)
-    :poolboy.checkin(pool, self(), caller)
+    :poolboy.checkin_ref(pool, self(), checkout_ref)
   end
 
   # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's
