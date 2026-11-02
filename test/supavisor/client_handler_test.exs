@@ -443,30 +443,17 @@ defmodule Supavisor.ClientHandlerTest do
       {:ok, data: data, db_pid: db_pid}
     end
 
-    # The backend closing right after answering, with the query done and the worker released.
-    test "ignores an abnormal exit of a released worker", %{data: data, db_pid: db_pid} do
-      exit_msg = {:EXIT, db_pid, {:shutdown, :db_termination}}
-      released = %{data | db_connection: nil}
-
-      assert :keep_state_and_data = @subject.handle_event(:info, exit_msg, :idle, released)
-    end
-
     # Killed mid-write, it takes the client's socket down with it, and the ClientHandler
-    # stops on that. Killed after, the response arrived and the client goes on.
-    test "ignores a released worker being killed", %{data: data, db_pid: db_pid} do
+    # stops on that. Otherwise the response arrived, as when the backend closes right after
+    # answering, and the client goes on. The manager going down moves an idle client to
+    # :connecting.
+    test "ignores an abnormal exit of a released worker", %{data: data, db_pid: db_pid} do
       released = %{data | db_connection: nil}
 
-      assert :keep_state_and_data =
-               @subject.handle_event(:info, {:EXIT, db_pid, :killed}, :idle, released)
-    end
-
-    # The manager going down moves an idle client to :connecting to subscribe again.
-    test "ignores an abnormal exit of a released worker while connecting",
-         %{data: data, db_pid: db_pid} do
-      exit_msg = {:EXIT, db_pid, {:shutdown, :db_termination}}
-      released = %{data | db_connection: nil}
-
-      assert :keep_state_and_data = @subject.handle_event(:info, exit_msg, :connecting, released)
+      for state <- [:idle, :connecting], reason <- [{:shutdown, :db_termination}, :killed] do
+        assert :keep_state_and_data =
+                 @subject.handle_event(:info, {:EXIT, db_pid, reason}, state, released)
+      end
     end
 
     test "ignores an abnormal exit of an earlier worker while on another", %{data: data} do
