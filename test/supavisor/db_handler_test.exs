@@ -1570,6 +1570,169 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
+  # backend_synced goes out before the write, and the ClientHandler stops listening for a
+  # released worker's exit, so the worker is linked to the client's socket for that write.
+  describe "handle_event/4 :busy client socket link" do
+    test "isn't linked to the client's socket after forwarding a synced response" do
+      {client_send, _client_recv} = held_sockpair()
+      data = busy_data(%{client_sock: {:gen_tcp, client_send}}) |> expecting(1, [?Q])
+
+      assert {:keep_state, _data} =
+               Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
+
+      assert_received {:"$gen_cast", {:backend_synced, 1}}
+      {:links, links} = Process.info(self(), :links)
+      refute client_send in links
+    end
+
+    test "dying mid-write of a synced response closes the client's socket" do
+      {client_send, client_recv} = held_sockpair()
+      data = busy_data(%{client_sock: {:gen_tcp, client_send}}) |> expecting(1, [?Q])
+      fill_port(client_send)
+
+      worker = forward_in_process(data, [large_data_row(), Server.ready_for_query()])
+      assert_receive {:"$gen_cast", {:backend_synced, 1}}
+      wait_blocked(worker)
+      Process.exit(worker, :kill)
+
+      assert_receive {:holder, {:EXIT, ^client_send, :killed}}, 1000
+      assert drain(&:gen_tcp.recv(client_recv, 0, &1)) in [:closed, :econnreset]
+    end
+
+    test "dying mid-write of a synced response over TLS closes the client's socket" do
+      {client_server, port_ref, client} = monitored_ssl_pair()
+      data = busy_data(%{client_sock: {:ssl, client_server}}) |> expecting(1, [?Q])
+
+      worker = forward_in_process(data, [large_data_row(), Server.ready_for_query()])
+      assert_receive {:"$gen_cast", {:backend_synced, 1}}
+      wait_blocked(worker)
+      Process.exit(worker, :kill)
+
+      assert_receive {:DOWN, ^port_ref, :port, _, :killed}, 1000
+      assert drain(&:ssl.recv(client, 0, &1)) == :closed
+    end
+
+    # Still the ClientHandler's current worker, which stops on its exit.
+    test "doesn't link for a write before the response is complete" do
+      {client_send, _client_recv} = held_sockpair()
+      data = busy_data(%{client_sock: {:gen_tcp, client_send}}) |> expecting(1, [?Q])
+      fill_port(client_send)
+
+      worker = forward_in_process(data, [large_data_row()])
+      wait_blocked(worker)
+      Process.exit(worker, :kill)
+
+      refute_receive {:"$gen_cast", {:backend_synced, _}}
+      refute_receive {:holder, {:EXIT, ^client_send, _}}, 200
+    end
+
+    test "ignores an exit from the client's socket" do
+      {client_send, _client_recv} = held_sockpair()
+      data = busy_data(%{client_sock: {:gen_tcp, client_send}})
+
+      assert :keep_state_and_data =
+               Db.handle_event(:info, {:EXIT, client_send, :normal}, :busy, data)
+    end
+
+    test "stops on an exit from its backend's socket" do
+      data = busy_data()
+      {:gen_tcp, backend_port} = data.sock
+
+      assert {:stop, :normal} =
+               Db.handle_event(:info, {:EXIT, backend_port, :normal}, :busy, data)
+    end
+  end
+
+  # A socket pair whose sending side belongs to a process trapping exits, as a ClientHandler
+  # does, and reporting what it receives.
+  defp held_sockpair do
+    {send, recv} = sockpair()
+    holder = holder()
+    :ok = :gen_tcp.controlling_process(send, holder)
+    {send, recv}
+  end
+
+  # A TLS connection set up as a ClientHandler does: its TCP port monitored, then upgraded.
+  # The ssl receiver doesn't tell the owner when that port dies, the monitor does.
+  defp monitored_ssl_pair do
+    {:ok, cert, key} = Supavisor.Support.SSLHelper.setup_test_ssl_certificates()
+    {:ok, listen} = :gen_tcp.listen(0, mode: :binary, active: false)
+    {:ok, {_, port}} = :inet.sockname(listen)
+    test = self()
+
+    spawn(fn ->
+      {:ok, client} =
+        :ssl.connect(~c"127.0.0.1", port, verify: :verify_none, mode: :binary, active: false)
+
+      :ok = :ssl.controlling_process(client, test)
+      send(test, {:client, client})
+    end)
+
+    {:ok, tcp} = :gen_tcp.accept(listen)
+    port_ref = Port.monitor(tcp)
+    {:ok, server} = :ssl.handshake(tcp, certfile: cert, keyfile: key)
+    assert_receive {:client, client}, 5000
+    {server, port_ref, client}
+  end
+
+  # Ends with the test, closing the socket it owns.
+  defp holder do
+    test = self()
+
+    spawn(fn ->
+      Process.flag(:trap_exit, true)
+      forward_to(test, Process.monitor(test))
+    end)
+  end
+
+  defp forward_to(test, ref) do
+    receive do
+      {:DOWN, ^ref, _, _, _} ->
+        :ok
+
+      msg ->
+        send(test, {:holder, msg})
+        forward_to(test, ref)
+    end
+  end
+
+  # Forwards a backend read from another process, which the test can kill mid-write.
+  defp forward_in_process(data, pkts) do
+    spawn(fn -> Db.handle_event(:info, {:tcp, :sock, IO.iodata_to_binary(pkts)}, :busy, data) end)
+  end
+
+  # A send to a TCP port queues all of it and returns, and only the next one blocks, on the
+  # busy port. A client that stopped reading leaves its port like this.
+  defp fill_port(port), do: :ok = :gen_tcp.send(port, large_data_row())
+
+  # More than the socket buffers on both ends hold, with the client not reading.
+  defp large_data_row do
+    payload = :binary.copy("x", 32 * 1024 * 1024)
+    <<?D, byte_size(payload) + 4::32, payload::binary>>
+  end
+
+  defp wait_blocked(pid, tries \\ 100) do
+    case Process.info(pid, :status) do
+      {:status, status} when status in [:waiting, :suspended] ->
+        :ok
+
+      _ when tries > 0 ->
+        Process.sleep(10)
+        wait_blocked(pid, tries - 1)
+
+      other ->
+        flunk("worker never blocked writing: #{inspect(other)}")
+    end
+  end
+
+  # Reads until the socket ends, returning why.
+  defp drain(recv) do
+    case recv.(5000) do
+      {:ok, _} -> drain(recv)
+      {:error, reason} -> reason
+    end
+  end
+
   defp expecting(data, write_seq, tags) do
     {:keep_state, data} =
       Db.handle_event(:cast, {:expect_messages, write_seq, tags}, :busy, data)

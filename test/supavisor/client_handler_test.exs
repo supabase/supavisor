@@ -451,13 +451,13 @@ defmodule Supavisor.ClientHandlerTest do
       assert :keep_state_and_data = @subject.handle_event(:info, exit_msg, :idle, released)
     end
 
-    # backend_synced comes before the write, so a worker killed after it may never have
-    # delivered the response. Ignoring this would leave the client waiting forever.
-    test "doesn't ignore a released worker being killed", %{data: data, db_pid: db_pid} do
+    # Killed mid-write, it takes the client's socket down with it, and the ClientHandler
+    # stops on that. Killed after, the response arrived and the client goes on.
+    test "ignores a released worker being killed", %{data: data, db_pid: db_pid} do
       released = %{data | db_connection: nil}
 
-      refute @subject.handle_event(:info, {:EXIT, db_pid, :killed}, :idle, released) ==
-               :keep_state_and_data
+      assert :keep_state_and_data =
+               @subject.handle_event(:info, {:EXIT, db_pid, :killed}, :idle, released)
     end
 
     # The manager going down moves an idle client to :connecting to subscribe again.
@@ -483,6 +483,16 @@ defmodule Supavisor.ClientHandlerTest do
 
       assert {:stop, :normal} =
                @subject.handle_event(:info, {:EXIT, db_pid, :normal}, :idle, released)
+    end
+
+    # A DbHandler killed mid-write closes our socket's port through its link. The port's
+    # DOWN stops us, so its exit mustn't be taken for a worker's.
+    test "ignores its socket's port exiting", %{data: data} do
+      {:gen_tcp, port} = data.sock
+      released = %{data | db_connection: nil}
+
+      assert :keep_state_and_data =
+               @subject.handle_event(:info, {:EXIT, port, :killed}, :idle, released)
     end
 
     test "doesn't ignore an abnormal exit of the current worker", %{data: data, db_pid: db_pid} do

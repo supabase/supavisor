@@ -545,16 +545,20 @@ defmodule Supavisor.ClientHandler do
     handle_socket_close(state, data)
   end
 
+  # The socket's monitor handles it closing.
+  def handle_event(:info, {:EXIT, port, _reason}, _state, %{sock: {:gen_tcp, port}}) do
+    :keep_state_and_data
+  end
+
   # If the linked DbHandler went down normally, we can trust it to have
   # sent/logged a proper error message and just terminate
   def handle_event(:info, {:EXIT, _db_pid, :normal}, _state, _data) do
     {:stop, :normal}
   end
 
-  # A DbHandler we released, on the backend closing right after answering. It handles that
-  # after finishing its writes, so the client has its response and goes on. Any other exit
-  # still ends the client: backend_synced comes before the write, so a release doesn't mean
-  # the response arrived, and a :normal exit is a failed client write or a forwarded FATAL.
+  # A DbHandler we released. If it died before finishing our response, it was linked to our
+  # socket for that write, which closed with it, so we hear about it from the socket. A
+  # :normal exit, above, still ends the client: that's a failed write or a forwarded FATAL.
   def handle_event(
         :info,
         {:EXIT, pid, _reason},

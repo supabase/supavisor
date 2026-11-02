@@ -501,9 +501,16 @@ defmodule Supavisor.DbHandler do
     # backend_synced is enqueued in the ClientHandler's mailbox before the final
     # ReadyForQuery reaches the client socket, so the ClientHandler usually releases
     # us before the client's next query arrives and that query takes a fresh checkout.
+    # From backend_synced on, the ClientHandler may release us and then ignores our exit, so
+    # if we died before finishing this write, the client would wait forever for the rest of
+    # the response. For the write, we're linked to the client's socket, which closes if we die.
+    link? = synced? and to_send != [] and data.mode == :transaction
+    if link?, do: Process.link(transport_port(data.client_sock))
+
     if synced?, do: ClientHandler.backend_synced(data.caller, data.write_seq)
 
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
+    if link?, do: Process.unlink(transport_port(data.client_sock))
 
     case send_result do
       {:error, reason} ->
@@ -719,6 +726,14 @@ defmodule Supavisor.DbHandler do
   # A ClientHandler that already released us, with its EXIT queued behind the release.
   def handle_event(_, {:EXIT, pid, _reason}, _state, %{caller: caller, pool: pool})
       when is_pid(pid) and pid != caller and pid != pool do
+    :keep_state_and_data
+  end
+
+  # A client's socket that closed after we finished writing to it, before we unlinked:
+  # unlinking doesn't take back an EXIT already in our mailbox. We're done with that socket.
+  # By now we may be idle or serving another client, so it's told apart from our backend's.
+  def handle_event(_, {:EXIT, port, _reason}, _state, %{sock: {_, backend_sock}})
+      when is_port(port) and port != backend_sock do
     :keep_state_and_data
   end
 
@@ -1067,6 +1082,17 @@ defmodule Supavisor.DbHandler do
   defp client_send(%{client_sock: sock}, payload) do
     HandlerHelpers.sock_send(sock, payload)
   end
+
+  # The TCP port under the client's socket. A port closes when a process linked to it exits
+  # with any reason but :normal. ssl's processes trap exits and ignore ours, so for TLS it's
+  # the port under the sslsocket, which the ssl receiver owns and stops on when it closes.
+  # The sslsocket matched is OTP 27's; OTP 28 changed the record.
+  @spec transport_port(Supavisor.sock()) :: port()
+  defp transport_port({:gen_tcp, port}) when is_port(port), do: port
+
+  # {:sslsocket, {transport, socket, connection_cb, trackers}, pids}
+  defp transport_port({:ssl, {:sslsocket, {:gen_tcp, port, _, _}, _}}) when is_port(port),
+    do: port
 
   defp chunk_send([], _sock), do: :ok
 
