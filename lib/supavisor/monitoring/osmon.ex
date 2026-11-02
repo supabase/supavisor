@@ -12,6 +12,9 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
   @event_cpu_la [:prom_ex, :plugin, :osmon, :cpu_avg1]
   @event_disk [:prom_ex, :plugin, :osmon, :disk]
   @prefix [:supavisor, :prom_ex]
+  @default_high_ram_usage_percent 80
+  @default_high_ram_usage_duration_ms :timer.minutes(10)
+  @high_ram_since_key {__MODULE__, :high_ram_since}
 
   @impl true
   def polling_metrics(opts) do
@@ -130,10 +133,43 @@ defmodule Supavisor.PromEx.Plugins.OsMon do
 
   def execute_metrics do
     execute_metrics(@event_memory, memory())
-    execute_metrics(@event_ram_usage, %{ram: ram_usage()})
+    ram = ram_usage()
+    log_if_high_ram(ram)
+    execute_metrics(@event_ram_usage, %{ram: ram})
     execute_metrics(@event_cpu_util, %{cpu: cpu_util()})
     execute_metrics(@event_cpu_la, cpu_la())
     execute_disk_metrics()
+  end
+
+  # Redundant with the ram_usage gauge, which can lag or be lost. Runs in the
+  # polling process, so its state lives in the process dictionary.
+  @doc false
+  @spec log_if_high_ram(float(), integer()) :: :ok
+  def log_if_high_ram(ram, now_ms \\ System.monotonic_time(:millisecond)) do
+    percent =
+      Application.get_env(:supavisor, :high_ram_usage_percent, @default_high_ram_usage_percent)
+
+    duration_ms =
+      Application.get_env(
+        :supavisor,
+        :high_ram_usage_duration_ms,
+        @default_high_ram_usage_duration_ms
+      )
+
+    if ram >= percent do
+      since = Process.get(@high_ram_since_key) || now_ms
+      Process.put(@high_ram_since_key, since)
+
+      if now_ms - since >= duration_ms do
+        Logger.warning(
+          "High RAM usage: #{Float.round(ram * 1.0, 1)}% (at or above #{percent}%) for #{div(now_ms - since, 1000)}s"
+        )
+      end
+    else
+      Process.delete(@high_ram_since_key)
+    end
+
+    :ok
   end
 
   def execute_metrics(event, metrics) do

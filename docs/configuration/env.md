@@ -84,6 +84,8 @@ This document provides a categorized list of all environment variables used in S
 | ------------------ | --------------------------------------- | ------------- | -------- |
 | `METRICS_DISABLED` | Disable metrics collection              | `false`       | No       |
 | `PROM_POLL_RATE`   | Prometheus polling rate in milliseconds | `15000`       | No       |
+| `HIGH_RAM_USAGE_PERCENT` | Warn when RAM usage stays at/above this % | `80` | No |
+| `HIGH_RAM_USAGE_DURATION_MS` | How long (ms) it must stay high before warning | `600000` | No |
 
 ### Logging
 
