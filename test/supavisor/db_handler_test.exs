@@ -1426,8 +1426,8 @@ defmodule Supavisor.DbHandlerTest do
     end
 
     test "ignores the exit of a ClientHandler that released it" do
-      data = busy_data() |> expecting(1, [?Q])
-      released_by = data.caller
+      released_by = spawn_link(fn -> Process.sleep(:infinity) end)
+      data = busy_data(%{caller: released_by}) |> expecting(1, [?Q])
       assert {:next_state, :idle, data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
 
       assert :keep_state_and_data =
@@ -1440,6 +1440,15 @@ defmodule Supavisor.DbHandlerTest do
       other = spawn(fn -> :ok end)
 
       assert :keep_state_and_data = Db.handle_event(:info, {:EXIT, other, :normal}, :busy, data)
+    end
+
+    # poolboy only unlinks the workers in its queue when it stops, so a checked out one hears
+    # from it, and closes its backend properly rather than waiting for the supervisor.
+    test "stops on an exit from poolboy" do
+      pool = spawn(fn -> :ok end)
+      data = busy_data(%{pool: pool})
+
+      assert {:stop, :normal} = Db.handle_event(:info, {:EXIT, pool, :shutdown}, :busy, data)
     end
 
     test "stops when its ClientHandler dies, even with the backend synced" do

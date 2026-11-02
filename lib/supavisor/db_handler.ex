@@ -716,10 +716,9 @@ defmodule Supavisor.DbHandler do
     end
   end
 
-  # A ClientHandler that already released us, with its EXIT queued behind the release, or
-  # poolboy, whose death reaches us through the supervisor that's our parent anyway.
-  def handle_event(_, {:EXIT, pid, _reason}, _state, %{caller: caller})
-      when is_pid(pid) and pid != caller do
+  # A ClientHandler that already released us, with its EXIT queued behind the release.
+  def handle_event(_, {:EXIT, pid, _reason}, _state, %{caller: caller, pool: pool})
+      when is_pid(pid) and pid != caller and pid != pool do
     :keep_state_and_data
   end
 

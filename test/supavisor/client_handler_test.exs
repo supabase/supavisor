@@ -451,6 +451,24 @@ defmodule Supavisor.ClientHandlerTest do
       assert :keep_state_and_data = @subject.handle_event(:info, exit_msg, :idle, released)
     end
 
+    # backend_synced comes before the write, so a worker killed after it may never have
+    # delivered the response. Ignoring this would leave the client waiting forever.
+    test "doesn't ignore a released worker being killed", %{data: data, db_pid: db_pid} do
+      released = %{data | db_connection: nil}
+
+      refute @subject.handle_event(:info, {:EXIT, db_pid, :killed}, :idle, released) ==
+               :keep_state_and_data
+    end
+
+    # The manager going down moves an idle client to :connecting to subscribe again.
+    test "ignores an abnormal exit of a released worker while connecting",
+         %{data: data, db_pid: db_pid} do
+      exit_msg = {:EXIT, db_pid, {:shutdown, :db_termination}}
+      released = %{data | db_connection: nil}
+
+      assert :keep_state_and_data = @subject.handle_event(:info, exit_msg, :connecting, released)
+    end
+
     test "ignores an abnormal exit of an earlier worker while on another", %{data: data} do
       earlier = spawn(fn -> :ok end)
       exit_msg = {:EXIT, earlier, {:shutdown, :db_termination}}
