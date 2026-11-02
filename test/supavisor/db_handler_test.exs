@@ -1413,12 +1413,49 @@ defmodule Supavisor.DbHandlerTest do
       refute caller in links
     end
 
-    test "discards the exit of a ClientHandler that released it" do
-      data = busy_data() |> expecting(1, [?Q])
-      send(self(), {:EXIT, data.caller, :normal})
+    test "checks in naming the ClientHandler it was released by" do
+      caller = spawn_link(fn -> Process.sleep(:infinity) end)
+      data = busy_data(%{caller: caller}) |> expecting(1, [?Q])
+      worker = self()
 
       assert {:next_state, :idle, _data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
-      refute_received {:EXIT, _pid, _reason}
+
+      assert_received {:"$gen_cast", {:checkin, ^worker, ^caller}}
+      {:links, links} = Process.info(self(), :links)
+      refute caller in links
+    end
+
+    test "ignores the exit of a ClientHandler that released it" do
+      data = busy_data() |> expecting(1, [?Q])
+      released_by = data.caller
+      assert {:next_state, :idle, data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+
+      assert :keep_state_and_data =
+               Db.handle_event(:info, {:EXIT, released_by, :normal}, :idle, data)
+    end
+
+    # It can land after the worker went to another client, who must not go down with it.
+    test "ignores the exit of an earlier ClientHandler while busy with another" do
+      data = busy_data()
+      other = spawn(fn -> :ok end)
+
+      assert :keep_state_and_data = Db.handle_event(:info, {:EXIT, other, :normal}, :busy, data)
+    end
+
+    test "stops when its ClientHandler dies, even with the backend synced" do
+      data = busy_data()
+
+      assert {:stop, :normal} = Db.handle_event(:info, {:EXIT, data.caller, :normal}, :busy, data)
+    end
+
+    # poolboy reclaims the worker on the ClientHandler's DOWN, which can reach it first. Taking
+    # the new caller now would hand it a backend still running the old client's query.
+    test "postpones a checkout while busy" do
+      data = busy_data() |> expecting(1, [?Q])
+      from = {self(), make_ref()}
+
+      assert {:keep_state_and_data, :postpone} =
+               Db.handle_event({:call, from}, {:checkout, :sock, self()}, :busy, data)
     end
 
     test "expect_messages cast queues the messages in order and keeps the latest write" do

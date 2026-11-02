@@ -638,7 +638,10 @@ defmodule Supavisor.DbHandler do
   def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
     Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
 
-    if state in [:idle, :busy] do
+    # poolboy can hand us out while busy, on seeing our caller's DOWN before we see its EXIT.
+    # The call waits for that EXIT to stop us, or for its release if one came first, and the
+    # ClientHandler retries a call that fails.
+    if state == :idle do
       Process.link(caller)
 
       if data.mode == :proxy do
@@ -711,6 +714,13 @@ defmodule Supavisor.DbHandler do
 
         {:stop, {:shutdown, :db_termination}, data}
     end
+  end
+
+  # A ClientHandler that already released us, with its EXIT queued behind the release, or
+  # poolboy, whose death reaches us through the supervisor that's our parent anyway.
+  def handle_event(_, {:EXIT, pid, _reason}, _state, %{caller: caller})
+      when is_pid(pid) and pid != caller do
+    :keep_state_and_data
   end
 
   # linked client_handler went down
@@ -1038,26 +1048,12 @@ defmodule Supavisor.DbHandler do
 
   # Returning to the pool only after the response is fully forwarded keeps
   # workers flushing to slow clients out of circulation. If the caller died
-  # mid-send (link gone), poolboy's owner monitor already reclaimed the worker
-  # and may have handed it out, so checking in again would corrupt the pool.
+  # mid-send, poolboy's owner monitor already reclaimed the worker and may have
+  # handed it out, so the checkin names the caller and poolboy ignores it then.
   @spec checkin(map()) :: :ok
   defp checkin(%{caller: caller, pool: pool}) do
-    {:links, links} = Process.info(self(), :links)
-
-    if caller in links do
-      Process.unlink(caller)
-      :poolboy.checkin(pool, self())
-    end
-
-    # The ClientHandler may exit right after releasing us, e.g. on the client's
-    # Terminate. The backend is clean, so that exit must not take us down with it.
-    receive do
-      {:EXIT, ^caller, _reason} -> :ok
-    after
-      0 -> :ok
-    end
-
-    :ok
+    Process.unlink(caller)
+    :poolboy.checkin(pool, self(), caller)
   end
 
   # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's
