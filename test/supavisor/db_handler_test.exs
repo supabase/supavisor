@@ -1570,8 +1570,8 @@ defmodule Supavisor.DbHandlerTest do
     end
   end
 
-  # backend_synced goes out before the write, and the ClientHandler stops listening for a
-  # released worker's exit, so the worker is linked to the client's socket for that write.
+  # backend_synced goes out before the write, and the ClientHandler ignores a released
+  # worker's exit, so the worker is linked to the client's socket for that write.
   describe "handle_event/4 :busy client socket link" do
     test "isn't linked to the client's socket after forwarding a synced response" do
       {client_send, _client_recv} = held_sockpair()
@@ -1612,7 +1612,8 @@ defmodule Supavisor.DbHandlerTest do
       assert drain(&:ssl.recv(client, 0, &1)) == :closed
     end
 
-    # Still the ClientHandler's current worker, which stops on its exit.
+    # Not synced yet, so it's still the ClientHandler's current worker, and its exit stops
+    # the ClientHandler.
     test "doesn't link for a write before the response is complete" do
       {client_send, _client_recv} = held_sockpair()
       data = busy_data(%{client_sock: {:gen_tcp, client_send}}) |> expecting(1, [?Q])

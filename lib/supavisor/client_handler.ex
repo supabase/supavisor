@@ -558,7 +558,8 @@ defmodule Supavisor.ClientHandler do
 
   # A DbHandler we released. If it died before finishing our response, it was linked to our
   # socket for that write, which closed with it, so we hear about it from the socket. A
-  # :normal exit, above, still ends the client: that's a failed write or a forwarded FATAL.
+  # :normal exit, above, still ends the client, as it does after a failed write or a
+  # forwarded FATAL.
   def handle_event(
         :info,
         {:EXIT, pid, _reason},

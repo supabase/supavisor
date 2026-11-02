@@ -1062,8 +1062,9 @@ defmodule Supavisor.DbHandler do
 
   # Returning to the pool only after the response is fully forwarded keeps
   # workers flushing to slow clients out of circulation. If the caller died
-  # mid-send, poolboy's owner monitor already reclaimed the worker and may have
-  # handed it out, so the checkin names the caller and poolboy ignores it then.
+  # before this checkin reaches poolboy, poolboy's monitor already reclaimed the
+  # worker and may have handed it to another client. The checkin names the
+  # caller, so poolboy ignores it then.
   @spec checkin(map()) :: :ok
   defp checkin(%{caller: caller, pool: pool}) do
     Process.unlink(caller)

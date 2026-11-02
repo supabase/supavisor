@@ -2,8 +2,9 @@ defmodule Supavisor.Integration.KilledWorkerTest do
   # A worker sends backend_synced before writing the response, so its ClientHandler can
   # release it, and stop caring about its exit, while the write is still going. A worker
   # killed there must not leave the client waiting on an open connection for the rest of a
-  # response that will never come. The client stops reading until a worker blocks writing
-  # a response its ClientHandler already released, and the test kills that worker.
+  # response that will never come. The test kills a worker blocked writing a response its
+  # ClientHandler already released. Over TCP the client stops reading until a worker blocks
+  # on such a write. Over TLS the test suspends the ssl sender instead.
   use Supavisor.DataCase, async: false
 
   require Supavisor
@@ -14,7 +15,8 @@ defmodule Supavisor.Integration.KilledWorkerTest do
 
   @attempts 10
 
-  # One read from the backend, so a worker blocked writing it has sent backend_synced.
+  # Small, so a worker usually blocks on a response it already sent backend_synced for.
+  # When it doesn't, the attempt starts over.
   @query "SELECT repeat('x', 2000)"
 
   setup_all do
