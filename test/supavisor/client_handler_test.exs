@@ -355,10 +355,11 @@ defmodule Supavisor.ClientHandlerTest do
   describe "handle_event/4 :busy backend_synced" do
     setup do
       {db_sock, _recv} = sockpair()
+      db_pid = fake_db_handler(:ok)
 
       data = %{
         mode: :transaction,
-        db_connection: {:pool, self(), {:gen_tcp, db_sock}},
+        db_connection: {self(), db_pid, {:gen_tcp, db_sock}},
         write_seq: 3,
         tracked_seq: 3,
         stream_state: MessageStreamer.new_stream_state(FrontendMessageHandler),
@@ -377,32 +378,67 @@ defmodule Supavisor.ClientHandlerTest do
           )
       }
 
-      {:ok, data: data}
+      {:ok, data: data, db_pid: db_pid}
     end
 
-    test "releases the DbHandler when it caught up with the latest write", %{data: data} do
+    test "releases the DbHandler and checks it in when it caught up with the latest write", %{
+      data: data,
+      db_pid: db_pid
+    } do
       assert {:next_state, :idle, data, _actions} =
                @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
 
       assert data.db_connection == nil
-      assert_received {:"$gen_cast", {:release, 3}}
+      assert_received {:released, 3}
+      assert_received {:"$gen_cast", {:checkin, ^db_pid}}
     end
 
-    test "releases the DbHandler when only untracked writes followed", %{data: data} do
+    test "releases the DbHandler when only untracked writes followed", %{
+      data: data,
+      db_pid: db_pid
+    } do
       data = %{data | write_seq: 5}
 
       assert {:next_state, :idle, data, _actions} =
                @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
 
       assert data.db_connection == nil
-      assert_received {:"$gen_cast", {:release, 5}}
+      assert_received {:released, 5}
+      assert_received {:"$gen_cast", {:checkin, ^db_pid}}
+    end
+
+    test "doesn't check in a DbHandler that refused the release", %{data: data} do
+      db_pid = fake_db_handler({:error, :write_seq_mismatch})
+      {pool, _db_pid, db_sock} = data.db_connection
+      data = %{data | db_connection: {pool, db_pid, db_sock}}
+
+      assert {:next_state, :idle, data, _actions} =
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
+
+      assert data.db_connection == nil
+      assert_received {:released, 3}
+      refute_received {:"$gen_cast", {:checkin, _db_pid}}
+    end
+
+    test "doesn't check in a DbHandler that exited", %{data: data} do
+      {db_pid, ref} = spawn_monitor(fn -> :ok end)
+      assert_receive {:DOWN, ^ref, :process, ^db_pid, :normal}
+      {pool, _db_pid, db_sock} = data.db_connection
+      data = %{data | db_connection: {pool, db_pid, db_sock}}
+
+      assert {:next_state, :idle, data, _actions} =
+               @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
+
+      assert data.db_connection == nil
+      refute_received {:"$gen_cast", {:checkin, _db_pid}}
     end
 
     test "stays busy when a later write is still in flight", %{data: data} do
       assert :keep_state_and_data =
                @subject.handle_event(:cast, {:backend_synced, 2}, :busy, data)
 
-      refute_received {:"$gen_cast", {:release, _write_seq}}
+      refute_received {:released, _write_seq}
+      refute_received {:"$gen_cast", {:checkin, _db_pid}}
     end
 
     test "stays busy while a message is partly forwarded", %{data: data} do
@@ -412,7 +448,23 @@ defmodule Supavisor.ClientHandlerTest do
       assert :keep_state_and_data =
                @subject.handle_event(:cast, {:backend_synced, 3}, :busy, data)
 
-      refute_received {:"$gen_cast", {:release, _write_seq}}
+      refute_received {:released, _write_seq}
+      refute_received {:"$gen_cast", {:checkin, _db_pid}}
     end
+  end
+
+  # Stands in for a DbHandler, answering one release with `reply` and reporting it.
+  defp fake_db_handler(reply) do
+    test = self()
+
+    spawn_link(fn ->
+      receive do
+        {:"$gen_call", from, {:release, write_seq}} ->
+          send(test, {:released, write_seq})
+          :gen_statem.reply(from, reply)
+      end
+
+      Process.sleep(:infinity)
+    end)
   end
 end

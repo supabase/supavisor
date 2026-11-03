@@ -124,11 +124,28 @@ defmodule Supavisor.DbHandler do
     do: :gen_statem.cast(pid, {:expect_messages, write_seq, tags})
 
   @doc """
-  Returns the DbHandler to the pool, in transaction mode, once the ClientHandler confirmed
-  nothing was forwarded after write `write_seq`.
+  Detaches the DbHandler from the ClientHandler, in transaction mode, once the ClientHandler
+  confirmed nothing was forwarded after write `write_seq`.
+
+  Returns `:ok` once the DbHandler is idle. Only then may the ClientHandler check it back
+  into the pool. On error, the DbHandler is stopping and must not be checked in.
+
+  The call waits while the DbHandler is still forwarding the response to the client, which
+  the client socket's 30s `send_timeout` (set on the listener in `Supavisor.Application`)
+  bounds. The call's own timeout sits just above that, so it only fires if the DbHandler
+  is stuck on something else. It isn't caught: the exit crashes the ClientHandler, which
+  drops the client rather than leaving it hanging. The DbHandler sees that exit once it
+  unblocks, and either stops with it or, if the write went through, finishes the release
+  and is reclaimed by poolboy on the ClientHandler's DOWN.
   """
-  @spec release(pid(), non_neg_integer()) :: :ok
-  def release(pid, write_seq), do: :gen_statem.cast(pid, {:release, write_seq})
+  @spec release(pid(), non_neg_integer()) ::
+          :ok | {:error, :write_seq_mismatch} | {:error, DbHandlerExitedError.t()}
+  def release(pid, write_seq) do
+    :gen_statem.call(pid, {:release, write_seq}, 35_000)
+  catch
+    :exit, {reason, _} when reason != :timeout ->
+      {:error, %DbHandlerExitedError{pid: pid, reason: reason}}
+  end
 
   @doc """
   Attempts to clean up session state by sending `server_reset_query` to the database.
@@ -223,8 +240,6 @@ defmodule Supavisor.DbHandler do
 
     storage_mod = BackendStorage.select(config.tenant_feature_flags)
 
-    pool = if pool_name = Map.get(args, :pool), do: GenServer.whereis(pool_name)
-
     data = %{
       id: id,
       sock: nil,
@@ -249,7 +264,6 @@ defmodule Supavisor.DbHandler do
       caller: nil,
       client_sock: nil,
       write_seq: 0,
-      pool: pool,
       terminating_error: nil,
       manager_ref: nil,
       derived_secrets: nil
@@ -474,24 +488,25 @@ defmodule Supavisor.DbHandler do
     {:keep_state, %{data | backend: backend, write_seq: write_seq}}
   end
 
-  # Casts from the ClientHandler arrive in order, so a matching write_seq means nothing
+  # Messages from the ClientHandler arrive in order, so a matching write_seq means nothing
   # was forwarded after the write the backend caught up with.
-  def handle_event(:cast, {:release, write_seq}, :busy, %{write_seq: write_seq} = data) do
+  def handle_event({:call, from}, {:release, write_seq}, :busy, %{write_seq: write_seq} = data) do
     {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
-    checkin(data)
+    unlink_caller(data.caller)
 
-    {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil}}
+    {:next_state, :idle, %{data | stats: stats, caller: nil, client_sock: nil},
+     {:reply, from, :ok}}
   end
 
   # The ClientHandler already let go of us, so ignoring this would keep us checked out for
   # as long as it lives. We unlink so it isn't taken down, and poolboy replaces us.
-  def handle_event(:cast, {:release, write_seq}, state, data) do
+  def handle_event({:call, from}, {:release, write_seq}, state, data) do
     Logger.error(
       "unexpected release for write #{write_seq} while #{state}, last write was #{data.write_seq}; closing server connection"
     )
 
     if is_pid(data.caller), do: Process.unlink(data.caller)
-    {:stop, :normal}
+    {:stop_and_reply, :normal, {:reply, from, {:error, :write_seq_mismatch}}}
   end
 
   # forward the message to the client
@@ -502,21 +517,21 @@ defmodule Supavisor.DbHandler do
     {backend, to_send, synced?} = BackendConnection.recv(data.backend, bin)
     data = %{data | backend: backend}
 
-    # backend_synced is enqueued in the ClientHandler's mailbox before the final
-    # ReadyForQuery reaches the client socket, so the ClientHandler usually releases
-    # us before the client's next query arrives and that query takes a fresh checkout.
+    # Reported before the write, so it's in the ClientHandler's mailbox before the client
+    # can react to the response: its disconnect or, in session mode, its next query can't
+    # overtake it. A worker flushing to a slow client still stays out of the pool, since
+    # the release that follows is only handled once this write is done.
     if synced?, do: ClientHandler.backend_synced(data.caller, data.write_seq)
 
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
 
     case send_result do
       {:error, reason} ->
-        # Still linked to the ClientHandler (checkin is what unlinks), so
+        # Still linked to the ClientHandler (release is what unlinks), so
         # stopping tears the client connection down with us.
         Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
         {:stop, :normal}
 
-      # In transaction mode, checked in once the ClientHandler releases us.
       :ok ->
         if synced? and data.mode == :session do
           {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
@@ -639,22 +654,25 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
-  def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
-    Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
+  def handle_event({:call, from}, {:checkout, sock, caller}, :idle, data) do
+    Logger.debug("DbHandler: checkout call: #{inspect(caller)}")
+    Process.link(caller)
 
-    if state in [:idle, :busy] do
-      Process.link(caller)
-
-      if data.mode == :proxy do
-        bin_ps = Server.encode_parameter_status(data.parameter_status)
-        send(caller, {:parameter_status, bin_ps})
-      end
-
-      {:next_state, :busy, %{data | client_sock: sock, caller: caller, write_seq: 0},
-       {:reply, from, {:ok, data.sock}}}
-    else
-      {:keep_state_and_data, :postpone}
+    if data.mode == :proxy do
+      bin_ps = Server.encode_parameter_status(data.parameter_status)
+      send(caller, {:parameter_status, bin_ps})
     end
+
+    {:next_state, :busy, %{data | client_sock: sock, caller: caller, write_seq: 0},
+     {:reply, from, {:ok, data.sock}}}
+  end
+
+  # poolboy reclaims a worker on its owner's DOWN, which can reach poolboy before the
+  # owner's EXIT reaches us, so a checkout can arrive while we're still running the dead
+  # client's query. It's held rather than taken: the EXIT stops us, the held call fails,
+  # and the ClientHandler retries on another worker.
+  def handle_event({:call, _from}, {:checkout, _sock, _caller}, _state, _data) do
+    {:keep_state_and_data, :postpone}
   end
 
   def handle_event({:call, from}, :ps, :busy, data) do
@@ -1040,28 +1058,18 @@ defmodule Supavisor.DbHandler do
     Supavisor.UpstreamAuthentication.delete_upstream_auth_secrets(data.id)
   end
 
-  # Returning to the pool only after the response is fully forwarded keeps
-  # workers flushing to slow clients out of circulation. If the caller died
-  # mid-send (link gone), poolboy's owner monitor already reclaimed the worker
-  # and may have handed it out, so checking in again would corrupt the pool.
-  @spec checkin(map()) :: :ok
-  defp checkin(%{caller: caller, pool: pool}) do
-    {:links, links} = Process.info(self(), :links)
+  # The ClientHandler may have been killed while waiting for the release reply, so
+  # its exit can already be queued. The backend is clean, so that exit must not
+  # take us down with it.
+  @spec unlink_caller(pid()) :: :ok
+  defp unlink_caller(caller) do
+    Process.unlink(caller)
 
-    if caller in links do
-      Process.unlink(caller)
-      :poolboy.checkin(pool, self())
-    end
-
-    # The ClientHandler may exit right after releasing us, e.g. on the client's
-    # Terminate. The backend is clean, so that exit must not take us down with it.
     receive do
       {:EXIT, ^caller, _reason} -> :ok
     after
       0 -> :ok
     end
-
-    :ok
   end
 
   # libpq's async API hangs when a TLS record leaves bytes in OpenSSL's

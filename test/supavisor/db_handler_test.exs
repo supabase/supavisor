@@ -159,7 +159,6 @@ defmodule Supavisor.DbHandlerTest do
 
     base = %{
       caller: self(),
-      pool: self(),
       mode: :transaction,
       sock: {:gen_tcp, backend_sock},
       client_sock: {:gen_tcp, client_sock},
@@ -1399,16 +1398,35 @@ defmodule Supavisor.DbHandlerTest do
 
       assert_received {:"$gen_cast", {:backend_synced, 1}}
       assert data.caller
+      from = {self(), make_ref()}
 
-      assert {:next_state, :idle, data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      assert {:next_state, :idle, data, {:reply, ^from, :ok}} =
+               Db.handle_event({:call, from}, {:release, 1}, :busy, data)
+
       assert data.caller == nil
+    end
+
+    # The report precedes the write, so the ClientHandler sees it before the client can
+    # react to the response.
+    test "reports the synced write before forwarding it to the client" do
+      {client_send, _client_recv} = sockpair()
+      :ok = :gen_tcp.close(client_send)
+      data = busy_data(%{client_sock: {:gen_tcp, client_send}}) |> expecting(1, [?Q])
+
+      assert {:stop, :normal} =
+               Db.handle_event(:info, {:tcp, :sock, Server.ready_for_query()}, :busy, data)
+
+      assert_received {:"$gen_cast", {:backend_synced, 1}}
     end
 
     test "stops without taking the ClientHandler down on a release for an earlier write" do
       caller = spawn_link(fn -> Process.sleep(:infinity) end)
       data = busy_data(%{caller: caller}) |> expecting(1, [?Q]) |> expecting(2, [?Q])
+      from = {self(), make_ref()}
 
-      assert {:stop, :normal} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      assert {:stop_and_reply, :normal, {:reply, ^from, {:error, :write_seq_mismatch}}} =
+               Db.handle_event({:call, from}, {:release, 1}, :busy, data)
+
       {:links, links} = Process.info(self(), :links)
       refute caller in links
     end
@@ -1416,8 +1434,11 @@ defmodule Supavisor.DbHandlerTest do
     test "discards the exit of a ClientHandler that released it" do
       data = busy_data() |> expecting(1, [?Q])
       send(self(), {:EXIT, data.caller, :normal})
+      from = {self(), make_ref()}
 
-      assert {:next_state, :idle, _data} = Db.handle_event(:cast, {:release, 1}, :busy, data)
+      assert {:next_state, :idle, _data, {:reply, ^from, :ok}} =
+               Db.handle_event({:call, from}, {:release, 1}, :busy, data)
+
       refute_received {:EXIT, _pid, _reason}
     end
 
@@ -1462,6 +1483,16 @@ defmodule Supavisor.DbHandlerTest do
       assert {:keep_state, _data} = Db.handle_event(:info, {:tcp, :sock, notice}, :busy, data)
 
       refute_received {:"$gen_cast", {:backend_synced, _write_seq}}
+    end
+
+    # poolboy reclaims the worker on the ClientHandler's DOWN, which can reach it first. Taking
+    # the new caller now would hand it a backend still running the old client's query.
+    test "postpones a checkout while busy" do
+      data = busy_data() |> expecting(1, [?Q])
+      from = {self(), make_ref()}
+
+      assert {:keep_state_and_data, :postpone} =
+               Db.handle_event({:call, from}, {:checkout, :sock, self()}, :busy, data)
     end
 
     test "checkout starts the write sequence over" do
