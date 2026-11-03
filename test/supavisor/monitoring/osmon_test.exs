@@ -1,6 +1,8 @@
 defmodule Supavisor.PromEx.Plugins.OsMonTest do
   use Supavisor.E2ECase, async: false
 
+  import ExUnit.CaptureLog
+
   alias Supavisor.PromEx.Plugins.OsMon
 
   @moduletag telemetry: true
@@ -32,6 +34,65 @@ defmodule Supavisor.PromEx.Plugins.OsMonTest do
       for polling_metric <- OsMon.polling_metrics(poll_rate: 1000) do
         assert %{poll_rate: 1000} = polling_metric
       end
+    end
+  end
+
+  describe "log_if_high_ram/2" do
+    @ten_minutes :timer.minutes(10)
+
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:supavisor, :high_ram_usage_percent)
+        Application.delete_env(:supavisor, :high_ram_usage_duration_ms)
+      end)
+    end
+
+    test "warns once at or above 80% for 10 minutes" do
+      log =
+        capture_log(fn ->
+          OsMon.log_if_high_ram(85.0, 0)
+          OsMon.log_if_high_ram(85.0, @ten_minutes - 1)
+        end)
+
+      refute log =~ "High RAM usage"
+
+      log = capture_log(fn -> OsMon.log_if_high_ram(85.04, @ten_minutes) end)
+
+      assert log =~ "High RAM usage: 85.0% (at or above 80%) for 600s"
+    end
+
+    test "warns at exactly the configured percent" do
+      log =
+        capture_log(fn ->
+          OsMon.log_if_high_ram(80.0, 0)
+          OsMon.log_if_high_ram(80.0, @ten_minutes)
+        end)
+
+      assert log =~ "High RAM usage: 80.0%"
+    end
+
+    test "dropping below the percent resets the timer" do
+      log =
+        capture_log(fn ->
+          OsMon.log_if_high_ram(85.0, 0)
+          OsMon.log_if_high_ram(79.9, 1_000)
+          OsMon.log_if_high_ram(85.0, @ten_minutes)
+        end)
+
+      refute log =~ "High RAM usage"
+    end
+
+    test "honors configured percent and duration" do
+      Application.put_env(:supavisor, :high_ram_usage_percent, 55.0)
+      Application.put_env(:supavisor, :high_ram_usage_duration_ms, 1_000)
+
+      log =
+        capture_log(fn ->
+          OsMon.log_if_high_ram(55.0, 0)
+          OsMon.log_if_high_ram(55.0, 1_000)
+        end)
+
+      assert log =~ "(at or above 55.0%)"
     end
   end
 
