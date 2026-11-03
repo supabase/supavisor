@@ -83,7 +83,15 @@ defmodule Supavisor.Application do
             max_connections: max_connections,
             num_acceptors: num_acceptors,
             num_listen_sockets: min(System.schedulers_online(), num_acceptors),
-            socket_opts: [port: port, keepalive: true, reuseport: true]
+            socket_opts: [
+              port: port,
+              keepalive: true,
+              reuseport: true,
+              # Bounds any write to the client. DbHandler.release/2 waits on such a write
+              # and times out just above this.
+              send_timeout: 30_000,
+              send_timeout_close: true
+            ]
           },
           handler,
           opts
