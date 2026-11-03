@@ -129,11 +129,19 @@ defmodule Supavisor.DbHandler do
 
   Returns `:ok` once the DbHandler is idle. Only then may the ClientHandler check it back
   into the pool. On error, the DbHandler is stopping and must not be checked in.
+
+  The call waits while the DbHandler is still forwarding the response to the client, which
+  the client socket's 30s `send_timeout` (set on the listener in `Supavisor.Application`)
+  bounds. The call's own timeout sits just above that, so it only fires if the DbHandler
+  is stuck on something else. It isn't caught: the exit crashes the ClientHandler, which
+  drops the client rather than leaving it hanging. The DbHandler sees that exit once it
+  unblocks, and either stops with it or, if the write went through, finishes the release
+  and is reclaimed by poolboy on the ClientHandler's DOWN.
   """
   @spec release(pid(), non_neg_integer()) ::
           :ok | {:error, :write_seq_mismatch} | {:error, DbHandlerExitedError.t()}
   def release(pid, write_seq) do
-    :gen_statem.call(pid, {:release, write_seq}, 15_000)
+    :gen_statem.call(pid, {:release, write_seq}, 35_000)
   catch
     :exit, {reason, _} when reason != :timeout ->
       {:error, %DbHandlerExitedError{pid: pid, reason: reason}}
@@ -509,6 +517,12 @@ defmodule Supavisor.DbHandler do
     {backend, to_send, synced?} = BackendConnection.recv(data.backend, bin)
     data = %{data | backend: backend}
 
+    # Reported before the write, so it's in the ClientHandler's mailbox before the client
+    # can react to the response: its disconnect or, in session mode, its next query can't
+    # overtake it. A worker flushing to a slow client still stays out of the pool, since
+    # the release that follows is only handled once this write is done.
+    if synced?, do: ClientHandler.backend_synced(data.caller, data.write_seq)
+
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)
 
     case send_result do
@@ -518,13 +532,7 @@ defmodule Supavisor.DbHandler do
         Logger.error("DbHandler: Failed to forward message to client: #{inspect(reason)}")
         {:stop, :normal}
 
-      # Reporting only after the response is fully forwarded keeps workers flushing
-      # to slow clients out of the pool, as the ClientHandler checks us in once it
-      # releases us. The client's next query still needs a network round trip to
-      # reach the ClientHandler, so it usually takes a fresh checkout.
       :ok ->
-        if synced?, do: ClientHandler.backend_synced(data.caller, data.write_seq)
-
         if synced? and data.mode == :session do
           {_, stats} = Telem.network_usage(:db, data.sock, data.id, data.stats)
           {:keep_state, %{data | stats: stats}}
@@ -646,22 +654,25 @@ defmodule Supavisor.DbHandler do
     {:keep_state_and_data, {:reply, from, {:error, error}}}
   end
 
-  def handle_event({:call, from}, {:checkout, sock, caller}, state, data) do
-    Logger.debug("DbHandler: checkout call when state was #{state}: #{inspect(caller)}")
+  def handle_event({:call, from}, {:checkout, sock, caller}, :idle, data) do
+    Logger.debug("DbHandler: checkout call: #{inspect(caller)}")
+    Process.link(caller)
 
-    if state in [:idle, :busy] do
-      Process.link(caller)
-
-      if data.mode == :proxy do
-        bin_ps = Server.encode_parameter_status(data.parameter_status)
-        send(caller, {:parameter_status, bin_ps})
-      end
-
-      {:next_state, :busy, %{data | client_sock: sock, caller: caller, write_seq: 0},
-       {:reply, from, {:ok, data.sock}}}
-    else
-      {:keep_state_and_data, :postpone}
+    if data.mode == :proxy do
+      bin_ps = Server.encode_parameter_status(data.parameter_status)
+      send(caller, {:parameter_status, bin_ps})
     end
+
+    {:next_state, :busy, %{data | client_sock: sock, caller: caller, write_seq: 0},
+     {:reply, from, {:ok, data.sock}}}
+  end
+
+  # poolboy reclaims a worker on its owner's DOWN, which can reach poolboy before the
+  # owner's EXIT reaches us, so a checkout can arrive while we're still running the dead
+  # client's query. It's held rather than taken: the EXIT stops us, the held call fails,
+  # and the ClientHandler retries on another worker.
+  def handle_event({:call, _from}, {:checkout, _sock, _caller}, _state, _data) do
+    {:keep_state_and_data, :postpone}
   end
 
   def handle_event({:call, from}, :ps, :busy, data) do
