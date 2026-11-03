@@ -287,7 +287,11 @@ defmodule Supavisor.DbHandler do
       mode: :binary,
       packet: :raw,
       nodelay: true,
-      active: false
+      active: false,
+      # Without this, a write to a backend that stopped acking blocks until the kernel
+      # gives up on retransmission.
+      send_timeout: 30_000,
+      send_timeout_close: true
     ]
 
     Telem.handler_action(:db_handler, :db_connection, data.id)
