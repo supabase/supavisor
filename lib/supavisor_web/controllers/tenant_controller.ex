@@ -216,9 +216,7 @@ defmodule SupavisorWeb.TenantController do
     result = Supavisor.terminate_global(external_id) |> inspect()
     Logger.warning("Terminate #{external_id}: #{result}")
 
-    Logger.info(
-      "Delete cache dist #{external_id}: #{inspect(Supavisor.del_all_cache_dist(external_id))}"
-    )
+    Supavisor.del_all_cache_dist(external_id)
 
     render(conn, "show_terminate.json", result: result)
   end
