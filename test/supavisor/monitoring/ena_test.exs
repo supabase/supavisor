@@ -62,8 +62,8 @@ defmodule Supavisor.PromEx.Plugins.EnaTest do
       name = [:supavisor, :prom_ex, :osmon, :ena, :conntrack_allowance_available]
       metric = Enum.find(metrics, &(&1.name == name))
 
-      assert metric
-      refute metric.reporter_options[:prometheus_type] == "counter"
+      assert %Telemetry.Metrics.LastValue{} = metric
+      assert is_nil(metric.reporter_options[:prometheus_type])
     end
 
     test "measurements skip stats the driver does not report" do
