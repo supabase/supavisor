@@ -6,7 +6,7 @@ defmodule Supavisor.Integration.ProxyTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
-  alias Supavisor.Support.{Cluster, SSLHelper}
+  alias Supavisor.Support.{Cluster, ProtocolClient, SSLHelper}
 
   @tenants ["proxy_tenant_ps_enabled", "proxy_tenant_ps_disabled"]
 
@@ -305,6 +305,67 @@ defmodule Supavisor.Integration.ProxyTest do
 
     [{_pid, pool_meta}] = Registry.lookup(Supavisor.Registry.TenantProxyClients, id)
     assert pool_meta[:app_name] == ""
+  end
+
+  @tag cluster: true
+  test "client without a database is proxied to the same pool" do
+    db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+    username = db_conf[:username]
+
+    tenant =
+      Sandbox.unboxed_run(Supavisor.Repo, fn ->
+        random_suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        tenant_id = "no_database_#{System.unique_integer([:positive])}_#{random_suffix}"
+
+        {:ok, _} =
+          Supavisor.Tenants.create_tenant(%{
+            db_host: to_string(db_conf[:hostname]),
+            db_port: db_conf[:port],
+            db_database: db_conf[:database],
+            default_parameter_status: %{},
+            external_id: tenant_id,
+            require_user: true,
+            users: [
+              %{
+                "db_user" => username,
+                "db_password" => db_conf[:password],
+                "pool_size" => 3,
+                "mode_type" => "transaction"
+              }
+            ]
+          })
+
+        on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant_id) end)
+        tenant_id
+      end)
+
+    assert {:ok, _pid, node2} = Cluster.start_node()
+    Node.connect(node2)
+
+    # The pool lives on one of the two nodes, so one of these connections is proxied
+    socks =
+      for port <- [
+            Application.get_env(:supavisor, :proxy_port_transaction),
+            Application.get_env(:supavisor, :secondary_proxy_port)
+          ] do
+        {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+        ProtocolClient.authenticate(sock, "#{username}.#{tenant}", db_conf[:password])
+        sock
+      end
+
+    for sock <- socks do
+      :ok = :gen_tcp.send(sock, <<?Q, 13::32, "SELECT 1", 0>>)
+
+      assert [<<?T, _::binary>>, <<?D, _::32, 1::16, 1::32, "1">>, _complete, <<?Z, _::binary>>] =
+               recv_until_ready_for_query(sock, "")
+    end
+
+    id = Supavisor.id(type: :single, tenant: tenant, user: username, mode: :transaction)
+
+    assert is_pid(Supavisor.get_global_sup(id))
+    assert is_nil(Supavisor.get_global_sup(Supavisor.id(id, db: db_conf[:database])))
+
+    Enum.each(socks, &:gen_tcp.close/1)
   end
 
   for tenant <- @tenants do
@@ -1606,6 +1667,20 @@ defmodule Supavisor.Integration.ProxyTest do
     database = String.replace(path, "/", "")
 
     [hostname: host, port: port, database: database, password: pass, username: username]
+  end
+
+  defp recv_until_ready_for_query(sock, buf) do
+    {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+    case Supavisor.Protocol.split_pkts(buf <> data) do
+      {pkts, ""} ->
+        if match?(<<?Z, _::binary>>, List.last(pkts)),
+          do: pkts,
+          else: recv_until_ready_for_query(sock, buf <> data)
+
+      _ ->
+        recv_until_ready_for_query(sock, buf <> data)
+    end
   end
 
   defp session_tenant_with_reset_query(reset_query) do
