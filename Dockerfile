@@ -98,7 +98,7 @@ RUN mix release supavisor
 # Start a new build stage for the final image
 FROM ${RUNNER_IMAGE}
 
-RUN apt-get update -y && apt-get install -y libstdc++6 openssl libncurses6 locales vim curl htop postgresql-contrib sudo tini cmake libclang-dev \
+RUN apt-get update -y && apt-get install -y libstdc++6 openssl libncurses6 locales vim curl htop postgresql-contrib sudo tini ethtool cmake libclang-dev \
   && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
 # Set the locale
