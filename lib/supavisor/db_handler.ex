@@ -892,19 +892,21 @@ defmodule Supavisor.DbHandler do
 
     msg =
       :pgo_protocol.encode_startup_message(
-        [
-          {"user", user},
-          {"database", conn_params.database},
-          {"application_name", conn_params.application_name}
-        ] ++
-          if(options != %{},
-            do: [{"options", StartupOptions.encode(options)}],
-            else: []
-          )
+        [{"user", user}, {"application_name", conn_params.application_name}] ++
+          database_param(conn_params.database) ++
+          options_param(options)
       )
 
     HandlerHelpers.sock_send(sock, msg)
   end
+
+  # A proxied client may have omitted the database. Omitting it here too lets
+  # the pool's node resolve the same pool id as the client's node.
+  defp database_param(nil), do: []
+  defp database_param(database), do: [{"database", database}]
+
+  defp options_param(options) when options == %{}, do: []
+  defp options_param(options), do: [{"options", StartupOptions.encode(options)}]
 
   # The node of the pool parses the user name like the node of the client did
   @spec proxy_tenant(Supavisor.id()) :: String.t()
