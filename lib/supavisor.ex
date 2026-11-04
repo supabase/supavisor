@@ -310,7 +310,6 @@ defmodule Supavisor do
 
   @spec del_all_cache(String.t(), String.t()) :: [map()]
   def del_all_cache(tenant, user) do
-    Logger.info("Deleting all cache for tenant #{tenant} and user #{user}")
     {:ok, keys} = Cachex.keys(Supavisor.Cache)
 
     del = fn key, acc ->
@@ -318,55 +317,76 @@ defmodule Supavisor do
       [%{inspect(key) => inspect(result)} | acc]
     end
 
-    Enum.reduce(keys, [], fn
-      {:metrics, ^tenant} = key, acc -> del.(key, acc)
-      {:secrets_for_validation, ^tenant, ^user} = key, acc -> del.(key, acc)
-      {:secrets_check, ^tenant, ^user} = key, acc -> del.(key, acc)
-      {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
-      {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
-      {:pool_config_cache, ^tenant, ^user} = key, acc -> del.(key, acc)
-      _, acc -> acc
-    end)
+    deleted =
+      Enum.reduce(keys, [], fn
+        {:metrics, ^tenant} = key, acc -> del.(key, acc)
+        {:secrets_for_validation, ^tenant, ^user} = key, acc -> del.(key, acc)
+        {:secrets_check, ^tenant, ^user} = key, acc -> del.(key, acc)
+        {:user_cache, _, ^user, ^tenant, _} = key, acc -> del.(key, acc)
+        {:tenant_cache, ^tenant, _} = key, acc -> del.(key, acc)
+        {:pool_config_cache, ^tenant, ^user} = key, acc -> del.(key, acc)
+        _, acc -> acc
+      end)
+
+    Logger.info(
+      "Deleted #{length(deleted)} cache entries for tenant #{tenant} and user #{user}",
+      project: tenant
+    )
+
+    deleted
   end
 
   @spec del_all_cache(String.t()) :: [map()]
   def del_all_cache(tenant) do
-    Logger.info("Deleting all cache for tenant #{tenant}")
-
     del = fn key, acc ->
       result = Cachex.del(Supavisor.Cache, key)
       [%{inspect(key) => inspect(result)} | acc]
     end
 
-    :ets.foldl(
-      fn
-        {:entry, key, _, _, _result}, acc ->
-          case key do
-            {:metrics, ^tenant} -> del.(key, acc)
-            {:secrets_for_validation, ^tenant, _} -> del.(key, acc)
-            {:secrets_check, ^tenant, _} -> del.(key, acc)
-            {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
-            {:tenant_cache, ^tenant, _} -> del.(key, acc)
-            {:pool_config_cache, ^tenant, _} -> del.(key, acc)
-            _ -> acc
-          end
+    deleted =
+      :ets.foldl(
+        fn
+          {:entry, key, _, _, _result}, acc ->
+            case key do
+              {:metrics, ^tenant} -> del.(key, acc)
+              {:secrets_for_validation, ^tenant, _} -> del.(key, acc)
+              {:secrets_check, ^tenant, _} -> del.(key, acc)
+              {:user_cache, _, _, ^tenant, _} -> del.(key, acc)
+              {:tenant_cache, ^tenant, _} -> del.(key, acc)
+              {:pool_config_cache, ^tenant, _} -> del.(key, acc)
+              _ -> acc
+            end
 
-        other, acc ->
-          Logger.error("Unknown key: #{inspect(other)}")
-          acc
-      end,
-      [],
-      Supavisor.Cache
-    )
+          other, acc ->
+            Logger.error("Unknown key: #{inspect(other)}")
+            acc
+        end,
+        [],
+        Supavisor.Cache
+      )
+
+    Logger.info("Deleted #{length(deleted)} cache entries for tenant #{tenant}", project: tenant)
+
+    deleted
   end
 
   @spec del_all_cache_dist(String.t(), pos_integer()) :: [map()]
   def del_all_cache_dist(tenant, timeout \\ 15_000) do
-    Logger.info("Deleting all dist cache for tenant #{tenant}")
+    nodes = [node() | Node.list()]
 
-    for node <- [node() | Node.list()] do
-      %{to_string(node) => :erpc.call(node, Supavisor, :del_all_cache, [tenant], timeout)}
-    end
+    deleted =
+      for node <- nodes do
+        %{to_string(node) => :erpc.call(node, Supavisor, :del_all_cache, [tenant], timeout)}
+      end
+
+    count = deleted |> Enum.flat_map(&Map.values/1) |> Enum.sum_by(&length/1)
+
+    Logger.info(
+      "Deleted #{count} cache entries for tenant #{tenant} on #{length(nodes)} nodes",
+      project: tenant
+    )
+
+    deleted
   end
 
   @spec get_local_pool(id) :: map | pid | nil
