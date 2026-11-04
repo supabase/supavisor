@@ -612,11 +612,14 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler: Client is ready")
 
     # In transaction mode the DbHandler waits for us to release it, since only we
-    # know nothing else was forwarded to it.
+    # know nothing else was forwarded to it. We check it in ourselves, after it's
+    # idle, so poolboy always sees the checkin before the monitor on us fires.
     db_connection =
       case data do
-        %{mode: :transaction, db_connection: {_pool, db_pid, _sock}} ->
-          DbHandler.release(db_pid, data.write_seq)
+        %{mode: :transaction, db_connection: {pool, db_pid, _sock}} ->
+          with :ok <- DbHandler.release(db_pid, data.write_seq),
+               do: :poolboy.checkin(pool, db_pid)
+
           nil
 
         _ ->
