@@ -131,6 +131,81 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     end
   end
 
+  describe "direct SSL" do
+    setup do
+      Supavisor.Support.SSLHelper.setup_downstream_certs()
+      db_conf = Application.get_env(:supavisor, Supavisor.Repo)
+
+      %{
+        db_conf: db_conf,
+        port: Application.get_env(:supavisor, :proxy_port_transaction),
+        username: "#{db_conf[:username]}.#{List.first(@tenants)}"
+      }
+    end
+
+    test "runs a query", ctx do
+      {:ok, ssl} = direct_ssl_connect(ctx.port, alpn_advertised_protocols: ["postgresql"])
+      assert :ssl.negotiated_protocol(ssl) == {:ok, "postgresql"}
+
+      send_startup(:ssl, ssl, ctx)
+      auth_tail = do_scram_exchange(:ssl, ssl, ctx.username, ctx.db_conf[:password])
+      recv_until_ready_for_query(:ssl, ssl, auth_tail)
+
+      :ok = :ssl.send(ssl, :pgo_protocol.encode_query_message("SELECT 1"))
+      {:ok, data} = :ssl.recv(ssl, 0, 5000)
+      assert_data_row(data)
+      :ssl.close(ssl)
+    end
+
+    test "rejects a client that doesn't use ALPN", ctx do
+      {:ok, ssl} = direct_ssl_connect(ctx.port, [])
+
+      log =
+        capture_log(fn ->
+          assert {:ok, data} = :ssl.recv(ssl, 0, 5000)
+
+          assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+                   Server.decode_pkt(data)
+
+          assert %{
+                   "S" => "FATAL",
+                   "C" => "08P01",
+                   "M" =>
+                     "(EDIRECTSSLREJECTED) received direct SSL connection request without ALPN protocol negotiation extension"
+                 } = payload
+
+          assert {:error, :closed} = :ssl.recv(ssl, 0, 5000)
+        end)
+
+      assert log =~ "(EDIRECTSSLREJECTED)"
+    end
+
+    test "rejects a client that offers other ALPN protocols", ctx do
+      assert {:error, {:tls_alert, {:no_application_protocol, _}}} =
+               direct_ssl_connect(ctx.port, alpn_advertised_protocols: ["http/1.1"])
+    end
+
+    test "closes the connection when no certificate is configured", ctx do
+      for key <- [
+            :global_downstream_cert,
+            :global_downstream_key,
+            :global_downstream_ec_cert,
+            :global_downstream_ec_key
+          ] do
+        Application.delete_env(:supavisor, key)
+      end
+
+      log =
+        capture_log(fn ->
+          assert {:error, :closed} =
+                   direct_ssl_connect(ctx.port, alpn_advertised_protocols: ["postgresql"])
+        end)
+
+      assert log =~
+               "(EDIRECTSSLREJECTED) direct SSL connection rejected: no server certificate configured"
+    end
+  end
+
   describe "authentication method selection" do
     setup do
       Supavisor.Support.SSLHelper.setup_downstream_certs()
@@ -305,6 +380,11 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       password: db_conf[:password],
       username: db_conf[:username]
     )
+  end
+
+  defp direct_ssl_connect(port, ssl_opts) do
+    {:ok, tcp} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+    :ssl.connect(tcp, [verify: :verify_none, active: false] ++ ssl_opts, 5000)
   end
 
   defp send_startup(transport, sock, ctx) do

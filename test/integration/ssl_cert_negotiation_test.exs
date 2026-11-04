@@ -78,6 +78,24 @@ defmodule Supavisor.Integration.SSLCertNegotiationTest do
       assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_v2_ecdsa.crt")}
     end
 
+    test "serves v2 certificate to a configured hostname over direct SSL" do
+      port = Application.get_env(:supavisor, :proxy_port_transaction)
+      {:ok, tcp} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
+
+      {:ok, ssl_socket} =
+        :ssl.connect(
+          tcp,
+          [
+            verify: :verify_none,
+            server_name_indication: ~c"v2.localhost",
+            alpn_advertised_protocols: ["postgresql"]
+          ],
+          5_000
+        )
+
+      assert :ssl.peercert(ssl_socket) == {:ok, cert_der("server_v2_ecdsa.crt")}
+    end
+
     test "matches hostnames case-insensitively" do
       {:ok, ssl_socket} =
         ssl_upgrade(verify: :verify_none, server_name_indication: ~c"V2.LOCALHOST")
