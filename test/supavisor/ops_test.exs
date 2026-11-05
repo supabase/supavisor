@@ -5,7 +5,9 @@ defmodule Supavisor.OpsTest do
 
   import ExUnit.CaptureLog
   import Supavisor.TenantsFixtures
-  import Supavisor.Asserts, only: [assert_eventually: 1, assert_eventually: 3]
+
+  import Supavisor.Asserts,
+    only: [assert_eventually: 1, assert_eventually: 3, assert_node_info: 3]
 
   alias Supavisor.Ops
 
@@ -248,7 +250,7 @@ defmodule Supavisor.OpsTest do
 
   describe "node_info_local/0" do
     test "describes this node" do
-      assert_node_info(Ops.node_info_local(), :ok)
+      assert_node_info(Ops.node_info_local(), node(), :ok)
     end
 
     test "reports a health check that hangs as failed" do
@@ -256,7 +258,11 @@ defmodule Supavisor.OpsTest do
       on_exit(fn -> :meck.unload(Supavisor.Health) end)
       :meck.expect(Supavisor.Health, :database_reachable?, fn -> Process.sleep(:infinity) end)
 
-      assert_node_info(Ops.node_info_local(), {:error, :failed_checks, [:database_reachable]})
+      assert_node_info(
+        Ops.node_info_local(),
+        node(),
+        {:error, :failed_checks, [:database_reachable]}
+      )
     end
   end
 
@@ -264,7 +270,7 @@ defmodule Supavisor.OpsTest do
     test "lists this node when it is alone in the cluster" do
       assert %{nodes: [info], errors: errors} = Ops.list_nodes()
       assert errors == %{}
-      assert_node_info(info, :ok)
+      assert_node_info(info, node(), :ok)
     end
   end
 
@@ -277,15 +283,5 @@ defmodule Supavisor.OpsTest do
 
       assert log =~ "Restart node no_such_node: not_found"
     end
-  end
-
-  defp assert_node_info(info, health) do
-    assert Enum.sort(Map.keys(info)) == [:health, :host, :node, :uptime_ms, :version]
-    assert info.node == node()
-    assert [_name, host] = info.node |> to_string() |> String.split("@")
-    assert info.host == host
-    assert is_integer(info.uptime_ms) and info.uptime_ms >= 0
-    assert info.version == to_string(Application.spec(:supavisor, :vsn))
-    assert info.health == health
   end
 end

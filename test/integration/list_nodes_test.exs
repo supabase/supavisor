@@ -2,6 +2,7 @@ defmodule Supavisor.Integration.ListNodesTest do
   use Supavisor.DataCase, async: false
 
   import ExUnit.CaptureLog
+  import Supavisor.Asserts, only: [assert_node_info: 3]
 
   alias Supavisor.Ops
   alias Supavisor.Support.Cluster
@@ -75,15 +76,5 @@ defmodule Supavisor.Integration.ListNodesTest do
       end)
 
     assert log =~ "Failed to get info of node #{node()}"
-  end
-
-  defp assert_node_info(info, node, health) do
-    assert Enum.sort(Map.keys(info)) == [:health, :host, :node, :uptime_ms, :version]
-    assert info.node == node
-    assert [_name, host] = node |> to_string() |> String.split("@")
-    assert info.host == host
-    assert is_integer(info.uptime_ms) and info.uptime_ms >= 0
-    assert info.version == to_string(Application.spec(:supavisor, :vsn))
-    assert info.health == health
   end
 end
