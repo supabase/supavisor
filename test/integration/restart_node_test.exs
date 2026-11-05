@@ -73,6 +73,36 @@ defmodule Supavisor.Integration.RestartNodeTest do
     assert_eventually(10, 1_000, fn -> peer_node not in Node.list() end)
   end
 
+  test "restart_node/1 returns :node_unreachable when the restart fails on the node", %{
+    peer: peer,
+    peer_node: peer_node
+  } do
+    failing_restart =
+      defmodule FailingRestart do
+        def run, do: raise("boom")
+      end
+
+    :ok = Cluster.load_module(peer, failing_restart)
+    :ok = :peer.call(peer, :meck, :new, [Supavisor.Ops, [:passthrough, :no_link]])
+
+    :ok =
+      :peer.call(peer, :meck, :expect, [
+        Supavisor.Ops,
+        :restart_node_local,
+        &FailingRestart.run/0
+      ])
+
+    log =
+      capture_log([level: :warning], fn ->
+        assert {:error, :node_unreachable} = Supavisor.Ops.restart_node(to_string(peer_node))
+      end)
+
+    assert log =~
+             ~s(Failed to restart node #{peer_node}: {:badrpc, {:error, {:exception, %RuntimeError{message: "boom"})
+
+    assert peer_node in Node.list()
+  end
+
   test "restart_node/1 returns :ambiguous when several nodes share the host", %{
     peer_node: peer_node
   } do

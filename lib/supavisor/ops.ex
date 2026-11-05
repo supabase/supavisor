@@ -6,6 +6,7 @@ defmodule Supavisor.Ops do
 
   require Logger
 
+  alias Supavisor.Helpers
   alias Supavisor.Manager
   alias Supavisor.Tenants
 
@@ -188,16 +189,19 @@ defmodule Supavisor.Ops do
   def restart_node(target) do
     case resolve_node(target) do
       {:ok, node} ->
-        :erpc.call(node, __MODULE__, :restart_node_local, [], @multicall_timeout)
+        case Helpers.rpc(node, __MODULE__, :restart_node_local, [], @multicall_timeout) do
+          {:error, {:badrpc, _} = reason} ->
+            Logger.warning("Failed to restart node #{target}: #{inspect(reason)}")
+            {:error, :node_unreachable}
+
+          :ok ->
+            :ok
+        end
 
       {:error, reason} = error ->
         Logger.warning("Restart node #{target}: #{reason}")
         error
     end
-  catch
-    :error, {:erpc, :noconnection} = reason ->
-      Logger.warning("Failed to restart node #{target}: #{inspect(reason)}")
-      {:error, :node_unreachable}
   end
 
   @spec resolve_node(String.t()) :: {:ok, node()} | {:error, :not_found | :ambiguous}
