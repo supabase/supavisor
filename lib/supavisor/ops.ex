@@ -108,17 +108,20 @@ defmodule Supavisor.Ops do
   @spec stop_pool(String.t(), pid(), pos_integer()) ::
           {:ok, :stopped | :stopping} | {:error, :not_found | :node_unreachable}
   def stop_pool(tenant, sup, timeout \\ @stop_timeout) do
-    :erpc.call(
-      node(sup),
-      __MODULE__,
-      :stop_pool_local,
-      [tenant, sup, timeout],
-      timeout + @multicall_timeout
-    )
-  catch
-    :error, {:erpc, :noconnection} = reason ->
-      Logger.warning("Failed to stop pool of #{tenant} on #{node(sup)}: #{inspect(reason)}")
-      {:error, :node_unreachable}
+    case Helpers.rpc(
+           node(sup),
+           __MODULE__,
+           :stop_pool_local,
+           [tenant, sup, timeout],
+           timeout + @multicall_timeout
+         ) do
+      {:error, {:badrpc, _} = reason} ->
+        Logger.warning("Failed to stop pool of #{tenant} on #{node(sup)}: #{inspect(reason)}")
+        {:error, :node_unreachable}
+
+      result ->
+        result
+    end
   end
 
   @doc """
