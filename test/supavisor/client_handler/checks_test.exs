@@ -2,7 +2,13 @@ defmodule Supavisor.ClientHandler.ChecksTest do
   use ExUnit.Case, async: true
 
   alias Supavisor.ClientHandler.Checks
-  alias Supavisor.Errors.{AddressNotAllowedError, ClientSocketClosedError, TenantBannedError}
+
+  alias Supavisor.Errors.{
+    AddressNotAllowedError,
+    ClientSocketClosedError,
+    SslRequiredError,
+    TenantBannedError
+  }
 
   defp banned_tenant(banned_until) do
     %{
@@ -50,6 +56,25 @@ defmodule Supavisor.ClientHandler.ChecksTest do
     test "allows connection when tenant is not banned" do
       data = %{tenant: %{banned_at: nil, ban_reason: nil, banned_until: nil}}
       assert :ok = Checks.check_tenant_not_banned(data)
+    end
+  end
+
+  describe "check_ssl_enforcement/3" do
+    test "rejects a client without TLS when the tenant enforces SSL" do
+      info = %{tenant: %{enforce_ssl: true}}
+
+      assert {:error, %SslRequiredError{user: "user"}} =
+               Checks.check_ssl_enforcement(%{ssl: false}, info, "user")
+    end
+
+    test "allows a client with TLS when the tenant enforces SSL" do
+      info = %{tenant: %{enforce_ssl: true}}
+      assert :ok = Checks.check_ssl_enforcement(%{ssl: true}, info, "user")
+    end
+
+    test "allows a client without TLS when the tenant doesn't enforce SSL" do
+      info = %{tenant: %{enforce_ssl: false}}
+      assert :ok = Checks.check_ssl_enforcement(%{ssl: false}, info, "user")
     end
   end
 

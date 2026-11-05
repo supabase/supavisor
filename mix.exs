@@ -58,6 +58,7 @@ defmodule Supavisor.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:peep, "~> 4.4.0", override: true},
       {:plug_cowboy, "~> 2.5"},
+      {:jason, "~> 1.4"},
       {:req, "~> 0.6.1"},
       {:prom_ex, "~> 1.10"},
       {:open_api_spex, "~> 3.16"},

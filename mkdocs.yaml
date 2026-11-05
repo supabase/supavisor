@@ -15,6 +15,8 @@ nav:
   - Connecting:
       - Overview: "connecting/overview.md"
       - Authentication: "connecting/authentication.md"
+      - over HTTP: "connecting/http.md"
+      - over WebSocket: "connecting/websocket.md"
   - Configuration:
       - Environment Variables: "configuration/env.md"
       - Tenants: "configuration/tenants.md"

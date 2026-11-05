@@ -125,10 +125,6 @@ supported ([todo](#future-work)).
     hitting the tenant database
 - Session pooling
   - Like `PgBouncer`
-- Multi-protocol Postgres query interface
-  - Postgres binary
-  - HTTPS
-  - Websocket
 - Postgres high-availability management
   - Primary database election on primary failure
   - Health checks
