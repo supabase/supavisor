@@ -22,6 +22,8 @@ defmodule Supavisor.ClientHandler do
   @max_checkout_retries 2
   @timeout_subscribe 500
   @ssl_handshake_timeout 2_500
+  @tls_handshake_record 0x16
+  @alpn_protocol "postgresql"
   @handshake_timeout 5_000
   @clients_registry Supavisor.Registry.TenantClients
   @proxy_clients_registry Supavisor.Registry.TenantProxyClients
@@ -59,6 +61,7 @@ defmodule Supavisor.ClientHandler do
     CheckoutTimeoutError,
     ClientSocketClosedError,
     DbHandlerExitedError,
+    DirectSslRejectedError,
     HandshakeTimeoutError,
     JitUnauthorizedError,
     MaxConnectionsError,
@@ -180,11 +183,7 @@ defmodule Supavisor.ClientHandler do
     if certs_keys != [] do
       :ok = HandlerHelpers.setopts(sock, active: false)
 
-      opts = [
-        verify: :verify_none,
-        certs_keys: certs_keys,
-        sni_fun: &downstream_sni_options/1
-      ]
+      opts = downstream_ssl_opts(certs_keys)
 
       with :ok <- client_sock_send(data, "S", :handshake),
            {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
@@ -211,6 +210,54 @@ defmodule Supavisor.ClientHandler do
         {:error, exception} ->
           Error.terminate_with_error(data, exception, :handshake)
       end
+    end
+  end
+
+  # Direct SSL: the client starts the TLS handshake without an SSLRequest. A startup
+  # packet can't begin with the TLS handshake record type, as its length would be too large.
+  def handle_event(
+        :info,
+        {:tcp, _, <<@tls_handshake_record, _::binary>> = client_hello},
+        :handshake,
+        %{sock: {:gen_tcp, port} = sock} = data
+      ) do
+    case Helpers.downstream_certs_keys() do
+      [] ->
+        Error.terminate_with_error(
+          data,
+          %DirectSslRejectedError{reason: :no_certificate},
+          :handshake
+        )
+
+      certs_keys ->
+        opts = [alpn_preferred_protocols: [@alpn_protocol]] ++ downstream_ssl_opts(certs_keys)
+
+        # The ClientHello was already read from the socket. Requeue it, together with any
+        # data buffered after it, so `:gen_tcp.controlling_process/2` forwards it to the
+        # TLS connection process when `:ssl.handshake/3` takes over the socket.
+        with :ok <- HandlerHelpers.setopts(sock, active: false),
+             send(self(), {:tcp, port, receive_tcp_buffered(port, client_hello)}),
+             {:ok, ssl_sock} <- :ssl.handshake(port, opts, @ssl_handshake_timeout) do
+          socket = {:ssl, ssl_sock}
+          data = %{data | sock: socket, ssl: true}
+          Logger.metadata(tls: true)
+
+          case :ssl.negotiated_protocol(ssl_sock) do
+            {:ok, @alpn_protocol} ->
+              :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
+              {:keep_state, data}
+
+            {:error, :protocol_not_negotiated} ->
+              Error.terminate_with_error(
+                data,
+                %DirectSslRejectedError{reason: :no_alpn},
+                :handshake
+              )
+          end
+        else
+          {:error, reason} ->
+            Error.terminate_with_error(data, %SslHandshakeError{reason: reason}, :handshake)
+        end
     end
   end
 
@@ -1169,6 +1216,18 @@ defmodule Supavisor.ClientHandler do
 
   defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?
   defp upstream_tls(%{upstream_ssl: upstream_ssl}, _ssl?), do: upstream_ssl
+
+  defp downstream_ssl_opts(certs_keys) do
+    [verify: :verify_none, certs_keys: certs_keys, sni_fun: &downstream_sni_options/1]
+  end
+
+  defp receive_tcp_buffered(port, acc) do
+    receive do
+      {:tcp, ^port, bin} -> receive_tcp_buffered(port, [acc | bin])
+    after
+      0 -> IO.iodata_to_binary(acc)
+    end
+  end
 
   defp downstream_sni_options(sni_hostname) do
     with true <- Helpers.downstream_v2_sni_hostname?(sni_hostname),
