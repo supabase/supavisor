@@ -3,6 +3,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
   alias Supavisor.Protocol.Server
   alias Supavisor.Support.ProtocolClient
+  alias Supavisor.Support.SSLHelper
   require Server
 
   import ExUnit.CaptureLog
@@ -99,7 +100,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
   describe "tls logger metadata" do
     setup do
-      Supavisor.Support.SSLHelper.setup_downstream_certs()
+      SSLHelper.setup_downstream_certs()
       %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
     end
 
@@ -208,7 +209,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
   describe "authentication method selection" do
     setup do
-      Supavisor.Support.SSLHelper.setup_downstream_certs()
+      SSLHelper.setup_downstream_certs()
       %{port: Application.get_env(:supavisor, :proxy_port_transaction)}
     end
 
@@ -312,7 +313,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     @cleartext_tenant "is_manager_cleartext"
 
     setup do
-      Supavisor.Support.SSLHelper.setup_downstream_certs()
+      SSLHelper.setup_downstream_certs()
 
       db_conf = Application.get_env(:supavisor, Supavisor.Repo)
 
@@ -478,7 +479,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     @token "sbp_0000000000000000000000000000000000000000"
 
     setup do
-      Supavisor.Support.SSLHelper.setup_downstream_certs()
+      SSLHelper.setup_downstream_certs()
 
       ref = :"jit_api_stub_#{System.unique_integer([:positive])}"
 

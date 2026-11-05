@@ -263,6 +263,7 @@ if config_env() != :test do
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
+    ena_interface: System.get_env("ENA_INTERFACE"),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,
