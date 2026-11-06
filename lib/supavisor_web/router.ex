@@ -73,7 +73,7 @@ defmodule SupavisorWeb.Router do
 
     get("/health", TenantController, :health)
     get("/nodes", OpsController, :index)
-    post("/nodes/:nodehost/restart", OpsController, :restart_node)
+    post("/nodes/:nodehost/shutdown", OpsController, :shutdown_node)
     post("/rebalance", PoolController, :rebalance)
 
     get("/clusters/:alias", ClusterController, :show)

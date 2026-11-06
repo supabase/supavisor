@@ -30,29 +30,29 @@ defmodule SupavisorWeb.OpsController do
     render(conn, :index, result: Supavisor.Ops.list_nodes())
   end
 
-  operation(:restart_node,
-    summary: "Restart a node of the cluster",
+  operation(:shutdown_node,
+    summary: "Shut down a node of the cluster",
     description: """
-    Restarts a node of the cluster, identified by the host part of its node name or by
+    Shuts down a node of the cluster, identified by the host part of its node name or by
     its full node name. It can be any node, not only the one that receives the request.
 
-    `202` only confirms the restart was initiated: the node exits shortly after, and
-    whatever supervises the process is expected to start it again.
+    `202` only confirms the shutdown was initiated: the node exits shortly after. It comes
+    back only if whatever supervises the process starts it again.
     """,
     parameters: [
       nodehost: [in: :path, description: "Node host or full node name", type: :string],
       authorization: @authorization
     ],
     responses: %{
-      202 => {"Restart initiated", "application/json", Empty},
+      202 => {"Shutdown initiated", "application/json", Empty},
       404 => NotFound.response(),
       409 => {"Several nodes share the host", "application/json", Empty},
       503 => {"Node unreachable", "application/json", Empty}
     }
   )
 
-  def restart_node(conn, %{"nodehost" => nodehost}) do
-    case Supavisor.Ops.restart_node(nodehost) do
+  def shutdown_node(conn, %{"nodehost" => nodehost}) do
+    case Supavisor.Ops.shutdown_node(nodehost) do
       :ok ->
         send_resp(conn, 202, "")
 

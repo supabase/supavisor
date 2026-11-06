@@ -12,8 +12,8 @@ defmodule Supavisor.Ops do
 
   @multicall_timeout :timer.seconds(5)
   @stop_timeout :timer.seconds(15)
-  @restart_delay :timer.seconds(1)
-  @restart_watchdog :timer.seconds(60)
+  @shutdown_delay :timer.seconds(1)
+  @shutdown_watchdog :timer.seconds(60)
 
   @type connection_counts :: %{idle: non_neg_integer(), checked_out: non_neg_integer()}
 
@@ -185,16 +185,17 @@ defmodule Supavisor.Ops do
   end
 
   @doc """
-  Restarts a node of the cluster, given its `nodehost` or its full node name.
-  The node is only asked to restart: it exits shortly after this returns.
+  Shuts down a node of the cluster, given its `nodehost` or its full node name.
+  The node is only asked to shut down: it exits shortly after this returns, and nothing
+  in Supavisor starts it again.
   """
-  @spec restart_node(String.t()) :: :ok | {:error, :not_found | :ambiguous | :node_unreachable}
-  def restart_node(target) do
+  @spec shutdown_node(String.t()) :: :ok | {:error, :not_found | :ambiguous | :node_unreachable}
+  def shutdown_node(target) do
     case resolve_node(target) do
       {:ok, node} ->
-        case Helpers.rpc(node, __MODULE__, :restart_node_local, [], @multicall_timeout) do
+        case Helpers.rpc(node, __MODULE__, :shutdown_node_local, [], @multicall_timeout) do
           {:error, {:badrpc, _} = reason} ->
-            Logger.warning("Failed to restart node #{target}: #{inspect(reason)}")
+            Logger.warning("Failed to shut down node #{target}: #{inspect(reason)}")
             {:error, :node_unreachable}
 
           :ok ->
@@ -202,7 +203,7 @@ defmodule Supavisor.Ops do
         end
 
       {:error, reason} = error ->
-        Logger.warning("Restart node #{target}: #{reason}")
+        Logger.warning("Shut down node #{target}: #{reason}")
         error
     end
   end
@@ -224,24 +225,24 @@ defmodule Supavisor.Ops do
   end
 
   @doc """
-  Restarts this node by exiting the VM shortly after returning, so the caller gets its
-  reply first. Whatever supervises the process, e.g. systemd with `Restart=always`, is
-  expected to start it again.
+  Shuts this node down by exiting the VM shortly after returning, so the caller gets its
+  reply first. Starting it again is up to whatever supervises the process, e.g. systemd
+  with `Restart=always`.
 
   Options:
 
     * `:delay` - ms before the stop starts, so the reply to the request that triggered
-      the restart goes out first.
+      the shutdown goes out first.
     * `:watchdog` - ms after the stop starts before the VM is halted, if the stop has not
       finished by then. It should be past the graceful stop of the slowest pool, so it
       never cuts one short.
   """
-  @spec restart_node_local(keyword()) :: :ok
-  def restart_node_local(opts \\ []) do
-    delay = Keyword.get(opts, :delay, @restart_delay)
-    watchdog = Keyword.get(opts, :watchdog, @restart_watchdog)
+  @spec shutdown_node_local(keyword()) :: :ok
+  def shutdown_node_local(opts \\ []) do
+    delay = Keyword.get(opts, :delay, @shutdown_delay)
+    watchdog = Keyword.get(opts, :watchdog, @shutdown_watchdog)
 
-    Logger.info("Restart node #{node()}: exiting in #{delay}ms")
+    Logger.info("Shut down node #{node()}: exiting in #{delay}ms")
 
     # Timers, not processes of ours: they live under the kernel, so the backstop for a
     # graceful stop that hangs outlasts the shutdown of our supervision tree.

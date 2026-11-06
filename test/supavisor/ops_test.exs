@@ -274,14 +274,14 @@ defmodule Supavisor.OpsTest do
     end
   end
 
-  describe "restart_node/1" do
+  describe "shutdown_node/1" do
     test "returns :not_found for a node that is not in the cluster" do
       log =
         capture_log([level: :warning], fn ->
-          assert {:error, :not_found} = Ops.restart_node("no_such_node")
+          assert {:error, :not_found} = Ops.shutdown_node("no_such_node")
         end)
 
-      assert log =~ "Restart node no_such_node: not_found"
+      assert log =~ "Shut down node no_such_node: not_found"
     end
   end
 end

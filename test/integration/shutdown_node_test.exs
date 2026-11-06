@@ -1,4 +1,4 @@
-defmodule Supavisor.Integration.RestartNodeTest do
+defmodule Supavisor.Integration.ShutdownNodeTest do
   use SupavisorWeb.ConnCase, async: false
 
   import ExUnit.CaptureLog
@@ -22,11 +22,11 @@ defmodule Supavisor.Integration.RestartNodeTest do
     }
   end
 
-  test "restarts another node of the cluster, replying before it exits", %{
+  test "shuts down another node of the cluster, replying before it exits", %{
     conn: conn,
     peer_node: peer_node
   } do
-    assert conn |> post(~p"/api/nodes/#{peer_node}/restart") |> response(202)
+    assert conn |> post(~p"/api/nodes/#{peer_node}/shutdown") |> response(202)
     # The reply goes out before the node exits.
     assert peer_node in Node.list()
 
@@ -65,7 +65,7 @@ defmodule Supavisor.Integration.RestartNodeTest do
         [shutdown: :infinity]
       ])
 
-    :ok = :peer.call(peer, Supavisor.Ops, :restart_node_local, [[delay: 100, watchdog: 1_000]])
+    :ok = :peer.call(peer, Supavisor.Ops, :shutdown_node_local, [[delay: 100, watchdog: 1_000]])
 
     # The graceful stop has started and the task ignores it, so only the watchdog can end the node.
     assert_receive :shutdown_ignored, 2_000
@@ -73,50 +73,50 @@ defmodule Supavisor.Integration.RestartNodeTest do
     assert_eventually(10, 1_000, fn -> peer_node not in Node.list() end)
   end
 
-  test "restart_node/1 returns :node_unreachable when the restart fails on the node", %{
+  test "shutdown_node/1 returns :node_unreachable when the shutdown fails on the node", %{
     peer: peer,
     peer_node: peer_node
   } do
-    failing_restart =
-      defmodule FailingRestart do
+    failing_shutdown =
+      defmodule FailingShutdown do
         def run, do: raise("boom")
       end
 
-    :ok = Cluster.load_module(peer, failing_restart)
+    :ok = Cluster.load_module(peer, failing_shutdown)
     :ok = :peer.call(peer, :meck, :new, [Supavisor.Ops, [:passthrough, :no_link]])
 
     :ok =
       :peer.call(peer, :meck, :expect, [
         Supavisor.Ops,
-        :restart_node_local,
-        &FailingRestart.run/0
+        :shutdown_node_local,
+        &FailingShutdown.run/0
       ])
 
     log =
       capture_log([level: :warning], fn ->
-        assert {:error, :node_unreachable} = Supavisor.Ops.restart_node(to_string(peer_node))
+        assert {:error, :node_unreachable} = Supavisor.Ops.shutdown_node(to_string(peer_node))
       end)
 
     assert log =~
-             ~s(Failed to restart node #{peer_node}: {:badrpc, {:error, {:exception, %RuntimeError{message: "boom"})
+             ~s(Failed to shut down node #{peer_node}: {:badrpc, {:error, {:exception, %RuntimeError{message: "boom"})
 
     assert peer_node in Node.list()
   end
 
-  test "restart_node/1 returns :ambiguous when several nodes share the host", %{
+  test "shutdown_node/1 returns :ambiguous when several nodes share the host", %{
     peer_node: peer_node
   } do
     log =
       capture_log([level: :warning], fn ->
-        assert {:error, :ambiguous} = Supavisor.Ops.restart_node("127.0.0.1")
+        assert {:error, :ambiguous} = Supavisor.Ops.shutdown_node("127.0.0.1")
       end)
 
-    assert log =~ "Restart node 127.0.0.1: ambiguous"
+    assert log =~ "Shut down node 127.0.0.1: ambiguous"
     assert peer_node in Node.list()
   end
 
   test "returns 409 when several nodes share the host", %{conn: conn} do
     assert %{"error" => "several nodes share this host" <> _} =
-             conn |> post(~p"/api/nodes/127.0.0.1/restart") |> json_response(409)
+             conn |> post(~p"/api/nodes/127.0.0.1/shutdown") |> json_response(409)
   end
 end

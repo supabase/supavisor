@@ -66,7 +66,7 @@ defmodule SupavisorWeb.OpsControllerTest do
     end
   end
 
-  describe "POST /api/nodes/:nodehost/restart" do
+  describe "POST /api/nodes/:nodehost/shutdown" do
     setup %{conn: conn} do
       {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
     end
@@ -74,12 +74,12 @@ defmodule SupavisorWeb.OpsControllerTest do
     test "returns 404 for a node that is not in the cluster", %{conn: conn} do
       assert %{"error" => "not found"} =
                conn
-               |> post(~p"/api/nodes/no_such_node/restart")
+               |> post(~p"/api/nodes/no_such_node/shutdown")
                |> json_response(404)
     end
 
     test "returns 202 for hosts and full node names, with an IP or a domain", %{conn: conn} do
-      stub_restart_node(:ok)
+      stub_shutdown_node(:ok)
 
       targets = [
         "10.0.0.5",
@@ -89,43 +89,43 @@ defmodule SupavisorWeb.OpsControllerTest do
       ]
 
       for target <- targets do
-        assert conn |> post(~p"/api/nodes/#{target}/restart") |> response(202) == ""
-        assert :meck.called(Supavisor.Ops, :restart_node, [target])
+        assert conn |> post(~p"/api/nodes/#{target}/shutdown") |> response(202) == ""
+        assert :meck.called(Supavisor.Ops, :shutdown_node, [target])
       end
     end
 
     test "returns 409 when several nodes share the host", %{conn: conn} do
-      stub_restart_node({:error, :ambiguous})
+      stub_shutdown_node({:error, :ambiguous})
 
       assert %{"error" => "several nodes share this host" <> _} =
                conn
-               |> post(~p"/api/nodes/127.0.0.1/restart")
+               |> post(~p"/api/nodes/127.0.0.1/shutdown")
                |> json_response(409)
     end
 
     test "returns 503 when the node is unreachable", %{conn: conn} do
-      stub_restart_node({:error, :node_unreachable})
+      stub_shutdown_node({:error, :node_unreachable})
 
       assert %{"error" => "node unreachable"} =
                conn
-               |> post(~p"/api/nodes/node1/restart")
+               |> post(~p"/api/nodes/node1/shutdown")
                |> json_response(503)
     end
 
     test "requires authorization" do
-      assert build_conn() |> post(~p"/api/nodes/node1/restart") |> response(403)
+      assert build_conn() |> post(~p"/api/nodes/node1/shutdown") |> response(403)
     end
 
     test "is documented in the OpenAPI spec", %{conn: conn} do
       spec = conn |> get(~p"/api/openapi") |> json_response(200)
 
       assert %{"responses" => %{"202" => _, "404" => _, "409" => _, "503" => _}} =
-               spec["paths"]["/api/nodes/{nodehost}/restart"]["post"]
+               spec["paths"]["/api/nodes/{nodehost}/shutdown"]["post"]
     end
   end
 
-  defp stub_restart_node(result) do
-    stub_ops(:restart_node, fn _target -> result end)
+  defp stub_shutdown_node(result) do
+    stub_ops(:shutdown_node, fn _target -> result end)
   end
 
   defp stub_ops(function, fun) do
