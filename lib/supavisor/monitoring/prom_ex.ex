@@ -136,8 +136,10 @@ defmodule Supavisor.Monitoring.PromEx do
 
   @spec do_cache_tenants_metrics() :: list
   def do_cache_tenants_metrics do
+    # Proxied clients' client-side metrics are recorded on this node, not the pool's.
     pools =
-      Registry.select(Supavisor.Registry.TenantClients, [{{:"$1", :_, :_}, [], [:"$1"]}])
+      [Supavisor.Registry.TenantClients, Supavisor.Registry.TenantProxyClients]
+      |> Enum.flat_map(&Registry.select(&1, [{{:"$1", :_, :_}, [], [:"$1"]}]))
       |> Enum.uniq_by(&Supavisor.id(&1, upstream_tls: false))
 
     by_tenant = fetch_metrics_by_tenant()

@@ -76,5 +76,35 @@ defmodule Supavisor.TenantsMetricsTest do
       assert PromEx.get_tenant_metrics(tenant) |> IO.iodata_to_binary() == ""
       assert {:ok, nil} = Cachex.get(Supavisor.Cache, {:metrics, tenant})
     end
+
+    test "caches metrics for a tenant whose only clients on this node are proxied" do
+      tenant = "tenants_metrics_proxy_#{System.unique_integer([:positive])}"
+
+      id =
+        Supavisor.id(
+          type: :single,
+          tenant: tenant,
+          user: "app_user",
+          mode: :transaction,
+          db: "db_name"
+        )
+
+      # The pool runs on another node, so this node only sees the proxied client.
+      Registry.register(Supavisor.Registry.TenantProxyClients, id, [])
+      Tenant.emit_proxy_telemetry_for_tenant(id, 3, "app")
+
+      state = %{check_ref: make_ref(), pools: MapSet.new()}
+      {:noreply, state} = Supavisor.TenantsMetrics.handle_info(:check_metrics, state)
+
+      metrics = PromEx.get_tenant_metrics(tenant) |> IO.iodata_to_binary()
+
+      assert metrics =~
+               ~r/^supavisor_proxy_connections_active\{[^}]*tenant="#{tenant}"[^}]*\} 3$/m
+
+      Registry.unregister(Supavisor.Registry.TenantProxyClients, id)
+      {:noreply, _state} = Supavisor.TenantsMetrics.handle_info(:check_metrics, state)
+
+      assert {:ok, nil} = Cachex.get(Supavisor.Cache, {:metrics, tenant})
+    end
   end
 end
