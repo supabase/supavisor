@@ -50,6 +50,7 @@ defmodule Supavisor.ClientHandler.Data do
     write_seq: 0,
     # Latest write with tracked messages.
     tracked_seq: 0,
-    invalid_options: []
+    invalid_options: [],
+    unforwarded_options: []
   ]
 end

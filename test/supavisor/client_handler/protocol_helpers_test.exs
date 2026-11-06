@@ -28,6 +28,21 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
                 invalid_options: []
               }} = ProtocolHelpers.parse_startup_packet(bin)
     end
+
+    test "lists the settings it doesn't forward" do
+      bin =
+        startup_packet([
+          {"user", "postgres.some_tenant"},
+          {"options", "-c jit=maybe -c work_mem=1MB -c search_path=public"}
+        ])
+
+      assert {:ok,
+              %StartupParams{
+                search_path: "public",
+                invalid_options: [{"jit", "maybe"}],
+                unforwarded_options: ["work_mem"]
+              }} = ProtocolHelpers.parse_startup_packet(bin)
+    end
   end
 
   describe "extract_and_validate_user_info/2" do

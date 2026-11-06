@@ -262,6 +262,7 @@ defmodule Supavisor.ClientHandlerTest do
         mode: :transaction,
         app_name: nil,
         invalid_options: [],
+        unforwarded_options: [],
         connection_start: System.monotonic_time()
       }
 

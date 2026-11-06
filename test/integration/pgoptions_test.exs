@@ -54,6 +54,34 @@ defmodule Supavisor.Integration.PgoptionsTest do
     assert work_mem != "2047GB"
   end
 
+  test "PGOPTIONS settings that aren't forwarded get a notice and stay unset", ctx do
+    {output, status} =
+      run_psql(ctx, "SHOW default_transaction_read_only;",
+        pgoptions: "-c default_transaction_read_only=on"
+      )
+
+    assert status == 0, output
+
+    assert output =~
+             ~s(parameter "default_transaction_read_only" in startup options is not forwarded by Supavisor)
+
+    assert output |> String.trim() |> String.split("\n") |> List.last() == "off"
+  end
+
+  test "PGOPTIONS settings that aren't forwarded share one notice", ctx do
+    {output, status} =
+      run_psql(ctx, "SHOW statement_timeout;",
+        pgoptions: "-c default_transaction_read_only=on -c statement_timeout=1234"
+      )
+
+    assert status == 0, output
+
+    assert output =~
+             ~s(parameters "default_transaction_read_only", "statement_timeout" in startup options are not forwarded by Supavisor)
+
+    assert length(String.split(output, "NOTICE:")) == 2
+  end
+
   test "PGOPTIONS --search_path invalid syntax terminates with error", ctx do
     {output, status} =
       run_psql(ctx, "SHOW search_path;", pgoptions: "--search_path=,--invalid-syntax--;(")
