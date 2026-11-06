@@ -3,6 +3,8 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
 
   alias Supavisor.Protocol.StartupOptions
 
+  doctest StartupOptions
+
   describe "encode/1" do
     test "empty map returns empty string" do
       assert StartupOptions.encode(%{}) == ""
@@ -151,6 +153,59 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
                "M" => ~s(invalid value for parameter "log_level": "trace"),
                "H" => "Available values: debug, info, notice, warning, error."
              } == StartupOptions.invalid_option_notice({"log_level", "trace"})
+    end
+  end
+
+  describe "unforwarded/1" do
+    test "lists settings Supavisor doesn't use, sorted" do
+      opts = %{
+        "search_path" => "public",
+        "statement_timeout" => "5s",
+        "default_transaction_read_only" => "on"
+      }
+
+      assert StartupOptions.unforwarded(opts) == [
+               "default_transaction_read_only",
+               "statement_timeout"
+             ]
+    end
+
+    test "never lists the options Supavisor reads itself" do
+      opts = %{
+        "search_path" => "public",
+        "jit" => true,
+        "client_tls" => false,
+        "log_level" => :debug,
+        "client_ip" => "10.0.0.1",
+        "reference" => "dev_tenant"
+      }
+
+      assert StartupOptions.unforwarded(opts) == []
+    end
+  end
+
+  describe "unforwarded_option_notice/1" do
+    test "names a single setting and says how to apply it" do
+      assert %{
+               "S" => "NOTICE",
+               "V" => "NOTICE",
+               "C" => "00000",
+               "M" =>
+                 ~s(parameter "default_transaction_read_only" in startup options is not forwarded by Supavisor and has no effect),
+               "H" => "Set it with ALTER ROLE or ALTER DATABASE ... SET."
+             } == StartupOptions.unforwarded_option_notice(["default_transaction_read_only"])
+    end
+
+    test "lists several settings in one message" do
+      assert %{
+               "M" =>
+                 ~s(parameters "default_transaction_read_only", "statement_timeout" in startup options are not forwarded by Supavisor and have no effect),
+               "H" => "Set them with ALTER ROLE or ALTER DATABASE ... SET."
+             } =
+               StartupOptions.unforwarded_option_notice([
+                 "default_transaction_read_only",
+                 "statement_timeout"
+               ])
     end
   end
 end

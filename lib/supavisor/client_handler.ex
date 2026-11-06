@@ -254,7 +254,8 @@ defmodule Supavisor.ClientHandler do
       client_ip: client_ip,
       app_name: app_name,
       log_level: log_level,
-      invalid_options: invalid_options
+      invalid_options: invalid_options,
+      unforwarded_options: unforwarded_options
     } = startup_params
 
     sni_hostname = HandlerHelpers.try_get_sni(sock)
@@ -264,7 +265,14 @@ defmodule Supavisor.ClientHandler do
     # peer is the forwarding node). Otherwise, use what we observed on the socket.
     effective_ssl = if(data.local && client_tls, do: client_tls, else: data.ssl)
     peer_ip = ProtocolHelpers.effective_peer_ip(data.local, client_ip, data.peer_ip)
-    data = %{data | peer_ip: peer_ip, app_name: app_name, invalid_options: invalid_options}
+
+    data = %{
+      data
+      | peer_ip: peer_ip,
+        app_name: app_name,
+        invalid_options: invalid_options,
+        unforwarded_options: unforwarded_options
+    }
 
     if log_level, do: Logger.put_process_level(self(), log_level)
 
@@ -463,7 +471,12 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:internal, {:greetings, ps}, _state, data) do
     {header, <<pid::32, key::32>> = payload} = Server.backend_key_data()
-    notices = invalid_option_notices(data.invalid_options)
+
+    notices = [
+      invalid_option_notices(data.invalid_options),
+      unforwarded_option_notices(data.unforwarded_options)
+    ]
+
     msg = [ps, [header, payload], notices, Server.ready_for_query()]
     :ok = Cancel.listen_cancel_query(pid, key)
 
@@ -1055,6 +1068,13 @@ defmodule Supavisor.ClientHandler do
     Enum.map(invalid, fn opt ->
       Server.encode_notice_message(StartupOptions.invalid_option_notice(opt))
     end)
+  end
+
+  @spec unforwarded_option_notices([String.t()]) :: iodata()
+  defp unforwarded_option_notices([]), do: []
+
+  defp unforwarded_option_notices(names) do
+    Server.encode_notice_message(StartupOptions.unforwarded_option_notice(names))
   end
 
   @spec client_sock_send(map(), iodata(), :handshake | :idle) ::

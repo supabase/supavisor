@@ -61,7 +61,8 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
          params
          | app_name: normalize_app_name(hello.payload["application_name"]),
            log_level: options["log_level"],
-           invalid_options: invalid
+           invalid_options: invalid,
+           unforwarded_options: StartupOptions.unforwarded(options)
        }}
     end
   end

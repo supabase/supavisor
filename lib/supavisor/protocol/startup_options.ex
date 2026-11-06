@@ -177,6 +177,60 @@ defmodule Supavisor.Protocol.StartupOptions do
     end
   end
 
+  # Names Supavisor reads itself (`client_ip` from a peer node, `reference` for the
+  # tenant lookup). `jit` is read as Supavisor's JIT-auth flag, so PostgreSQL's own
+  # `jit` setting is never forwarded either. Any other setting in `options` is
+  # dropped before the backend connection is opened, since a pooled backend is
+  # shared between clients.
+  @consumed Map.keys(@schema) ++ ["client_ip", "reference"]
+
+  @doc """
+  Returns the names in a validated options map that Supavisor doesn't use or forward, sorted.
+
+  ## Examples
+
+      iex> Supavisor.Protocol.StartupOptions.unforwarded(%{"search_path" => "public", "statement_timeout" => "5s"})
+      ["statement_timeout"]
+  """
+  @spec unforwarded(map()) :: [String.t()]
+  def unforwarded(opts) do
+    opts |> Map.keys() |> Enum.reject(&(&1 in @consumed)) |> Enum.sort()
+  end
+
+  @doc """
+  Builds the single NOTICE sent for the startup options that are not forwarded to the database.
+
+  ## Examples
+
+      iex> Supavisor.Protocol.StartupOptions.unforwarded_option_notice(["statement_timeout"])
+      %{"S" => "NOTICE", "V" => "NOTICE", "C" => "00000",
+        "M" => ~s(parameter "statement_timeout" in startup options is not forwarded by Supavisor and has no effect),
+        "H" => "Set it with ALTER ROLE or ALTER DATABASE ... SET."}
+  """
+  @spec unforwarded_option_notice([String.t(), ...]) :: map()
+  def unforwarded_option_notice(names) do
+    quoted = Enum.map_join(names, ", ", &~s("#{&1}"))
+
+    {message, it} =
+      case names do
+        [_] ->
+          {"parameter #{quoted} in startup options is not forwarded by Supavisor and has no effect",
+           "it"}
+
+        _ ->
+          {"parameters #{quoted} in startup options are not forwarded by Supavisor and have no effect",
+           "them"}
+      end
+
+    %{
+      "S" => "NOTICE",
+      "V" => "NOTICE",
+      "C" => "00000",
+      "M" => message,
+      "H" => "Set #{it} with ALTER ROLE or ALTER DATABASE ... SET."
+    }
+  end
+
   @doc """
   Encodes a map of GUC settings into a PostgreSQL startup `options` string.
 
