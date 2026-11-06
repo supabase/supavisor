@@ -186,8 +186,7 @@ defmodule Supavisor.Ops do
 
   @doc """
   Shuts down a node of the cluster, given its `nodehost` or its full node name.
-  The node is only asked to shut down: it exits shortly after this returns, and nothing
-  in Supavisor starts it again.
+  The node is only asked to shut down: it exits shortly after this returns.
   """
   @spec shutdown_node(String.t()) :: :ok | {:error, :not_found | :ambiguous | :node_unreachable}
   def shutdown_node(target) do
