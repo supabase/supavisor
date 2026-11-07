@@ -14,6 +14,7 @@ defmodule Supavisor.Ops do
   @stop_timeout :timer.seconds(15)
   @shutdown_delay :timer.seconds(1)
   @shutdown_watchdog :timer.seconds(60)
+  @boot_id_key {__MODULE__, :boot_id}
 
   @type connection_counts :: %{idle: non_neg_integer(), checked_out: non_neg_integer()}
 
@@ -34,6 +35,7 @@ defmodule Supavisor.Ops do
           host: String.t(),
           uptime_ms: non_neg_integer(),
           version: String.t(),
+          boot_id: String.t(),
           health: :ok | {:error, :failed_checks, [atom()]}
         }
 
@@ -169,6 +171,20 @@ defmodule Supavisor.Ops do
   end
 
   @doc """
+  Generates the id of this start of the node. It is called once, before the supervision tree
+  starts.
+  """
+  @spec init_boot_id() :: :ok
+  def init_boot_id, do: :persistent_term.put(@boot_id_key, Ecto.UUID.generate())
+
+  @doc """
+  The id of this start of the node: it changes every time the node starts and never while it
+  runs.
+  """
+  @spec boot_id() :: String.t()
+  def boot_id, do: :persistent_term.get(@boot_id_key)
+
+  @doc """
   Describes this node.
   """
   @spec node_info_local() :: node_info()
@@ -180,15 +196,19 @@ defmodule Supavisor.Ops do
       host: node_host(node()),
       uptime_ms: System.convert_time_unit(uptime, :native, :millisecond),
       version: to_string(Application.spec(:supavisor, :vsn)),
+      boot_id: boot_id(),
       health: Supavisor.Health.health_check()
     }
   end
 
   @doc """
   Shuts down a node of the cluster, given its `nodehost` or its full node name.
-  The node is only asked to shut down: it exits shortly after this returns.
+  The node is only asked to shut down: it exits shortly after this returns. Returns the
+  boot id of the start of the node that accepted the shutdown.
   """
-  @spec shutdown_node(String.t()) :: :ok | {:error, :not_found | :ambiguous | :node_unreachable}
+  @spec shutdown_node(String.t()) ::
+          {:ok, %{node: node(), boot_id: String.t()}}
+          | {:error, :not_found | :ambiguous | :node_unreachable}
   def shutdown_node(target) do
     case resolve_node(target) do
       {:ok, node} ->
@@ -197,8 +217,8 @@ defmodule Supavisor.Ops do
             Logger.warning("Failed to shut down node #{target}: #{inspect(reason)}")
             {:error, :node_unreachable}
 
-          :ok ->
-            :ok
+          {:ok, boot_id} ->
+            {:ok, %{node: node, boot_id: boot_id}}
         end
 
       {:error, reason} = error ->
@@ -226,7 +246,7 @@ defmodule Supavisor.Ops do
   @doc """
   Shuts this node down by exiting the VM shortly after returning, so the caller gets its
   reply first. Starting it again is up to whatever supervises the process, e.g. systemd
-  with `Restart=always`.
+  with `Restart=always`. Returns the boot id of this start of the node.
 
   Options:
 
@@ -236,7 +256,7 @@ defmodule Supavisor.Ops do
       finished by then. It should be past the graceful stop of the slowest pool, so it
       never cuts one short.
   """
-  @spec shutdown_node_local(keyword()) :: :ok
+  @spec shutdown_node_local(keyword()) :: {:ok, String.t()}
   def shutdown_node_local(opts \\ []) do
     delay = Keyword.get(opts, :delay, @shutdown_delay)
     watchdog = Keyword.get(opts, :watchdog, @shutdown_watchdog)
@@ -250,7 +270,7 @@ defmodule Supavisor.Ops do
     :timer.apply_after(delay, System, :stop, [1])
     :timer.apply_after(delay + watchdog, System, :halt, [1])
 
-    :ok
+    {:ok, boot_id()}
   end
 
   @spec stop_sup(pid(), timeout()) :: {:ok, :stopped | :stopping}

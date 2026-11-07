@@ -15,7 +15,10 @@ defmodule Supavisor.Integration.ListNodesTest do
     %{peer: peer, peer_node: peer_node}
   end
 
-  test "list_nodes/0 lists every node of the cluster, sorted by name", %{peer_node: peer_node} do
+  test "list_nodes/0 lists every node of the cluster, sorted by name", %{
+    peer: peer,
+    peer_node: peer_node
+  } do
     assert %{nodes: nodes, errors: errors} = Ops.list_nodes()
     assert errors == %{}
     assert Enum.map(nodes, & &1.node) == Enum.sort([node(), peer_node])
@@ -26,6 +29,10 @@ defmodule Supavisor.Integration.ListNodesTest do
 
     # The peer started after this node.
     assert by_node[peer_node].uptime_ms < by_node[node()].uptime_ms
+
+    assert by_node[node()].boot_id == Ops.boot_id()
+    assert by_node[peer_node].boot_id == :peer.call(peer, Ops, :boot_id, [])
+    assert by_node[peer_node].boot_id != by_node[node()].boot_id
   end
 
   test "list_nodes/0 reports a node whose health check hangs as unhealthy", %{

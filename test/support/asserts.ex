@@ -50,12 +50,13 @@ defmodule Supavisor.Asserts do
   `Supavisor.Ops.node_info_local/0`, with the given `health`.
   """
   def assert_node_info(info, node, health) do
-    assert Enum.sort(Map.keys(info)) == [:health, :host, :node, :uptime_ms, :version]
+    assert Enum.sort(Map.keys(info)) == [:boot_id, :health, :host, :node, :uptime_ms, :version]
     assert info.node == node
     assert [_name, host] = node |> to_string() |> String.split("@")
     assert info.host == host
     assert is_integer(info.uptime_ms) and info.uptime_ms >= 0
     assert info.version == to_string(Application.spec(:supavisor, :vsn))
+    assert Ecto.UUID.cast(info.boot_id) == {:ok, info.boot_id}
     assert info.health == health
   end
 

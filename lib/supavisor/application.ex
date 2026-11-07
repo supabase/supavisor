@@ -100,6 +100,7 @@ defmodule Supavisor.Application do
 
     :syn.add_node_to_scopes([:tenants, :tenant_pools, :availability_zone, :accepting_pools])
 
+    Supavisor.Ops.init_boot_id()
     Supavisor.CircuitBreaker.init()
     Supavisor.ConnectBackoff.init()
 

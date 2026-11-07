@@ -8,7 +8,7 @@ defmodule SupavisorWeb.OpsControllerTest do
       {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
     end
 
-    test "lists this node with its uptime, version and health", %{conn: conn} do
+    test "lists this node with its uptime, version, boot id and health", %{conn: conn} do
       name = to_string(node())
 
       assert %{nodes: [info], errors: errors} =
@@ -16,7 +16,11 @@ defmodule SupavisorWeb.OpsControllerTest do
 
       assert errors == %{}
 
-      assert %{node: ^name, host: host, uptime_ms: uptime_ms, version: version} = info
+      boot_id = Supavisor.Ops.boot_id()
+
+      assert %{node: ^name, host: host, uptime_ms: uptime_ms, version: version, boot_id: ^boot_id} =
+               info
+
       assert [_name, ^host] = String.split(name, "@")
       assert is_integer(uptime_ms)
       assert version == to_string(Application.spec(:supavisor, :vsn))
@@ -29,6 +33,7 @@ defmodule SupavisorWeb.OpsControllerTest do
         host: "10.0.0.1",
         uptime_ms: 1_000,
         version: "1.0.0",
+        boot_id: "7b0d3c1e-5a47-4a0b-9d2f-0f4e2b8c6a11",
         health: {:error, :failed_checks, [:database_reachable]}
       }
 
@@ -46,6 +51,7 @@ defmodule SupavisorWeb.OpsControllerTest do
                    "host" => "10.0.0.1",
                    "uptime_ms" => 1_000,
                    "version" => "1.0.0",
+                   "boot_id" => "7b0d3c1e-5a47-4a0b-9d2f-0f4e2b8c6a11",
                    "health" => %{
                      "status" => "unhealthy",
                      "failed_checks" => ["database_reachable"]
@@ -79,7 +85,7 @@ defmodule SupavisorWeb.OpsControllerTest do
     end
 
     test "returns 202 for hosts and full node names, with an IP or a domain", %{conn: conn} do
-      stub_shutdown_node(:ok)
+      stub_shutdown_node({:ok, %{node: :"supavisor@10.0.0.5", boot_id: "boot-id"}})
 
       targets = [
         "10.0.0.5",
@@ -89,7 +95,9 @@ defmodule SupavisorWeb.OpsControllerTest do
       ]
 
       for target <- targets do
-        assert conn |> post(~p"/api/nodes/#{target}/shutdown") |> response(202) == ""
+        body = conn |> post(~p"/api/nodes/#{target}/shutdown") |> json_response(202)
+        assert body == %{"node" => "supavisor@10.0.0.5", "boot_id" => "boot-id"}
+        assert_schema(body, "NodeShutdown")
         assert :meck.called(Supavisor.Ops, :shutdown_node, [target])
       end
     end
@@ -121,6 +129,8 @@ defmodule SupavisorWeb.OpsControllerTest do
 
       assert %{"responses" => %{"202" => _, "404" => _, "409" => _, "503" => _}} =
                spec["paths"]["/api/nodes/{nodehost}/shutdown"]["post"]
+
+      assert %{"required" => ["node", "boot_id"]} = spec["components"]["schemas"]["NodeShutdown"]
     end
   end
 

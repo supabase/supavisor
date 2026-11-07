@@ -640,6 +640,10 @@ defmodule SupavisorWeb.OpenApiSchemas do
           description: "Milliseconds since the node started"
         },
         version: %Schema{type: :string, description: "Application version"},
+        boot_id: %Schema{
+          type: :string,
+          description: "Id of this start of the node, which changes every time it starts"
+        },
         health: %Schema{
           type: :object,
           properties: %{
@@ -649,8 +653,31 @@ defmodule SupavisorWeb.OpenApiSchemas do
           required: [:status, :failed_checks]
         }
       },
-      required: [:node, :host, :uptime_ms, :version, :health]
+      required: [:node, :host, :uptime_ms, :version, :boot_id, :health]
     })
+  end
+
+  defmodule NodeShutdown do
+    @moduledoc false
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      properties: %{
+        node: %Schema{type: :string, description: "Full node name"},
+        boot_id: %Schema{
+          type: :string,
+          description: "Id of the start of the node that accepted the shutdown"
+        }
+      },
+      required: [:node, :boot_id],
+      example: %{
+        node: "supavisor@10.0.0.1",
+        boot_id: "7b0d3c1e-5a47-4a0b-9d2f-0f4e2b8c6a11"
+      }
+    })
+
+    def response, do: {"Shutdown initiated", "application/json", __MODULE__}
   end
 
   defmodule NodeList do
@@ -675,6 +702,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
             host: "10.0.0.1",
             uptime_ms: 86_400_000,
             version: "2.11.0",
+            boot_id: "7b0d3c1e-5a47-4a0b-9d2f-0f4e2b8c6a11",
             health: %{status: "healthy", failed_checks: []}
           }
         ],

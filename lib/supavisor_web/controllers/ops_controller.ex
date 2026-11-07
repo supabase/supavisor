@@ -2,7 +2,7 @@ defmodule SupavisorWeb.OpsController do
   use SupavisorWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
-  alias SupavisorWeb.OpenApiSchemas.{Empty, NodeList, NotFound}
+  alias SupavisorWeb.OpenApiSchemas.{Empty, NodeList, NodeShutdown, NotFound}
 
   plug OpenApiSpex.Plug.CastAndValidate, json_render_error_v2: true, replace_params: false
   plug :put_view, SupavisorWeb.OpsJSON
@@ -37,14 +37,15 @@ defmodule SupavisorWeb.OpsController do
     its full node name. It can be any node, not only the one that receives the request.
 
     `202` only confirms the shutdown was initiated: the node exits shortly after. It comes
-    back only if whatever supervises the process starts it again.
+    back only if whatever supervises the process starts it again. The reply holds the
+    `boot_id` of the start of the node that accepted the shutdown.
     """,
     parameters: [
       nodehost: [in: :path, description: "Node host or full node name", type: :string],
       authorization: @authorization
     ],
     responses: %{
-      202 => {"Shutdown initiated", "application/json", Empty},
+      202 => NodeShutdown.response(),
       404 => NotFound.response(),
       409 => {"Several nodes share the host", "application/json", Empty},
       503 => {"Node unreachable", "application/json", Empty}
@@ -53,8 +54,8 @@ defmodule SupavisorWeb.OpsController do
 
   def shutdown_node(conn, %{"nodehost" => nodehost}) do
     case Supavisor.Ops.shutdown_node(nodehost) do
-      :ok ->
-        send_resp(conn, 202, "")
+      {:ok, %{node: node, boot_id: boot_id}} ->
+        conn |> put_status(202) |> render(:shutdown_node, node: node, boot_id: boot_id)
 
       {:error, :not_found} ->
         conn |> put_status(404) |> render(:error, error: "not found")

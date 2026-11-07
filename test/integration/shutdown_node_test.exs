@@ -10,7 +10,8 @@ defmodule Supavisor.Integration.ShutdownNodeTest do
   @moduletag cluster: true
 
   setup %{conn: conn} do
-    {:ok, peer, peer_node} = Cluster.start_node()
+    peer_name = :peer.random_name()
+    {:ok, peer, peer_node} = Cluster.start_node(peer_name)
     true = Node.connect(peer_node)
 
     token = Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
@@ -18,15 +19,22 @@ defmodule Supavisor.Integration.ShutdownNodeTest do
     %{
       conn: put_req_header(conn, "authorization", "Bearer " <> token),
       peer: peer,
+      peer_name: peer_name,
       peer_node: peer_node
     }
   end
 
   test "shuts down another node of the cluster, replying before it exits", %{
     conn: conn,
+    peer: peer,
     peer_node: peer_node
   } do
-    assert conn |> post(~p"/api/nodes/#{peer_node}/shutdown") |> response(202)
+    boot_id = :peer.call(peer, Supavisor.Ops, :boot_id, [])
+
+    assert %{"node" => name, "boot_id" => ^boot_id} =
+             conn |> post(~p"/api/nodes/#{peer_node}/shutdown") |> json_response(202)
+
+    assert name == to_string(peer_node)
     # The reply goes out before the node exits.
     assert peer_node in Node.list()
 
@@ -34,6 +42,28 @@ defmodule Supavisor.Integration.ShutdownNodeTest do
 
     assert %{"nodes" => [%{"node" => name}]} = conn |> get(~p"/api/nodes") |> json_response(200)
     assert name == to_string(node())
+  end
+
+  test "a node started again has another boot id than the one that was shut down", %{
+    conn: conn,
+    peer_name: peer_name,
+    peer_node: peer_node
+  } do
+    assert %{"boot_id" => old_boot_id} =
+             conn |> post(~p"/api/nodes/#{peer_node}/shutdown") |> json_response(202)
+
+    assert_eventually(15, 1_000, fn -> peer_node not in Node.list() end)
+
+    # Peers have no supervisor, so start the node again by hand.
+    stop_supervised({:peer, peer_name})
+    {:ok, peer, ^peer_node} = Cluster.start_node(peer_name)
+    true = Node.connect(peer_node)
+    new_boot_id = :peer.call(peer, Supavisor.Ops, :boot_id, [])
+
+    assert new_boot_id != old_boot_id
+
+    assert %{"nodes" => nodes} = conn |> get(~p"/api/nodes") |> json_response(200)
+    assert %{"boot_id" => ^new_boot_id} = Enum.find(nodes, &(&1["node"] == to_string(peer_node)))
   end
 
   test "halts a node whose graceful stop hangs, once the watchdog fires", %{
@@ -65,7 +95,8 @@ defmodule Supavisor.Integration.ShutdownNodeTest do
         [shutdown: :infinity]
       ])
 
-    :ok = :peer.call(peer, Supavisor.Ops, :shutdown_node_local, [[delay: 100, watchdog: 1_000]])
+    assert {:ok, _boot_id} =
+             :peer.call(peer, Supavisor.Ops, :shutdown_node_local, [[delay: 100, watchdog: 1_000]])
 
     # The graceful stop has started and the task ignores it, so only the watchdog can end the node.
     assert_receive :shutdown_ignored, 2_000

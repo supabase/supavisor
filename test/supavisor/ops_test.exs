@@ -248,9 +248,18 @@ defmodule Supavisor.OpsTest do
     end
   end
 
+  describe "boot_id/0" do
+    test "is the same for the whole life of the node" do
+      assert Ops.boot_id() == Ops.boot_id()
+    end
+  end
+
   describe "node_info_local/0" do
     test "describes this node" do
-      assert_node_info(Ops.node_info_local(), node(), :ok)
+      info = Ops.node_info_local()
+
+      assert_node_info(info, node(), :ok)
+      assert info.boot_id == Ops.boot_id()
     end
 
     test "reports a health check that hangs as failed" do
@@ -271,6 +280,16 @@ defmodule Supavisor.OpsTest do
       assert %{nodes: [info], errors: errors} = Ops.list_nodes()
       assert errors == %{}
       assert_node_info(info, node(), :ok)
+    end
+  end
+
+  describe "shutdown_node_local/1" do
+    test "returns the boot id of this node" do
+      # The timers are an hour out, so nothing stops this node.
+      assert {:ok, boot_id} =
+               Ops.shutdown_node_local(delay: :timer.hours(1), watchdog: :timer.hours(1))
+
+      assert boot_id == Ops.boot_id()
     end
   end
 

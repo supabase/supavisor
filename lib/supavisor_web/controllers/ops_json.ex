@@ -9,6 +9,9 @@ defmodule SupavisorWeb.OpsJSON do
     }
   end
 
+  def shutdown_node(%{node: node, boot_id: boot_id}),
+    do: %{node: to_string(node), boot_id: boot_id}
+
   def error(%{error: error}), do: %{error: error}
 
   defp node_info(info) do
@@ -17,6 +20,7 @@ defmodule SupavisorWeb.OpsJSON do
       host: info.host,
       uptime_ms: info.uptime_ms,
       version: info.version,
+      boot_id: info.boot_id,
       health: health(info.health)
     }
   end
