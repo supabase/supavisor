@@ -9,6 +9,8 @@ defmodule Supavisor.SecretChecker do
   alias Supavisor.ClientAuthentication
   alias Supavisor.ClientAuthentication.ValidationSecrets
   alias Supavisor.Errors.AuthQueryError
+  alias Supavisor.Secrets.SASLSecrets
+  alias Supavisor.UpstreamAuthentication
 
   @interval :timer.seconds(15)
 
@@ -71,6 +73,7 @@ defmodule Supavisor.SecretChecker do
     manager_secrets = Supavisor.Tenants.get_manager_user_cache(tenant_external_id)
 
     state = %{
+      id: args.id,
       tenant: tenant_external_id,
       tenant_record: tenant,
       manager_secrets: manager_secrets,
@@ -126,6 +129,8 @@ defmodule Supavisor.SecretChecker do
         cache =
           ClientAuthentication.refresh_if_changed(state.tenant, state.user, validation_secrets)
 
+        drop_stale_upstream_secrets(state.id, sasl_secrets)
+
         {:ok, validation_secrets, cache}
 
       other ->
@@ -155,6 +160,24 @@ defmodule Supavisor.SecretChecker do
     Logger.info("SecretChecker: Successfully changed auth_query user")
     {:reply, :ok, %{state | manager_secrets: new_manager, conn: new_conn}}
   end
+
+  # The upstream SCRAM keys are derived from the salt the client authenticated
+  # against, so once Postgres re-salts the verifier (any ALTER ROLE ... PASSWORD,
+  # even with the same password) they fail upstream with 28P01. Compare against
+  # this pool's own copy: the validation cache is shared by every pool of the
+  # user, so only the first checker to refresh it sees `:changed`. Only the key
+  # material is compared; secrets DbHandler derives itself spell the digest differently.
+  defp drop_stale_upstream_secrets(id, %SASLSecrets{} = fresh) do
+    with {:ok, %SASLSecrets{} = upstream} <- UpstreamAuthentication.get_upstream_auth_secrets(id),
+         true <- scram_key(upstream) != scram_key(fresh) do
+      Logger.info("SecretChecker: SCRAM secrets rotated upstream, deleting upstream auth")
+      UpstreamAuthentication.delete_upstream_auth_secrets(id)
+    end
+
+    :ok
+  end
+
+  defp scram_key(%SASLSecrets{} = s), do: {s.salt, s.iterations, s.stored_key, s.server_key}
 
   defp jitter, do: :rand.uniform(div(@interval, 10))
 
