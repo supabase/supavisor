@@ -6,11 +6,15 @@ defmodule Supavisor.Ops do
 
   require Logger
 
+  alias Supavisor.Helpers
   alias Supavisor.Manager
   alias Supavisor.Tenants
 
   @multicall_timeout :timer.seconds(5)
   @stop_timeout :timer.seconds(15)
+  @shutdown_delay :timer.seconds(1)
+  @shutdown_watchdog :timer.seconds(60)
+  @boot_id_key {__MODULE__, :boot_id}
 
   @type connection_counts :: %{idle: non_neg_integer(), checked_out: non_neg_integer()}
 
@@ -24,6 +28,15 @@ defmodule Supavisor.Ops do
           db_port: non_neg_integer() | nil,
           clients: non_neg_integer() | nil,
           db_connections: connection_counts() | nil
+        }
+
+  @type node_info :: %{
+          node: node(),
+          host: String.t(),
+          uptime_ms: non_neg_integer(),
+          version: String.t(),
+          boot_id: String.t(),
+          health: :ok | {:error, :failed_checks, [atom()]}
         }
 
   @doc """
@@ -97,17 +110,20 @@ defmodule Supavisor.Ops do
   @spec stop_pool(String.t(), pid(), pos_integer()) ::
           {:ok, :stopped | :stopping} | {:error, :not_found | :node_unreachable}
   def stop_pool(tenant, sup, timeout \\ @stop_timeout) do
-    :erpc.call(
-      node(sup),
-      __MODULE__,
-      :stop_pool_local,
-      [tenant, sup, timeout],
-      timeout + @multicall_timeout
-    )
-  catch
-    :error, {:erpc, :noconnection} = reason ->
-      Logger.warning("Failed to stop pool of #{tenant} on #{node(sup)}: #{inspect(reason)}")
-      {:error, :node_unreachable}
+    case Helpers.rpc(
+           node(sup),
+           __MODULE__,
+           :stop_pool_local,
+           [tenant, sup, timeout],
+           timeout + @multicall_timeout
+         ) do
+      {:error, {:badrpc, _} = reason} ->
+        Logger.warning("Failed to stop pool of #{tenant} on #{node(sup)}: #{inspect(reason)}")
+        {:error, :node_unreachable}
+
+      result ->
+        result
+    end
   end
 
   @doc """
@@ -128,6 +144,133 @@ defmodule Supavisor.Ops do
         Logger.warning("Stop pool of #{tenant}: pool pid #{inspect(sup)} not found")
         {:error, :not_found}
     end
+  end
+
+  @doc """
+  Lists the nodes connected to this one, itself included. Nodes that fail to answer
+  are returned under `:errors` instead of failing the whole listing.
+  """
+  @spec list_nodes() :: %{nodes: [node_info()], errors: %{node() => term()}}
+  def list_nodes do
+    nodes = [node() | Node.list()]
+    # Room for the health checks to time out first, so a hung check is reported by the node.
+    timeout = Supavisor.Health.check_timeout() + @multicall_timeout
+    results = :erpc.multicall(nodes, __MODULE__, :node_info_local, [], timeout)
+
+    nodes
+    |> Enum.zip(results)
+    |> Enum.reduce(%{nodes: [], errors: %{}}, fn
+      {_node, {:ok, info}}, acc ->
+        %{acc | nodes: [info | acc.nodes]}
+
+      {node, error}, acc ->
+        Logger.warning("Failed to get info of node #{node}: #{inspect(error)}")
+        %{acc | errors: Map.put(acc.errors, node, error)}
+    end)
+    |> Map.update!(:nodes, &Enum.sort_by(&1, fn info -> info.node end))
+  end
+
+  @doc """
+  Generates the id of this start of the node. It is called once, before the supervision tree
+  starts.
+  """
+  @spec init_boot_id() :: :ok
+  def init_boot_id, do: :persistent_term.put(@boot_id_key, Ecto.UUID.generate())
+
+  @doc """
+  The id of this start of the node: it changes every time the node starts and never while it
+  runs.
+  """
+  @spec boot_id() :: String.t()
+  def boot_id, do: :persistent_term.get(@boot_id_key)
+
+  @doc """
+  Describes this node.
+  """
+  @spec node_info_local() :: node_info()
+  def node_info_local do
+    uptime = System.monotonic_time() - :erlang.system_info(:start_time)
+
+    %{
+      node: node(),
+      host: node_host(node()),
+      uptime_ms: System.convert_time_unit(uptime, :native, :millisecond),
+      version: to_string(Application.spec(:supavisor, :vsn)),
+      boot_id: boot_id(),
+      health: Supavisor.Health.health_check()
+    }
+  end
+
+  @doc """
+  Shuts down a node of the cluster, given its `nodehost` or its full node name.
+  The node is only asked to shut down: it exits shortly after this returns. Returns the
+  boot id of the start of the node that accepted the shutdown.
+  """
+  @spec shutdown_node(String.t()) ::
+          {:ok, %{node: node(), boot_id: String.t()}}
+          | {:error, :not_found | :ambiguous | :node_unreachable}
+  def shutdown_node(target) do
+    case resolve_node(target) do
+      {:ok, node} ->
+        case Helpers.rpc(node, __MODULE__, :shutdown_node_local, [], @multicall_timeout) do
+          {:error, {:badrpc, _} = reason} ->
+            Logger.warning("Failed to shut down node #{target}: #{inspect(reason)}")
+            {:error, :node_unreachable}
+
+          {:ok, boot_id} ->
+            {:ok, %{node: node, boot_id: boot_id}}
+        end
+
+      {:error, reason} = error ->
+        Logger.warning("Shut down node #{target}: #{reason}")
+        error
+    end
+  end
+
+  @spec resolve_node(String.t()) :: {:ok, node()} | {:error, :not_found | :ambiguous}
+  defp resolve_node(target) do
+    [node() | Node.list()]
+    |> Enum.filter(&(to_string(&1) == target or node_host(&1) == target))
+    |> case do
+      [node] -> {:ok, node}
+      [] -> {:error, :not_found}
+      [_ | _] -> {:error, :ambiguous}
+    end
+  end
+
+  @spec node_host(node()) :: String.t()
+  defp node_host(node) do
+    node |> to_string() |> String.split("@") |> List.last()
+  end
+
+  @doc """
+  Shuts this node down by exiting the VM shortly after returning, so the caller gets its
+  reply first. Starting it again is up to whatever supervises the process, e.g. systemd
+  with `Restart=always`. Returns the boot id of this start of the node.
+
+  Options:
+
+    * `:delay` - ms before the stop starts, so the reply to the request that triggered
+      the shutdown goes out first.
+    * `:watchdog` - ms after the stop starts before the VM is halted, if the stop has not
+      finished by then. It should be past the graceful stop of the slowest pool, so it
+      never cuts one short.
+  """
+  @spec shutdown_node_local(keyword()) :: {:ok, String.t()}
+  def shutdown_node_local(opts \\ []) do
+    delay = Keyword.get(opts, :delay, @shutdown_delay)
+    watchdog = Keyword.get(opts, :watchdog, @shutdown_watchdog)
+
+    Logger.info("Shut down node #{node()}: exiting in #{delay}ms")
+
+    # Timers, not processes of ours: they live under the kernel, so the backstop for a
+    # graceful stop that hangs outlasts the shutdown of our supervision tree.
+    # `System.stop/1` returns right away. Its status is non-zero, so the supervisor sees
+    # a failed exit rather than a clean stop.
+    :timer.apply_after(delay, System, :stop, [1])
+    :timer.apply_after(delay + watchdog, System, :halt, [1])
+
+    {:ok, boot_id()}
   end
 
   @spec stop_sup(pid(), timeout()) :: {:ok, :stopped | :stopping}

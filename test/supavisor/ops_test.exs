@@ -5,7 +5,9 @@ defmodule Supavisor.OpsTest do
 
   import ExUnit.CaptureLog
   import Supavisor.TenantsFixtures
-  import Supavisor.Asserts, only: [assert_eventually: 1, assert_eventually: 3]
+
+  import Supavisor.Asserts,
+    only: [assert_eventually: 1, assert_eventually: 3, assert_node_info: 3]
 
   alias Supavisor.Ops
 
@@ -243,6 +245,62 @@ defmodule Supavisor.OpsTest do
       assert_eventually(10, 1_000, fn ->
         not Process.alive?(sup) and Ops.list_pools_local(@tenant) == []
       end)
+    end
+  end
+
+  describe "boot_id/0" do
+    test "is the same for the whole life of the node" do
+      assert Ops.boot_id() == Ops.boot_id()
+    end
+  end
+
+  describe "node_info_local/0" do
+    test "describes this node" do
+      info = Ops.node_info_local()
+
+      assert_node_info(info, node(), :ok)
+      assert info.boot_id == Ops.boot_id()
+    end
+
+    test "reports a health check that hangs as failed" do
+      :meck.new(Supavisor.Health, [:passthrough, :no_link])
+      on_exit(fn -> :meck.unload(Supavisor.Health) end)
+      :meck.expect(Supavisor.Health, :database_reachable?, fn -> Process.sleep(:infinity) end)
+
+      assert_node_info(
+        Ops.node_info_local(),
+        node(),
+        {:error, :failed_checks, [:database_reachable]}
+      )
+    end
+  end
+
+  describe "list_nodes/0" do
+    test "lists this node when it is alone in the cluster" do
+      assert %{nodes: [info], errors: errors} = Ops.list_nodes()
+      assert errors == %{}
+      assert_node_info(info, node(), :ok)
+    end
+  end
+
+  describe "shutdown_node_local/1" do
+    test "returns the boot id of this node" do
+      # The timers are an hour out, so nothing stops this node.
+      assert {:ok, boot_id} =
+               Ops.shutdown_node_local(delay: :timer.hours(1), watchdog: :timer.hours(1))
+
+      assert boot_id == Ops.boot_id()
+    end
+  end
+
+  describe "shutdown_node/1" do
+    test "returns :not_found for a node that is not in the cluster" do
+      log =
+        capture_log([level: :warning], fn ->
+          assert {:error, :not_found} = Ops.shutdown_node("no_such_node")
+        end)
+
+      assert log =~ "Shut down node no_such_node: not_found"
     end
   end
 end
