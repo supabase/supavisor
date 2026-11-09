@@ -187,7 +187,7 @@ defmodule Supavisor.ClientHandler do
       ]
 
       with :ok <- client_sock_send(data, "S", :handshake),
-           {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
+           {:ok, ssl_sock} <- Supavisor.TLSHandshake.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
         socket = {:ssl, ssl_sock}
         :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
         Logger.metadata(tls: true)
