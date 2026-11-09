@@ -255,7 +255,7 @@ defmodule Supavisor.ClientHandler do
       app_name: app_name,
       log_level: log_level,
       invalid_options: invalid_options,
-      unforwarded_options: unforwarded_options
+      unknown_options: unknown_options
     } = startup_params
 
     sni_hostname = HandlerHelpers.try_get_sni(sock)
@@ -271,7 +271,7 @@ defmodule Supavisor.ClientHandler do
       | peer_ip: peer_ip,
         app_name: app_name,
         invalid_options: invalid_options,
-        unforwarded_options: unforwarded_options
+        unknown_options: unknown_options
     }
 
     if log_level, do: Logger.put_process_level(self(), log_level)
@@ -474,7 +474,7 @@ defmodule Supavisor.ClientHandler do
 
     notices = [
       invalid_option_notices(data.invalid_options),
-      unforwarded_option_notices(data.unforwarded_options)
+      unknown_option_notices(data.unknown_options)
     ]
 
     msg = [ps, [header, payload], notices, Server.ready_for_query()]
@@ -1070,11 +1070,11 @@ defmodule Supavisor.ClientHandler do
     end)
   end
 
-  @spec unforwarded_option_notices([String.t()]) :: iodata()
-  defp unforwarded_option_notices([]), do: []
+  @spec unknown_option_notices([String.t()]) :: iodata()
+  defp unknown_option_notices([]), do: []
 
-  defp unforwarded_option_notices(names) do
-    Server.encode_notice_message(StartupOptions.unforwarded_option_notice(names))
+  defp unknown_option_notices(names) do
+    Server.encode_notice_message(StartupOptions.unknown_option_notice(names))
   end
 
   @spec client_sock_send(map(), iodata(), :handshake | :idle) ::

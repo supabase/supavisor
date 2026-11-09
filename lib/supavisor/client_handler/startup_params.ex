@@ -15,7 +15,7 @@ defmodule Supavisor.ClientHandler.StartupParams do
           app_name: String.t() | nil,
           log_level: Logger.level() | nil,
           invalid_options: [{String.t(), String.t()}],
-          unforwarded_options: [String.t()]
+          unknown_options: [String.t()]
         }
 
   @enforce_keys [:type, :user]
@@ -31,6 +31,6 @@ defmodule Supavisor.ClientHandler.StartupParams do
     :log_level,
     jit: false,
     invalid_options: [],
-    unforwarded_options: []
+    unknown_options: []
   ]
 end

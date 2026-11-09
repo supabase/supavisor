@@ -29,7 +29,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
               }} = ProtocolHelpers.parse_startup_packet(bin)
     end
 
-    test "lists the settings it doesn't forward" do
+    test "lists the unknown options" do
       bin =
         startup_packet([
           {"user", "postgres.some_tenant"},
@@ -40,7 +40,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
               %StartupParams{
                 search_path: "public",
                 invalid_options: [{"jit", "maybe"}],
-                unforwarded_options: ["work_mem"]
+                unknown_options: ["work_mem"]
               }} = ProtocolHelpers.parse_startup_packet(bin)
     end
   end
@@ -102,7 +102,7 @@ defmodule Supavisor.ClientHandler.ProtocolHelpersTest do
           "client_ip" => "2001:db8::1"
         })
 
-      {options, []} = StartupOptions.validate(StartupOptions.parse(encoded))
+      {options, [], []} = StartupOptions.validate(StartupOptions.parse(encoded))
       payload = %{"user" => "postgres.some_tenant"}
 
       assert {:ok,
