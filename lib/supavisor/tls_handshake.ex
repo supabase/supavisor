@@ -14,10 +14,13 @@ defmodule Supavisor.TLSHandshake do
 
     * `start_dyn_connection_sup/1`, which starts non-distribution connections under a partition
       of `#{inspect(__MODULE__)}.Supervisor` instead of `tls_connection_sup`.
-    * `handle_options/5`, which is changed as we would need to inline/copy a lot of ssl internal code.
-      Instead, we make it use the public `ssl:handle_options/3`, which runs the same processing
-      without a socket, and then merges the socket's emulated options (which `/5` does).
-      It doesn't do the check that a certificate or an anonymous cipher suite is configured.
+    * Option processing. `ssl:handshake/3` processes the options on every call, with ssl's
+      private `handle_options/5`, which we would need to inline/copy a lot of ssl internal code
+      to port. Instead, `handle_options/1` processes them once, ahead of time, with the public
+      `ssl:handle_options/3`, which runs the same processing without a socket. `handshake/3`
+      takes the result and merges the socket's emulated options (which `/5` does). It doesn't
+      do the check that a certificate or an anonymous cipher suite is configured, and when the
+      options have no `log_level`, ssl's logger level is read once, by `handle_options/1`.
     * `handshake/6`, which calls this module's `start_fsm/8` instead of the connection module
       from `connection_cb/1`, so that isn't ported.
   """
@@ -46,18 +49,31 @@ defmodule Supavisor.TLSHandshake do
     PartitionSupervisor.child_spec(child_spec: DynamicSupervisor, name: @sup)
   end
 
-  # Port of ssl:handshake/3, the clause for a socket that isn't an #sslsocket{}.
-  @spec handshake(:gen_tcp.socket(), [:ssl.tls_server_option()], timeout()) ::
+  @typedoc "Server options processed by `handle_options/1`."
+  @type options :: record(:config)
+
+  @doc """
+  Processes server options for `handshake/3`, which `:ssl.handshake/3` does on every call.
+  Throws `{:error, reason}` for invalid options.
+  """
+  @spec handle_options([:ssl.tls_server_option()]) :: options()
+  def handle_options(ssl_options) do
+    {:ok, config} = :ssl.handle_options(ssl_options, :server, :undefined)
+    config
+  end
+
+  # Port of ssl:handshake/3, the clause for a socket that isn't an #sslsocket{}, with the options
+  # processed by handle_options/1.
+  @spec handshake(:gen_tcp.socket(), options(), timeout()) ::
           {:ok, :ssl.sslsocket()} | {:ok, :ssl.sslsocket(), map()} | {:error, term()}
-  def handshake(socket, ssl_options, timeout)
-      when is_list(ssl_options) and
-             ((is_integer(timeout) and timeout >= 0) or timeout == :infinity) do
-    cb_info = handle_option_cb_info(ssl_options, :tls)
+  def handshake(
+        socket,
+        config(transport_info: cb_info, ssl: ssl_opts, emulated: emulated0),
+        timeout
+      )
+      when (is_integer(timeout) and timeout >= 0) or timeout == :infinity do
     transport = elem(cb_info, 0)
-
-    {:ok, config(transport_info: ^cb_info, ssl: ssl_opts, emulated: em_opts)} =
-      handle_options(transport, socket, ssl_options, :server, :undefined)
-
+    em_opts = emulated_options(transport, socket, emulated0)
     :ok = :tls_socket.setopts(transport, socket, :tls_socket.internal_inet_values())
     {:ok, port} = :tls_socket.port(transport, socket)
     {:ok, session_id_handle} = :tls_socket.session_id_tracker(:ssl_unknown_listener, ssl_opts)
@@ -75,13 +91,6 @@ defmodule Supavisor.TLSHandshake do
     {:error, _reason} = error -> error
   end
 
-  # Equivalent of ssl:handle_options/5, not a copy: see the moduledoc. Skips the server
-  # certificate check.
-  defp handle_options(transport, socket, opts0, role, host) do
-    {:ok, config(emulated: emulated0) = config} = :ssl.handle_options(opts0, role, host)
-    {:ok, config(config, emulated: emulated_options(transport, socket, emulated0))}
-  end
-
   # Port of ssl:emulated_options/4, given the options it computes with a socket of undefined,
   # which ssl:handle_options/3 has already computed.
   defp emulated_options(transport, socket, emulated0) do
@@ -89,20 +98,6 @@ defmodule Supavisor.TLSHandshake do
     {:ok, original} = :tls_socket.getopts(transport, socket, emulated_options)
     :lists.ukeymerge(1, emulated0, original)
   end
-
-  # Port of ssl:handle_option_cb_info/2.
-  defp handle_option_cb_info(options, protocol) do
-    cb_info = :proplists.get_value(:cb_info, options, default_cb_info(protocol))
-    handle_cb_info(cb_info)
-  end
-
-  # Port of ssl:default_cb_info/1.
-  defp default_cb_info(:tls), do: {:gen_tcp, :tcp, :tcp_closed, :tcp_error, :tcp_passive}
-
-  # Port of ssl:handle_cb_info/1.
-  defp handle_cb_info({v1, v2, v3, v4}), do: {v1, v2, v3, v4, :"#{v2}_passive"}
-  defp handle_cb_info(cb_info) when tuple_size(cb_info) == 5, do: cb_info
-  defp handle_cb_info(cb_info), do: throw({:error, {:options, {:cb_info, cb_info}}})
 
   # Port of ssl_gen_statem:handshake/7.
   defp handshake(port, socket, opts, user, cb_info, timeout) do

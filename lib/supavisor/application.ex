@@ -102,6 +102,7 @@ defmodule Supavisor.Application do
 
     Supavisor.CircuitBreaker.init()
     Supavisor.ConnectBackoff.init()
+    Supavisor.Helpers.load_downstream_tls_options()
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 

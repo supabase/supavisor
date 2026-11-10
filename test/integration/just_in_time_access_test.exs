@@ -18,6 +18,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     prev_key = Application.get_env(:supavisor, :global_downstream_key)
     Application.put_env(:supavisor, :global_downstream_cert, cert_path)
     Application.put_env(:supavisor, :global_downstream_key, key_path)
+    Supavisor.Helpers.load_downstream_tls_options()
 
     db_conf =
       :supavisor
@@ -32,6 +33,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     on_exit(fn ->
       Application.put_env(:supavisor, :global_downstream_cert, prev_cert)
       Application.put_env(:supavisor, :global_downstream_key, prev_key)
+      Supavisor.Helpers.load_downstream_tls_options()
       Process.sleep(100)
     end)
 

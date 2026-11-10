@@ -62,6 +62,7 @@ defmodule Supavisor.Support.SSLHelper do
           if File.exists?(path), do: Application.put_env(:supavisor, env_key, path)
         end
 
+        Supavisor.Helpers.load_downstream_tls_options()
         {:ok, cert_path, key_path}
 
       error ->
@@ -112,12 +113,16 @@ defmodule Supavisor.Support.SSLHelper do
       Application.put_env(:supavisor, key, value)
     end
 
+    Supavisor.Helpers.load_downstream_tls_options()
+
     ExUnit.Callbacks.on_exit(fn ->
       for {key, val} <- orig do
         if val,
           do: Application.put_env(:supavisor, key, val),
           else: Application.delete_env(:supavisor, key)
       end
+
+      Supavisor.Helpers.load_downstream_tls_options()
     end)
 
     :ok

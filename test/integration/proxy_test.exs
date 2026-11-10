@@ -1101,6 +1101,7 @@ defmodule Supavisor.Integration.ProxyTest do
       # Restore original SSL configuration
       Application.put_env(:supavisor, :global_downstream_cert, original_cert)
       Application.put_env(:supavisor, :global_downstream_key, original_key)
+      Supavisor.Helpers.load_downstream_tls_options()
     end)
 
     db_conf = Application.get_env(:supavisor, Supavisor.Repo)
