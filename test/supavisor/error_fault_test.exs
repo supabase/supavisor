@@ -56,6 +56,19 @@ defmodule Supavisor.ErrorFaultTest do
       assert fault(%Errors.CheckoutTimeoutError{reason: nil}) == :supavisor
     end
 
+    test "a TLS handshake we dropped under overload is supavisor's" do
+      assert fault(%Errors.SslHandshakeError{reason: :overloaded}) == :supavisor
+    end
+
+    test "a TLS handshake we dropped under overload sends no Postgres error and logs a warning" do
+      error = %Errors.SslHandshakeError{reason: :overloaded}
+      assert Errors.SslHandshakeError.postgres_error(error) == nil
+      assert Errors.SslHandshakeError.log_level(error) == :warning
+
+      assert Errors.SslHandshakeError.log_level(%Errors.SslHandshakeError{reason: :closed}) ==
+               :error
+    end
+
     test "circuit breaker depends on the operation that tripped" do
       assert fault(%Errors.CircuitBreakerError{operation: :auth_error}) == :user
       assert fault(%Errors.CircuitBreakerError{operation: :get_secrets}) == :supavisor

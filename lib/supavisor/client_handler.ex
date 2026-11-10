@@ -192,6 +192,12 @@ defmodule Supavisor.ClientHandler do
         {:error, %ClientSocketClosedError{} = exception} ->
           Error.terminate_with_error(data, exception, :handshake)
 
+        {:error, :overloaded} ->
+          # The client has our "S" and expects TLS next, so a Postgres error would read as a
+          # broken TLS record. Refuse with a TLS alert instead.
+          _ = HandlerHelpers.sock_send(sock, TLSHandshake.overloaded_alert())
+          Error.terminate_with_error(data, %SslHandshakeError{reason: :overloaded}, :handshake)
+
         {:error, reason} ->
           Error.terminate_with_error(data, %SslHandshakeError{reason: reason}, :handshake)
       end
