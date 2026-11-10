@@ -1,6 +1,7 @@
 defmodule Supavisor.MessageQueueWatchdog do
   @moduledoc """
-  Periodically checks message queue lengths of relevant singleton processes.
+  Periodically checks message queue lengths of relevant singleton processes,
+  and of each partition of relevant partitioned supervisors.
 
   Logs a warning when a queue exceeds 20k messages. Shuts down the node
   when the queue of a process the system cannot operate without exceeds
@@ -16,6 +17,8 @@ defmodule Supavisor.MessageQueueWatchdog do
   @warn_queue_len 20_000
   @shutdown_queue_len 500_000
   @shutdown_processes ["tls_connection_sup", "inet_gethost_native"]
+
+  @shutdown_partitioned [Supavisor.TLSHandshake.Supervisor]
 
   @processes [
     :tls_connection_sup,
@@ -40,15 +43,33 @@ defmodule Supavisor.MessageQueueWatchdog do
 
   @doc """
   Reads the current message queue lengths of the watched processes that
-  are running, keyed by a printable process name.
+  are running, keyed by a printable process name. Partitions are named
+  `<supervisor>.<partition>`.
   """
   @spec queue_lengths() :: [{String.t(), non_neg_integer()}]
   def queue_lengths do
-    for name <- @processes,
-        pid = Process.whereis(name),
-        {:message_queue_len, len} <- [Process.info(pid, :message_queue_len)] do
-      {format_name(name), len}
-    end
+    for {name, len, _shutdown?} <- watched_queue_lengths(), do: {name, len}
+  end
+
+  defp watched_queue_lengths do
+    named =
+      for name <- @processes,
+          pid = Process.whereis(name),
+          {:message_queue_len, len} <- [Process.info(pid, :message_queue_len)] do
+        str = format_name(name)
+        {str, len, str in @shutdown_processes}
+      end
+
+    partitions =
+      for sup <- @shutdown_partitioned,
+          Process.whereis(sup),
+          {id, pid, _, _} <- PartitionSupervisor.which_children(sup),
+          is_pid(pid),
+          {:message_queue_len, len} <- [Process.info(pid, :message_queue_len)] do
+        {"#{format_name(sup)}.#{id}", len, true}
+      end
+
+    named ++ partitions
   end
 
   @impl true
@@ -59,23 +80,25 @@ defmodule Supavisor.MessageQueueWatchdog do
 
   @impl true
   def handle_info(:check, state) do
-    Enum.each(queue_lengths(), fn {name, len} -> check_queue_len(name, len) end)
+    Enum.each(watched_queue_lengths(), fn {name, len, shutdown?} ->
+      check_queue_len(name, len, shutdown?)
+    end)
+
     schedule_check()
     {:noreply, state}
   end
 
-  defp check_queue_len(name, len)
-       when name in @shutdown_processes and len > @shutdown_queue_len do
+  defp check_queue_len(name, len, true = _shutdown?) when len > @shutdown_queue_len do
     Logger.critical("#{__MODULE__}: #{name} message queue length is #{len}, shutting down node")
 
     System.stop()
   end
 
-  defp check_queue_len(name, len) when len > @warn_queue_len do
+  defp check_queue_len(name, len, _shutdown?) when len > @warn_queue_len do
     Logger.warning("#{__MODULE__}: #{name} message queue length is #{len}")
   end
 
-  defp check_queue_len(_name, _len), do: :ok
+  defp check_queue_len(_name, _len, _shutdown?), do: :ok
 
   defp format_name(name) do
     case Atom.to_string(name) do
