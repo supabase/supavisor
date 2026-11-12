@@ -14,6 +14,7 @@ defmodule Supavisor.Protocol.MessageStreamer do
     handler_module: nil,
     handler_state: nil,
     pending_bin: <<>>,
+    pending_msg: nil,
     pkts: [],
     in_flight_pkt: nil
   )
@@ -23,6 +24,7 @@ defmodule Supavisor.Protocol.MessageStreamer do
             handler_module: module(),
             handler_state: any(),
             pending_bin: binary(),
+            pending_msg: {remaining_len :: pos_integer(), iodata()} | nil,
             pkts: [binary() | tuple()],
             in_flight_pkt: {tag :: binary(), remaining_len :: non_neg_integer()} | nil
           )
@@ -38,6 +40,7 @@ defmodule Supavisor.Protocol.MessageStreamer do
       handler_module: handler_module,
       handler_state: handler_module.init_state(),
       pending_bin: <<>>,
+      pending_msg: nil,
       pkts: [],
       in_flight_pkt: nil
     )
@@ -66,6 +69,9 @@ defmodule Supavisor.Protocol.MessageStreamer do
     case acc do
       stream_state(in_flight_pkt: {_tag, _len}) ->
         handle_in_flight(acc, binary)
+
+      stream_state(pending_msg: {_remaining_len, _chunks}) ->
+        handle_pending_msg(acc, binary)
 
       stream_state(pending_bin: "") ->
         handle_pkt(acc, binary)
@@ -101,6 +107,27 @@ defmodule Supavisor.Protocol.MessageStreamer do
     end
   end
 
+  # Chunks of a handled message are kept as iodata and joined once the message is
+  # complete, so each read costs its own size rather than the size buffered so far.
+  defp handle_pending_msg(acc, binary) do
+    {remaining_len, chunks} = stream_state(acc, :pending_msg)
+
+    case binary do
+      <<last_chunk::binary-size(remaining_len), rest::binary>> ->
+        msg = IO.iodata_to_binary([chunks, last_chunk])
+
+        with {:ok, acc} <- handle_pkt(stream_state(acc, pending_msg: nil), msg) do
+          do_handle_packets(acc, rest)
+        end
+
+      chunk ->
+        {:ok,
+         stream_state(acc,
+           pending_msg: {remaining_len - byte_size(chunk), [chunks, chunk]}
+         )}
+    end
+  end
+
   defp handle_pkt(acc, binary) do
     case binary do
       <<tag, len::32, payload::binary-size(len - 4), rest::binary>> ->
@@ -125,7 +152,7 @@ defmodule Supavisor.Protocol.MessageStreamer do
 
         # If we are interested in the content, we store it in pending so we can handle it later
         if tag in handled_message_types do
-          {:ok, stream_state(acc, pending_bin: bin)}
+          {:ok, stream_state(acc, pending_msg: {len + 1 - byte_size(bin), bin})}
         else
           {:ok,
            stream_state(acc,
