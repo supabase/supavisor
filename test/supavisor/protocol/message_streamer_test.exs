@@ -61,7 +61,7 @@ defmodule Supavisor.Protocol.MessageStreamerTest do
 
       assert MessageStreamer.stream_state(intermediate_state, :handler_state).counter == 0
       assert intermediate_result == []
-      assert MessageStreamer.stream_state(intermediate_state, :pending_bin) == partial_bin
+      assert MessageStreamer.stream_state(intermediate_state, :pending_msg) == {2, partial_bin}
 
       {:ok, final_state, final_result} =
         MessageStreamer.handle_packets(intermediate_state, remaining_bin)
@@ -69,6 +69,7 @@ defmodule Supavisor.Protocol.MessageStreamerTest do
       assert MessageStreamer.stream_state(final_state, :handler_state).counter == 1
       assert final_result == [{:test_pkt, ?A, 8, "test"}]
       assert MessageStreamer.stream_state(final_state, :pending_bin) == <<>>
+      assert is_nil(MessageStreamer.stream_state(final_state, :pending_msg))
     end
 
     test "handles multiple messages in single binary", %{stream_state: stream_state} do
@@ -156,6 +157,7 @@ defmodule Supavisor.Protocol.MessageStreamerTest do
                ] = grouped_result
 
         assert MessageStreamer.stream_state(final_state, :pending_bin) == <<>>
+        assert is_nil(MessageStreamer.stream_state(final_state, :pending_msg))
         assert MessageStreamer.stream_state(final_state, :in_flight_pkt) == nil
         assert MessageStreamer.stream_state(final_state, :handler_state).counter == 4
       end
