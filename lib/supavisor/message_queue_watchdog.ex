@@ -88,7 +88,7 @@ defmodule Supavisor.MessageQueueWatchdog do
     {:noreply, state}
   end
 
-  defp check_queue_len(name, len, true = _shutdown?) when len > @shutdown_queue_len do
+  defp check_queue_len(name, len, shutdown?) when shutdown? and len > @shutdown_queue_len do
     Logger.critical("#{__MODULE__}: #{name} message queue length is #{len}, shutting down node")
 
     System.stop()
