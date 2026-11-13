@@ -157,14 +157,16 @@ defmodule Supavisor.ClientHandler do
   # cancel request
   def handle_event(:info, {_, _, Server.cancel_message(pid, key)}, _state, _) do
     Logger.debug("ClientHandler: Got cancel query for #{inspect({pid, key})}")
-    :ok = Cancel.send_cancel_query(pid, key)
     ConnectionRequest.ignore()
+    _ = Cancel.send_cancel_query_and_wait(pid, key)
     {:stop, :normal}
   end
 
   # send cancel request to db
   def handle_event(:info, :cancel_query, state, data) do
     :ok = Cancel.maybe_forward_cancel_to_db(state, data)
+    # handlers started before a hot upgrade have no cancel_key
+    :ok = Cancel.reply_cancel_done(Map.get(data, :cancel_key))
     :keep_state_and_data
   end
 
@@ -484,7 +486,9 @@ defmodule Supavisor.ClientHandler do
       :ok ->
         Telem.client_connection_time(data.connection_start, data.id)
         ConnectionRequest.ok(data)
-        {:next_state, :idle, %{data | client_ready: true}, handle_actions(data)}
+
+        {:next_state, :idle, %{data | client_ready: true, cancel_key: {pid, key}},
+         handle_actions(data)}
 
       {:error, exception} ->
         Error.terminate_with_error(data, exception, :handshake)
