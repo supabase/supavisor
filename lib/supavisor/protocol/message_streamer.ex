@@ -16,7 +16,8 @@ defmodule Supavisor.Protocol.MessageStreamer do
     pending_bin: <<>>,
     pending_msg: nil,
     pkts: [],
-    in_flight_pkt: nil
+    in_flight_pkt: nil,
+    handle_streamed?: false
   )
 
   @type stream_state() ::
@@ -26,7 +27,10 @@ defmodule Supavisor.Protocol.MessageStreamer do
             pending_bin: binary(),
             pending_msg: {remaining_len :: pos_integer(), iodata()} | nil,
             pkts: [binary() | tuple()],
-            in_flight_pkt: {tag :: binary(), remaining_len :: non_neg_integer()} | nil
+            in_flight_pkt: {tag :: binary(), remaining_len :: non_neg_integer()} | nil,
+            # Whether the message in flight is one handle_partial/3 chose to stream, so
+            # handle_streamed/2 is due when it completes.
+            handle_streamed?: boolean()
           )
 
   @type pkt() :: binary()
@@ -42,7 +46,8 @@ defmodule Supavisor.Protocol.MessageStreamer do
       pending_bin: <<>>,
       pending_msg: nil,
       pkts: [],
-      in_flight_pkt: nil
+      in_flight_pkt: nil,
+      handle_streamed?: false
     )
   end
 
@@ -87,10 +92,19 @@ defmodule Supavisor.Protocol.MessageStreamer do
     case binary do
       # Message is complete
       <<rest_of_message::binary-size(remaining_len), rest::binary>> ->
+        handler_state = stream_state(acc, :handler_state)
+
+        handler_state =
+          if stream_state(acc, :handle_streamed?),
+            do: stream_state(acc, :handler_module).handle_streamed(handler_state, tag),
+            else: handler_state
+
         new_stream_state =
           stream_state(acc,
             pkts: [rest_of_message | stream_state(acc, :pkts)],
-            in_flight_pkt: nil
+            handler_state: handler_state,
+            in_flight_pkt: nil,
+            handle_streamed?: false
           )
 
         do_handle_packets(new_stream_state, rest)
@@ -148,17 +162,24 @@ defmodule Supavisor.Protocol.MessageStreamer do
       # Incomplete message with known len
       <<tag, len::32, _rest::binary>> = bin ->
         handler_module = stream_state(acc, :handler_module)
-        handled_message_types = handler_module.handled_message_types()
+        handled? = tag in handler_module.handled_message_types()
 
-        # If we are interested in the content, we store it in pending so we can handle it later
-        if tag in handled_message_types do
-          {:ok, stream_state(acc, pending_msg: {len + 1 - byte_size(bin), bin})}
-        else
-          {:ok,
-           stream_state(acc,
-             pkts: [bin | stream_state(acc, :pkts)],
-             in_flight_pkt: {tag, len + 1 - byte_size(bin)}
-           )}
+        partial =
+          if handled?,
+            do: handler_module.handle_partial(stream_state(acc, :handler_state), tag, len),
+            else: :stream
+
+        case partial do
+          :buffer ->
+            {:ok, stream_state(acc, pending_msg: {len + 1 - byte_size(bin), bin})}
+
+          :stream ->
+            {:ok,
+             stream_state(acc,
+               pkts: [bin | stream_state(acc, :pkts)],
+               in_flight_pkt: {tag, len + 1 - byte_size(bin)},
+               handle_streamed?: handled?
+             )}
         end
 
       # Incomplete message
