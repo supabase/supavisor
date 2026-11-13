@@ -45,14 +45,14 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
   @doc """
   Parses and validates startup packet data.
 
-  Returns parsed user info, application name, log level, and list of invalid options.
+  Returns parsed user info, application name, log level, and the invalid and unknown options.
   """
   @spec parse_startup_packet(binary()) ::
           {:ok, StartupParams.t()}
           | {:error, StartupMessageError.t() | InvalidUserInfoError.t()}
   def parse_startup_packet(bin) do
     with {:ok, hello} <- Client.decode_startup_packet(bin),
-         {options, invalid} = StartupOptions.validate(hello.payload["options"] || %{}),
+         {options, invalid, unknown} = StartupOptions.validate(hello.payload["options"] || %{}),
          {:ok, params} <- extract_and_validate_user_info(hello.payload, options) do
       Logger.debug("ClientHandler: Client startup message: #{inspect(hello)}")
 
@@ -61,7 +61,8 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
          params
          | app_name: normalize_app_name(hello.payload["application_name"]),
            log_level: options["log_level"],
-           invalid_options: invalid
+           invalid_options: invalid,
+           unknown_options: unknown
        }}
     end
   end

@@ -3,6 +3,8 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
 
   alias Supavisor.Protocol.StartupOptions
 
+  doctest StartupOptions
+
   describe "encode/1" do
     test "empty map returns empty string" do
       assert StartupOptions.encode(%{}) == ""
@@ -81,50 +83,68 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
   describe "validate/1" do
     test "converts boolean spellings case-insensitively" do
       for v <- ~w(1 t tr tru true y ye yes on TRUE On) do
-        assert {%{"jit" => true}, []} = StartupOptions.validate(%{"jit" => v}),
+        assert {%{"jit" => true}, [], []} = StartupOptions.validate(%{"jit" => v}),
                "expected #{inspect(v)} to be true"
       end
 
       for v <- ~w(0 f fa fal fals false n no of off OFF) do
-        assert {%{"jit" => false}, []} = StartupOptions.validate(%{"jit" => v}),
+        assert {%{"jit" => false}, [], []} = StartupOptions.validate(%{"jit" => v}),
                "expected #{inspect(v)} to be false"
       end
     end
 
     test "reports invalid boolean values" do
       for v <- ~w(o maybe 10 2) ++ [""] do
-        assert {%{}, [{"jit", ^v}]} = StartupOptions.validate(%{"jit" => v}),
+        assert {%{}, [{"jit", ^v}], []} = StartupOptions.validate(%{"jit" => v}),
                "expected #{inspect(v)} to be invalid"
       end
     end
 
     test "converts enum values to atoms" do
-      assert {%{"log_level" => :info}, []} =
+      assert {%{"log_level" => :info}, [], []} =
                StartupOptions.validate(%{"log_level" => "INFO"})
     end
 
     test "reports invalid enum values" do
-      assert {%{}, [{"log_level", "trace"}]} =
+      assert {%{}, [{"log_level", "trace"}], []} =
                StartupOptions.validate(%{"log_level" => "trace"})
     end
 
     test "passes string values through unchanged" do
-      assert {%{"search_path" => "public, foo"}, []} =
+      assert {%{"search_path" => "public, foo"}, [], []} =
                StartupOptions.validate(%{"search_path" => "public, foo"})
     end
 
-    test "passes unknown options through unchanged" do
-      assert {%{"work_mem" => "64MB"}, []} =
-               StartupOptions.validate(%{"work_mem" => "64MB"})
+    test "returns unknown options by name, sorted" do
+      assert {%{"search_path" => "public"}, [], ["default_transaction_read_only", "work_mem"]} =
+               StartupOptions.validate(%{
+                 "work_mem" => "64MB",
+                 "search_path" => "public",
+                 "default_transaction_read_only" => "on"
+               })
+    end
+
+    test "never returns the options Supavisor reads itself as unknown" do
+      opts = %{
+        "search_path" => "public",
+        "jit" => "on",
+        "client_tls" => "off",
+        "log_level" => "debug",
+        "client_ip" => "10.0.0.1",
+        "reference" => "dev_tenant"
+      }
+
+      assert {%{"client_ip" => "10.0.0.1", "reference" => "dev_tenant"}, [], []} =
+               StartupOptions.validate(opts)
     end
 
     test "drops invalid options and keeps the rest" do
-      assert {%{"search_path" => "public"}, [{"jit", "maybe"}]} =
+      assert {%{"search_path" => "public"}, [{"jit", "maybe"}], []} =
                StartupOptions.validate(%{"jit" => "maybe", "search_path" => "public"})
     end
 
     test "empty map" do
-      assert {%{}, []} = StartupOptions.validate(%{})
+      assert {%{}, [], []} = StartupOptions.validate(%{})
     end
   end
 
@@ -151,6 +171,30 @@ defmodule Supavisor.Protocol.StartupOptionsTest do
                "M" => ~s(invalid value for parameter "log_level": "trace"),
                "H" => "Available values: debug, info, notice, warning, error."
              } == StartupOptions.invalid_option_notice({"log_level", "trace"})
+    end
+  end
+
+  describe "unknown_option_notice/1" do
+    test "names a single option and says how to set a PostgreSQL parameter" do
+      assert %{
+               "S" => "NOTICE",
+               "V" => "NOTICE",
+               "C" => "00000",
+               "M" =>
+                 ~s(unknown parameter "default_transaction_read_only" in startup options was ignored),
+               "H" => "To set a PostgreSQL parameter, use ALTER ROLE or ALTER DATABASE ... SET."
+             } == StartupOptions.unknown_option_notice(["default_transaction_read_only"])
+    end
+
+    test "lists several options in one message" do
+      assert %{
+               "M" =>
+                 ~s(unknown parameters "default_transaction_read_only", "statement_timeout" in startup options were ignored)
+             } =
+               StartupOptions.unknown_option_notice([
+                 "default_transaction_read_only",
+                 "statement_timeout"
+               ])
     end
   end
 end
