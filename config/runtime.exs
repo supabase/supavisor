@@ -225,6 +225,12 @@ if downstream_v2_configured? and
   raise "v2 certificates are configured but no default downstream certificate is configured"
 end
 
+config :supavisor,
+  tls_handshake_queue_target_ms:
+    System.get_env("TLS_HANDSHAKE_QUEUE_TARGET_MS", "100") |> String.to_integer(),
+  tls_handshake_queue_interval_ms:
+    System.get_env("TLS_HANDSHAKE_QUEUE_INTERVAL_MS", "1000") |> String.to_integer()
+
 if config_env() != :test do
   config :supavisor,
     session_proxy_ports:

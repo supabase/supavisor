@@ -14,7 +14,7 @@ defmodule Supavisor.TLSHandshake do
 
     * `start_dyn_connection_sup/1`, which starts non-distribution connections under a partition
       of `#{inspect(__MODULE__)}.Supervisor` instead of `tls_connection_sup`, and drops a start
-      the partition takes while its queue isn't draining (see `start_dyn_sup/1`). The handshake
+      the partition takes while its queue isn't draining (see `OverloadProtection`). The handshake
       then fails with `{:error, :overloaded}`.
     * Option processing. `ssl:handshake/3` processes the options on every call, with ssl's
       private `handle_options/5`, which we would need to inline/copy a lot of ssl internal code
@@ -47,14 +47,9 @@ defmodule Supavisor.TLSHandshake do
     Record.extract(:socket_options, from_lib: "ssl/src/ssl_internal.hrl")
   )
 
-  @sup __MODULE__.Supervisor
+  alias __MODULE__.OverloadProtection
 
-  # Queue control for each partition's mailbox, as in DBConnection.ConnectionPool: when the
-  # shortest wait seen during a @queue_interval_ms is above @queue_target_ms, the next interval
-  # drops every start that waited more than twice the target.
-  @queue_target_ms 100
-  @queue_interval_ms 1_000
-  @queue_key {__MODULE__, :queue}
+  @sup __MODULE__.Supervisor
 
   def child_spec(_) do
     PartitionSupervisor.child_spec(child_spec: DynamicSupervisor, name: @sup)
@@ -241,51 +236,15 @@ defmodule Supavisor.TLSHandshake do
   end
 
   # Runs in the partition, when it takes the start from its queue. `sent` is when the caller
-  # queued it. A start is dropped when the queue isn't draining: the partition keeps the shortest
-  # wait of the starts it took during the current interval. If an interval ends with that above
-  # the target, even the luckiest start waited too long, and during the next interval every start
-  # that waited more than twice the target is dropped. The first start of an interval is never
-  # dropped. A dropped start skips the wait for the child's ack (which scans the partition's
-  # whole queue on OTP 27) and the work on the handshake.
+  # queued it. A dropped start (see OverloadProtection) skips the wait for the child's ack (which
+  # scans the partition's whole queue on OTP 27) and the work on the handshake.
   @doc false
   def start_dyn_sup(sent) do
     now = System.monotonic_time()
 
-    if queue_drop?(now, now - sent),
+    if OverloadProtection.drop?(now, now - sent),
       do: :ignore,
       else: :tls_dyn_connection_sup.start_link()
-  end
-
-  # Port of DBConnection.ConnectionPool's dequeue/5, with the state in the partition's process
-  # dictionary. `now` and `delay` are in native time units. Public so tests can pass the time.
-  @doc false
-  def queue_drop?(now, delay) do
-    target = System.convert_time_unit(@queue_target_ms, :millisecond, :native)
-
-    case Process.get(@queue_key) do
-      {next, min_delay, _slow?} when now >= next ->
-        queue_put(now, delay, min_delay > target)
-        false
-
-      nil ->
-        queue_put(now, delay, false)
-        false
-
-      {_next, _min_delay, true} when delay > target * 2 ->
-        true
-
-      {next, min_delay, slow?} when delay < min_delay ->
-        Process.put(@queue_key, {next, delay, slow?})
-        false
-
-      _ ->
-        false
-    end
-  end
-
-  defp queue_put(now, delay, slow?) do
-    interval = System.convert_time_unit(@queue_interval_ms, :millisecond, :native)
-    Process.put(@queue_key, {now + interval, delay, slow?})
   end
 
   # Port of tls_gen_connection:socket_control/6.
