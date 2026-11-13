@@ -678,4 +678,98 @@ defmodule Supavisor.Protocol.FrontendMessageHandlerTest do
       assert IO.iodata_to_binary(result) == bin
     end
   end
+
+  describe "split messages" do
+    # Sends `bin` in two reads, split at `at`, and returns each read's output and the tags
+    # recorded across both.
+    defp split_send(stream_state, bin, at) do
+      <<first::binary-size(at), second::binary>> = bin
+      {:ok, stream_state, first_out} = MessageStreamer.handle_packets(stream_state, first)
+      {:ok, stream_state, second_out} = MessageStreamer.handle_packets(stream_state, second)
+      hs = MessageStreamer.stream_state(stream_state, :handler_state)
+      {forwarded, _hs} = FrontendMessageHandler.take_forwarded(hs)
+      {first_out, second_out, forwarded}
+    end
+
+    defp all_off(stream_state) do
+      MessageStreamer.update_state(stream_state, &%{&1 | translate?: false, leak_action: :ignore})
+    end
+
+    @bind <<?B, 24::32, 0, "s1", 0, 0::16, 1::16, 6::32, "abcdef", 0::16>>
+    @named_parse <<?P, 18::32, "s1", 0, "select 1", 0, 0::16>>
+
+    test "streams a message no enabled feature reads", %{stream_state: stream_state} do
+      stream_state = all_off(stream_state)
+
+      for bin <- [@bind, @named_parse, simple_query("SELECT 1"), <<?E, 9::32, 0, 0, 0, 0, 200>>] do
+        {first, second, forwarded} = split_send(stream_state, bin, 8)
+        <<tag, _::binary>> = bin
+
+        assert first == [binary_part(bin, 0, 8)]
+        assert IO.iodata_to_binary(second) == binary_part(bin, 8, byte_size(bin) - 8)
+        assert forwarded == [tag]
+      end
+    end
+
+    # A CopyFail ending a failed COPY syncs the backend on the write that records it, so that
+    # has to be the write that completes it.
+    test "records a streamed message in the write that completes it", %{
+      stream_state: stream_state
+    } do
+      stream_state = all_off(stream_state)
+      <<first::binary-size(8), second::binary>> = <<?f, 10::32, "boom!", 0>>
+
+      {:ok, stream_state, [^first]} = MessageStreamer.handle_packets(stream_state, first)
+      hs = MessageStreamer.stream_state(stream_state, :handler_state)
+      assert {[], hs} = FrontendMessageHandler.take_forwarded(hs)
+
+      stream_state = MessageStreamer.stream_state(stream_state, handler_state: hs)
+      assert forwarded(stream_state, second) == [?f]
+    end
+
+    test "buffers a Bind when prepared statements are enabled", %{stream_state: stream_state} do
+      {:ok, stream_state, _} = MessageStreamer.handle_packets(stream_state, @named_parse)
+      {first, second, _forwarded} = split_send(stream_state, @bind, 8)
+
+      assert first == []
+      assert [{:bind_pkt, _name, _bind, _parse}] = second
+    end
+
+    test "buffers a Parse, Describe and Close when only prepared statements are on", %{
+      stream_state: stream_state
+    } do
+      stream_state =
+        stream_state |> all_off() |> MessageStreamer.update_state(&%{&1 | translate?: true})
+
+      describe = <<?D, 8::32, ?S, "s1", 0>>
+      close = <<?C, 8::32, ?S, "s1", 0>>
+
+      Enum.reduce(
+        [{@named_parse, :parse_pkt}, {describe, :describe_pkt}, {close, :close_pkt}],
+        stream_state,
+        fn {bin, kind}, stream_state ->
+          <<first::binary-size(6), second::binary>> = bin
+          {:ok, stream_state, []} = MessageStreamer.handle_packets(stream_state, first)
+          {:ok, stream_state, [pkt]} = MessageStreamer.handle_packets(stream_state, second)
+          assert elem(pkt, 0) == kind
+          stream_state
+        end
+      )
+    end
+
+    test "buffers a Parse or Query when the leak check is on", %{stream_state: stream_state} do
+      stream_state = stream_state |> all_off() |> with_leak_action(:log)
+
+      for bin <- [@named_parse, simple_query("SELECT 1")] do
+        assert {[], [^bin], _} = split_send(stream_state, bin, 8)
+      end
+    end
+
+    test "buffers a Query when the prepare check is on", %{stream_state: stream_state} do
+      stream_state = stream_state |> all_off() |> with_simple_query_prepare_check()
+      bin = simple_query("SELECT 1")
+
+      assert {[], [^bin], _} = split_send(stream_state, bin, 8)
+    end
+  end
 end

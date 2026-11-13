@@ -15,6 +15,12 @@ defmodule Supavisor.Protocol.MessageStreamerTest do
     def init_state, do: %{counter: 0}
 
     @impl true
+    def handle_partial(_state, _tag, _len), do: :buffer
+
+    @impl true
+    def handle_streamed(state, _tag), do: state
+
+    @impl true
     def handle_message(state, tag, len, payload) do
       new_state = %{state | counter: state.counter + 1}
       result = {:test_pkt, tag, len, payload}
@@ -170,6 +176,74 @@ defmodule Supavisor.Protocol.MessageStreamerTest do
         end)
 
       assert MessageStreamer.stream_state(updated_stream_state, :handler_state).counter == 42
+    end
+  end
+
+  defmodule StreamingHandler do
+    @behaviour Supavisor.Protocol.MessageHandler
+
+    @impl true
+    def handled_message_types, do: [?A]
+
+    @impl true
+    def init_state, do: %{handled: [], streamed: []}
+
+    @impl true
+    def handle_partial(_state, _tag, _len), do: :stream
+
+    @impl true
+    def handle_streamed(state, tag), do: %{state | streamed: [tag | state.streamed]}
+
+    @impl true
+    def handle_message(state, tag, _len, payload),
+      do: {:ok, %{state | handled: [tag | state.handled]}, {:handled, tag, payload}}
+  end
+
+  describe "streamed messages" do
+    setup do
+      {:ok, stream_state: MessageStreamer.new_stream_state(StreamingHandler)}
+    end
+
+    test "forwards the message as it arrives and calls handle_streamed once it completes", %{
+      stream_state: stream_state
+    } do
+      bin = <<?A, 14::32, "0123456789">>
+      [first, second, third] = [binary_part(bin, 0, 7), binary_part(bin, 7, 4), "6789"]
+
+      {:ok, s, out1} = MessageStreamer.handle_packets(stream_state, first)
+      assert out1 == [first]
+      assert MessageStreamer.stream_state(s, :handler_state).streamed == []
+
+      {:ok, s, out2} = MessageStreamer.handle_packets(s, second)
+      assert out2 == [second]
+      assert MessageStreamer.stream_state(s, :handler_state).streamed == []
+
+      {:ok, s, out3} = MessageStreamer.handle_packets(s, third)
+      assert out3 == [third]
+      assert MessageStreamer.stream_state(s, :handler_state) == %{handled: [], streamed: [?A]}
+      assert MessageStreamer.stream_state(s, :in_flight_pkt) == nil
+      refute MessageStreamer.stream_state(s, :handle_streamed?)
+    end
+
+    test "handles the next message in the read that completes a streamed one", %{
+      stream_state: stream_state
+    } do
+      <<first::binary-size(7), rest::binary>> = <<?A, 14::32, "0123456789">>
+
+      {:ok, s, _} = MessageStreamer.handle_packets(stream_state, first)
+      {:ok, s, out} = MessageStreamer.handle_packets(s, rest <> <<?A, 6::32, "hi">>)
+
+      assert out == [rest, {:handled, ?A, "hi"}]
+      assert MessageStreamer.stream_state(s, :handler_state) == %{handled: [?A], streamed: [?A]}
+    end
+
+    test "doesn't call handle_streamed for an unhandled message", %{stream_state: stream_state} do
+      <<first::binary-size(7), rest::binary>> = <<?Z, 14::32, "0123456789">>
+
+      {:ok, s, _} = MessageStreamer.handle_packets(stream_state, first)
+      {:ok, s, _} = MessageStreamer.handle_packets(s, rest)
+
+      assert MessageStreamer.stream_state(s, :handler_state).streamed == []
     end
   end
 

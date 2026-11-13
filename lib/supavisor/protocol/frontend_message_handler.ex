@@ -13,6 +13,11 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   It also records the messages forwarded in each write, so the DbHandler can follow the
   backend through them (see `Supavisor.Protocol.BackendConnection`). Prepared statement
   packets are recorded as `{:ps, tag}`, since the DbHandler decides what is sent for them.
+
+  A message that arrives over several reads is held until complete only if an enabled
+  feature reads its payload: prepared statements for P, B, C and D, and the checks above
+  for P and Q. Otherwise it is forwarded as it arrives, without being handled, and recorded
+  in the write that completes it, as a held message would be.
   """
 
   @behaviour Supavisor.Protocol.MessageHandler
@@ -46,6 +51,29 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
   """
   @spec take_forwarded(map()) :: {[BackendConnection.write_tag()], map()}
   def take_forwarded(state), do: {Enum.reverse(state.forwarded), %{state | forwarded: []}}
+
+  # A message whose payload no enabled feature reads is forwarded as it arrives, so a large
+  # one isn't held in memory whole.
+  @impl true
+  def handle_partial(state, tag, _len) do
+    leak_check? = state.leak_action != :ignore
+
+    reads_payload? =
+      case tag do
+        ?P -> state.translate? or leak_check?
+        ?Q -> leak_check? or state.check_simple_query_prepare?
+        tag when tag in [?B, ?C, ?D] -> state.translate?
+        _ -> false
+      end
+
+    if reads_payload?, do: :buffer, else: :stream
+  end
+
+  # Recorded in the write that completes the message, like a buffered one. A CopyFail ending a
+  # failed COPY syncs the backend on the write that records it, and the ClientHandler ignores
+  # that sync while the message is still in flight.
+  @impl true
+  def handle_streamed(state, tag), do: record(state, tag)
 
   @impl true
   def handle_message(state, tag, len, payload) do
