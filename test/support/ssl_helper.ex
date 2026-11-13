@@ -105,7 +105,11 @@ defmodule Supavisor.Support.SSLHelper do
     ])
   end
 
-  defp put_env_with_restore(envs) do
+  @doc """
+  Puts the given `:supavisor` env and reloads the downstream TLS options. Registers an `on_exit`
+  callback to restore the original values.
+  """
+  def put_env_with_restore(envs) do
     orig =
       Map.new(envs, fn {key, _} -> {key, Application.get_env(:supavisor, key)} end)
 
