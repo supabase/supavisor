@@ -27,6 +27,17 @@ defmodule Supavisor.TLSHandshake do
       from `connection_cb/1`, so that isn't ported.
   """
 
+  @ported_ssl_vsn ~c"11.2.12.11"
+
+  :application.load(:ssl)
+
+  if Application.spec(:ssl, :vsn) != @ported_ssl_vsn do
+    raise CompileError,
+      description:
+        "#{inspect(__MODULE__)} requires ssl #{@ported_ssl_vsn}, " <>
+          "but ssl is #{Application.spec(:ssl, :vsn)}"
+  end
+
   require Record
 
   Record.defrecordp(:config, Record.extract(:config, from_lib: "ssl/src/ssl_internal.hrl"))
