@@ -69,9 +69,7 @@ defmodule Supavisor.Protocol.FrontendMessageHandler do
     if reads_payload?, do: :buffer, else: :stream
   end
 
-  # Recorded in the write that completes the message, like a buffered one. A CopyFail ending a
-  # failed COPY syncs the backend on the write that records it, and the ClientHandler ignores
-  # that sync while the message is still in flight.
+  # Recorded in the write that completes the message.
   @impl true
   def handle_streamed(state, tag), do: record(state, tag)
 
