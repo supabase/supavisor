@@ -112,7 +112,11 @@ defmodule Supavisor.ClientHandler do
     local = opts[:local] || false
 
     Logger.metadata(peer_ip: peer_ip, local: local, tls: false, state: :init)
-    :ok = trans.setopts(sock, active: @switch_active_count)
+
+    # Ensure buffer >= recbuf, so a read isn't capped at the 1460 byte default.
+    # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
+    {:ok, [{:recbuf, recbuf}]} = :inet.getopts(sock, [:recbuf])
+    :ok = trans.setopts(sock, active: @switch_active_count, buffer: recbuf)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
     now = System.monotonic_time()
