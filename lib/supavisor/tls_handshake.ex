@@ -74,7 +74,7 @@ defmodule Supavisor.TLSHandshake do
 
   @doc """
   Processes server options for `handshake/3`, which `:ssl.handshake/3` does on every call.
-  Throws `{:error, reason}` for invalid options.
+  `:ssl.handle_options/3` throws instead of returning an error.
   """
   @spec handle_options([:ssl.tls_server_option()]) :: options()
   def handle_options(ssl_options) do
