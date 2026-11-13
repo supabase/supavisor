@@ -8,7 +8,7 @@ defmodule Supavisor.TLSHandshake do
   in the run queue, so one supervisor caps the handshake rate below the arrival rate and its
   mailbox grows until the node stops accepting TLS connections.
 
-  Ported from ssl 11.2.12.11 (OTP 27.3.4), and relies on ssl internals, so it must be rechecked
+  Ported from ssl 11.2.12.14 (OTP 27.3.4.19), and relies on ssl internals, so it must be rechecked
   on every OTP upgrade. Each function names the one it ports, and the code follows the source,
   except for:
 
@@ -27,7 +27,7 @@ defmodule Supavisor.TLSHandshake do
       from `connection_cb/1`, so that isn't ported.
   """
 
-  @ported_ssl_vsn ~c"11.2.12.11"
+  @ported_ssl_vsn ~c"11.2.12.14"
 
   :application.load(:ssl)
 
