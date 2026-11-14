@@ -102,6 +102,8 @@ defmodule Supavisor.Application do
 
     Supavisor.CircuitBreaker.init()
     Supavisor.ConnectBackoff.init()
+    Supavisor.Helpers.load_downstream_tls_options()
+    Supavisor.TLSHandshake.OverloadProtection.load_config()
 
     topologies = Application.get_env(:libcluster, :topologies) || []
 
@@ -141,6 +143,7 @@ defmodule Supavisor.Application do
           child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
         },
         Supavisor.Vault,
+        Supavisor.TLSHandshake,
 
         # Start the Endpoint (http/https)
         SupavisorWeb.Endpoint

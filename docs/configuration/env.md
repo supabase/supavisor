@@ -28,6 +28,8 @@ This document provides a categorized list of all environment variables used in S
 | `ADMISSION_RETRIES`           | Retries waiting for a free client slot before EMAXCONN     | `5`                       | No       |
 | `ADMISSION_BACKOFF`           | Backoff between admission retries (ms)                     | `300`                     | No       |
 | `SWITCH_ACTIVE_COUNT`         | Switch active connection count                             | `100`                     | No       |
+| `TLS_HANDSHAKE_QUEUE_TARGET_MS` | Target wait for a TLS handshake to start (ms). When the shortest wait during an interval is above it, the next interval drops handshakes that wait over twice the target. | `100` | No       |
+| `TLS_HANDSHAKE_QUEUE_INTERVAL_MS` | Interval over which the shortest TLS handshake wait is measured (ms) | `1000`        | No       |
 | `GLOBAL_UPSTREAM_CA_PATH`     | Upstream CA certificate path                               | -                         | No       |
 | `GLOBAL_DOWNSTREAM_CERT_PATH` | Downstream certificate path                                | -                         | No       |
 | `GLOBAL_DOWNSTREAM_KEY_PATH`  | Downstream private key path                                | -                         | No       |

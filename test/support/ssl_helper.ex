@@ -62,6 +62,7 @@ defmodule Supavisor.Support.SSLHelper do
           if File.exists?(path), do: Application.put_env(:supavisor, env_key, path)
         end
 
+        Supavisor.Helpers.load_downstream_tls_options()
         {:ok, cert_path, key_path}
 
       error ->
@@ -104,7 +105,11 @@ defmodule Supavisor.Support.SSLHelper do
     ])
   end
 
-  defp put_env_with_restore(envs) do
+  @doc """
+  Puts the given `:supavisor` env and reloads the downstream TLS options. Registers an `on_exit`
+  callback to restore the original values.
+  """
+  def put_env_with_restore(envs) do
     orig =
       Map.new(envs, fn {key, _} -> {key, Application.get_env(:supavisor, key)} end)
 
@@ -112,12 +117,16 @@ defmodule Supavisor.Support.SSLHelper do
       Application.put_env(:supavisor, key, value)
     end
 
+    Supavisor.Helpers.load_downstream_tls_options()
+
     ExUnit.Callbacks.on_exit(fn ->
       for {key, val} <- orig do
         if val,
           do: Application.put_env(:supavisor, key, val),
           else: Application.delete_env(:supavisor, key)
       end
+
+      Supavisor.Helpers.load_downstream_tls_options()
     end)
 
     :ok

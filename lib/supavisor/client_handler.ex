@@ -35,7 +35,8 @@ defmodule Supavisor.ClientHandler do
     Manager,
     Monitoring.Telem,
     Protocol.Debug,
-    Tenants
+    Tenants,
+    TLSHandshake
   }
 
   alias Supavisor.ClientHandler.{
@@ -111,7 +112,11 @@ defmodule Supavisor.ClientHandler do
     local = opts[:local] || false
 
     Logger.metadata(peer_ip: peer_ip, local: local, tls: false, state: :init)
-    :ok = trans.setopts(sock, active: @switch_active_count)
+
+    # Ensure buffer >= recbuf, so a read isn't capped at the 1460 byte default.
+    # Set once at connection time as best effort; OS may adjust recbuf later via auto-tuning.
+    {:ok, [{:recbuf, recbuf}]} = :inet.getopts(sock, [:recbuf])
+    :ok = trans.setopts(sock, active: @switch_active_count, buffer: recbuf)
     Logger.debug("ClientHandler is: #{inspect(self())}")
 
     now = System.monotonic_time()
@@ -174,20 +179,15 @@ defmodule Supavisor.ClientHandler do
         :handshake,
         %{sock: sock} = data
       ) do
-    certs_keys = Helpers.downstream_certs_keys()
+    tls_options = Helpers.downstream_tls_options()
 
     # SSL negotiation, S/N/Error
-    if certs_keys != [] do
+    if tls_options do
       :ok = HandlerHelpers.setopts(sock, active: false)
 
-      opts = [
-        verify: :verify_none,
-        certs_keys: certs_keys,
-        sni_fun: &downstream_sni_options/1
-      ]
-
       with :ok <- client_sock_send(data, "S", :handshake),
-           {:ok, ssl_sock} <- :ssl.handshake(elem(sock, 1), opts, @ssl_handshake_timeout) do
+           {:ok, ssl_sock} <-
+             TLSHandshake.handshake(elem(sock, 1), tls_options, @ssl_handshake_timeout) do
         socket = {:ssl, ssl_sock}
         :ok = HandlerHelpers.setopts(socket, active: @switch_active_count)
         Logger.metadata(tls: true)
@@ -195,6 +195,12 @@ defmodule Supavisor.ClientHandler do
       else
         {:error, %ClientSocketClosedError{} = exception} ->
           Error.terminate_with_error(data, exception, :handshake)
+
+        {:error, :overloaded} ->
+          # The client has our "S" and expects TLS next, so a Postgres error would read as a
+          # broken TLS record. Refuse with a TLS alert instead.
+          _ = HandlerHelpers.sock_send(sock, TLSHandshake.overloaded_alert())
+          Error.terminate_with_error(data, %SslHandshakeError{reason: :overloaded}, :handshake)
 
         {:error, reason} ->
           Error.terminate_with_error(data, %SslHandshakeError{reason: reason}, :handshake)
@@ -1169,15 +1175,6 @@ defmodule Supavisor.ClientHandler do
 
   defp upstream_tls(%{use_jit: true}, ssl?), do: ssl?
   defp upstream_tls(%{upstream_ssl: upstream_ssl}, _ssl?), do: upstream_ssl
-
-  defp downstream_sni_options(sni_hostname) do
-    with true <- Helpers.downstream_v2_sni_hostname?(sni_hostname),
-         [_ | _] = certs_keys <- Helpers.downstream_v2_certs_keys() do
-      [certs_keys: certs_keys]
-    else
-      _ -> :undefined
-    end
-  end
 
   defp handle_socket_close(state, data, reason \\ nil) do
     maybe_cleanup_db_handler(state, data)
