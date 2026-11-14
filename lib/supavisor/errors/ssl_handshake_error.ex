@@ -15,11 +15,19 @@ defmodule Supavisor.Errors.SslHandshakeError do
     "SSL handshake failed: #{inspect(reason)}"
   end
 
+  # An overloaded handshake is refused with a TLS alert, sent by the ClientHandler.
   @impl Supavisor.Error
+  def postgres_error(%{reason: :overloaded}), do: nil
+
   def postgres_error(error) do
     Supavisor.Error.protocol_error("FATAL", "08006", message(error))
   end
 
   @impl Supavisor.Error
+  def log_level(%{reason: :overloaded}), do: :warning
+  def log_level(_), do: :error
+
+  @impl Supavisor.Error
+  def fault(%{reason: :overloaded}), do: :supavisor
   def fault(_), do: :user
 end

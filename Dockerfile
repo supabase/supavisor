@@ -20,8 +20,8 @@
 # publish_docker.yml derives its build-args from .tool-versions directly.
 # DEBIAN_VERSION has no .tool-versions equivalent.
 ARG ELIXIR_VERSION=1.18.5
-ARG OTP_VERSION=27.3.4.16
-ARG DEBIAN_VERSION=trixie-20260824-slim
+ARG OTP_VERSION=27.3.4.19
+ARG DEBIAN_VERSION=trixie-20261027-slim
 
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
 ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"

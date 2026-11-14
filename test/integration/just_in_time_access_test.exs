@@ -5,7 +5,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
   require Logger
   alias Ecto.Adapters.SQL.Sandbox
   alias Postgrex, as: P
-  alias Supavisor.Support.Cluster
+  alias Supavisor.Support.{Cluster, SSLHelper}
 
   @moduletag integration_docker: true
 
@@ -14,10 +14,10 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
     cert_path = Path.join(cert_dir, "server.crt")
     key_path = Path.join(cert_dir, "server.key")
 
-    prev_cert = Application.get_env(:supavisor, :global_downstream_cert)
-    prev_key = Application.get_env(:supavisor, :global_downstream_key)
-    Application.put_env(:supavisor, :global_downstream_cert, cert_path)
-    Application.put_env(:supavisor, :global_downstream_key, key_path)
+    SSLHelper.put_env_with_restore(
+      global_downstream_cert: cert_path,
+      global_downstream_key: key_path
+    )
 
     db_conf =
       :supavisor
@@ -29,11 +29,7 @@ defmodule Supavisor.Integration.JustInTimeAccessTest do
       |> Keyword.put(:password, "postgres")
 
     # Add a small delay between tests to allow connections to clean up
-    on_exit(fn ->
-      Application.put_env(:supavisor, :global_downstream_cert, prev_cert)
-      Application.put_env(:supavisor, :global_downstream_key, prev_key)
-      Process.sleep(100)
-    end)
+    on_exit(fn -> Process.sleep(100) end)
 
     %{db_conf: db_conf}
   end

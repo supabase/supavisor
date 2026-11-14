@@ -227,6 +227,46 @@ defmodule Supavisor.Helpers do
     )
   end
 
+  @downstream_tls_options_key {__MODULE__, :downstream_tls_options}
+
+  @doc """
+  Processes the downstream TLS options from the application env once, for
+  `downstream_tls_options/0`. Called at startup, and must be called again after that env changes.
+  """
+  @spec load_downstream_tls_options() :: :ok
+  def load_downstream_tls_options do
+    tls_options =
+      case downstream_certs_keys() do
+        [] ->
+          nil
+
+        certs_keys ->
+          Supavisor.TLSHandshake.handle_options(
+            verify: :verify_none,
+            certs_keys: certs_keys,
+            sni_fun: &downstream_sni_options/1
+          )
+      end
+
+    :persistent_term.put(@downstream_tls_options_key, tls_options)
+  end
+
+  @doc """
+  The downstream TLS options for `Supavisor.TLSHandshake.handshake/3`, or nil when no
+  certificate is configured.
+  """
+  @spec downstream_tls_options() :: Supavisor.TLSHandshake.options() | nil
+  def downstream_tls_options, do: :persistent_term.get(@downstream_tls_options_key)
+
+  defp downstream_sni_options(sni_hostname) do
+    with true <- downstream_v2_sni_hostname?(sni_hostname),
+         [_ | _] = certs_keys <- downstream_v2_certs_keys() do
+      [certs_keys: certs_keys]
+    else
+      _ -> :undefined
+    end
+  end
+
   @doc """
   Builds the SCRAM client-final message and returns `{client_final, server_signature, derived_secrets}`.
 
