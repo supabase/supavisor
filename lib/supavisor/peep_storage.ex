@@ -132,11 +132,8 @@ defmodule Supavisor.PeepStorage do
   end
 
   defp get_or_create_tags_id(tags_tid, reverse_tags_tid, tags) do
-    case :ets.lookup(tags_tid, tags) do
-      [{_, id}] ->
-        id
-
-      [] ->
+    case :ets.lookup_element(tags_tid, tags, 2, nil) do
+      nil ->
         id = System.unique_integer()
 
         case :ets.insert_new(tags_tid, {tags, id}) do
@@ -147,6 +144,9 @@ defmodule Supavisor.PeepStorage do
           false ->
             get_or_create_tags_id(tags_tid, reverse_tags_tid, tags)
         end
+
+      id ->
+        id
     end
   end
 
