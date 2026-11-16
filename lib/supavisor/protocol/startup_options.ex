@@ -81,40 +81,50 @@ defmodule Supavisor.Protocol.StartupOptions do
   # Skip unrecognized tokens
   defp parse_tokens([_ | rest], acc), do: parse_tokens(rest, acc)
 
-  # Supavisor specific startup options schema.
+  # Supavisor specific startup options schema. `client_ip` is set by a peer node
+  # and `reference` names the tenant. Options outside the schema are dropped,
+  # since a pooled backend is shared between clients.
   @schema %{
     "jit" => :boolean,
     "client_tls" => :boolean,
     "search_path" => :string,
-    "log_level" => {:enum, [:debug, :info, :notice, :warning, :error]}
+    "log_level" => {:enum, [:debug, :info, :notice, :warning, :error]},
+    "client_ip" => :string,
+    "reference" => :string
   }
 
   @doc """
   Validates and type-converts a parsed options map against the known schema.
 
+  Returns the options in the schema, the ones with invalid values, and the
+  sorted names of the ones not in the schema.
+
   ## Examples
 
       iex> Supavisor.Protocol.StartupOptions.validate(%{"jit" => "1", "work_mem" => "64MB"})
-      {%{"jit" => true, "work_mem" => "64MB"}, []}
+      {%{"jit" => true}, [], ["work_mem"]}
 
       iex> Supavisor.Protocol.StartupOptions.validate(%{"jit" => "maybe"})
-      {%{}, [{"jit", "maybe"}]}
+      {%{}, [{"jit", "maybe"}], []}
 
   """
-  @spec validate(map()) :: {map(), [{String.t(), String.t()}]}
+  @spec validate(map()) :: {map(), [{String.t(), String.t()}], [String.t()]}
   def validate(opts) do
-    Enum.reduce(opts, {%{}, []}, fn {name, value}, {options, invalid} ->
-      case @schema do
-        %{^name => type} ->
-          case cast(type, value) do
-            {:ok, cast} -> {Map.put(options, name, cast), invalid}
-            :error -> {options, [{name, value} | invalid]}
-          end
+    {options, invalid, unknown} =
+      Enum.reduce(opts, {%{}, [], []}, fn {name, value}, {options, invalid, unknown} ->
+        case @schema do
+          %{^name => type} ->
+            case cast(type, value) do
+              {:ok, cast} -> {Map.put(options, name, cast), invalid, unknown}
+              :error -> {options, [{name, value} | invalid], unknown}
+            end
 
-        _ ->
-          {Map.put(options, name, value), invalid}
-      end
-    end)
+          _ ->
+            {options, invalid, [name | unknown]}
+        end
+      end)
+
+    {options, invalid, Enum.sort(unknown)}
   end
 
   # PostgreSQL parameter type casting.
@@ -175,6 +185,35 @@ defmodule Supavisor.Protocol.StartupOptions do
       _ ->
         Map.put(base, "M", ~s(invalid value for parameter "#{name}": "#{value}"))
     end
+  end
+
+  @doc """
+  Builds the single NOTICE sent for the startup options that aren't in the schema.
+
+  ## Examples
+
+      iex> Supavisor.Protocol.StartupOptions.unknown_option_notice(["statement_timeout"])
+      %{"S" => "NOTICE", "V" => "NOTICE", "C" => "00000",
+        "M" => ~s(unknown parameter "statement_timeout" in startup options was ignored),
+        "H" => "To set a PostgreSQL parameter, use ALTER ROLE or ALTER DATABASE ... SET."}
+  """
+  @spec unknown_option_notice([String.t(), ...]) :: map()
+  def unknown_option_notice(names) do
+    quoted = Enum.map_join(names, ", ", &~s("#{&1}"))
+
+    message =
+      case names do
+        [_] -> "unknown parameter #{quoted} in startup options was ignored"
+        _ -> "unknown parameters #{quoted} in startup options were ignored"
+      end
+
+    %{
+      "S" => "NOTICE",
+      "V" => "NOTICE",
+      "C" => "00000",
+      "M" => message,
+      "H" => "To set a PostgreSQL parameter, use ALTER ROLE or ALTER DATABASE ... SET."
+    }
   end
 
   @doc """

@@ -54,6 +54,48 @@ defmodule Supavisor.Integration.PgoptionsTest do
     assert work_mem != "2047GB"
   end
 
+  test "PGOPTIONS unknown settings get a notice and stay unset", ctx do
+    {output, status} =
+      run_psql(ctx, "SHOW default_transaction_read_only;",
+        pgoptions: "-c default_transaction_read_only=on"
+      )
+
+    assert status == 0, output
+
+    assert output =~
+             ~s(unknown parameter "default_transaction_read_only" in startup options was ignored)
+
+    assert output |> String.trim() |> String.split("\n") |> List.last() == "off"
+  end
+
+  test "PGOPTIONS unknown settings share one notice", ctx do
+    default_statement_timeout = run_psql!(ctx, "SHOW statement_timeout;")
+
+    {output, status} =
+      run_psql(ctx, "SHOW statement_timeout;",
+        pgoptions: "-c default_transaction_read_only=on -c statement_timeout=1234"
+      )
+
+    assert status == 0, output
+
+    assert output =~
+             ~s(unknown parameters "default_transaction_read_only", "statement_timeout" in startup options were ignored)
+
+    assert length(String.split(output, "NOTICE:")) == 2
+
+    assert output |> String.trim() |> String.split("\n") |> List.last() ==
+             default_statement_timeout
+  end
+
+  test "PGOPTIONS with only supported options gets no notice", ctx do
+    {output, status} =
+      run_psql(ctx, "SHOW search_path;", pgoptions: "--search_path=schemaA,schemaB")
+
+    assert status == 0, output
+    refute output =~ "NOTICE:"
+    assert String.trim(output) == "schemaA,schemaB"
+  end
+
   test "PGOPTIONS --search_path invalid syntax terminates with error", ctx do
     {output, status} =
       run_psql(ctx, "SHOW search_path;", pgoptions: "--search_path=,--invalid-syntax--;(")
