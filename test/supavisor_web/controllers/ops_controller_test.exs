@@ -1,0 +1,150 @@
+defmodule SupavisorWeb.OpsControllerTest do
+  use SupavisorWeb.ConnCase, async: false
+
+  alias Supavisor.JWT.SharedSecret.Token
+
+  describe "GET /api/nodes" do
+    setup %{conn: conn} do
+      {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
+    end
+
+    test "lists this node with its uptime, version, boot id and health", %{conn: conn} do
+      name = to_string(node())
+
+      assert %{nodes: [info], errors: errors} =
+               conn |> get(~p"/api/nodes") |> json_response(200) |> assert_schema("NodeList")
+
+      assert errors == %{}
+
+      boot_id = Supavisor.Ops.boot_id()
+
+      assert %{node: ^name, host: host, uptime_ms: uptime_ms, version: version, boot_id: ^boot_id} =
+               info
+
+      assert [_name, ^host] = String.split(name, "@")
+      assert is_integer(uptime_ms)
+      assert version == to_string(Application.spec(:supavisor, :vsn))
+      assert info.health == %{status: "healthy", failed_checks: []}
+    end
+
+    test "renders failed checks and unreachable nodes", %{conn: conn} do
+      info = %{
+        node: :"supavisor@10.0.0.1",
+        host: "10.0.0.1",
+        uptime_ms: 1_000,
+        version: "1.0.0",
+        boot_id: "7b0d3c1e-5a47-4a0b-9d2f-0f4e2b8c6a11",
+        health: {:error, :failed_checks, [:database_reachable]}
+      }
+
+      stub_ops(:list_nodes, fn ->
+        %{nodes: [info], errors: %{"supavisor@10.0.0.2": :timeout}}
+      end)
+
+      body = conn |> get(~p"/api/nodes") |> json_response(200)
+      assert_schema(body, "NodeList")
+
+      assert body == %{
+               "nodes" => [
+                 %{
+                   "node" => "supavisor@10.0.0.1",
+                   "host" => "10.0.0.1",
+                   "uptime_ms" => 1_000,
+                   "version" => "1.0.0",
+                   "boot_id" => "7b0d3c1e-5a47-4a0b-9d2f-0f4e2b8c6a11",
+                   "health" => %{
+                     "status" => "unhealthy",
+                     "failed_checks" => ["database_reachable"]
+                   }
+                 }
+               ],
+               "errors" => %{"supavisor@10.0.0.2" => "unreachable"}
+             }
+    end
+
+    test "requires authorization" do
+      assert build_conn() |> get(~p"/api/nodes") |> response(403)
+    end
+
+    test "is documented in the OpenAPI spec", %{conn: conn} do
+      spec = conn |> get(~p"/api/openapi") |> json_response(200)
+      assert %{"responses" => %{"200" => _}} = spec["paths"]["/api/nodes"]["get"]
+    end
+  end
+
+  describe "POST /api/nodes/:nodehost/shutdown" do
+    setup %{conn: conn} do
+      {:ok, conn: put_req_header(conn, "authorization", "Bearer " <> gen_token())}
+    end
+
+    test "returns 404 for a node that is not in the cluster", %{conn: conn} do
+      assert %{"error" => "not found"} =
+               conn
+               |> post(~p"/api/nodes/no_such_node/shutdown")
+               |> json_response(404)
+    end
+
+    test "returns 202 for hosts and full node names, with an IP or a domain", %{conn: conn} do
+      stub_shutdown_node({:ok, %{node: :"supavisor@10.0.0.5", boot_id: "boot-id"}})
+
+      targets = [
+        "10.0.0.5",
+        "supavisor@10.0.0.5",
+        "ip-10-0-0-5.ec2.internal",
+        "supavisor@ip-10-0-0-5.ec2.internal"
+      ]
+
+      for target <- targets do
+        body = conn |> post(~p"/api/nodes/#{target}/shutdown") |> json_response(202)
+        assert body == %{"node" => "supavisor@10.0.0.5", "boot_id" => "boot-id"}
+        assert_schema(body, "NodeShutdown")
+        assert :meck.called(Supavisor.Ops, :shutdown_node, [target])
+      end
+    end
+
+    test "returns 409 when several nodes share the host", %{conn: conn} do
+      stub_shutdown_node({:error, :ambiguous})
+
+      assert %{"error" => "several nodes share this host" <> _} =
+               conn
+               |> post(~p"/api/nodes/127.0.0.1/shutdown")
+               |> json_response(409)
+    end
+
+    test "returns 503 when the node is unreachable", %{conn: conn} do
+      stub_shutdown_node({:error, :node_unreachable})
+
+      assert %{"error" => "node unreachable"} =
+               conn
+               |> post(~p"/api/nodes/node1/shutdown")
+               |> json_response(503)
+    end
+
+    test "requires authorization" do
+      assert build_conn() |> post(~p"/api/nodes/node1/shutdown") |> response(403)
+    end
+
+    test "is documented in the OpenAPI spec", %{conn: conn} do
+      spec = conn |> get(~p"/api/openapi") |> json_response(200)
+
+      assert %{"responses" => %{"202" => _, "404" => _, "409" => _, "503" => _}} =
+               spec["paths"]["/api/nodes/{nodehost}/shutdown"]["post"]
+
+      assert %{"required" => ["node", "boot_id"]} = spec["components"]["schemas"]["NodeShutdown"]
+    end
+  end
+
+  defp stub_shutdown_node(result) do
+    stub_ops(:shutdown_node, fn _target -> result end)
+  end
+
+  defp stub_ops(function, fun) do
+    :meck.new(Supavisor.Ops, [:passthrough, :no_link])
+    on_exit(fn -> :meck.unload(Supavisor.Ops) end)
+    :meck.expect(Supavisor.Ops, function, fun)
+  end
+
+  defp gen_token do
+    Token.gen!(Application.fetch_env!(:supavisor, :api_jwt_secret))
+  end
+end

@@ -23,6 +23,18 @@ defmodule Supavisor.HealthTest do
                Health.health_check(exit_check: {__MODULE__, :exit_check, []})
     end
 
+    test "kills and fails a check that does not finish in time" do
+      checks = [
+        passing_check: {__MODULE__, :passing_check, []},
+        hanging_check: {__MODULE__, :hanging_check, [self()]}
+      ]
+
+      assert {:error, :failed_checks, [:hanging_check]} = Health.health_check(checks, 100)
+
+      assert_receive {:hanging, pid}
+      refute Process.alive?(pid)
+    end
+
     test "returns checks with invalid responses" do
       assert {:error, :failed_checks, [:invalid_response_check]} =
                Health.health_check(
@@ -41,6 +53,13 @@ defmodule Supavisor.HealthTest do
 
   def exit_check(_args) do
     exit(:whoops)
+  end
+
+  def passing_check, do: true
+
+  def hanging_check(test_pid) do
+    send(test_pid, {:hanging, self()})
+    Process.sleep(:infinity)
   end
 
   def invalid_response_check(_args) do

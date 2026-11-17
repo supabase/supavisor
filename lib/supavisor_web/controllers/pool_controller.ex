@@ -96,7 +96,9 @@ defmodule SupavisorWeb.PoolController do
       204 => Empty.response(),
       404 => NotFound.response(),
       422 => UnprocessablyEntity.response(),
-      503 => {"Node of the pool unreachable", "application/json", Empty}
+      503 =>
+        {"Node of the pool unreachable or did not answer in time: the pool may still stop",
+         "application/json", Empty}
     }
   )
 
