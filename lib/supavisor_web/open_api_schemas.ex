@@ -667,7 +667,7 @@ defmodule SupavisorWeb.OpenApiSchemas do
         node: %Schema{type: :string, description: "Full node name"},
         boot_id: %Schema{
           type: :string,
-          description: "Id of the start of the node that accepted the shutdown"
+          description: "Id of the start of the node being shut down"
         }
       },
       required: [:node, :boot_id],

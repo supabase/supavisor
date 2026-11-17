@@ -11,6 +11,7 @@ defmodule Supavisor.Ops do
   alias Supavisor.Tenants
 
   @multicall_timeout :timer.seconds(5)
+  @rpc_timeout :timer.seconds(5)
   @stop_timeout :timer.seconds(15)
   @shutdown_delay :timer.seconds(1)
   @shutdown_watchdog :timer.seconds(60)
@@ -115,7 +116,7 @@ defmodule Supavisor.Ops do
            __MODULE__,
            :stop_pool_local,
            [tenant, sup, timeout],
-           timeout + @multicall_timeout
+           timeout + @rpc_timeout
          ) do
       {:error, {:badrpc, _} = reason} ->
         Logger.warning("Failed to stop pool of #{tenant} on #{node(sup)}: #{inspect(reason)}")
@@ -204,7 +205,7 @@ defmodule Supavisor.Ops do
   @doc """
   Shuts down a node of the cluster, given its `nodehost` or its full node name.
   The node is only asked to shut down: it exits shortly after this returns. Returns the
-  boot id of the start of the node that accepted the shutdown.
+  boot id of the node that is being shut down.
   """
   @spec shutdown_node(String.t()) ::
           {:ok, %{node: node(), boot_id: String.t()}}
@@ -212,9 +213,9 @@ defmodule Supavisor.Ops do
   def shutdown_node(target) do
     case resolve_node(target) do
       {:ok, node} ->
-        case Helpers.rpc(node, __MODULE__, :shutdown_node_local, [], @multicall_timeout) do
+        case Helpers.rpc(node, __MODULE__, :shutdown_node_local, [], @rpc_timeout) do
           {:error, {:badrpc, _} = reason} ->
-            Logger.warning("Failed to shut down node #{target}: #{inspect(reason)}")
+            Logger.warning("Failed to shut down node #{inspect(target)}: #{inspect(reason)}")
             {:error, :node_unreachable}
 
           {:ok, boot_id} ->
@@ -222,7 +223,7 @@ defmodule Supavisor.Ops do
         end
 
       {:error, reason} = error ->
-        Logger.warning("Shut down node #{target}: #{reason}")
+        Logger.warning("Shut down node #{inspect(target)}: #{reason}")
         error
     end
   end
@@ -265,8 +266,8 @@ defmodule Supavisor.Ops do
 
     # Timers, not processes of ours: they live under the kernel, so the backstop for a
     # graceful stop that hangs outlasts the shutdown of our supervision tree.
-    # `System.stop/1` returns right away. Its status is non-zero, so the supervisor sees
-    # a failed exit rather than a clean stop.
+    # `System.stop/1` returns right away. Its status is non-zero, so the external supervisor
+    # sees a failed exit rather than a clean stop.
     :timer.apply_after(delay, System, :stop, [1])
     :timer.apply_after(delay + watchdog, System, :halt, [1])
 

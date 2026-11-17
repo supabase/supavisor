@@ -129,7 +129,7 @@ defmodule Supavisor.Integration.ShutdownNodeTest do
       end)
 
     assert log =~
-             ~s(Failed to shut down node #{peer_node}: {:badrpc, {:error, {:exception, %RuntimeError{message: "boom"})
+             ~s(Failed to shut down node "#{peer_node}": {:badrpc, {:error, {:exception, %RuntimeError{message: "boom"})
 
     assert peer_node in Node.list()
   end
@@ -142,7 +142,7 @@ defmodule Supavisor.Integration.ShutdownNodeTest do
         assert {:error, :ambiguous} = Supavisor.Ops.shutdown_node("127.0.0.1")
       end)
 
-    assert log =~ "Shut down node 127.0.0.1: ambiguous"
+    assert log =~ ~s(Shut down node "127.0.0.1": ambiguous)
     assert peer_node in Node.list()
   end
 

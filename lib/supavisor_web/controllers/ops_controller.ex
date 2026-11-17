@@ -38,7 +38,11 @@ defmodule SupavisorWeb.OpsController do
 
     `202` only confirms the shutdown was initiated: the node exits shortly after. It comes
     back only if whatever supervises the process starts it again. The reply holds the
-    `boot_id` of the start of the node that accepted the shutdown.
+    `node` and `boot_id` of the node being shut down, which is not necessarily the node that
+    received the request.
+
+    If the request fails with a connection error or a `503`, the shutdown may still go
+    ahead: check `GET /api/nodes`.
     """,
     parameters: [
       nodehost: [in: :path, description: "Node host or full node name", type: :string],
@@ -48,7 +52,9 @@ defmodule SupavisorWeb.OpsController do
       202 => NodeShutdown.response(),
       404 => NotFound.response(),
       409 => {"Several nodes share the host", "application/json", Empty},
-      503 => {"Node unreachable", "application/json", Empty}
+      503 =>
+        {"Node unreachable or did not answer in time: the shutdown may still go ahead",
+         "application/json", Empty}
     }
   )
 

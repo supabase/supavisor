@@ -297,10 +297,11 @@ defmodule Supavisor.OpsTest do
     test "returns :not_found for a node that is not in the cluster" do
       log =
         capture_log([level: :warning], fn ->
-          assert {:error, :not_found} = Ops.shutdown_node("no_such_node")
+          assert {:error, :not_found} = Ops.shutdown_node("no_such\nnode")
         end)
 
-      assert log =~ "Shut down node no_such_node: not_found"
+      # The target is escaped, so it can't inject a line into the log.
+      assert log =~ ~S(Shut down node "no_such\nnode": not_found)
     end
   end
 end
