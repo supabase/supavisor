@@ -91,6 +91,14 @@ defmodule Supavisor.ClientHandler do
   @spec backend_synced(pid(), non_neg_integer()) :: :ok
   def backend_synced(pid, write_seq), do: :gen_statem.cast(pid, {:backend_synced, write_seq})
 
+  @doc """
+  Tells the ClientHandler the backend failed or ignored its Parses of these statements, given by
+  their server-side names, so it forgets their names as Postgres would.
+  """
+  @spec parses_failed(pid(), [PreparedStatements.statement_name()]) :: :ok
+  def parses_failed(pid, server_side_names),
+    do: :gen_statem.cast(pid, {:parses_failed, server_side_names})
+
   @spec send_error_and_terminate(pid(), iodata()) :: :ok
   def send_error_and_terminate(pid, error_message),
     do: :gen_statem.cast(pid, {:send_error_and_terminate, error_message})
@@ -652,6 +660,20 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:cast, {:backend_synced, _write_seq}, :idle, _) do
     :keep_state_and_data
+  end
+
+  # The DbHandler sends this before the backend's error reaches the client, so the client's
+  # retry of the Parse finds the name free.
+  def handle_event(:cast, {:parses_failed, server_side_names}, _state, data) do
+    stream_state =
+      MessageStreamer.update_state(data.stream_state, fn handler_state ->
+        statements =
+          PreparedStatements.forget(handler_state.prepared_statements, server_side_names)
+
+        %{handler_state | prepared_statements: statements}
+      end)
+
+    {:keep_state, %{data | stream_state: stream_state}}
   end
 
   def handle_event(:cast, {:send_error_and_terminate, error_message}, _state, data) do

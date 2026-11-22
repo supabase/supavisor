@@ -516,11 +516,14 @@ defmodule Supavisor.DbHandler do
 
     {backend, to_send, synced?} = BackendConnection.recv(data.backend, bin)
     data = %{data | backend: backend}
+    failed_parses = BackendConnection.failed_parses(backend)
 
-    # Reported before the write, so it's in the ClientHandler's mailbox before the client
-    # can react to the response: its disconnect or, in session mode, its next query can't
-    # overtake it. A worker flushing to a slow client still stays out of the pool, since
-    # the release that follows is only handled once this write is done.
+    # Reported before the write, so they're in the ClientHandler's mailbox before the client
+    # can react to the response. Its disconnect, its retry of a failed Parse or, in session
+    # mode, its next query can't overtake them. A worker flushing to a slow client still
+    # stays out of the pool, since the release that follows is only handled once this write
+    # is done.
+    if failed_parses != [], do: ClientHandler.parses_failed(data.caller, failed_parses)
     if synced?, do: ClientHandler.backend_synced(data.caller, data.write_seq)
 
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)

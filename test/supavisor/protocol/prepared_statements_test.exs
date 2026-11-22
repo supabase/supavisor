@@ -214,6 +214,20 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       assert_valid_error(error)
     end
 
+    test "forget drops the statements with the given server-side names" do
+      kept = %PreparedStatement{name: "server_kept", parse_pkt: "parse kept"}
+      gone = %PreparedStatement{name: "server_gone", parse_pkt: "parse gone"}
+      {:ok, client_statements} = Storage.put(Storage.new(), "kept", kept)
+      {:ok, client_statements} = Storage.put(client_statements, "gone", gone)
+
+      client_statements = PreparedStatements.forget(client_statements, ["server_gone"])
+
+      assert Storage.get(client_statements, "gone") == nil
+      assert Storage.get(client_statements, "kept") == kept
+      assert Storage.statement_memory(client_statements) == PreparedStatement.size(kept)
+      assert PreparedStatements.forget(client_statements, ["server_other"]) == client_statements
+    end
+
     test "parse message returns error when memory limit is reached" do
       # Create a large prepared statement that will push us over the memory limit
       large_query = String.duplicate("a", PreparedStatements.client_memory_limit_bytes() - 19)

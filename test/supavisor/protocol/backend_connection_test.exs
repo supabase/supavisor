@@ -617,6 +617,37 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
       refute LRU.member?(statements(backend), "s1")
     end
 
+    test "a failed Parse from the client is reported for that read, one sent by Supavisor isn't" do
+      for {tag, pkt, failed} <- [{?P, parse("s1"), ["s1"]}, {?B, bind("s1"), []}] do
+        {backend, _to_backend, [], 0} = send_parked_write(new(), [{:ps, tag}, ?S], [pkt, "s"])
+
+        assert {backend, _out, false} = BackendConnection.recv(backend, error("25P02") <> z(?E))
+        assert BackendConnection.failed_parses(backend) == failed
+
+        backend = BackendConnection.client_write(backend, [?Q])
+        assert {backend, _out, true} = BackendConnection.recv(backend, z(?I))
+        assert BackendConnection.failed_parses(backend) == []
+      end
+    end
+
+    test "client Parses ignored after an error are reported, sent or not" do
+      backend = BackendConnection.client_write(new(["s2"]), [?B, ?E])
+      tags = [{:ps, ?P}, {:ps, ?P}, ?S]
+
+      {backend, to_backend, [], 0} =
+        send_parked_write(backend, tags, [parse("s1"), parse("s2"), "s"])
+
+      assert IO.iodata_to_binary(to_backend) == "parse(s1)s"
+
+      assert {backend, _out, false} =
+               BackendConnection.recv(backend, bind_complete() <> error("22012"))
+
+      assert BackendConnection.failed_parses(backend) == []
+
+      assert {backend, _out, true} = BackendConnection.recv(backend, z(?I))
+      assert BackendConnection.failed_parses(backend) == ["s1", "s2"]
+    end
+
     test "a Close ignored after an error, sent or not, leaves the statements as they were" do
       for had_statement? <- [false, true] do
         before = if had_statement?, do: ["s1"], else: []

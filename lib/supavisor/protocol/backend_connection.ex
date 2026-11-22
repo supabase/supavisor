@@ -57,6 +57,11 @@ defmodule Supavisor.Protocol.BackendConnection do
   Packets sent before the backend's answer arrives may still fail with it, since whether it
   would succeed wasn't known when they were sent.
 
+  The client's own Parses that the backend fails or ignores, whether Supavisor sent them or
+  answered them itself, are returned by `failed_parses/1` after the `recv/2` that saw them. The
+  ClientHandler still has a name for each, and forgets it, since Postgres lets the client parse
+  it again.
+
   Undoing each ignored message on its own can leave the record wrong when a statement has
   more than one unanswered Parse or Close. The backend's next error about the statement
   corrects it. A Parse failing with 42P05 (`duplicate_prepared_statement`) records the statement, and a Bind or Describe
@@ -95,7 +100,8 @@ defmodule Supavisor.Protocol.BackendConnection do
     streaming: nil,
     client_in_copy: false,
     running_queries: %{},
-    query_results: %{}
+    query_results: %{},
+    failed_parses: []
   )
 
   @type state() ::
@@ -121,7 +127,8 @@ defmodule Supavisor.Protocol.BackendConnection do
             streaming: {bytes_left :: non_neg_integer(), forward? :: boolean()} | nil,
             client_in_copy: boolean(),
             running_queries: %{atom() => map() | nil},
-            query_results: %{atom() => query_result()}
+            query_results: %{atom() => query_result()},
+            failed_parses: [PreparedStatements.statement_name()]
           )
 
   @parse ?P
@@ -270,13 +277,20 @@ defmodule Supavisor.Protocol.BackendConnection do
   """
   @spec recv(t(), binary()) :: {t(), iodata(), boolean()}
   def recv(backend(buffer: <<>>) = backend, data) do
-    {backend, out, synced?} = parse_input(backend, data)
+    {backend, out, synced?} = parse_input(backend(backend, failed_parses: []), data)
     {backend, Enum.reverse(out), synced?}
   end
 
   # Appending to an empty buffer would still copy `data`.
   def recv(backend(buffer: buffer) = backend, data),
     do: recv(backend(backend, buffer: <<>>), buffer <> data)
+
+  @doc """
+  Returns the server-side names of the client's Parses that the backend failed or ignored in the
+  last `recv/2`, in order. None of them created a statement.
+  """
+  @spec failed_parses(t()) :: [PreparedStatements.statement_name()]
+  def failed_parses(backend(failed_parses: names)), do: Enum.reverse(names)
 
   @doc """
   Returns whether the backend is idle, outside a transaction, with every request answered, no
@@ -662,8 +676,20 @@ defmodule Supavisor.Protocol.BackendConnection do
           statements
       end
 
-    finish_query(backend(backend, requests: requests, statements: statements), request)
+    backend
+    |> backend(requests: requests, statements: statements)
+    |> record_failed_parse(request)
+    |> finish_query(request)
   end
+
+  # The client's own Parse, whether Supavisor sent it or answered it itself. A Parse Supavisor
+  # sends ahead of a Bind or Describe doesn't count, since the client's Parse of that statement
+  # succeeded earlier and its name stays.
+  defp record_failed_parse(backend(failed_parses: names) = backend, {@parse, action, name})
+       when action in [:forward, :fake] and is_binary(name),
+       do: backend(backend, failed_parses: [name | names])
+
+  defp record_failed_parse(backend, _request), do: backend
 
   # A query's requests are queued together, so it's over once the next request isn't one of its.
   defp finish_query(backend, {_, {:internal_query, id}, _}) do

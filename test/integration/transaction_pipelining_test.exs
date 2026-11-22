@@ -762,6 +762,61 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
+  # Postgres rejects every Parse in a failed transaction, so the statement isn't created and
+  # the client can parse it again after ROLLBACK, as retry loops in pgx and asyncpg do.
+  @tag named_prepared_statements: true
+  test "parses a statement again after the backend rejected its Parse", %{tenant: tenant} do
+    name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+    sock = connect(tenant)
+
+    :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1/0")])
+    assert error_codes(recv_rfqs(sock, 2)) == ["22012"]
+
+    :ok = :gen_tcp.send(sock, [parse(name, "SELECT 42"), @sync])
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == ["25P02"]
+    assert statuses(pkts) == [?E]
+
+    :ok = :gen_tcp.send(sock, query("ROLLBACK"))
+    assert statuses(recv_rfqs(sock, 1)) == [?I]
+
+    :ok =
+      :gen_tcp.send(sock, [parse(name, "SELECT 42"), bind("", name, []), execute(""), @sync])
+
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [["42"]]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
+  # Whether Supavisor sends the skipped Parse depends on whether the backend has the
+  # statement already. Either way the client's name has to be free afterwards.
+  for {label, on_backend?} <- [{"sent", false}, {"not sent", true}] do
+    @tag named_prepared_statements: true
+    test "parses a statement again after the backend skipped its Parse, #{label}", %{
+      tenant: tenant
+    } do
+      name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+      if unquote(on_backend?), do: prepare_on_backend(tenant, name, "SELECT 42")
+      sock = connect(tenant)
+
+      :ok = :gen_tcp.send(sock, [extended("SELECT 1/0"), parse(name, "SELECT 42"), @sync])
+      pkts = recv_rfqs(sock, 1)
+      assert error_codes(pkts) == ["22012"]
+      assert tags(pkts) == [?1, ?E, ?Z]
+
+      :ok =
+        :gen_tcp.send(sock, [parse(name, "SELECT 42"), bind("", name, []), execute(""), @sync])
+
+      pkts = recv_rfqs(sock, 1)
+      assert error_codes(pkts) == []
+      assert rows(pkts) == [["42"]]
+      refute_more(sock)
+      assert_released(tenant)
+    end
+  end
+
   # On a backend without the statement, the Parse sent ahead of the first Bind is skipped
   # after the error. The second Bind comes after the Sync, in the same write, so it's sent
   # before the backend's answer shows the statement was never created.

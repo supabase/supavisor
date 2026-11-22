@@ -109,6 +109,14 @@ defmodule Supavisor.Protocol.PreparedStatements do
   end
 
   @doc """
+  Forgets the client's statements with these server-side names, whose Parse the backend failed
+  or ignored.
+  """
+  @spec forget(Storage.t(), [statement_name()]) :: Storage.t()
+  def forget(client_statements, server_side_names),
+    do: Storage.delete_server_side(client_statements, server_side_names)
+
+  @doc """
   Handles a Bind (B) message for prepared statements.
   """
   @spec handle_bind_message(Storage.t(), non_neg_integer(), binary()) ::

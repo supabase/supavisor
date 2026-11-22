@@ -57,6 +57,15 @@ defmodule Supavisor.Protocol.PreparedStatements.Storage do
     {statement, {new_size, new_statements}}
   end
 
+  @spec delete_server_side(t(), [PreparedStatements.statement_name()]) :: t()
+  def delete_server_side({_size, statements} = storage, server_side_names) do
+    Enum.reduce(statements, storage, fn {name, statement}, {size, kept} = acc ->
+      if statement.name in server_side_names,
+        do: {size - PreparedStatement.size(statement), Map.delete(kept, name)},
+        else: acc
+    end)
+  end
+
   @spec statement_count(t()) :: non_neg_integer()
   def statement_count({_size, statements}) do
     map_size(statements)
