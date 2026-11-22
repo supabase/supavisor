@@ -762,6 +762,149 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
+  # DISCARD ALL and DEALLOCATE ALL drop every statement on the backend, so the next client
+  # there needs its Parse sent again. Prisma with pgbouncer=true runs DEALLOCATE ALL at the
+  # start of every transaction. The test config rejects DEALLOCATE in simple queries, so it
+  # goes through the extended protocol here.
+  for {label, commands} <- [
+        {"DISCARD ALL", [{:simple, "DISCARD ALL"}]},
+        {"DEALLOCATE ALL", [{:extended, "DEALLOCATE ALL"}]},
+        {"DEALLOCATE ALL in a transaction",
+         [{:simple, "BEGIN"}, {:extended, "DEALLOCATE ALL"}, {:simple, "COMMIT"}]}
+      ] do
+    @tag named_prepared_statements: true
+    test "prepares a statement again after another client's #{label}", %{tenant: tenant} do
+      name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+      commands = unquote(commands)
+      sock = connect(tenant)
+
+      :ok =
+        :gen_tcp.send(sock, [
+          parse(name, "SELECT 42"),
+          bind("", name, []),
+          execute(""),
+          @sync,
+          query("SELECT pg_backend_pid()")
+        ])
+
+      assert [["42"], [backend_pid]] = rows(recv_rfqs(sock, 2))
+      assert_released(tenant)
+
+      # The pool hands out the most recently returned backend, so the other client gets the
+      # one with the statement, and the first client gets it back after.
+      other = connect(tenant)
+
+      :ok =
+        :gen_tcp.send(other, [Enum.map(commands, &command/1), query("SELECT pg_backend_pid()")])
+
+      pkts = recv_rfqs(other, length(commands) + 1)
+      assert error_codes(pkts) == []
+      assert rows(pkts) == [[backend_pid]]
+      :ok = :gen_tcp.close(other)
+      assert_released(tenant)
+
+      :ok =
+        :gen_tcp.send(sock, [
+          bind("", name, []),
+          execute(""),
+          @sync,
+          query("SELECT pg_backend_pid()")
+        ])
+
+      pkts = recv_rfqs(sock, 2)
+      assert error_codes(pkts) == []
+      assert rows(pkts) == [["42"], [backend_pid]]
+      refute_more(sock)
+      assert_released(tenant)
+    end
+  end
+
+  # Postgres drops the client's own statements too, so it can parse a name it used before.
+  for {protocol, sql} <- [{:simple, "DISCARD ALL"}, {:extended, "DEALLOCATE ALL"}] do
+    @tag named_prepared_statements: true
+    test "parses a statement again after its own #{sql}", %{tenant: tenant} do
+      name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+      sock = connect(tenant)
+
+      :ok = :gen_tcp.send(sock, [parse(name, "SELECT 42"), @sync])
+      assert statuses(recv_rfqs(sock, 1)) == [?I]
+
+      :ok = :gen_tcp.send(sock, command({unquote(protocol), unquote(sql)}))
+      assert error_codes(recv_rfqs(sock, 1)) == []
+
+      :ok =
+        :gen_tcp.send(sock, [parse(name, "SELECT 43"), bind("", name, []), execute(""), @sync])
+
+      pkts = recv_rfqs(sock, 1)
+      assert error_codes(pkts) == []
+      assert rows(pkts) == [["43"]]
+      refute_more(sock)
+      assert_released(tenant)
+    end
+  end
+
+  # A statement parsed after the command is one Postgres keeps.
+  @tag named_prepared_statements: true
+  test "keeps a statement parsed after DISCARD ALL in the same write", %{tenant: tenant} do
+    name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+    sock = connect(tenant)
+
+    :ok =
+      :gen_tcp.send(sock, [
+        query("DISCARD ALL"),
+        parse(name, "SELECT 42"),
+        bind("", name, []),
+        execute(""),
+        @sync
+      ])
+
+    pkts = recv_rfqs(sock, 2)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [["42"]]
+
+    :ok = :gen_tcp.send(sock, [bind("", name, []), execute(""), @sync])
+
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [["42"]]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
+  # The ClientHandler handles the next write before it hears of the DISCARD ALL, so the
+  # statement parsed there must survive it.
+  @tag named_prepared_statements: true
+  test "keeps a statement parsed in a write handled before the DISCARD ALL completes", %{
+    tenant: tenant
+  } do
+    name = "pipelining_stmt_#{System.unique_integer([:positive])}"
+    sock = connect(tenant)
+    client = client_handler(tenant, sock)
+
+    :ok = :gen_tcp.send(sock, [query("SELECT pg_sleep(0.2)"), query("DISCARD ALL")])
+    assert_eventually(20, 10, fn -> elem(:sys.get_state(client), 0) == :busy end)
+
+    :ok = :sys.suspend(client)
+
+    :ok =
+      :gen_tcp.send(sock, [parse(name, "SELECT 42"), bind("", name, []), execute(""), @sync])
+
+    Process.sleep(400)
+    :ok = :sys.resume(client)
+
+    pkts = recv_rfqs(sock, 3)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [[""], ["42"]]
+
+    :ok = :gen_tcp.send(sock, [bind("", name, []), execute(""), @sync])
+
+    pkts = recv_rfqs(sock, 1)
+    assert error_codes(pkts) == []
+    assert rows(pkts) == [["42"]]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
   # On a backend without the statement, the Parse sent ahead of the first Bind is skipped
   # after the error. The second Bind comes after the Sync, in the same write, so it's sent
   # before the backend's answer shows the statement was never created.
@@ -958,6 +1101,9 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
 
   # Parse+Bind+Execute on the unnamed statement and portal, without a Sync.
   defp extended(sql), do: [parse("", sql), bind("", "", []), execute("")]
+
+  defp command({:simple, sql}), do: query(sql)
+  defp command({:extended, sql}), do: [extended(sql), @sync]
 
   ## Backend messages
 

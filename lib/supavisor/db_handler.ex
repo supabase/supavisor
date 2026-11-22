@@ -517,10 +517,13 @@ defmodule Supavisor.DbHandler do
     {backend, to_send, synced?} = BackendConnection.recv(data.backend, bin)
     data = %{data | backend: backend}
 
-    # Reported before the write, so it's in the ClientHandler's mailbox before the client
-    # can react to the response: its disconnect or, in session mode, its next query can't
-    # overtake it. A worker flushing to a slow client still stays out of the pool, since
-    # the release that follows is only handled once this write is done.
+    # Reported before the write, so they're in the ClientHandler's mailbox before the client
+    # can react to the response. Its disconnect, its next Parse or, in session mode, its next
+    # query can't overtake them. A worker flushing to a slow client still stays out of the
+    # pool, since the release that follows is only handled once this write is done.
+    if BackendConnection.client_statements_dropped?(backend),
+      do: ClientHandler.statements_dropped(data.caller, data.write_seq)
+
     if synced?, do: ClientHandler.backend_synced(data.caller, data.write_seq)
 
     send_result = if to_send == [], do: :ok, else: client_send(data, to_send)

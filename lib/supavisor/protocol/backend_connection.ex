@@ -57,6 +57,12 @@ defmodule Supavisor.Protocol.BackendConnection do
   Packets sent before the backend's answer arrives may still fail with it, since whether it
   would succeed wasn't known when they were sent.
 
+  A DISCARD ALL or DEALLOCATE ALL drops every statement on the backend, including the ones other
+  clients use. Once it completes, only the statements Parsed by messages sent after it are
+  recorded. When the client sent it, `client_statements_dropped?/1` says so after the `recv/2`
+  that saw it completing, unless a Parse of the client's own was sent after it. The
+  ClientHandler then forgets the client's names, as Postgres would.
+
   Undoing each ignored message on its own can leave the record wrong when a statement has
   more than one unanswered Parse or Close. The backend's next error about the statement
   corrects it. A Parse failing with 42P05 (`duplicate_prepared_statement`) records the statement, and a Bind or Describe
@@ -95,7 +101,8 @@ defmodule Supavisor.Protocol.BackendConnection do
     streaming: nil,
     client_in_copy: false,
     running_queries: %{},
-    query_results: %{}
+    query_results: %{},
+    client_statements_dropped: false
   )
 
   @type state() ::
@@ -121,7 +128,8 @@ defmodule Supavisor.Protocol.BackendConnection do
             streaming: {bytes_left :: non_neg_integer(), forward? :: boolean()} | nil,
             client_in_copy: boolean(),
             running_queries: %{atom() => map() | nil},
-            query_results: %{atom() => query_result()}
+            query_results: %{atom() => query_result()},
+            client_statements_dropped: boolean()
           )
 
   @parse ?P
@@ -163,6 +171,9 @@ defmodule Supavisor.Protocol.BackendConnection do
   ]
 
   @extended_query_messages [@parse, @bind, @close, @describe, @execute]
+
+  # The CommandComplete tags of the commands that drop every prepared statement.
+  @drop_all_tags [<<"DISCARD ALL", 0>>, <<"DEALLOCATE ALL", 0>>]
 
   @duplicate_pstatement "42P05"
   @undefined_pstatement "26000"
@@ -270,13 +281,23 @@ defmodule Supavisor.Protocol.BackendConnection do
   """
   @spec recv(t(), binary()) :: {t(), iodata(), boolean()}
   def recv(backend(buffer: <<>>) = backend, data) do
-    {backend, out, synced?} = parse_input(backend, data)
+    {backend, out, synced?} =
+      parse_input(backend(backend, client_statements_dropped: false), data)
+
     {backend, Enum.reverse(out), synced?}
   end
 
   # Appending to an empty buffer would still copy `data`.
   def recv(backend(buffer: buffer) = backend, data),
     do: recv(backend(backend, buffer: <<>>), buffer <> data)
+
+  @doc """
+  Returns whether a DISCARD ALL or DEALLOCATE ALL from the client completed in the last
+  `recv/2`, with no Parse of the client's sent after it, so none of the client's statements is
+  left.
+  """
+  @spec client_statements_dropped?(t()) :: boolean()
+  def client_statements_dropped?(backend(client_statements_dropped: dropped?)), do: dropped?
 
   @doc """
   Returns whether the backend is idle, outside a transaction, with every request answered, no
@@ -497,6 +518,9 @@ defmodule Supavisor.Protocol.BackendConnection do
   defp answering(backend, type, _body) when type in [@row_description, @no_data],
     do: pop_request(backend, @describe)
 
+  defp answering(backend, @command_complete, body) when body in @drop_all_tags,
+    do: backend |> drop_all_statements() |> pop_request(@execute)
+
   defp answering(backend, type, _body)
        when type in [@command_complete, @empty_query_response, @portal_suspended],
        do: pop_request(backend, @execute)
@@ -663,6 +687,45 @@ defmodule Supavisor.Protocol.BackendConnection do
       end
 
     finish_query(backend(backend, requests: requests, statements: statements), request)
+  end
+
+  # The request at the head ran the command. Every request queued after it was sent after it, so
+  # the backend ends up with the statements their Parses create.
+  defp drop_all_statements(backend(requests: requests, storage: storage) = backend) do
+    {head, later} =
+      case :queue.to_list(requests) do
+        [head | later] -> {head, later}
+        [] -> {nil, []}
+      end
+
+    statements = Enum.reduce(later, storage.new(), &redo_statement(&1, &2, storage))
+
+    backend(backend,
+      statements: statements,
+      client_statements_dropped:
+        client_command?(head) and not client_parse_pending?(backend, later)
+    )
+  end
+
+  defp redo_statement({@parse, action, name}, statements, storage)
+       when action in [:forward, :skip] and is_binary(name),
+       do: storage.put(statements, name)
+
+  defp redo_statement({@close, action, name}, statements, storage)
+       when action in [:forward, :skip] and is_binary(name),
+       do: storage.delete(statements, name)
+
+  defp redo_statement(_request, statements, _storage), do: statements
+
+  defp client_command?({_, :forward, _}), do: true
+  defp client_command?(_request), do: false
+
+  # The client already has a name for a Parse it sent after the command, which Postgres keeps.
+  defp client_parse_pending?(backend(parked_write: parked_write), later) do
+    Enum.any?(later, fn
+      {@parse, action, name} -> action in [:forward, :fake] and is_binary(name)
+      _request -> false
+    end) or Enum.member?(parked_write || [], {:ps, @parse})
   end
 
   # A query's requests are queued together, so it's over once the next request isn't one of its.

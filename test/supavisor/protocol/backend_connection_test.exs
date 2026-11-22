@@ -680,6 +680,93 @@ defmodule Supavisor.Protocol.BackendConnectionTest do
     end
   end
 
+  describe "DISCARD ALL and DEALLOCATE ALL" do
+    test "drop every statement, so a Bind sends its Parse again" do
+      simple = {[?Q], ""}
+      extended = {[?P, ?B, ?E, ?S], parse_complete() <> bind_complete()}
+
+      for tag <- ["DISCARD ALL", "DEALLOCATE ALL"], {tags, before} <- [simple, extended] do
+        backend = BackendConnection.client_write(new(["s1", "s2"]), tags)
+        responses = before <> command_complete(tag) <> z(?I)
+
+        assert {backend, out, true} = BackendConnection.recv(backend, responses)
+        assert IO.iodata_to_binary(out) == responses
+        assert LRU.size(statements(backend)) == 0
+        assert BackendConnection.client_statements_dropped?(backend)
+
+        {_backend, to_backend, [], 0} =
+          send_parked_write(backend, [{:ps, ?B}, ?S], [bind("s1"), "s"])
+
+        assert IO.iodata_to_binary(to_backend) == "parse(s1)bind(s1)s"
+      end
+    end
+
+    test "other commands leave the statements" do
+      for tag <- ["DISCARD PLANS", "DEALLOCATE", "SELECT 1"] do
+        backend = BackendConnection.client_write(new(["s1"]), [?Q])
+
+        assert {backend, _out, true} =
+                 BackendConnection.recv(backend, command_complete(tag) <> z(?I))
+
+        assert LRU.member?(statements(backend), "s1")
+        refute BackendConnection.client_statements_dropped?(backend)
+      end
+    end
+
+    test "keep the statements that messages sent after them create" do
+      backend = BackendConnection.client_write(new(["s1", "s2"]), [?Q])
+      tags = [{:ps, ?P}, {:ps, ?B}, ?E, {:ps, ?C}, ?S]
+      pkts = [parse("s3"), bind("s4"), "e", close("s2"), "s"]
+      {backend, to_backend, [], 0} = send_parked_write(backend, tags, pkts)
+
+      assert IO.iodata_to_binary(to_backend) == "parse(s3)parse(s4)bind(s4)eclose(s2)s"
+
+      assert {backend, _out, false} =
+               BackendConnection.recv(backend, command_complete("DISCARD ALL") <> z(?I))
+
+      assert Enum.filter(["s1", "s2", "s3", "s4"], &LRU.member?(statements(backend), &1)) ==
+               ["s3", "s4"]
+    end
+
+    test "leave the client's statements when Supavisor ran them or a client Parse follows" do
+      parked =
+        new()
+        |> BackendConnection.client_write([?Q])
+        |> BackendConnection.client_write([{:ps, ?P}, ?S])
+
+      {sent, _to_backend, [], 0} =
+        new()
+        |> BackendConnection.client_write([?Q])
+        |> send_parked_write([{:ps, ?P}, ?S], [parse("s1"), "s"])
+
+      {not_sent, _to_backend, [], 0} =
+        new(["s1"])
+        |> BackendConnection.client_write([?Q])
+        |> send_parked_write([{:ps, ?P}, ?S], [parse("s1"), "s"])
+
+      internal = BackendConnection.query(new(["s1"]), simple_query("DISCARD ALL"), :reset)
+
+      for backend <- [parked, sent, not_sent, internal] do
+        {backend, _out, _synced?} =
+          BackendConnection.recv(backend, command_complete("DISCARD ALL"))
+
+        refute BackendConnection.client_statements_dropped?(backend)
+      end
+    end
+
+    test "report the client's statements dropped for that read only" do
+      backend = BackendConnection.client_write(new(["s1"]), [?Q, ?Q])
+
+      assert {backend, _out, false} =
+               BackendConnection.recv(backend, command_complete("DEALLOCATE ALL") <> z(?I))
+
+      assert BackendConnection.client_statements_dropped?(backend)
+
+      assert {backend, _out, true} = BackendConnection.recv(backend, z(?I))
+      refute BackendConnection.client_statements_dropped?(backend)
+    end
+  end
+
   describe "queries run by Supavisor" do
     test "none of their responses reach the client" do
       backend = BackendConnection.query(new(), extended_query(), :check)

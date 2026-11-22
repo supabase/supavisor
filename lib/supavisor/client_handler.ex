@@ -91,6 +91,14 @@ defmodule Supavisor.ClientHandler do
   @spec backend_synced(pid(), non_neg_integer()) :: :ok
   def backend_synced(pid, write_seq), do: :gen_statem.cast(pid, {:backend_synced, write_seq})
 
+  @doc """
+  Tells the ClientHandler that a DISCARD ALL or DEALLOCATE ALL it forwarded dropped all of its
+  prepared statements, when `write_seq` was the latest write the DbHandler knew of.
+  """
+  @spec statements_dropped(pid(), non_neg_integer()) :: :ok
+  def statements_dropped(pid, write_seq),
+    do: :gen_statem.cast(pid, {:statements_dropped, write_seq})
+
   @spec send_error_and_terminate(pid(), iodata()) :: :ok
   def send_error_and_terminate(pid, error_message),
     do: :gen_statem.cast(pid, {:send_error_and_terminate, error_message})
@@ -651,6 +659,28 @@ defmodule Supavisor.ClientHandler do
   end
 
   def handle_event(:cast, {:backend_synced, _write_seq}, :idle, _) do
+    :keep_state_and_data
+  end
+
+  # The DbHandler sends this before the command's response reaches the client. A write handled
+  # after the last one the DbHandler knew of can Parse a statement Postgres keeps, so the names
+  # are only forgotten when there was none.
+  def handle_event(
+        :cast,
+        {:statements_dropped, write_seq},
+        _state,
+        %{write_seq: write_seq} = data
+      ) do
+    stream_state =
+      MessageStreamer.update_state(
+        data.stream_state,
+        &%{&1 | prepared_statements: PreparedStatements.init_storage()}
+      )
+
+    {:keep_state, %{data | stream_state: stream_state}}
+  end
+
+  def handle_event(:cast, {:statements_dropped, _write_seq}, _state, _data) do
     :keep_state_and_data
   end
 
