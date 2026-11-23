@@ -762,6 +762,32 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
     assert_released(tenant)
   end
 
+  # Postgres doesn't create the statement, so its name is still free.
+  @tag named_prepared_statements: true
+  test "accepts a Parse for the name of one that failed in an aborted transaction", %{
+    tenant: tenant
+  } do
+    sock = connect(tenant)
+
+    :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1/0")])
+    assert error_codes(recv_rfqs(sock, 2)) == ["22012"]
+
+    :ok = :gen_tcp.send(sock, [parse("stmt", "SELECT 42"), @sync])
+    assert error_codes(recv_rfqs(sock, 1)) == ["25P02"]
+
+    :ok = :gen_tcp.send(sock, query("ROLLBACK"))
+    assert statuses(recv_rfqs(sock, 1)) == [?I]
+
+    :ok =
+      :gen_tcp.send(sock, [parse("stmt", "SELECT 42"), bind("", "stmt", []), execute(""), @sync])
+
+    pkts = recv_rfqs(sock, 1)
+    assert tags(pkts) == [?1, ?2, ?D, ?C, ?Z]
+    assert rows(pkts) == [["42"]]
+    refute_more(sock)
+    assert_released(tenant)
+  end
+
   # On a backend without the statement, the Parse sent ahead of the first Bind is skipped
   # after the error. The second Bind comes after the Sync, in the same write, so it's sent
   # before the backend's answer shows the statement was never created.

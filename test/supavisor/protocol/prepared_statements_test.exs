@@ -198,20 +198,24 @@ defmodule Supavisor.Protocol.PreparedStatements.PreparedStatementTest do
       assert_valid_error(error)
     end
 
-    test "parse message returns error for duplicate PS" do
+    test "parse message for a stored name replaces the statement" do
       {:ok, client_statements} =
         Storage.put(Storage.new(), "stmt", %PreparedStatement{
           name: "server_stmt",
-          parse_pkt: <<>>
+          parse_pkt: <<0::800>>
         })
 
       len = 20
       payload = <<"stmt", 0, "select 1", 0, 0, 0>>
 
-      assert {:error, %Supavisor.Errors.DuplicatePreparedStatementError{name: "stmt"}} =
-               error = PreparedStatements.handle_parse_message(client_statements, len, payload)
+      assert {:ok, client_statements, {:parse_pkt, server_name, parse_pkt}} =
+               PreparedStatements.handle_parse_message(client_statements, len, payload)
 
-      assert_valid_error(error)
+      assert %PreparedStatement{name: ^server_name, parse_pkt: ^parse_pkt} =
+               Storage.get(client_statements, "stmt")
+
+      assert Storage.statement_count(client_statements) == 1
+      assert Storage.statement_memory(client_statements) == byte_size(parse_pkt)
     end
 
     test "parse message returns error when memory limit is reached" do
