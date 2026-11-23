@@ -28,22 +28,20 @@ defmodule Supavisor.Protocol.PreparedStatements.Storage do
   def put(storage, statement_name, statement) do
     # A stored name is replaced: its Parse may have been failed or skipped by the backend.
     {_replaced, {size, statements}} = pop(storage, statement_name)
+    new_size = size + PreparedStatement.size(statement)
 
     cond do
       map_size(statements) >= @statement_limit ->
         {:error, %Supavisor.Errors.MaxPreparedStatementsError{limit: @statement_limit}}
 
-      true ->
-        new_size = size + PreparedStatement.size(statement)
+      new_size > @memory_limit_bytes ->
+        {:error,
+         %Supavisor.Errors.MaxPreparedStatementsMemoryError{
+           limit_mb: @memory_limit_bytes / 1_000_000
+         }}
 
-        if new_size > @memory_limit_bytes do
-          {:error,
-           %Supavisor.Errors.MaxPreparedStatementsMemoryError{
-             limit_mb: @memory_limit_bytes / 1_000_000
-           }}
-        else
-          {:ok, {new_size, Map.put(statements, statement_name, statement)}}
-        end
+      true ->
+        {:ok, {new_size, Map.put(statements, statement_name, statement)}}
     end
   end
 
