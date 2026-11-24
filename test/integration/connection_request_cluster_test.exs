@@ -89,33 +89,29 @@ defmodule Supavisor.Integration.ConnectionRequestClusterTest do
     forward_events(nodes, ref)
     on_exit(fn -> :telemetry.detach({:connection_request_cluster_test, ref}) end)
 
-    tasks =
+    test_pid = self()
+
+    conns =
       for i <- 1..10, port <- ports do
-        Task.async(fn ->
-          pid = self()
+        id = {:proxy, i, port}
 
-          {:ok, proxy} =
-            P.start_link(
-              hostname: db_conf[:hostname],
-              port: port,
-              database: db_conf[:database],
-              password: db_conf[:password],
-              username: db_conf[:username] <> "." <> "#{@tenant_prefix}#{i}",
-              pool_size: 1,
-              after_connect: fn _ -> send(pid, :connected) end
-            )
+        opts = [
+          hostname: db_conf[:hostname],
+          port: port,
+          database: db_conf[:database],
+          password: db_conf[:password],
+          username: db_conf[:username] <> "." <> "#{@tenant_prefix}#{i}",
+          pool_size: 1,
+          after_connect: fn _ -> send(test_pid, :connected) end
+        ]
 
-          receive do
-            :connected -> :ok
-          end
-
-          proxy
-        end)
+        start_supervised!(Supervisor.child_spec({P, opts}, id: id))
+        id
       end
 
-    conns = Task.await_many(tasks, 15_000)
-
     try do
+      for _ <- conns, do: assert_receive(:connected, 15_000)
+
       assert length(conns) == 30
 
       # Guards against a vacuous pass: some requests must have been proxied to another node
@@ -133,7 +129,7 @@ defmodule Supavisor.Integration.ConnectionRequestClusterTest do
       assert Enum.filter(events, fn {_, meta} -> meta.mode == :proxy end) == []
     after
       # Leave no client registered on this node for the tests that run after, even on failure
-      Enum.each(conns, &GenServer.stop/1)
+      Enum.each(conns, &stop_supervised!/1)
 
       wait_until(
         fn -> Registry.count(Supavisor.Registry.TenantClients) <= clients_before end,
