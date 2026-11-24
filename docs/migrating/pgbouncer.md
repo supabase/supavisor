@@ -13,18 +13,19 @@ momentarily need to support two connection pools to Postgres.
 
 ## Session settings in transaction mode
 
-In transaction mode, a session-level `SET` of `DateStyle`, `TimeZone`,
-`IntervalStyle`, `client_encoding` or `standard_conforming_strings` stays on
-the server connection after the transaction ends, and every later client that
-gets that connection runs under it.
+In transaction mode, any session-level `SET` stays on the server connection
+after the transaction ends, and every later client that gets that connection
+runs under it.
 
-The other clients are not told. The `ParameterStatus` they received at startup
-still shows the original values, so a driver that reads dates, timestamps or
-intervals by those values can misread the results. A framework can cause this
-without any hand-written `SET`: Rails, for example, sets `IntervalStyle` on
-every connection it opens.
+For parameters the server reports to clients, such as `DateStyle`, `TimeZone`,
+`IntervalStyle`, `client_encoding` and `standard_conforming_strings`, the
+other clients are not told either. The `ParameterStatus` they received at
+startup still shows the original values, so a driver that reads dates,
+timestamps or intervals by those values can misread the results. A framework
+can cause this without any hand-written `SET`: Rails, for example, sets
+`IntervalStyle` on every connection it opens.
 
-To change these parameters in transaction mode:
+To change session settings in transaction mode:
 
 - Set them for one transaction with `SET LOCAL` (or `set_config` with
   `is_local` set to `true`).
