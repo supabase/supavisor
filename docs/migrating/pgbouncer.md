@@ -3,12 +3,41 @@ and a database has been added as a `tenant`.
 
 No application level code changes should be required other than a connection
 string change. Both `transaction` and `session` pool mode behavior for Supavisor
-is the same as PgBouncer.
+is the same as PgBouncer, except for the session settings described in
+[Session settings in transaction mode](#session-settings-in-transaction-mode).
 
 One caveat during migration is running two connection poolers at the same time.
 
 When rolling out a connection string change to your application you will
 momentarily need to support two connection pools to Postgres.
+
+## Session settings in transaction mode
+
+PgBouncer
+[tracks](https://www.pgbouncer.org/config.html#track_extra_parameters)
+`DateStyle`, `TimeZone` and `IntervalStyle` per client in transaction mode, and
+sets them back when a server connection moves to another client. Supavisor does not. A session-level `SET` of one of these parameters,
+or of `client_encoding` or `standard_conforming_strings`, stays on the server
+connection, and every later client that gets that connection runs under it.
+
+The other clients are not told. The `ParameterStatus` they received at startup
+still shows the original values, so a driver that reads dates, timestamps or
+intervals by those values can misread the results. A framework can cause this
+without any hand-written `SET`: Rails, for example, sets `IntervalStyle` on
+every connection it opens.
+
+To change these parameters in transaction mode:
+
+- Set them for one transaction with `SET LOCAL` (or `set_config` with
+  `is_local` set to `true`).
+- Set a default on the Postgres side for the database, or for the role that
+  Supavisor's server connections log in as, for example
+  `ALTER ROLE app_user SET TimeZone = 'UTC';`.
+- Connect clients that need their own session settings in session mode.
+
+Set the tenant's `txn_mode_leak_action` to `log` or `error` to find clients
+that send a session-level `SET` in transaction mode. Queries the check skips,
+such as those larger than 1 KB, are not caught.
 
 ## Check Postgres connection limit
 

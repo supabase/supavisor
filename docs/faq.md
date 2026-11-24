@@ -18,6 +18,13 @@ feature flag is enabled, either globally with the
 `NAMED_PREPARED_STATEMENTS_ENABLED` environment variable or per tenant via
 `feature_flags`.
 
+## Can a client change `TimeZone` or `DateStyle` in transaction mode?
+
+Only for one transaction, with `SET LOCAL` or `set_config` with `is_local` set
+to `true`. A session-level `SET` stays on the server connection and is seen by
+other clients that get it later. See
+[Session settings in transaction mode](migrating/pgbouncer.md#session-settings-in-transaction-mode).
+
 ## Why do you route connections to a single Supavisor node when deployed as a cluster?
 
 Supavisor can run as a cluster of nodes for high availability. The first node to
