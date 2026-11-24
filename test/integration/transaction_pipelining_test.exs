@@ -769,15 +769,19 @@ defmodule Supavisor.Integration.TransactionPipeliningTest do
   } do
     sock = connect(tenant)
 
+    # Start a transaction and fail a query in it. Postgres then rejects every command until
+    # the transaction ends.
     :ok = :gen_tcp.send(sock, [query("BEGIN"), query("SELECT 1/0")])
     assert error_codes(recv_rfqs(sock, 2)) == ["22012"]
 
+    # Supavisor stores the name when it forwards the Parse, but Postgres rejects it.
     :ok = :gen_tcp.send(sock, [parse("stmt", "SELECT 42"), @sync])
     assert error_codes(recv_rfqs(sock, 1)) == ["25P02"]
 
     :ok = :gen_tcp.send(sock, query("ROLLBACK"))
     assert statuses(recv_rfqs(sock, 1)) == [?I]
 
+    # The stored name must not make Supavisor reject a new Parse with it.
     :ok =
       :gen_tcp.send(sock, [parse("stmt", "SELECT 42"), bind("", "stmt", []), execute(""), @sync])
 
