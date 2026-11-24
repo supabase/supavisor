@@ -18,12 +18,12 @@ after the transaction ends, and every later client that gets that connection
 runs under it.
 
 For parameters the server reports to clients, such as `DateStyle`, `TimeZone`,
-`IntervalStyle`, `client_encoding` and `standard_conforming_strings`, the
-other clients are not told either. The `ParameterStatus` they received at
-startup still shows the original values, so a driver that reads dates,
-timestamps or intervals by those values can misread the results. A framework
-can cause this without any hand-written `SET`: Rails, for example, sets
-`IntervalStyle` on every connection it opens.
+`IntervalStyle`, `client_encoding` and `standard_conforming_strings`, a client
+may run its transactions on a server connection whose values differ from the
+`ParameterStatus` it received at startup. Changing these parameters with a
+session-level `SET` is not safe in transaction mode. A framework can cause this
+without any hand-written `SET`: Rails, for example, sets `IntervalStyle` on
+every connection it opens.
 
 To change session settings in transaction mode:
 
