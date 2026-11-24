@@ -21,7 +21,6 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
     Errors.PreparedStatementNotFoundError,
     Errors.SessionLeakError,
     Errors.SimpleQueryNotSupportedError,
-    Errors.DuplicatePreparedStatementError,
     FeatureFlag,
     HandlerHelpers,
     Helpers,
@@ -37,7 +36,6 @@ defmodule Supavisor.ClientHandler.ProtocolHelpers do
           | {:error, MaxPreparedStatementsError.t()}
           | {:error, SessionLeakError.t()}
           | {:error, SimpleQueryNotSupportedError.t()}
-          | {:error, DuplicatePreparedStatementError.t()}
           | {:error, PreparedStatementNotFoundError.t()}
 
   ## Startup Packet Processing
