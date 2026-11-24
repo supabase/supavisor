@@ -45,19 +45,16 @@ defmodule Supavisor.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:phoenix, "~> 1.7.2"},
+      {:phoenix, "~> 1.7.25"},
       {:phoenix_ecto, "~> 4.4"},
       {:ecto_sql, "~> 3.10"},
-      {:postgrex,
-       github: "elixir-ecto/postgrex",
-       ref: "0f92ae39c8f43b6cf39a46ab1142f6fc09be40fe",
-       override: true},
+      {:postgrex, "~> 0.22.1"},
       {:phoenix_view, "~> 2.0.2"},
-      {:phoenix_live_view, "~> 1.0"},
+      {:phoenix_live_view, "~> 1.0 and >= 1.0.20"},
       {:phoenix_live_dashboard, "~> 0.7"},
       {:telemetry_poller, "~> 1.0"},
       {:peep, "~> 4.4.0", override: true},
-      {:plug_cowboy, "~> 2.5"},
+      {:plug_cowboy, "~> 2.9"},
       {:joken, "~> 2.6.0"},
       {:cloak_ecto, "~> 1.3.0"},
       {:req, "~> 0.6.1"},
@@ -96,7 +93,7 @@ defmodule Supavisor.MixProject do
       {:stream_data, "~> 1.0", only: [:dev, :test]},
       # Override needed due to eflambe
       {:meck, "~> 1.0", only: [:dev, :test], override: true},
-      {:tidewave, "~> 0.9.1", only: [:dev]}
+      {:tidewave, "~> 0.9.2", only: [:dev]}
     ]
   end
 
