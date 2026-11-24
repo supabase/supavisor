@@ -44,30 +44,26 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
       {:node2, get_proxy_port(peer2)}
     ]
 
-    connection_tasks =
+    test_pid = self()
+
+    connections =
       for i <- 1..10, {node_name, port} <- nodes do
-        Task.async(fn ->
-          pid = self()
+        id = {:proxy, i, node_name}
 
-          {:ok, proxy} =
-            Postgrex.start_link(
-              hostname: db_conf[:hostname],
-              port: port,
-              database: db_conf[:database],
-              password: db_conf[:password],
-              username: db_conf[:username] <> ".cluster_pool_tenant_#{i}",
-              after_connect: fn _ -> send(pid, :connected) end
-            )
+        opts = [
+          hostname: db_conf[:hostname],
+          port: port,
+          database: db_conf[:database],
+          password: db_conf[:password],
+          username: db_conf[:username] <> ".cluster_pool_tenant_#{i}",
+          after_connect: fn _ -> send(test_pid, :connected) end
+        ]
 
-          receive do
-            :connected -> :ok
-          end
-
-          {i, node_name, proxy}
-        end)
+        proxy = start_supervised!(Supervisor.child_spec({P, opts}, id: id))
+        {id, node_name, proxy}
       end
 
-    connections = Task.await_many(connection_tasks, 10_000)
+    for _ <- connections, do: assert_receive(:connected, 10_000)
 
     for {_i, _node_name, proxy} <- connections do
       assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
@@ -116,8 +112,8 @@ defmodule Supavisor.Integration.ClusterPoolingTest do
     end
 
     # Cleanup all connections
-    for {_, _node_name, proxy} <- connections do
-      GenServer.stop(proxy)
+    for {id, _node_name, _proxy} <- connections do
+      stop_supervised!(id)
     end
   end
 
