@@ -13,12 +13,10 @@ momentarily need to support two connection pools to Postgres.
 
 ## Session settings in transaction mode
 
-PgBouncer
-[tracks](https://www.pgbouncer.org/config.html#track_extra_parameters)
-`DateStyle`, `TimeZone` and `IntervalStyle` per client in transaction mode, and
-sets them back when a server connection moves to another client. Supavisor does not. A session-level `SET` of one of these parameters,
-or of `client_encoding` or `standard_conforming_strings`, stays on the server
-connection, and every later client that gets that connection runs under it.
+In transaction mode, a session-level `SET` of `DateStyle`, `TimeZone`,
+`IntervalStyle`, `client_encoding` or `standard_conforming_strings` stays on
+the server connection after the transaction ends, and every later client that
+gets that connection runs under it.
 
 The other clients are not told. The `ParameterStatus` they received at startup
 still shows the original values, so a driver that reads dates, timestamps or
