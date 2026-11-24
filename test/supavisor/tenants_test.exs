@@ -262,7 +262,7 @@ defmodule Supavisor.TenantsTest do
     end
 
     test "get_pool_config/2 raises when called with nil external_id" do
-      assert_raise ArgumentError, ~r/comparison with nil is forbidden/, fn ->
+      assert_raise ArgumentError, ~r/comparing `t.external_id` with `nil` is forbidden/, fn ->
         Tenants.get_pool_config(nil, "some_user")
       end
     end
