@@ -3,12 +3,40 @@ and a database has been added as a `tenant`.
 
 No application level code changes should be required other than a connection
 string change. Both `transaction` and `session` pool mode behavior for Supavisor
-is the same as PgBouncer.
+is the same as PgBouncer, except for the session settings described in
+[Session settings in transaction mode](#session-settings-in-transaction-mode).
 
 One caveat during migration is running two connection poolers at the same time.
 
 When rolling out a connection string change to your application you will
 momentarily need to support two connection pools to Postgres.
+
+## Session settings in transaction mode
+
+In transaction mode, any session-level `SET` stays on the server connection
+after the transaction ends, and every later client that gets that connection
+runs under it.
+
+For parameters the server reports to clients, such as `DateStyle`, `TimeZone`,
+`IntervalStyle`, `client_encoding` and `standard_conforming_strings`, a client
+may run its transactions on a server connection whose values differ from the
+`ParameterStatus` it received at startup. Changing these parameters with a
+session-level `SET` is not safe in transaction mode. A framework can cause this
+without any hand-written `SET`: Rails, for example, sets `IntervalStyle` on
+every connection it opens.
+
+To change session settings in transaction mode:
+
+- Set them for one transaction with `SET LOCAL` (or `set_config` with
+  `is_local` set to `true`).
+- Set a default on the Postgres side for the database, or for the role that
+  Supavisor's server connections log in as, for example
+  `ALTER ROLE app_user SET TimeZone = 'UTC';`.
+- Connect clients that need their own session settings in session mode.
+
+Set the tenant's `txn_mode_leak_action` to `log` or `error` to find clients
+that send a session-level `SET` in transaction mode. Queries the check skips,
+such as those larger than 1 KB, are not caught.
 
 ## Check Postgres connection limit
 

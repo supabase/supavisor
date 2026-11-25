@@ -2,6 +2,7 @@ defmodule Supavisor.MetricsCleanerTest do
   use ExUnit.Case, async: false
 
   require Supavisor
+  alias Supavisor.Monitoring.PromEx
   alias Supavisor.PromEx.Plugins.Tenant, as: Metrics
 
   @subject Supavisor.MetricsCleaner
@@ -34,7 +35,7 @@ defmodule Supavisor.MetricsCleanerTest do
         ""
       )
 
-    metrics = Supavisor.Monitoring.PromEx.get_metrics()
+    metrics = PromEx.get_metrics()
 
     assert IO.iodata_to_binary(metrics) =~ ~r/non-existent/
 
@@ -44,7 +45,7 @@ defmodule Supavisor.MetricsCleanerTest do
     @subject.clean()
     assert_receive {:metrics, _}
 
-    metrics = Supavisor.Monitoring.PromEx.get_metrics()
+    metrics = PromEx.get_metrics()
 
     refute IO.iodata_to_binary(metrics) =~ ~r/non-existent/
   end
@@ -63,7 +64,7 @@ defmodule Supavisor.MetricsCleanerTest do
         )
       )
 
-    metrics = Supavisor.Monitoring.PromEx.get_metrics()
+    metrics = PromEx.get_metrics()
 
     assert IO.iodata_to_binary(metrics) =~ ~r/non-existent/
 
@@ -72,7 +73,7 @@ defmodule Supavisor.MetricsCleanerTest do
     @subject.clean()
     assert_receive {:metrics, _}
 
-    metrics = Supavisor.Monitoring.PromEx.get_metrics()
+    metrics = PromEx.get_metrics()
 
     refute IO.iodata_to_binary(metrics) =~ ~r/non-existent/
   end
@@ -126,7 +127,7 @@ defmodule Supavisor.MetricsCleanerTest do
       )
 
     # Trigger a scrape so the cache_tid gets populated via the export path
-    metrics = Supavisor.Monitoring.PromEx.get_metrics()
+    metrics = PromEx.get_metrics()
     assert IO.iodata_to_binary(metrics) =~ "orphan-tags-test"
 
     # The tags map stored in ETS matches the telemetry metadata filtered to @tags

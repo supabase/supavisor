@@ -255,7 +255,8 @@ defmodule Supavisor.ClientHandler do
       client_ip: client_ip,
       app_name: app_name,
       log_level: log_level,
-      invalid_options: invalid_options
+      invalid_options: invalid_options,
+      unknown_options: unknown_options
     } = startup_params
 
     sni_hostname = HandlerHelpers.try_get_sni(sock)
@@ -271,7 +272,8 @@ defmodule Supavisor.ClientHandler do
       | peer_ip: peer_ip,
         ssl: effective_ssl,
         app_name: app_name,
-        invalid_options: invalid_options
+        invalid_options: invalid_options,
+        unknown_options: unknown_options
     }
 
     if log_level, do: Logger.put_process_level(self(), log_level)
@@ -474,7 +476,12 @@ defmodule Supavisor.ClientHandler do
 
   def handle_event(:internal, {:greetings, ps}, _state, data) do
     {header, <<pid::32, key::32>> = payload} = Server.backend_key_data()
-    notices = invalid_option_notices(data.invalid_options)
+
+    notices = [
+      invalid_option_notices(data.invalid_options),
+      unknown_option_notices(data.unknown_options)
+    ]
+
     msg = [ps, [header, payload], notices, Server.ready_for_query()]
     :ok = Cancel.listen_cancel_query(pid, key)
 
@@ -623,11 +630,14 @@ defmodule Supavisor.ClientHandler do
     Logger.debug("ClientHandler: Client is ready")
 
     # In transaction mode the DbHandler waits for us to release it, since only we
-    # know nothing else was forwarded to it.
+    # know nothing else was forwarded to it. We check it in ourselves, after it's
+    # idle, so poolboy always sees the checkin before the monitor on us fires.
     db_connection =
       case data do
-        %{mode: :transaction, db_connection: {_pool, db_pid, _sock}} ->
-          DbHandler.release(db_pid, data.write_seq)
+        %{mode: :transaction, db_connection: {pool, db_pid, _sock}} ->
+          with :ok <- DbHandler.release(db_pid, data.write_seq),
+               do: :poolboy.checkin(pool, db_pid)
+
           nil
 
         _ ->
@@ -1063,6 +1073,13 @@ defmodule Supavisor.ClientHandler do
     Enum.map(invalid, fn opt ->
       Server.encode_notice_message(StartupOptions.invalid_option_notice(opt))
     end)
+  end
+
+  @spec unknown_option_notices([String.t()]) :: iodata()
+  defp unknown_option_notices([]), do: []
+
+  defp unknown_option_notices(names) do
+    Server.encode_notice_message(StartupOptions.unknown_option_notice(names))
   end
 
   @spec client_sock_send(map(), iodata(), :handshake | :idle) ::

@@ -18,6 +18,7 @@ defmodule Supavisor.Monitoring.PromEx do
   alias Supavisor.PromEx.Plugins.{
     CGroup,
     Cluster,
+    Ena,
     JWTAuth,
     LoggerLines,
     MessageQueue,
@@ -88,7 +89,14 @@ defmodule Supavisor.Monitoring.PromEx do
       {MessageQueue, poll_rate: poll_rate},
       JWTAuth,
       LoggerLines
-    ]
+    ] ++ ena_plugins(poll_rate)
+  end
+
+  defp ena_plugins(poll_rate) do
+    case Application.get_env(:supavisor, :ena_interface) do
+      nil -> []
+      interface -> [{Ena, poll_rate: poll_rate, interface: interface}]
+    end
   end
 
   @spec get_metrics() :: iodata()

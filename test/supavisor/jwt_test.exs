@@ -138,6 +138,7 @@ defmodule Supavisor.JWTTest do
       assert log =~ "check_auth: rejected api GET /api/tenants/x"
       assert log =~ "token_expired"
       assert log =~ ~s(exp: "#{expected_exp}")
+      assert log =~ " (hmac)"
       assert log =~ ~r/now: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/
     end
 
@@ -279,6 +280,7 @@ defmodule Supavisor.JWTTest do
 
         assert log =~ "check_auth: rejected api GET /api/tenants/x"
         assert log =~ ~s(claim: "#{claim}")
+        assert log =~ " (jwks)"
         assert log =~ "claim_val: #{inspect(value)}"
         refute log =~ token, "#{tag} rejection must not log the token"
       end

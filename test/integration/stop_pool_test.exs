@@ -30,6 +30,7 @@ defmodule Supavisor.Integration.StopPoolTest do
     %{conn: conn, peer: peer, peer_name: peer_name, peer_node: peer_node}
   end
 
+  # A random search path, so a pool another suite left running can't have the same id.
   defp pool_id(db) do
     Supavisor.id(
       type: :single,
@@ -37,8 +38,14 @@ defmodule Supavisor.Integration.StopPoolTest do
       user: "postgres",
       mode: :transaction,
       db: db,
-      search_path: nil
+      search_path: "stop_pool_#{Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)}"
     )
+  end
+
+  defp pool_pid_from_list(pools, id) do
+    Supavisor.id(search_path: search_path) = id
+    %{"pid" => pid} = Enum.find(pools, &(&1["id"]["search_path"] == search_path))
+    pid
   end
 
   test "stops a pool owned by another node with the pid from the pool list", %{
@@ -60,7 +67,7 @@ defmodule Supavisor.Integration.StopPoolTest do
     assert node(peer_sup) == peer_node
 
     %{"pools" => pools} = conn |> get(~p"/api/tenants/#{@tenant}/pools") |> json_response(200)
-    %{"pid" => pid} = Enum.find(pools, &(&1["node"] == to_string(peer_node)))
+    pid = pool_pid_from_list(pools, peer_id)
 
     assert conn
            |> delete(~p"/api/tenants/#{@tenant}/pools", Jason.encode!(%{pid: pid}))
@@ -89,7 +96,7 @@ defmodule Supavisor.Integration.StopPoolTest do
     assert is_pid(local_sup)
 
     %{"pools" => pools} = conn |> get(~p"/api/tenants/#{@tenant}/pools") |> json_response(200)
-    %{"pid" => pid} = Enum.find(pools, &(&1["node"] == to_string(node())))
+    pid = pool_pid_from_list(pools, local_id)
 
     # The peer's endpoint doesn't serve HTTP in tests, so dispatch the request on the peer.
     resp =

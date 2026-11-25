@@ -265,6 +265,7 @@ if config_env() != :test do
     http_sql_max_response_bytes:
       System.get_env("HTTP_SQL_MAX_RESPONSE_BYTES", "10485760") |> String.to_integer(),
     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
+    ena_interface: System.get_env("ENA_INTERFACE"),
     global_upstream_ca: upstream_ca,
     global_downstream_cert: downstream_cert,
     global_downstream_key: downstream_key,

@@ -35,8 +35,7 @@ defmodule Supavisor.TenantSupervisor do
          %{
            id: {:pool, id},
            start:
-             {:poolboy, :start_link,
-              [pool_spec(name, min_size, e.pool_size), %{id: args.id, pool: name}]},
+             {:poolboy, :start_link, [pool_spec(name, min_size, e.pool_size), %{id: args.id}]},
            restart: :temporary,
            type: :supervisor
          }}

@@ -4,6 +4,7 @@ defmodule Supavisor.Monitoring.PromExTest do
 
   require Supavisor
 
+  alias Supavisor.Monitoring.Telem
   alias Supavisor.PromEx.Plugins.{Cluster, Tenant}
 
   @subject Supavisor.Monitoring.PromEx
@@ -108,7 +109,7 @@ defmodule Supavisor.Monitoring.PromExTest do
       user = "user"
 
       check all db_name <- string(:printable, min_length: 1, max_length: 63) do
-        Supavisor.Monitoring.Telem.client_join(
+        Telem.client_join(
           :ok,
           Supavisor.id(type: :single, tenant: tenant, user: user, mode: :session, db: db_name)
         )
@@ -136,7 +137,7 @@ defmodule Supavisor.Monitoring.PromExTest do
       db_name = "db_name"
 
       check all user <- string(:printable, min_length: 1, max_length: 63) do
-        Supavisor.Monitoring.Telem.client_join(
+        Telem.client_join(
           :ok,
           Supavisor.id(type: :single, tenant: tenant, user: user, mode: :session, db: db_name)
         )
@@ -164,7 +165,7 @@ defmodule Supavisor.Monitoring.PromExTest do
       user = "user"
 
       check all tenant <- string(:printable, min_length: 1) do
-        Supavisor.Monitoring.Telem.client_join(
+        Telem.client_join(
           :ok,
           Supavisor.id(type: :single, tenant: tenant, user: user, mode: :session, db: db_name)
         )
