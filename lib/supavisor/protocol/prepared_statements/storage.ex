@@ -6,6 +6,9 @@ defmodule Supavisor.Protocol.PreparedStatements.Storage do
   alias Supavisor.Protocol.PreparedStatements
   alias Supavisor.Protocol.PreparedStatements.PreparedStatement
 
+  # put/3 pops first. Inlined, the tuples pop/2 returns are never built.
+  @compile {:inline, pop: 2}
+
   @statement_limit 100
   @memory_limit_bytes 1_000_000
 
@@ -22,26 +25,23 @@ defmodule Supavisor.Protocol.PreparedStatements.Storage do
           {:ok, t()}
           | {:error, Supavisor.Errors.MaxPreparedStatementsError.t()}
           | {:error, Supavisor.Errors.MaxPreparedStatementsMemoryError.t()}
-          | {:error, Supavisor.Errors.DuplicatePreparedStatementError.t()}
-  def put({size, statements}, statement_name, statement) do
+  def put(storage, statement_name, statement) do
+    # A stored name is replaced: its Parse may have been failed or skipped by the backend.
+    {_replaced, {size, statements}} = pop(storage, statement_name)
+    new_size = size + PreparedStatement.size(statement)
+
     cond do
       map_size(statements) >= @statement_limit ->
         {:error, %Supavisor.Errors.MaxPreparedStatementsError{limit: @statement_limit}}
 
-      Map.has_key?(statements, statement_name) ->
-        {:error, %Supavisor.Errors.DuplicatePreparedStatementError{name: statement_name}}
+      new_size > @memory_limit_bytes ->
+        {:error,
+         %Supavisor.Errors.MaxPreparedStatementsMemoryError{
+           limit_mb: @memory_limit_bytes / 1_000_000
+         }}
 
       true ->
-        new_size = size + PreparedStatement.size(statement)
-
-        if new_size > @memory_limit_bytes do
-          {:error,
-           %Supavisor.Errors.MaxPreparedStatementsMemoryError{
-             limit_mb: @memory_limit_bytes / 1_000_000
-           }}
-        else
-          {:ok, {new_size, Map.put(statements, statement_name, statement)}}
-        end
+        {:ok, {new_size, Map.put(statements, statement_name, statement)}}
     end
   end
 
