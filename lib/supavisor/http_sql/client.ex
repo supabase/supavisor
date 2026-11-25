@@ -15,9 +15,9 @@ defmodule Supavisor.HttpSql.Client do
   # sent to the connection process, so a single binary would briefly double the response.
   @chunk_size 1024 * 1024
 
-  @spec run(HttpSql.conn_info(), HttpSql.client(), [HttpSql.query()]) ::
+  @spec run(HttpSql.conn_info(), String.t(), [HttpSql.query()]) ::
           {:ok, [HttpSql.result()]} | {:error, {:postgres, map()} | term()}
-  def run(conn_info, client, queries) do
+  def run(conn_info, client_ip, queries) do
     port = internal_port(conn_info)
     max_bytes = Application.get_env(:supavisor, :http_sql_max_response_bytes, 10 * 1024 * 1024)
 
@@ -29,7 +29,7 @@ defmodule Supavisor.HttpSql.Client do
         conn = %{sock: sock, buffer: <<>>, budget: max_bytes}
 
         try do
-          with {:ok, conn} <- startup(conn, conn_info, client),
+          with {:ok, conn} <- startup(conn, conn_info, client_ip),
                {:ok, conn} <- send_queries(conn, queries) do
             case receive_results(conn, length(queries)) do
               {:error, :response_too_large} -> {:error, {:response_too_large, max_bytes}}
@@ -54,11 +54,12 @@ defmodule Supavisor.HttpSql.Client do
 
   ## Startup
 
-  defp startup(conn, conn_info, client) do
+  defp startup(conn, conn_info, client_ip) do
     options =
       Map.merge(conn_info.options, %{
-        "client_ip" => client.ip,
-        "client_tls" => to_string(client.tls),
+        "client_ip" => client_ip,
+        # HTTPS is enforced at the infra layer, so clients always use TLS.
+        "client_tls" => "true",
         "password_auth" => "true"
       })
 

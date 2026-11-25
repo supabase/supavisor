@@ -4,18 +4,18 @@ defmodule Supavisor.HttpSqlTest do
   alias Supavisor.HttpSql
 
   @conn_string "postgresql://postgres.tenant:postgres@localhost/postgres"
-  @client %{ip: "127.0.0.1", tls: false}
+  @client_ip "127.0.0.1"
 
   test "rejects a missing or invalid connection string" do
     for conn_string <- [nil, "postgres://user@host/db", "postgres://user:pass@host", "nope"] do
       assert {:error, {:bad_request, _}} =
-               HttpSql.run(conn_string, %{"query" => "SELECT 1"}, %{}, @client)
+               HttpSql.run(conn_string, %{"query" => "SELECT 1"}, %{}, @client_ip)
     end
   end
 
   test "rejects a body without a query" do
     for body <- [%{}, %{"query" => 1}, %{"queries" => [%{}]}, %{"queries" => "SELECT 1"}] do
-      assert {:error, {:bad_request, _}} = HttpSql.run(@conn_string, body, %{}, @client)
+      assert {:error, {:bad_request, _}} = HttpSql.run(@conn_string, body, %{}, @client_ip)
     end
   end
 
@@ -26,7 +26,7 @@ defmodule Supavisor.HttpSqlTest do
                  @conn_string,
                  %{"query" => "SELECT $1", "params" => params},
                  %{},
-                 @client
+                 @client_ip
                )
     end
   end
@@ -39,7 +39,7 @@ defmodule Supavisor.HttpSqlTest do
                @conn_string,
                %{"queries" => [%{"query" => "SELECT 1"}]},
                headers,
-               @client
+               @client_ip
              )
   end
 end
