@@ -15,11 +15,16 @@ defmodule Supavisor.Protocol.Client do
   end
 
   # The startup packet payload is a list of key/value pairs, separated by null bytes.
-  # The payload is terminated by an extra null byte. Empty values are valid (e.g. options\x00\x00).
+  # The payload is terminated by an extra null byte. Empty values are valid (e.g. options\x00\x00),
+  # so only the last value's null byte and the terminator are dropped.
   @spec decode_startup_packet_payload(binary()) ::
           {:ok, map()} | {:error, StartupMessageError.t()}
   defp decode_startup_packet_payload(payload) do
-    fields = payload |> String.trim_trailing(<<0>>) |> String.split(<<0>>)
+    fields =
+      payload
+      |> String.replace_suffix(<<0>>, "")
+      |> String.replace_suffix(<<0>>, "")
+      |> String.split(<<0>>)
 
     # If the number of fields is odd, then the payload is malformed
     if rem(length(fields), 2) == 1 do
