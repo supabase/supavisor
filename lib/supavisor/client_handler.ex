@@ -274,13 +274,33 @@ defmodule Supavisor.ClientHandler do
     )
   end
 
-  def handle_event(:info, {proto, _, bin}, :handshake, data) when proto in @proto do
-    case ProtocolHelpers.parse_startup_packet(bin) do
-      {:ok, %StartupParams{} = startup_params} ->
-        {:keep_state_and_data, {:next_event, :internal, {:hello, startup_params}}}
+  # A client's first message can arrive over several reads, as TCP keeps no write
+  # boundaries. Hold the bytes until the length prefix is met, then handle them as one read.
+  def handle_event(:info, {proto, sock, bin}, :handshake, %{handshake_buffer: buffer} = data)
+      when proto in @proto do
+    case buffer <> bin do
+      <<len::32, _::binary>> when len > @max_startup_packet_size ->
+        Error.terminate_with_error(
+          data,
+          %StartupPacketTooLargeError{packet_size: len},
+          :handshake
+        )
 
-      {:error, exception} ->
-        Error.terminate_with_error(data, exception, :handshake)
+      <<len::32, _::binary>> = packet when byte_size(packet) >= len and buffer == <<>> ->
+        case ProtocolHelpers.parse_startup_packet(packet) do
+          {:ok, %StartupParams{} = startup_params} ->
+            {:keep_state_and_data, {:next_event, :internal, {:hello, startup_params}}}
+
+          {:error, exception} ->
+            Error.terminate_with_error(data, exception, :handshake)
+        end
+
+      <<len::32, _::binary>> = packet when byte_size(packet) >= len ->
+        data = %{data | handshake_buffer: <<>>}
+        {:keep_state, data, {:next_event, :info, {proto, sock, packet}}}
+
+      packet ->
+        {:keep_state, %{data | handshake_buffer: packet}}
     end
   end
 

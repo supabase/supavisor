@@ -51,6 +51,8 @@ defmodule Supavisor.ClientHandler.Data do
     # Latest write with tracked messages.
     tracked_seq: 0,
     invalid_options: [],
-    unknown_options: []
+    unknown_options: [],
+    # Bytes of the client's first message received so far, until its length prefix is met.
+    handshake_buffer: <<>>
   ]
 end

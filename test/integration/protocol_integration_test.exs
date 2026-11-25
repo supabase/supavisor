@@ -96,6 +96,44 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
       :gen_tcp.close(sock)
     end
+
+    test "accepts a startup packet split across reads", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+      bin =
+        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+          "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
+
+      send_in_two_parts(sock, bin, 8)
+      assert {:ok, <<?R, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+
+      :gen_tcp.close(sock)
+    end
+
+    test "accepts a startup packet whose length is split across reads", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+      bin =
+        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+          "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
+
+      send_in_two_parts(sock, bin, 3)
+      assert {:ok, <<?R, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+
+      :gen_tcp.close(sock)
+    end
+
+    test "answers an SSLRequest split across reads", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+      send_in_two_parts(sock, Server.ssl_request_message(), 1)
+      assert {:ok, "N"} = :gen_tcp.recv(sock, 0, 5000)
+
+      :gen_tcp.close(sock)
+    end
   end
 
   describe "tls logger metadata" do
@@ -371,6 +409,14 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert_data_row(data)
       :ssl.close(ssl)
     end
+  end
+
+  # Sends a message in two writes: the first cut bytes, then the rest, so the server reads it split.
+  defp send_in_two_parts(sock, bin, cut) do
+    <<first::binary-size(cut), rest::binary>> = bin
+    :ok = :gen_tcp.send(sock, first)
+    Process.sleep(50)
+    :ok = :gen_tcp.send(sock, rest)
   end
 
   defp connect_origin(db_conf) do
