@@ -44,4 +44,12 @@ defmodule Supavisor.Protocol.ClientTest do
              {:error,
               %Supavisor.Errors.StartupMessageError{reason: :bad_startup_payload, payload: ""}}
   end
+
+  test "decode_startup_packet/1 keeps an empty value in the last parameter" do
+    payload = <<"user", 0, "postgres", 0, "application_name", 0, 0, 0>>
+    input = <<byte_size(payload) + 8::32, 0, 3, 0, 0, payload::binary>>
+
+    assert {:ok, packet} = Client.decode_startup_packet(input)
+    assert packet.payload == %{"user" => "postgres", "application_name" => ""}
+  end
 end
