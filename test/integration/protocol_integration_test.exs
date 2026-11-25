@@ -155,6 +155,25 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
       :gen_tcp.close(sock)
     end
+
+    test "accepts a split startup packet whose next read starts with GET", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+      fields =
+        <<3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+          "postgres", 0, "application_name", 0, "GET /", 0, 0>>
+
+      len = byte_size(fields) + 4
+      packet = <<len::32, fields::binary>>
+      cut = byte_size(packet) - byte_size(<<"GET /", 0, 0>>)
+      <<_::binary-size(cut), "GET", _::binary>> = packet
+
+      send_in_two_parts(sock, packet, cut)
+      assert {:ok, <<?R, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+
+      :gen_tcp.close(sock)
+    end
   end
 
   describe "tls logger metadata" do
