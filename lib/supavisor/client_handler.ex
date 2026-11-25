@@ -145,7 +145,12 @@ defmodule Supavisor.ClientHandler do
   end
 
   @impl true
-  def handle_event(:info, {_proto, _, <<"GET", _::binary>>}, :handshake, data) do
+  def handle_event(
+        :info,
+        {_proto, _, <<"GET", _::binary>>},
+        :handshake,
+        %{handshake_buffer: <<>>} = data
+      ) do
     Logger.debug("ClientHandler: Client is trying to request HTTP")
 
     HandlerHelpers.sock_send(
@@ -219,7 +224,7 @@ defmodule Supavisor.ClientHandler do
         :info,
         {:tcp, _, <<@tls_handshake_record, _::binary>> = client_hello},
         :handshake,
-        %{sock: {:gen_tcp, port} = sock} = data
+        %{sock: {:gen_tcp, port} = sock, handshake_buffer: <<>>} = data
       ) do
     case Helpers.downstream_certs_keys() do
       [] ->

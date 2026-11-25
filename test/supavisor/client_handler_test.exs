@@ -263,7 +263,8 @@ defmodule Supavisor.ClientHandlerTest do
         app_name: nil,
         invalid_options: [],
         unknown_options: [],
-        connection_start: System.monotonic_time()
+        connection_start: System.monotonic_time(),
+        handshake_buffer: <<>>
       }
 
       assert {:keep_state_and_data,
