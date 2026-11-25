@@ -174,6 +174,35 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
       :gen_tcp.close(sock)
     end
+
+    test "handles bytes after a split startup packet as the next message", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+      bin =
+        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+          "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
+
+      <<first::binary-size(8), rest::binary>> = bin
+      :ok = :gen_tcp.send(sock, first)
+      Process.sleep(50)
+
+      # The rest of the startup packet and a Terminate message arrive in one read.
+      :ok = :gen_tcp.send(sock, rest <> <<?X, 4::32>>)
+
+      case :gen_tcp.recv(sock, 0, 5000) do
+        {:ok, <<?R, _::binary>>} ->
+          :ok
+
+        {:error, :closed} ->
+          :ok
+
+        other ->
+          flunk("expected an authentication request or a closed socket, got: #{inspect(other)}")
+      end
+
+      :gen_tcp.close(sock)
+    end
   end
 
   describe "tls logger metadata" do
