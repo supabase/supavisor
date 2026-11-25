@@ -80,6 +80,12 @@ defmodule Supavisor.ClientHandler.ChecksTest do
                Checks.check_address_allowed(data, info)
     end
 
+    test "skips the check on local listeners", %{data: data} do
+      data = Map.put(data, :local, true)
+      info = %{tenant: %{allow_list: ["10.0.0.0/8"]}}
+      assert :ok = Checks.check_address_allowed(data, info)
+    end
+
     test "returns socket closed error when the client socket is closed", %{data: data} do
       {:gen_tcp, server} = data.sock
       :ok = :gen_tcp.close(server)
