@@ -41,6 +41,9 @@ defmodule Supavisor.ClientHandler.Checks do
     end
   end
 
+  # Proxied connections were already checked on the node that accepted them
+  def check_address_allowed(%{local: true}, _info), do: :ok
+
   def check_address_allowed(data, info) do
     with {:ok, addr} <- HandlerHelpers.addr_from_sock(data.sock),
          :ok <- check_cidrs(info.tenant.allow_list, addr) do
