@@ -127,10 +127,16 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
     test "answers an SSLRequest split across reads", %{port: port} do
       opts = [:binary, active: false, nodelay: true]
-      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      {:ok, control_sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
 
+      :ok = :gen_tcp.send(control_sock, Server.ssl_request_message())
+      {:ok, expected_reply} = :gen_tcp.recv(control_sock, 0, 5000)
+      assert expected_reply in ["S", "N"]
+      :gen_tcp.close(control_sock)
+
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
       send_in_two_parts(sock, Server.ssl_request_message(), 1)
-      assert {:ok, "N"} = :gen_tcp.recv(sock, 0, 5000)
+      assert {:ok, ^expected_reply} = :gen_tcp.recv(sock, 0, 5000)
 
       :gen_tcp.close(sock)
     end
