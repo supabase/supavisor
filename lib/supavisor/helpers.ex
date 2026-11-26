@@ -2,6 +2,8 @@ defmodule Supavisor.Helpers do
   @moduledoc false
   require Logger
 
+  @max_scram_iterations 32_768
+
   @spec check_creds_get_ver(map) :: {:ok, String.t() | nil} | {:error, String.t()}
 
   def check_creds_get_ver(%{"require_user" => false} = params) do
@@ -291,7 +293,11 @@ defmodule Supavisor.Helpers do
     i = srv_first.i
 
     salted_password =
-      :pgo_scram.hi(PgSASLprep.scram_normalize(IO.iodata_to_binary(secrets.password)), salt, i)
+      scram_salted_password(
+        PgSASLprep.scram_normalize(IO.iodata_to_binary(secrets.password)),
+        salt,
+        i
+      )
 
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
@@ -346,7 +352,7 @@ defmodule Supavisor.Helpers do
         %Supavisor.Secrets.SASLSecrets{} = secrets
       ) do
     salted_password =
-      :pgo_scram.hi(
+      scram_salted_password(
         PgSASLprep.scram_normalize(IO.iodata_to_binary(password)),
         secrets.salt,
         secrets.iterations
@@ -355,6 +361,37 @@ defmodule Supavisor.Helpers do
     client_key = :pgo_scram.hmac(salted_password, "Client Key")
     stored_key = :pgo_scram.h(client_key)
     stored_key == secrets.stored_key
+  end
+
+  @doc """
+  Computes the SCRAM `SaltedPassword := Hi(password, salt, i)` from RFC 5802,
+  which is PBKDF2 with HMAC-SHA-256 and a 32-byte output.
+
+  The password must already be SASLprep-normalized. The iteration count must be
+  within `1..max_scram_iterations()`.
+
+  Failures raise without the arguments in the stacktrace, so a crash report
+  never contains the password.
+  """
+  @spec scram_salted_password(binary(), binary(), pos_integer()) :: binary()
+  def scram_salted_password(password, salt, iterations) do
+    if valid_scram_iterations?(iterations) do
+      try do
+        :crypto.pbkdf2_hmac(:sha256, password, salt, iterations, 32)
+      catch
+        _kind, _reason -> raise "SCRAM salted password derivation failed"
+      end
+    else
+      raise ArgumentError, "invalid SCRAM iteration count"
+    end
+  end
+
+  @spec max_scram_iterations() :: pos_integer()
+  def max_scram_iterations, do: @max_scram_iterations
+
+  @spec valid_scram_iterations?(term()) :: boolean()
+  def valid_scram_iterations?(iterations) do
+    is_integer(iterations) and iterations >= 1 and iterations <= @max_scram_iterations
   end
 
   def signatures(stored_key, server_key, srv_first, client_nonce, user_name, channel) do

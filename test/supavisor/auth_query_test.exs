@@ -58,6 +58,14 @@ defmodule Supavisor.AuthQueryTest do
       assert_valid_error(result)
     end
 
+    test "rejects SCRAM secrets with zero iterations" do
+      secret =
+        "SCRAM-SHA-256$0:#{Base.encode64("salt")}$#{Base.encode64("storedKey")}:#{Base.encode64("serverKey")}"
+
+      assert {:error, %AuthQueryError{reason: :too_few_iterations}} =
+               AuthQuery.parse_secret(secret, "user")
+    end
+
     test "accepts SCRAM secrets at the iteration limit" do
       secret =
         "SCRAM-SHA-256$32768:#{Base.encode64("salt")}$#{Base.encode64("storedKey")}:#{Base.encode64("serverKey")}"

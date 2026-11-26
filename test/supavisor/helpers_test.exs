@@ -44,6 +44,37 @@ defmodule Supavisor.HelpersTest do
     end
   end
 
+  describe "scram_salted_password/3" do
+    @password "do-not-log-this-password"
+
+    test "an invalid iteration count raises without the password in the stacktrace" do
+      failure = formatted_failure(fn -> @subject.scram_salted_password(@password, "salt", 0) end)
+
+      assert failure =~ "invalid SCRAM iteration count"
+      refute failure =~ @password
+    end
+
+    test "a failed derivation raises without the password in the stacktrace" do
+      failure =
+        formatted_failure(fn ->
+          @subject.scram_salted_password(@password, :not_a_binary, 4096)
+        end)
+
+      assert failure =~ "SCRAM salted password derivation failed"
+      refute failure =~ @password
+    end
+
+    defp formatted_failure(fun) do
+      try do
+        fun.()
+      catch
+        kind, reason -> Exception.format(kind, reason, __STACKTRACE__)
+      else
+        _ -> flunk("expected a raise")
+      end
+    end
+  end
+
   describe "set_min_heap_size/1" do
     test "sets min heap size to configured value" do
       expected_words = Supavisor.Helpers.mb_to_words(100)
