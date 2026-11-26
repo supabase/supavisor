@@ -197,6 +197,22 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert String.starts_with?(reply_data, "HTTP/1.1 204")
     end
 
+    test "answers split non-HTTP bytes like the same bytes in one write", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      request = "POST / HTTP/1.1\r\n\r\n"
+
+      {:ok, control_sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      :ok = :gen_tcp.send(control_sock, request)
+      expected = recv_until_closed(control_sock, "")
+
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      send_in_two_parts(sock, request, 2)
+      reply = recv_until_closed(sock, "")
+      assert reply == expected
+      assert {reply_data, :closed} = reply
+      refute String.contains?(reply_data, "ESTARTUPPACKETTOOLARGE")
+    end
+
     test "handles bytes after a split startup packet as the next message", %{port: port} do
       bin =
         <<95::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,

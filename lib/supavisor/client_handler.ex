@@ -156,15 +156,9 @@ defmodule Supavisor.ClientHandler do
       <<"GET", _::binary>> = packet ->
         {:keep_state, data, {:next_event, :info, {proto, sock, packet}}}
 
-      <<len::32, _::binary>> when len > @max_startup_packet_size ->
-        Error.terminate_with_error(
-          data,
-          %StartupPacketTooLargeError{packet_size: len},
-          :handshake
-        )
-
-      <<len::32, _::binary>> = packet when len < 8 ->
-        # Too short to be a message: the startup clause rejects it.
+      <<len::32, _::binary>> = packet when len < 8 or len > @max_startup_packet_size ->
+        # Not a message to wait for (too short, or too long to buffer): handle the bytes as
+        # if they came in one read.
         {:keep_state, data, {:next_event, :info, {proto, sock, packet}}}
 
       <<len::32, _::binary>> = packet when byte_size(packet) >= len ->
