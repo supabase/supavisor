@@ -317,7 +317,8 @@ defmodule Supavisor.ClientHandler do
   # A process started before an upgrade may not have the handshake_buffer key yet.
   def handle_event(:info, {proto, _, bin}, :handshake, data) when proto in @proto do
     case bin do
-      <<len::32, _::binary>> when byte_size(bin) < len and len <= @max_startup_packet_size ->
+      <<len::32, _::binary>>
+      when len >= 8 and byte_size(bin) < len and len <= @max_startup_packet_size ->
         {:keep_state, Map.put(data, :handshake_buffer, bin)}
 
       _ when byte_size(bin) < 4 ->

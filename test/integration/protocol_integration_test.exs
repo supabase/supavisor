@@ -226,6 +226,99 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert recv_until_closed(sock, "") == expected
       assert System.monotonic_time(:millisecond) - started < 1_000
     end
+
+    test "handles a CancelRequest split across reads like one sent in one write",
+         %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      cancel = Server.cancel_message(0, 0)
+
+      {:ok, control_sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      :ok = :gen_tcp.send(control_sock, cancel)
+      # The server makes no reply to a cancel request: it closes the connection.
+      expected = recv_until_closed(control_sock, "")
+      assert expected == {"", :closed}
+
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      send_in_two_parts(sock, cancel, 3)
+      assert recv_until_closed(sock, "") == expected
+    end
+
+    test "rejects a too-large startup packet split across reads", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+      padding = :binary.copy(<<0>>, 1100)
+      bin = <<1108::32, 3::16, 0::16, padding::binary>>
+
+      # The first read holds only part of the length prefix.
+      send_in_two_parts(sock, bin, 3)
+      assert {:ok, data} = :gen_tcp.recv(sock, 0, 5000)
+
+      assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+               Server.decode_pkt(data)
+
+      assert %{
+               "C" => "08P01",
+               "M" =>
+                 "(ESTARTUPPACKETTOOLARGE) Startup packet too large: 1108 bytes (max 1024 bytes)"
+             } = payload
+
+      assert {:error, :closed} = :gen_tcp.recv(sock, 0, 5000)
+    end
+
+    test "rejects at once a length prefix too short to be a message", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      # A first message is at least 8 bytes, so more reads can't complete a length of 7.
+      bin = <<7::32, 0>>
+
+      for cut <- [nil, 2] do
+        {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+        case cut do
+          nil -> :ok = :gen_tcp.send(sock, bin)
+          n -> send_in_two_parts(sock, bin, n)
+        end
+
+        assert {:ok, data} = :gen_tcp.recv(sock, 0, 1_000)
+
+        assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+                 Server.decode_pkt(data)
+
+        assert %{
+                 "C" => "08P01",
+                 "M" => "(ESTARTUPMESSAGE) Invalid startup message: :bad_startup_payload"
+               } = payload
+
+        :gen_tcp.close(sock)
+      end
+    end
+
+    test "fails at once on bytes sent after a split SSLRequest with no certificate configured",
+         %{port: port} do
+      SSLHelper.setup_downstream_certs()
+
+      for key <- [
+            :global_downstream_cert,
+            :global_downstream_key,
+            :global_downstream_ec_cert,
+            :global_downstream_ec_key
+          ] do
+        Application.delete_env(:supavisor, key)
+      end
+
+      opts = [:binary, active: false, nodelay: true]
+      packet = Server.ssl_request_message() <> <<0x16, 3, 1, 0, 4, 1, 0, 0, 0>>
+
+      {:ok, control_sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      :ok = :gen_tcp.send(control_sock, packet)
+      expected = recv_until_closed(control_sock, "")
+
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      started = System.monotonic_time(:millisecond)
+      send_in_two_parts(sock, packet, 4)
+      assert recv_until_closed(sock, "") == expected
+      assert System.monotonic_time(:millisecond) - started < 1_000
+    end
   end
 
   describe "tls logger metadata" do
