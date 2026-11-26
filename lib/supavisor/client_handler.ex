@@ -153,6 +153,9 @@ defmodule Supavisor.ClientHandler do
     data = %{data | handshake_buffer: <<>>}
 
     case buffer <> bin do
+      <<"GET", _::binary>> = packet ->
+        {:keep_state, data, {:next_event, :info, {proto, sock, packet}}}
+
       <<len::32, _::binary>> when len > @max_startup_packet_size ->
         Error.terminate_with_error(
           data,

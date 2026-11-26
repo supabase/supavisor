@@ -102,7 +102,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
 
       bin =
-        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+        <<95::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
           "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
 
       send_in_two_parts(sock, bin, 8)
@@ -116,7 +116,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
 
       bin =
-        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+        <<95::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
           "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
 
       send_in_two_parts(sock, bin, 3)
@@ -181,33 +181,47 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       :gen_tcp.close(sock)
     end
 
-    test "handles bytes after a split startup packet as the next message", %{port: port} do
+    test "answers a split GET prefix like a GET in one read", %{port: port} do
       opts = [:binary, active: false, nodelay: true]
-      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      request = "GET / HTTP/1.1\r\n\r\n"
 
+      {:ok, control_sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      :ok = :gen_tcp.send(control_sock, request)
+      expected = recv_until_closed(control_sock, "")
+
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      send_in_two_parts(sock, request, 2)
+      reply = recv_until_closed(sock, "")
+      assert reply == expected
+      assert {reply_data, :closed} = reply
+      assert String.starts_with?(reply_data, "HTTP/1.1 204")
+    end
+
+    test "handles bytes after a split startup packet as the next message", %{port: port} do
       bin =
-        <<91::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
+        <<95::32, 3::16, 0::16, "user", 0, "postgres.proxy_tenant_ps_enabled", 0, "database", 0,
           "postgres", 0, "options", 0, 0, "client_encoding", 0, "UTF8", 0, 0>>
 
       <<first::binary-size(8), rest::binary>> = bin
-      :ok = :gen_tcp.send(sock, first)
-      Process.sleep(50)
 
-      # The rest of the startup packet and a Terminate message arrive in one read.
-      :ok = :gen_tcp.send(sock, rest <> <<?X, 4::32>>)
+      {result, log} =
+        with_log(fn ->
+          try do
+            check_trailing_bytes(port, bin, first, rest)
+            :passed
+          rescue
+            e -> {:failed, e, __STACKTRACE__}
+          end
+        end)
 
-      case :gen_tcp.recv(sock, 0, 5000) do
-        {:ok, <<?R, _::binary>>} ->
+      case result do
+        :passed ->
           :ok
 
-        {:error, :closed} ->
-          :ok
-
-        other ->
-          flunk("expected an authentication request or a closed socket, got: #{inspect(other)}")
+        {:failed, e, stacktrace} ->
+          IO.puts("trailing-bytes log:\n" <> log)
+          reraise e, stacktrace
       end
-
-      :gen_tcp.close(sock)
     end
 
     test "fails at once on bytes sent after a split SSLRequest", %{port: port} do
@@ -268,10 +282,9 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
     test "rejects at once a length prefix too short to be a message", %{port: port} do
       opts = [:binary, active: false, nodelay: true]
-      # A first message is at least 8 bytes, so more reads can't complete a length of 7.
-      bin = <<7::32, 0>>
-
-      for cut <- [nil, 2] do
+      # A first message is at least 8 bytes, so more reads can't complete a length of 5 to 7.
+      for len <- 5..7, cut <- [nil, 2] do
+        bin = <<len::32, 0>>
         {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
 
         case cut do
@@ -602,6 +615,56 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     :ok = :gen_tcp.send(sock, first)
     Process.sleep(50)
     :ok = :gen_tcp.send(sock, rest)
+  end
+
+  # Checks the reply to a split startup packet with trailing bytes against one-read controls.
+  defp check_trailing_bytes(port, bin, first, rest) do
+    opts = [:binary, active: false, nodelay: true]
+
+    # Terminate after the startup packet: split writes must match one write.
+    {:ok, control_x} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+    :ok = :gen_tcp.send(control_x, bin)
+    assert {:ok, <<?R, _::binary>>} = :gen_tcp.recv(control_x, 0, 5000)
+    :ok = :gen_tcp.send(control_x, <<?X, 4::32>>)
+    control_x_reply = recv_until_closed(control_x, "")
+    :gen_tcp.close(control_x)
+
+    {:ok, split_x} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+    :ok = :gen_tcp.send(split_x, first)
+    Process.sleep(50)
+    :ok = :gen_tcp.send(split_x, rest <> <<?X, 4::32>>)
+    assert {:ok, <<?R, _::binary>>} = :gen_tcp.recv(split_x, 0, 5000)
+    split_x_reply = recv_until_closed(split_x, "")
+    :gen_tcp.close(split_x)
+
+    assert split_x_reply == control_x_reply
+
+    # No Terminate: split writes must match one write, and the socket stays open.
+    {:ok, control_open} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+    :ok = :gen_tcp.send(control_open, bin)
+    control_open_result = after_auth_request(control_open)
+    :gen_tcp.close(control_open)
+
+    {:ok, split_open} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+    :ok = :gen_tcp.send(split_open, first)
+    Process.sleep(50)
+    :ok = :gen_tcp.send(split_open, rest)
+    split_open_result = after_auth_request(split_open)
+    :gen_tcp.close(split_open)
+
+    assert split_open_result == control_open_result
+    assert control_open_result == :open
+  end
+
+  # Reads the auth request, then reports :open if nothing else arrives within 1 s, else the rest of the reply.
+  defp after_auth_request(sock) do
+    assert {:ok, <<?R, _::binary>>} = :gen_tcp.recv(sock, 0, 5000)
+
+    case :gen_tcp.recv(sock, 0, 1_000) do
+      {:error, :timeout} -> :open
+      {:ok, data} -> recv_until_closed(sock, data)
+      {:error, :closed} -> {"", :closed}
+    end
   end
 
   defp recv_until_closed(sock, acc) do
