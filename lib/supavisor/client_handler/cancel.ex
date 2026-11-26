@@ -18,6 +18,12 @@ defmodule Supavisor.ClientHandler.Cancel do
   alias Supavisor.HandlerHelpers
   require Supavisor.Protocol.Server, as: Server
 
+  # Bounds the cancel connection's wait for the ack, which never comes for a session that already ended,
+  # so keep it short, but longer than @upstream_timeout so a slow database still gets its ack.
+  @cancel_timeout 2_000
+  # The owning handler waits inline for Postgres to close the cancel socket, at most this long.
+  @upstream_timeout 1_000
+
   @doc """
   Called upon receiving cancel requests, broadcasts to relevant client handler
   """
@@ -29,6 +35,41 @@ defmodule Supavisor.ClientHandler.Cancel do
       msg
     )
   end
+
+  @doc """
+  Broadcasts a cancel request and waits until the owning client handler has forwarded it to the database.
+
+  Clients may send their next query as soon as the cancel connection closes, so it must not close earlier.
+  Gives up after `timeout` (no handler owns the key, or one running an older version that never replies).
+  The ack is per session, so a second cancel sent while the first is being forwarded may be released by the first's ack.
+  """
+  @spec send_cancel_query_and_wait(non_neg_integer, non_neg_integer, timeout) ::
+          :ok | {:error, :timeout}
+  def send_cancel_query_and_wait(pid, key, timeout \\ @cancel_timeout) do
+    topic = "cancel_done:#{pid}_#{key}"
+    :ok = PubSub.subscribe(Supavisor.PubSub, topic)
+    :ok = send_cancel_query(pid, key)
+
+    result =
+      receive do
+        :cancel_done -> :ok
+      after
+        timeout -> {:error, :timeout}
+      end
+
+    :ok = PubSub.unsubscribe(Supavisor.PubSub, topic)
+    result
+  end
+
+  @doc """
+  Tells the cancel connections waiting on `{pid, key}` that the cancel reached the database
+  """
+  @spec reply_cancel_done({non_neg_integer, non_neg_integer} | nil) :: :ok | {:error, term}
+  def reply_cancel_done({pid, key}) do
+    PubSub.broadcast(Supavisor.PubSub, "cancel_done:#{pid}_#{key}", :cancel_done)
+  end
+
+  def reply_cancel_done(nil), do: :ok
 
   @doc """
   Called by ClientHandlers when starting a connection
@@ -51,11 +92,12 @@ defmodule Supavisor.ClientHandler.Cancel do
     case db_pid_meta(key) do
       [{^db_pid, meta}] ->
         msg = Server.cancel_message(meta.pid, meta.key)
-        opts = [:binary, {:packet, :raw}, {:active, true}, meta.ip_version]
+        opts = [:binary, {:packet, :raw}, {:active, false}, meta.ip_version]
         {:ok, sock} = :gen_tcp.connect(meta.host, meta.port, opts)
-        sock = {:gen_tcp, sock}
-        :ok = HandlerHelpers.sock_send(sock, msg)
-        :ok = HandlerHelpers.sock_close(sock)
+        :ok = HandlerHelpers.sock_send({:gen_tcp, sock}, msg)
+        # Postgres closes the cancel connection only after it has signalled the backend
+        _ = :gen_tcp.recv(sock, 0, @upstream_timeout)
+        :ok = HandlerHelpers.sock_close({:gen_tcp, sock})
 
       error ->
         Logger.error(

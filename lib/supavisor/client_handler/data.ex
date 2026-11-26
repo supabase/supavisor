@@ -43,6 +43,7 @@ defmodule Supavisor.ClientHandler.Data do
     :subscribe_retries,
     :admission_retries,
     :client_ready,
+    :cancel_key,
     :max_clients,
     :pool_ranch,
     :use_jit_flow,
