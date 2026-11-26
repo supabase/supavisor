@@ -34,10 +34,9 @@ defmodule Supavisor.JWT do
     * `:blocklist` - `:supavisor` app-env key of the blocked tokens
     * `:jwks` - optional `:supavisor` app-env key of the `Supavisor.JWT.JWKS`
       config (`nil` there disables JWKS)
-    * `:hmac_disabled` - optional `:supavisor` app-env key of a boolean; when it
-      is `true`, HMAC tokens are rejected with `:hmac_disabled`. It is read on
-      every request, so it can be flipped on a running node with
-      `Application.put_env/3`
+    * `:hmac_disabled` - optional `:supavisor` app-env key; when it is `true`,
+      HMAC tokens are rejected with `:hmac_disabled`. It is read on every 
+      request, so it can be flipped in runtime with `Application.put_env/3`
 
   ## Disabling HMAC
 
@@ -45,8 +44,7 @@ defmodule Supavisor.JWT do
   `:hmac_disabled` key to `true`. HMAC tokens are then rejected before any
   signature work, and the telemetry keeps the `:hmac` method, so
   `[:supavisor, :jwt_auth, :rejected]` with `reason: :hmac_disabled` shows who
-  still sends them. Only do this where JWKS is configured, otherwise nothing
-  can authorize.
+  still sends them.
 
   Independently of the flag, a missing (`nil`) or empty HMAC secret rejects HMAC
   tokens with `:hmac_secret_not_configured`: `Joken` would otherwise raise on
