@@ -87,6 +87,7 @@ defmodule Supavisor.Protocol.StartupOptions do
   @schema %{
     "jit" => :boolean,
     "client_tls" => :boolean,
+    "password_auth" => :boolean,
     "search_path" => :string,
     "log_level" => {:enum, [:debug, :info, :notice, :warning, :error]},
     "client_ip" => :string,

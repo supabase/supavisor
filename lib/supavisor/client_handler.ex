@@ -297,6 +297,7 @@ defmodule Supavisor.ClientHandler do
       db_name: db_name,
       search_path: search_path,
       jit: client_jit,
+      password_auth: password_auth_requested,
       client_tls: client_tls,
       client_ip: client_ip,
       app_name: app_name,
@@ -316,6 +317,7 @@ defmodule Supavisor.ClientHandler do
     data = %{
       data
       | peer_ip: peer_ip,
+        ssl: effective_ssl,
         app_name: app_name,
         invalid_options: invalid_options,
         unknown_options: unknown_options
@@ -351,6 +353,8 @@ defmodule Supavisor.ClientHandler do
             upstream_tls: upstream_tls
           )
 
+        force_password? = data.local and password_auth_requested
+
         with :ok <- Checks.check_tenant_not_banned(info),
              :ok <- Checks.check_ssl_enforcement(data, info, user),
              :ok <- Checks.check_address_allowed(data, info),
@@ -360,6 +364,7 @@ defmodule Supavisor.ClientHandler do
                  info.tenant,
                  client_jit,
                  effective_ssl,
+                 force_password?,
                  user
                ) do
           Logger.debug("ClientHandler: Authentication method: #{inspect(auth_method)}")
