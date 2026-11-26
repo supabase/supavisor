@@ -3,6 +3,7 @@ defmodule Supavisor.Integration.StopPoolTest do
 
   require Supavisor
 
+  import ExUnit.CaptureLog
   import Supavisor.Asserts, only: [assert_eventually: 1]
 
   alias Supavisor.JWT.SharedSecret.Token
@@ -123,5 +124,36 @@ defmodule Supavisor.Integration.StopPoolTest do
     stop_supervised!({:peer, peer_name})
 
     assert {:error, :node_unreachable} = Supavisor.Ops.stop_pool(@tenant, pid)
+  end
+
+  test "stop_pool/3 reports a node where the stop fails as unreachable", %{
+    peer: peer,
+    peer_node: peer_node
+  } do
+    failing_stop =
+      defmodule FailingStop do
+        def run(_tenant, _sup, _timeout), do: raise("boom")
+      end
+
+    :ok = Cluster.load_module(peer, failing_stop)
+    :ok = :peer.call(peer, :meck, :new, [Supavisor.Ops, [:passthrough, :no_link]])
+
+    :ok =
+      :peer.call(peer, :meck, :expect, [
+        Supavisor.Ops,
+        :stop_pool_local,
+        &FailingStop.run/3
+      ])
+
+    # Any pid of the peer will do: the stubbed `stop_pool_local` fails before it looks it up.
+    pid = :peer.call(peer, Process, :whereis, [:init])
+
+    log =
+      capture_log([level: :warning], fn ->
+        assert {:error, :node_unreachable} = Supavisor.Ops.stop_pool(@tenant, pid)
+      end)
+
+    assert log =~
+             ~s(Failed to stop pool of #{@tenant} on #{peer_node}: {:badrpc, {:error, {:exception, %RuntimeError{message: "boom"})
   end
 end

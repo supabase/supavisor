@@ -3,6 +3,8 @@ defmodule Supavisor.Asserts do
   Additional assertions useful in Supavisor tests
   """
 
+  import ExUnit.Assertions, only: [assert: 1]
+
   @doc """
   Asserts that `function` will eventually success. Fails otherwise.
 
@@ -41,6 +43,21 @@ defmodule Supavisor.Asserts do
     else
       :ok
     end
+  end
+
+  @doc """
+  Asserts that `info` is the description of `node`, as returned by
+  `Supavisor.Ops.node_info_local/0`, with the given `health`.
+  """
+  def assert_node_info(info, node, health) do
+    assert Enum.sort(Map.keys(info)) == [:boot_id, :health, :host, :node, :uptime_ms, :version]
+    assert info.node == node
+    assert [_name, host] = node |> to_string() |> String.split("@")
+    assert info.host == host
+    assert is_integer(info.uptime_ms) and info.uptime_ms >= 0
+    assert info.version == to_string(Application.spec(:supavisor, :vsn))
+    assert Ecto.UUID.cast(info.boot_id) == {:ok, info.boot_id}
+    assert info.health == health
   end
 
   @valid_log_levels ~w(emergency alert critical error warning warn notice info debug)a
