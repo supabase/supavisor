@@ -34,6 +34,21 @@ defmodule Supavisor.JWT do
     * `:blocklist` - `:supavisor` app-env key of the blocked tokens
     * `:jwks` - optional `:supavisor` app-env key of the `Supavisor.JWT.JWKS`
       config (`nil` there disables JWKS)
+    * `:hmac_disabled` - optional `:supavisor` app-env key; when it is `true`,
+      HMAC tokens are rejected with `:hmac_disabled`. It is read on every 
+      request, so it can be flipped in runtime with `Application.put_env/3`
+
+  ## Disabling HMAC
+
+  A pipeline stops accepting the shared HMAC secret by setting its
+  `:hmac_disabled` key to `true`. HMAC tokens are then rejected before any
+  signature work, and the telemetry keeps the `:hmac` method, so
+  `[:supavisor, :jwt_auth, :rejected]` with `reason: :hmac_disabled` shows who
+  still sends them.
+
+  Independently of the flag, a missing (`nil`) or empty HMAC secret rejects HMAC
+  tokens with `:hmac_secret_not_configured`: `Joken` would otherwise raise on
+  `nil`, and sign and verify with an empty key on `""`.
 
   ## Telemetry
 
@@ -55,7 +70,8 @@ defmodule Supavisor.JWT do
           pipeline: atom(),
           secret: atom(),
           blocklist: atom(),
-          jwks: atom()
+          jwks: atom(),
+          hmac_disabled: atom()
         ]
 
   @doc """
@@ -70,10 +86,12 @@ defmodule Supavisor.JWT do
     secret = config!(opts, :secret)
     blocklist = config!(opts, :blocklist)
     jwks_config = config(opts, :jwks)
+    hmac_disabled? = config(opts, :hmac_disabled) == true
 
     with {:ok, token} <- check_bearer(conn),
          :ok <- check_blocklist(token, blocklist),
          {:ok, method} <- check_header(token),
+         :ok <- check_hmac_allowed(method, hmac_disabled?),
          :ok <- check_payload(token, method),
          {:ok, claims} <- dispatch(method, token, secret, jwks_config) do
       :telemetry.execute([:supavisor, :jwt_auth, :ok], %{count: 1}, %{
@@ -125,12 +143,18 @@ defmodule Supavisor.JWT do
     end
   end
 
+  defp check_hmac_allowed(:hmac, true), do: {:error, :hmac, :hmac_disabled}
+  defp check_hmac_allowed(_method, _hmac_disabled?), do: :ok
+
   defp check_payload(token, method) do
     case Joken.peek_claims(token) do
       {:ok, claims} when is_map(claims) -> :ok
       _error -> {:error, method, :expected_claims_map}
     end
   end
+
+  defp dispatch(:hmac, _token, secret, _jwks_config) when secret in [nil, ""],
+    do: {:error, :hmac, :hmac_secret_not_configured}
 
   defp dispatch(:hmac, token, secret, _jwks_config),
     do: tag(:hmac, SharedSecret.verify(token, secret))

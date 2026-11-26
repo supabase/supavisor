@@ -607,6 +607,11 @@ defmodule SupavisorWeb.TenantControllerTest do
       sign_token(pem, Map.merge(default_claims(), overrides))
     end
 
+    defp disable_hmac do
+      Application.put_env(:supavisor, :api_jwt_hmac_disabled, true)
+      on_exit(fn -> Application.put_env(:supavisor, :api_jwt_hmac_disabled, false) end)
+    end
+
     test "is disabled by default: a JWKS token gets 403 with no api_jwks_config",
          %{conn: conn, pem: pem} do
       assert Application.get_env(:supavisor, :api_jwks_config) == nil
@@ -700,6 +705,40 @@ defmodule SupavisorWeb.TenantControllerTest do
                conn
                |> get(~p"/api/tenants/non_existing_tenant_id")
                |> json_response(404)
+    end
+
+    test "an HMAC token gets 403 once api_jwt_hmac_disabled is set", %{conn: conn} do
+      ref = attach_jwt_auth_telemetry_handler()
+      disable_hmac()
+
+      # `conn` carries the standard "dev" HMAC bearer token from the top-level setup.
+      assert get(conn, ~p"/api/tenants/non_existing_tenant_id").status == 403
+
+      assert_receive {^ref, [:supavisor, :jwt_auth, :rejected], %{count: 1},
+                      %{method: :hmac, pipeline: :api, reason: :hmac_disabled}}
+
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+    end
+
+    test "a JWKS token is still authorized when api_jwt_hmac_disabled is set", %{
+      conn: conn,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(
+        %{trusted_issuer: issuer(), allowed_subs: [sub()], expected_aud: aud()},
+        public_jwk
+      )
+
+      disable_hmac()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> jwks_token(pem))
+        |> get(~p"/api/tenants/non_existing_tenant_id")
+
+      # 404 (reached the controller), not 403.
+      assert conn.status == 404
     end
 
     test "emits jwt_auth ok with method :hmac for a valid HMAC token", %{conn: conn} do

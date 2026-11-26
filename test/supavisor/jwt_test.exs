@@ -29,6 +29,8 @@ defmodule Supavisor.JWTTest do
   @secret "my_secret_key"
   @opts [pipeline: :api, secret: :jwt_test_secret, blocklist: :jwt_test_blocklist]
   @opts_jwks @opts ++ [jwks: :api_jwks_config]
+  @opts_hmac_disabled @opts ++ [hmac_disabled: :jwt_test_hmac_disabled]
+  @opts_jwks_hmac_disabled @opts_jwks ++ [hmac_disabled: :jwt_test_hmac_disabled]
 
   setup_all do
     generate_rsa_keypair()
@@ -351,6 +353,133 @@ defmodule Supavisor.JWTTest do
 
       assert {:error, :signature_error} = JWT.authorize(conn_with(forged), @opts_jwks)
       assert_rejected(ref, :hmac, :api, :signature_error)
+    end
+  end
+
+  describe "HMAC disabled" do
+    setup do
+      Application.put_env(:supavisor, :jwt_test_hmac_disabled, true)
+      on_exit(fn -> Application.delete_env(:supavisor, :jwt_test_hmac_disabled) end)
+    end
+
+    test "rejects an HMAC token, tagged :hmac, before verifying its signature", %{ref: ref} do
+      assert {:error, :hmac_disabled} =
+               JWT.authorize(conn_with(hmac_token()), @opts_hmac_disabled)
+
+      assert_rejected(ref, :hmac, :api, :hmac_disabled)
+      refute_received {^ref, [:supavisor, :jwt_auth, :ok], _, _}
+
+      # A token with a bad signature gets the same answer: the secret is never consulted.
+      forged = Token.gen!(%{"role" => "test"}, "another_secret")
+      assert {:error, :hmac_disabled} = JWT.authorize(conn_with(forged), @opts_hmac_disabled)
+      assert_rejected(ref, :hmac, :api, :hmac_disabled)
+    end
+
+    test "rejects HS256, HS384 and HS512 tokens", %{ref: ref} do
+      for alg <- ["HS256", "HS384", "HS512"] do
+        token = Token.gen!(%{"role" => "test"}, Joken.Signer.create(alg, @secret))
+
+        assert {:error, :hmac_disabled} = JWT.authorize(conn_with(token), @opts_hmac_disabled)
+        assert_rejected(ref, :hmac, :api, :hmac_disabled)
+      end
+    end
+
+    test "is read on every request, so it can be flipped on a running node", %{ref: ref} do
+      conn = conn_with(hmac_token())
+
+      assert {:error, :hmac_disabled} = JWT.authorize(conn, @opts_hmac_disabled)
+      assert_rejected(ref, :hmac, :api, :hmac_disabled)
+
+      Application.put_env(:supavisor, :jwt_test_hmac_disabled, false)
+      assert {:ok, %{"role" => "test"}} = JWT.authorize(conn, @opts_hmac_disabled)
+
+      Application.put_env(:supavisor, :jwt_test_hmac_disabled, true)
+      assert {:error, :hmac_disabled} = JWT.authorize(conn, @opts_hmac_disabled)
+    end
+
+    test "a missing or non-true value leaves HMAC enabled" do
+      for value <- [nil, false, "true", 1] do
+        Application.put_env(:supavisor, :jwt_test_hmac_disabled, value)
+        assert {:ok, _claims} = JWT.authorize(conn_with(hmac_token()), @opts_hmac_disabled)
+      end
+
+      Application.delete_env(:supavisor, :jwt_test_hmac_disabled)
+      assert {:ok, _claims} = JWT.authorize(conn_with(hmac_token()), @opts_hmac_disabled)
+    end
+
+    test "does not affect a pipeline that does not pass the option (e.g. /metrics)", %{ref: ref} do
+      opts = Keyword.put(@opts, :pipeline, :metrics)
+
+      assert {:ok, %{"role" => "test"}} = JWT.authorize(conn_with(hmac_token()), opts)
+
+      assert_received {^ref, [:supavisor, :jwt_auth, :ok], _,
+                       %{method: :hmac, pipeline: :metrics}}
+    end
+
+    test "the blocklist still answers first", %{ref: ref} do
+      token = hmac_token()
+      Application.put_env(:supavisor, :jwt_test_blocklist, [token])
+
+      assert {:error, :token_blocklisted} = JWT.authorize(conn_with(token), @opts_hmac_disabled)
+      assert_rejected(ref, :unknown, :api, :token_blocklisted)
+    end
+  end
+
+  describe "HMAC disabled with JWKS configured" do
+    setup %{public_jwk: public_jwk} do
+      start_jwks_auth(default_config(), public_jwk)
+      Application.put_env(:supavisor, :jwt_test_hmac_disabled, true)
+      on_exit(fn -> Application.delete_env(:supavisor, :jwt_test_hmac_disabled) end)
+    end
+
+    test "a JWKS token is still accepted", %{ref: ref, pem: pem} do
+      token = sign_token(pem, default_claims())
+
+      assert {:ok, claims} = JWT.authorize(conn_with(token), @opts_jwks_hmac_disabled)
+      assert claims["sub"] == sub()
+      assert_received {^ref, [:supavisor, :jwt_auth, :ok], _, %{method: :jwks, pipeline: :api}}
+      refute_received {^ref, [:supavisor, :jwt_auth, :rejected], _, _}
+    end
+
+    test "an HMAC token is rejected", %{ref: ref} do
+      assert {:error, :hmac_disabled} =
+               JWT.authorize(conn_with(hmac_token()), @opts_jwks_hmac_disabled)
+
+      assert_rejected(ref, :hmac, :api, :hmac_disabled)
+    end
+  end
+
+  describe "HMAC secret not configured" do
+    test "a nil secret rejects HMAC tokens instead of raising", %{ref: ref} do
+      Application.put_env(:supavisor, :jwt_test_secret, nil)
+
+      assert {:error, :hmac_secret_not_configured} = JWT.authorize(conn_with(hmac_token()), @opts)
+      assert_rejected(ref, :hmac, :api, :hmac_secret_not_configured)
+    end
+
+    test "an empty secret rejects HMAC tokens, including ones signed with the empty key",
+         %{ref: ref} do
+      Application.put_env(:supavisor, :jwt_test_secret, "")
+      signed_with_empty_key = Token.gen!(%{"role" => "test"}, "")
+
+      assert {:error, :hmac_secret_not_configured} =
+               JWT.authorize(conn_with(signed_with_empty_key), @opts)
+
+      assert_rejected(ref, :hmac, :api, :hmac_secret_not_configured)
+    end
+
+    test "does not stop a JWKS token from being authorized", %{
+      ref: ref,
+      pem: pem,
+      public_jwk: public_jwk
+    } do
+      start_jwks_auth(default_config(), public_jwk)
+      Application.put_env(:supavisor, :jwt_test_secret, nil)
+
+      assert {:ok, _claims} =
+               JWT.authorize(conn_with(sign_token(pem, default_claims())), @opts_jwks)
+
+      assert_received {^ref, [:supavisor, :jwt_auth, :ok], _, %{method: :jwks}}
     end
   end
 

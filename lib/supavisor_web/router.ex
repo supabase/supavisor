@@ -17,7 +17,8 @@ defmodule SupavisorWeb.Router do
       pipeline: :api,
       secret: :api_jwt_secret,
       blocklist: :api_blocklist,
-      jwks: :api_jwks_config
+      jwks: :api_jwks_config,
+      hmac_disabled: :api_jwt_hmac_disabled
     )
 
     plug(OpenApiSpex.Plug.PutApiSpec, module: SupavisorWeb.ApiSpec)
