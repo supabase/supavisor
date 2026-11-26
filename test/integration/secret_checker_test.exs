@@ -3,6 +3,8 @@ defmodule Supavisor.Integration.SecretCheckerTest do
 
   require Supavisor
   alias Postgrex, as: P
+  alias Supavisor.Secrets.SASLSecrets
+  alias Supavisor.UpstreamAuthentication
 
   defmodule CrashingSecretChecker do
     use GenServer
@@ -134,5 +136,121 @@ defmodule Supavisor.Integration.SecretCheckerTest do
 
     assert {:ok, %Supavisor.ClientAuthentication.ValidationSecrets{}} =
              Task.await(task, 5_000)
+  end
+
+  describe "upstream auth secrets after a password change" do
+    @password "secret_checker_rotation_password"
+
+    setup %{db_conf: db_conf, tenant_id: tenant_id} do
+      role = "secret_checker_rotation_#{System.unique_integer([:positive])}"
+      origin = start_supervised!({Postgrex, origin_opts(db_conf)}, id: :origin_conn)
+      P.query!(origin, "CREATE ROLE #{role} WITH LOGIN PASSWORD '#{@password}'", [])
+
+      on_exit(fn ->
+        {:ok, cleanup} = Postgrex.start_link(origin_opts(db_conf))
+        Postgrex.query!(cleanup, "DROP ROLE IF EXISTS #{role}", [])
+      end)
+
+      pool_id =
+        Supavisor.id(
+          type: :single,
+          tenant: tenant_id,
+          user: role,
+          mode: :transaction,
+          db: db_conf[:database]
+        )
+
+      proxy = connect_to_proxy(db_conf, role, tenant_id, :first_client)
+      assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+
+      assert {:ok, %SASLSecrets{}} = UpstreamAuthentication.get_upstream_auth_secrets(pool_id)
+
+      %{origin: origin, role: role, pool_id: pool_id, proxy: proxy}
+    end
+
+    test "are dropped once the role's SCRAM verifier is re-salted", ctx do
+      # Same plaintext, but Postgres stores a new salt and keys.
+      P.query!(ctx.origin, "ALTER ROLE #{ctx.role} PASSWORD '#{@password}'", [])
+
+      assert {:ok, _secrets, _cache} = Supavisor.SecretChecker.get_secrets(ctx.pool_id)
+
+      assert {:error, :not_found} =
+               UpstreamAuthentication.get_upstream_auth_secrets(ctx.pool_id)
+
+      proxy = connect_to_proxy(ctx.db_conf, ctx.role, ctx.tenant_id, :second_client)
+      assert %P.Result{rows: [[1]]} = P.query!(proxy, "SELECT 1", [])
+      assert {:ok, %SASLSecrets{}} = UpstreamAuthentication.get_upstream_auth_secrets(ctx.pool_id)
+    end
+
+    test "are dropped for every pool of the role, not only the first to refresh", ctx do
+      session_proxy =
+        connect_to_proxy(ctx.db_conf, ctx.role, ctx.tenant_id, :session_client, :session)
+
+      assert %P.Result{rows: [[1]]} = P.query!(session_proxy, "SELECT 1", [])
+
+      session_pool_id =
+        Supavisor.id(
+          type: :single,
+          tenant: ctx.tenant_id,
+          user: ctx.role,
+          mode: :session,
+          db: ctx.db_conf[:database]
+        )
+
+      assert {:ok, %SASLSecrets{}} =
+               UpstreamAuthentication.get_upstream_auth_secrets(session_pool_id)
+
+      P.query!(ctx.origin, "ALTER ROLE #{ctx.role} PASSWORD '#{@password}'", [])
+
+      # The first refresh updates the shared validation cache, so the second one is a no-op.
+      assert {:ok, _secrets, :changed} = Supavisor.SecretChecker.get_secrets(ctx.pool_id)
+      assert {:ok, _secrets, :noop} = Supavisor.SecretChecker.get_secrets(session_pool_id)
+
+      assert {:error, :not_found} = UpstreamAuthentication.get_upstream_auth_secrets(ctx.pool_id)
+
+      assert {:error, :not_found} =
+               UpstreamAuthentication.get_upstream_auth_secrets(session_pool_id)
+    end
+
+    test "are kept while the verifier is unchanged", ctx do
+      {:ok, before} = UpstreamAuthentication.get_upstream_auth_secrets(ctx.pool_id)
+
+      assert {:ok, _secrets, _cache} = Supavisor.SecretChecker.get_secrets(ctx.pool_id)
+
+      assert {:ok, ^before} = UpstreamAuthentication.get_upstream_auth_secrets(ctx.pool_id)
+    end
+
+    test "are kept when only the digest spelling differs", ctx do
+      # DbHandler derives secrets with digest "sha-256"; pg_authid says "SCRAM-SHA-256".
+      {:ok, client_secrets} = UpstreamAuthentication.get_upstream_auth_secrets(ctx.pool_id)
+      derived = %{client_secrets | digest: "sha-256"}
+      UpstreamAuthentication.put_upstream_auth_secrets(ctx.pool_id, derived)
+
+      assert {:ok, _secrets, _cache} = Supavisor.SecretChecker.get_secrets(ctx.pool_id)
+
+      assert {:ok, ^derived} = UpstreamAuthentication.get_upstream_auth_secrets(ctx.pool_id)
+    end
+  end
+
+  defp connect_to_proxy(db_conf, role, tenant_id, id, mode \\ :transaction) do
+    start_supervised!(
+      {Postgrex,
+       hostname: db_conf[:hostname],
+       port: Application.get_env(:supavisor, :"proxy_port_#{mode}"),
+       database: db_conf[:database],
+       password: @password,
+       username: "#{role}.#{tenant_id}"},
+      id: id
+    )
+  end
+
+  defp origin_opts(db_conf) do
+    [
+      hostname: db_conf[:hostname],
+      port: db_conf[:port],
+      database: db_conf[:database],
+      password: db_conf[:password],
+      username: db_conf[:username]
+    ]
   end
 end
