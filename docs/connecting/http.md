@@ -21,5 +21,6 @@ const [users, posts] = await sql.transaction([
 
 ## Notes
 
+- Supavisor assumes `/sql` is served over HTTPS.
 - Tenants can't be selected by SNI.
 - Responses are capped at `HTTP_SQL_MAX_RESPONSE_BYTES` (10 MiB by default), above which the request fails with status 507.
