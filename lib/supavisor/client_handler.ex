@@ -168,7 +168,15 @@ defmodule Supavisor.ClientHandler do
         <<message::binary-size(len), rest::binary>> = packet
 
         events =
-          for part <- [message, rest], part != <<>>, do: {:next_event, :info, {proto, sock, part}}
+          if message == Server.ssl_request_message() and rest != <<>> do
+            # Bytes sent after an SSLRequest, before its reply, would be read ahead of the TLS
+            # handshake: handle the whole packet as if it came in one read.
+            [{:next_event, :info, {proto, sock, packet}}]
+          else
+            for part <- [message, rest],
+                part != <<>>,
+                do: {:next_event, :info, {proto, sock, part}}
+          end
 
         {:keep_state, data, events}
 

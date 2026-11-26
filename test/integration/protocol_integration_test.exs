@@ -209,6 +209,23 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
       :gen_tcp.close(sock)
     end
+
+    test "fails at once on bytes sent after a split SSLRequest", %{port: port} do
+      SSLHelper.setup_downstream_certs()
+      opts = [:binary, active: false, nodelay: true]
+      # The client sends more bytes (here the start of a TLS record) before reading the reply.
+      packet = Server.ssl_request_message() <> <<0x16, 3, 1, 0, 4, 1, 0, 0, 0>>
+
+      {:ok, control_sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      :ok = :gen_tcp.send(control_sock, packet)
+      expected = recv_until_closed(control_sock, "")
+
+      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+      started = System.monotonic_time(:millisecond)
+      send_in_two_parts(sock, packet, 4)
+      assert recv_until_closed(sock, "") == expected
+      assert System.monotonic_time(:millisecond) - started < 1_000
+    end
   end
 
   describe "tls logger metadata" do
@@ -492,6 +509,13 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
     :ok = :gen_tcp.send(sock, first)
     Process.sleep(50)
     :ok = :gen_tcp.send(sock, rest)
+  end
+
+  defp recv_until_closed(sock, acc) do
+    case :gen_tcp.recv(sock, 0, 5000) do
+      {:ok, more} -> recv_until_closed(sock, acc <> more)
+      {:error, reason} -> {acc, reason}
+    end
   end
 
   defp connect_origin(db_conf) do
