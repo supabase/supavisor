@@ -5,24 +5,28 @@ defmodule SupavisorWeb.WsProxy do
   """
 
   require Logger
+  alias Supavisor.Protocol.Client
   alias Supavisor.Protocol.Server
+  alias Supavisor.Protocol.StartupOptions
   @behaviour Plug
 
   def call(conn, state) do
     Logger.debug("WsProxy is: #{inspect(self())}")
+    state = %{state | client_ip: conn.remote_ip |> :inet.ntoa() |> to_string()}
     Plug.Conn.upgrade_adapter(conn, :websocket, {__MODULE__, state, %{compress: false}})
   end
 
   def init(_) do
-    %{socket: nil, acc: nil, status: :startup}
+    %{socket: nil, acc: nil, status: :startup, client_ip: nil}
   end
 
   def websocket_handle(
         {:binary, <<len::32, startup_pkt::binary-size(len - 4), rest::binary>>},
         %{status: :startup} = state
       ) do
-    {:ok, socket} = connect_local()
-    :ok = :gen_tcp.send(socket, [<<len::32>>, startup_pkt])
+    {port, startup_pkt} = local_startup(<<len::32, startup_pkt::binary>>, state.client_ip)
+    {:ok, socket} = :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: true])
+    :ok = :gen_tcp.send(socket, startup_pkt)
 
     {:ok, %{state | acc: rest, socket: socket}}
   end
@@ -62,9 +66,37 @@ defmodule SupavisorWeb.WsProxy do
 
   def filter_pass_pkt(bin), do: bin
 
-  @spec connect_local() :: {:ok, port()} | {:error, term()}
-  defp connect_local do
-    proxy_port = Application.fetch_env!(:supavisor, :proxy_port_transaction)
-    :gen_tcp.connect(~c"localhost", proxy_port, [:binary, packet: :raw, active: true])
+  # Adds the client's IP and TLS status to the startup message.
+  defp local_startup(<<_len::32, protocol::binary-4, _::binary>> = packet, client_ip) do
+    case Client.decode_startup_packet(packet) do
+      {:ok, %{payload: payload}} ->
+        options =
+          payload
+          |> Map.get("options", %{})
+          |> Map.merge(%{
+            "client_ip" => client_ip,
+            # HTTPS is enforced at the infra layer, so clients always use TLS.
+            "client_tls" => "true"
+          })
+
+        params =
+          payload
+          |> Map.put("options", StartupOptions.encode(options))
+          |> Enum.map(fn {key, value} -> [key, 0, value, 0] end)
+
+        body = IO.iodata_to_binary([protocol, params, 0])
+
+        {internal_port({payload["user"], payload["database"]}),
+         [<<byte_size(body) + 4::32>>, body]}
+
+      # Not a startup message.
+      {:error, _} ->
+        {internal_port(nil), packet}
+    end
+  end
+
+  defp internal_port(key) do
+    ports = Application.fetch_env!(:supavisor, :transaction_proxy_ports)
+    :ranch.get_port({:pg_proxy_internal, :transaction, :erlang.phash2(key, length(ports))})
   end
 end
