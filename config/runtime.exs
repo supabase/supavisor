@@ -254,7 +254,7 @@ if config_env() != :test do
 
   api_jwt_secret = System.get_env("API_JWT_SECRET")
 
-  if not api_jwt_hmac_disabled and (api_jwt_secret == nil or api_jwt_secret == "") do
+  if not api_jwt_hmac_disabled and (is_nil(api_jwt_secret) or api_jwt_secret == "") do
     raise "API_JWT_SECRET must be set when API_JWT_HMAC_DISABLED is false"
   end
 
