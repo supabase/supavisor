@@ -348,6 +348,43 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert recv_until_closed(sock, "") == expected
       assert System.monotonic_time(:millisecond) - started < 1_000
     end
+
+    test "rejects at once a first read that cannot begin a message", %{port: port} do
+      opts = [:binary, active: false, nodelay: true]
+      # Fewer than 4 bytes wait for more only if they can still begin a GET or a length prefix
+      # of at most 1024 bytes. These can't, so they fail at once, as in one read, also after a
+      # first byte that could (<<0>> then "P").
+      cases = [
+        {"P", nil},
+        {"PO", nil},
+        {"POS", nil},
+        {<<1>>, nil},
+        {<<0, 5>>, nil},
+        {<<0, 0, 5>>, nil},
+        {<<0, ?P>>, 1}
+      ]
+
+      for {bin, cut} <- cases do
+        {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
+
+        case cut do
+          nil -> :ok = :gen_tcp.send(sock, bin)
+          n -> send_in_two_parts(sock, bin, n)
+        end
+
+        assert {:ok, data} = :gen_tcp.recv(sock, 0, 1_000)
+
+        assert {:ok, %Server.Pkt{tag: :error_response, payload: payload}, ""} =
+                 Server.decode_pkt(data)
+
+        assert %{
+                 "C" => "08P01",
+                 "M" => "(ESTARTUPMESSAGE) Invalid startup message: :bad_startup_payload"
+               } = payload
+
+        :gen_tcp.close(sock)
+      end
+    end
   end
 
   describe "tls logger metadata" do

@@ -153,15 +153,8 @@ defmodule Supavisor.ClientHandler do
     data = %{data | handshake_buffer: <<>>}
 
     case buffer <> bin do
-      <<"GET", _::binary>> = packet ->
-        {:keep_state, data, {:next_event, :info, {proto, sock, packet}}}
-
-      <<len::32, _::binary>> = packet when len < 8 or len > @max_startup_packet_size ->
-        # Not a message to wait for (too short, or too long to buffer): handle the bytes as
-        # if they came in one read.
-        {:keep_state, data, {:next_event, :info, {proto, sock, packet}}}
-
-      <<len::32, _::binary>> = packet when byte_size(packet) >= len ->
+      <<len::32, _::binary>> = packet
+      when len >= 8 and len <= @max_startup_packet_size and byte_size(packet) >= len ->
         <<message::binary-size(len), rest::binary>> = packet
 
         events =
@@ -178,7 +171,9 @@ defmodule Supavisor.ClientHandler do
         {:keep_state, data, events}
 
       packet ->
-        {:keep_state, %{data | handshake_buffer: packet}}
+        # Not a whole message yet, or not one to wait for: handle the bytes as if they came
+        # in one read, which buffers them again only when more bytes can still complete them.
+        {:keep_state, data, {:next_event, :info, {proto, sock, packet}}}
     end
   end
 
@@ -318,7 +313,12 @@ defmodule Supavisor.ClientHandler do
       when len >= 8 and byte_size(bin) < len and len <= @max_startup_packet_size ->
         {:keep_state, Map.put(data, :handshake_buffer, bin)}
 
-      _ when byte_size(bin) < 4 ->
+      # Fewer than 4 bytes: wait for more only if they can still begin a GET or a length
+      # prefix of at most @max_startup_packet_size; other bytes fail at once, as in one read.
+      _
+      when byte_size(bin) < 4 and
+             (bin == binary_part("GET", 0, byte_size(bin)) or
+                bin <= binary_part(<<@max_startup_packet_size::32>>, 0, byte_size(bin))) ->
         {:keep_state, Map.put(data, :handshake_buffer, bin)}
 
       _ ->
