@@ -71,6 +71,7 @@ This document provides a categorized list of all environment variables used in S
 | `API_JWT_TRUSTED_ISSUER`  | AWS STS issuer trusted for `/api` (enables AWS-identity JWKS auth alongside `API_JWT_SECRET`; unset = disabled) | -             | No                   |
 | `API_JWT_ALLOWED_SUBS`    | Comma-separated IAM principal ARNs (`sub` claim) allowed on `/api` when `API_JWT_TRUSTED_ISSUER` is set | -             | Yes, if `API_JWT_TRUSTED_ISSUER` set                   |
 | `API_JWT_EXPECTED_AUD`    | Expected `aud` claim on AWS-identity `/api` tokens                | -             | Yes, if `API_JWT_TRUSTED_ISSUER` set                   |
+| `API_JWT_HMAC_DISABLED`   | `true` or `1` rejects HMAC-signed (`API_JWT_SECRET`) tokens on `/api`, so only AWS-identity JWKS tokens are accepted; `/metrics` is unaffected. Can also be flipped on a running node with `Application.put_env(:supavisor, :api_jwt_hmac_disabled, true)`. Refuses to boot unless `API_JWT_TRUSTED_ISSUER` is set | `false`       | No                   |
 | `METRICS_JWT_SECRET`      | Secret for metrics JWT authentication                           | -             | No                   |
 | `API_TOKEN_BLOCKLIST`     | Comma-separated list of blocked API tokens                      | -             | No                   |
 | `METRICS_TOKEN_BLOCKLIST` | Comma-separated list of blocked metrics tokens                  | -             | No                   |

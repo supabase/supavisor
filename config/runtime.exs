@@ -245,6 +245,13 @@ if config_env() != :test do
       }
     end
 
+  api_jwt_hmac_disabled = Supavisor.Helpers.get_env_bool("API_JWT_HMAC_DISABLED", false)
+
+  if api_jwt_hmac_disabled and is_nil(api_jwks_config) do
+    raise "API_JWT_HMAC_DISABLED requires API_JWT_TRUSTED_ISSUER, API_JWT_ALLOWED_SUBS and " <>
+            "API_JWT_EXPECTED_AUD: with HMAC off and JWKS not configured every /api request is rejected"
+  end
+
   config :supavisor,
     session_proxy_ports:
       System.get_env("SESSION_PROXY_PORTS", "12100,12101,12102,12103")
@@ -258,6 +265,7 @@ if config_env() != :test do
     jwt_claim_validators: System.get_env("JWT_CLAIM_VALIDATORS", "{}") |> JSON.decode!(),
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     api_jwks_config: api_jwks_config,
+    api_jwt_hmac_disabled: api_jwt_hmac_disabled,
     metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
     proxy_port_transaction:
       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
