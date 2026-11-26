@@ -313,12 +313,11 @@ defmodule Supavisor.ClientHandler do
       when len >= 8 and byte_size(bin) < len and len <= @max_startup_packet_size ->
         {:keep_state, Map.put(data, :handshake_buffer, bin)}
 
-      # Fewer than 4 bytes: wait for more only if they can still begin a GET or a length
-      # prefix of at most @max_startup_packet_size; other bytes fail at once, as in one read.
+      # Fewer than 4 bytes: wait for more only if they can still begin a length prefix of at
+      # most @max_startup_packet_size; other bytes fail at once, as in one read.
       _
       when byte_size(bin) < 4 and
-             (bin == binary_part("GET", 0, byte_size(bin)) or
-                bin <= binary_part(<<@max_startup_packet_size::32>>, 0, byte_size(bin))) ->
+             bin <= binary_part(<<@max_startup_packet_size::32>>, 0, byte_size(bin)) ->
         {:keep_state, Map.put(data, :handshake_buffer, bin)}
 
       _ ->

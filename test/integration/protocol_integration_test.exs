@@ -181,22 +181,6 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       :gen_tcp.close(sock)
     end
 
-    test "answers a split GET prefix like a GET in one read", %{port: port} do
-      opts = [:binary, active: false, nodelay: true]
-      request = "GET / HTTP/1.1\r\n\r\n"
-
-      {:ok, control_sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
-      :ok = :gen_tcp.send(control_sock, request)
-      expected = recv_until_closed(control_sock, "")
-
-      {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, opts)
-      send_in_two_parts(sock, request, 2)
-      reply = recv_until_closed(sock, "")
-      assert reply == expected
-      assert {reply_data, :closed} = reply
-      assert String.starts_with?(reply_data, "HTTP/1.1 204")
-    end
-
     test "answers split non-GET bytes like the same bytes in one write", %{port: port} do
       opts = [:binary, active: false, nodelay: true]
       request = "POST / HTTP/1.1\r\n\r\n"
@@ -351,10 +335,12 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
 
     test "rejects at once a first read that cannot begin a message", %{port: port} do
       opts = [:binary, active: false, nodelay: true]
-      # Fewer than 4 bytes wait for more only if they can still begin a GET or a length prefix
-      # of at most 1024 bytes. These can't, so they fail at once, as in one read, also after a
-      # first byte that could (<<0>> then "P").
+      # Fewer than 4 bytes wait for more only if they can still begin a length prefix of at
+      # most 1024 bytes. These can't, a GET cut after 1 or 2 bytes included, so they fail at
+      # once, as at base, also after a first byte that could (<<0>> then "P").
       cases = [
+        {"G", nil},
+        {"GE", nil},
         {"P", nil},
         {"PO", nil},
         {"POS", nil},
