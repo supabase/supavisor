@@ -197,7 +197,7 @@ defmodule Supavisor.Integration.ProtocolIntegrationTest do
       assert String.starts_with?(reply_data, "HTTP/1.1 204")
     end
 
-    test "answers split non-HTTP bytes like the same bytes in one write", %{port: port} do
+    test "answers split non-GET bytes like the same bytes in one write", %{port: port} do
       opts = [:binary, active: false, nodelay: true]
       request = "POST / HTTP/1.1\r\n\r\n"
 
