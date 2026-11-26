@@ -68,6 +68,13 @@ defmodule Supavisor.ClientHandler.AuthMethodsTest do
                {:ok, :jit}
     end
 
+    test "uses cleartext password over TLS for non-JIT clients of a JIT tenant" do
+      tenant = %Tenant{use_jit: true, feature_flags: %{}}
+
+      assert AuthMethods.fetch_authentication_method(tenant, false, true, "user") ==
+               {:ok, :password}
+    end
+
     test "rejects JIT without TLS" do
       tenant = %Tenant{use_jit: true, feature_flags: %{}}
 
