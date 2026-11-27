@@ -58,7 +58,7 @@ defmodule Supavisor.ClientHandler.Checks do
     end
   end
 
-  defp check_cidrs(allow_list, addr) do
+  def check_cidrs(allow_list, addr) do
     if HandlerHelpers.filter_cidrs(allow_list, addr) == [] do
       {:error, %AddressNotAllowedError{address: addr}}
     else
