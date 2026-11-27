@@ -446,6 +446,14 @@ defmodule Supavisor.DbHandler do
         {:keep_state_and_data,
          {:next_event, :internal, {:terminate_with_error, error, pool_action}}}
 
+      # Retrying can't succeed until the upstream secret changes, so stop the pool
+      # instead of reconnecting.
+      {:unsupported_upstream_auth, error} ->
+        Logger.error("DbHandler: Auth error #{inspect(error)}")
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
+
       {:ready_for_query, acc} ->
         ps = acc.ps
 
@@ -988,13 +996,24 @@ defmodule Supavisor.DbHandler do
 
     secrets = data.connection_params.secrets
 
-    {client_final_message, server_proof, derived_secrets} =
-      Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws")
+    if match?(%PasswordSecrets{}, secrets) and
+         not Helpers.valid_scram_iterations?(server_first_parts.i) do
+      {:unsupported_upstream_auth,
+       %{
+         "S" => "FATAL",
+         "C" => "XX000",
+         "M" =>
+           "upstream SCRAM iteration count #{server_first_parts.i} is outside the supported range 1..#{Helpers.max_scram_iterations()}"
+       }}
+    else
+      {client_final_message, server_proof, derived_secrets} =
+        Helpers.get_client_final(secrets, server_first_parts, nonce, secrets.user, "biws")
 
-    bin = :pgo_protocol.encode_scram_response_message(client_final_message)
-    :ok = HandlerHelpers.sock_send(data.sock, bin)
+      bin = :pgo_protocol.encode_scram_response_message(client_final_message)
+      :ok = HandlerHelpers.sock_send(data.sock, bin)
 
-    {:authentication_server_first_message, server_proof, derived_secrets}
+      {:authentication_server_first_message, server_proof, derived_secrets}
+    end
   end
 
   defp handle_auth_pkts(

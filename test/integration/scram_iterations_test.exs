@@ -36,6 +36,42 @@ defmodule Supavisor.Integration.ScramIterationsTest do
     assert message =~ "SCRAM secret iteration count 32769 exceeds the maximum of 32768"
   end
 
+  test "rejects upstream SCRAM iteration counts above the limit", ctx do
+    create_role(ctx.origin, ctx.role, 32_769)
+    tenant = create_require_user_tenant(ctx.db_conf, ctx.role)
+
+    assert {:error, %P.Error{postgres: %{severity: "FATAL", message: message}}} =
+             connect_to_proxy(ctx.db_conf, ctx.role, tenant)
+
+    assert message =~ "upstream SCRAM iteration count 32769 is outside the supported range"
+  end
+
+  defp create_require_user_tenant(db_conf, role) do
+    tenant = "scram_iterations_#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      Supavisor.Tenants.create_tenant(%{
+        db_database: db_conf[:database],
+        db_host: db_conf[:hostname],
+        db_port: db_conf[:port],
+        external_id: tenant,
+        require_user: true,
+        default_parameter_status: %{"server_version" => "15.0"},
+        users: [
+          %{
+            "db_user" => role,
+            "db_password" => @password,
+            "pool_size" => 1,
+            "mode_type" => "transaction"
+          }
+        ]
+      })
+
+    on_exit(fn -> Supavisor.Tenants.delete_tenant_by_external_id(tenant) end)
+
+    tenant
+  end
+
   defp create_role(conn, role, iterations) do
     salt = :crypto.strong_rand_bytes(16)
     salted_password = :pgo_scram.hi(@password, salt, iterations)
@@ -49,14 +85,14 @@ defmodule Supavisor.Integration.ScramIterationsTest do
     Postgrex.query!(conn, "CREATE ROLE #{role} WITH LOGIN PASSWORD '#{verifier}';", [])
   end
 
-  defp connect_to_proxy(db_conf, role) do
+  defp connect_to_proxy(db_conf, role, tenant \\ @tenant) do
     with {:error, {error, _}} <-
            start_supervised(
              {SingleConnection,
               hostname: db_conf[:hostname],
               port: Application.get_env(:supavisor, :proxy_port_transaction),
               database: db_conf[:database],
-              username: "#{role}.#{@tenant}",
+              username: "#{role}.#{tenant}",
               password: @password,
               pool_size: 1}
            ) do

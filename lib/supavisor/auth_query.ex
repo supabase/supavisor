@@ -9,7 +9,7 @@ defmodule Supavisor.AuthQuery do
   alias Supavisor.Secrets.{ManagerSecrets, SASLSecrets}
   alias Supavisor.Tenants.Tenant
 
-  @max_scram_iterations 32_768
+  @max_scram_iterations Helpers.max_scram_iterations()
 
   @doc """
   Starts and links a Postgrex connection configured for auth-query use.
@@ -162,6 +162,14 @@ defmodule Supavisor.AuthQuery do
      %AuthQueryError{
        reason: :too_many_iterations,
        details: "#{iterations} exceeds the maximum of #{@max_scram_iterations}"
+     }}
+  end
+
+  defp validate_iterations(iterations) when iterations < 1 do
+    {:error,
+     %AuthQueryError{
+       reason: :too_few_iterations,
+       details: "#{iterations} is below the minimum of 1"
      }}
   end
 
