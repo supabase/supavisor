@@ -446,6 +446,14 @@ defmodule Supavisor.DbHandler do
         {:keep_state_and_data,
          {:next_event, :internal, {:terminate_with_error, error, pool_action}}}
 
+      # Retrying can't succeed until the upstream secret changes, so stop the pool
+      # instead of reconnecting.
+      {:unsupported_upstream_auth, error} ->
+        Logger.error("DbHandler: Auth error #{inspect(error)}")
+
+        {:keep_state_and_data,
+         {:next_event, :internal, {:terminate_with_error, error, :shutdown_pool}}}
+
       {:ready_for_query, acc} ->
         ps = acc.ps
 
@@ -990,7 +998,7 @@ defmodule Supavisor.DbHandler do
 
     if match?(%PasswordSecrets{}, secrets) and
          not Helpers.valid_scram_iterations?(server_first_parts.i) do
-      {:error_response,
+      {:unsupported_upstream_auth,
        %{
          "S" => "FATAL",
          "C" => "XX000",
